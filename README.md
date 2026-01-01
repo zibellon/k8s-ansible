@@ -1,14 +1,34 @@
-# В каком порядке готовить сервера
-1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
+# Конфигурация файла hosts.yaml
+1. Сервера
+   1. managers
+      1. Добавить все сервера, с которыми будет производится работа
+      2. ОБЯЗАТЕЛЬНО! Указать сервер, который является главным manager (master-manager) - `is_master: true`
+   2. workers
+      1. Добавить все сервера, с которыми будет производится работа
+
+# Первичная инициализация кластера
+1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
    1. Инициализация ноды
 2. `ansible-playbook -i hosts.yaml playbooks/init-cluster.yaml --limit k8s-manager-1`
    1. Инициализация кластера. Именно команда: `kubeadm init ...`
-3. Присоединение к кластеру
-   1. Если до этого уже был node-install
-      1. `ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1`
-   2. Если не было
-      1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
-      2. `ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1`
+
+# Присоединение worker-node
+1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
+   1. Инициализация ноды
+2. `ansible-playbook -i hosts.yaml playbooks/worker-join.yaml --limit k8s-worker-1`
+   1. Получение токена и вызов команды `kubeadm join ...`
+
+# Присоединение manager-node
+1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
+   1. Инициализация ноды
+2. `ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit k8s-manager-2`
+   1. Загрузка сертификатов в k8s.secrets, получение токена и вызов команды `kubeadm join ...`
+
+# Обслуживание сервера (cordon + drain) и возврат в строй
+1. `ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit k8s-worker-3`
+   1. Вывод ноды на обслуживание
+2. `ansible-playbook -i hosts.yaml playbooks/node-drain-off.yaml --limit k8s-worker-3`
+   1. Вернуть ноду в строй
 
 # В каком порядке устанавливать
 1. cilium
