@@ -1,22 +1,16 @@
-# ------
 # В каком порядке готовить сервера
-# ------
 1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
    1. Инициализация ноды
 2. `ansible-playbook -i hosts.yaml playbooks/init-cluster.yaml --limit k8s-manager-1`
-   1. инициализация кластера. Именно команда: `kubeadm init ...`
-3. ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1
-   1. присоединение к кластеру, если до этого уже был node-install
-4. присоединение к кластеру
+   1. Инициализация кластера. Именно команда: `kubeadm init ...`
+3. Присоединение к кластеру
    1. Если до этого уже был node-install
-      1. ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1
+      1. `ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1`
    2. Если не было
-      1. ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1
-      2. ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1
+      1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
+      2. `ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1`
 
-# ------
 # В каком порядке устанавливать
-# ------
 1. cilium
    1. ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1
    2. ставится: cilium + host-network-policy + kube-system-network-policy
@@ -54,9 +48,7 @@
     2. Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
     3. Ставится: argocd + network-policy + ingress + git-ops
 
-# ------
 # Как и что обновлять
-# ------
 1. cilium
    1. Установка идет через официальный helm
    2. Только параметры в `hosts.yaml`
