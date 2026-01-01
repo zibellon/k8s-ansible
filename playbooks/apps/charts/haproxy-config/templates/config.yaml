@@ -1,0 +1,83 @@
+# =============================================================================
+# HAPROXY GLOBAL CONFIG
+# =============================================================================
+
+apiVersion: ingress.v1.haproxy.org/v1
+kind: Global
+metadata:
+  name: haproxy-global
+  namespace: {{ .Values.namespace }}
+  annotations:
+    ingress.class: "{{ .Values.ingressClass }}"
+spec:
+  config:
+    # Max connections
+    maxconn: {{ .Values.global.maxconn }}
+    # Threads (по количеству CPU cores)
+    nbthread: {{ .Values.global.nbthread }}
+    # Tune options
+    tune_options:
+      # Buffer size for large queries
+      bufsize: {{ .Values.global.bufsize }}
+      # Max rewrite size
+      maxrewrite: {{ .Values.global.maxrewrite }}
+      # Receive buffer
+      rcvbuf_client: {{ .Values.global.rcvbuf_client }}
+      rcvbuf_server: {{ .Values.global.rcvbuf_server }}
+      # Send buffer
+      sndbuf_client: {{ .Values.global.sndbuf_client }}
+      sndbuf_server: {{ .Values.global.sndbuf_server }}
+      # Max concurrent connections per thread
+      maxaccept: {{ .Values.global.maxaccept }}
+      # Run queue depth
+      runqueue_depth: {{ .Values.global.runqueue_depth }}
+
+  # Logging
+  log_targets:
+    - index: 0
+      address: stdout
+      facility: daemon
+      format: raw
+      level: warning
+
+---
+# =============================================================================
+# HAPROXY DEFAULTS CONFIG
+# =============================================================================
+
+apiVersion: ingress.v1.haproxy.org/v1
+kind: Defaults
+metadata:
+  name: haproxy-defaults
+  namespace: {{ .Values.namespace }}
+  annotations:
+    ingress.class: "{{ .Values.ingressClass }}"
+spec:
+  config:
+    mode: {{ .Values.defaults.mode }}
+    # Timeouts (in milliseconds)
+    client_timeout: {{ .Values.defaults.client_timeout }}
+    server_timeout: {{ .Values.defaults.server_timeout }}
+    connect_timeout: {{ .Values.defaults.connect_timeout }}
+    queue_timeout: {{ .Values.defaults.queue_timeout }}
+    # TCP Keepalive - critical for long-lived connections
+    tcpka: enabled
+    clitcpka: enabled
+    srvtcpka: enabled
+    # Keepalive parameters (in milliseconds)
+    clitcpka_idle: {{ .Values.defaults.clitcpka_idle }}
+    clitcpka_intvl: {{ .Values.defaults.clitcpka_intvl }}
+    clitcpka_cnt: {{ .Values.defaults.clitcpka_cnt }}
+    srvtcpka_idle: {{ .Values.defaults.srvtcpka_idle }}
+    srvtcpka_intvl: {{ .Values.defaults.srvtcpka_intvl }}
+    srvtcpka_cnt: {{ .Values.defaults.srvtcpka_cnt }}
+    # Retries
+    retries: {{ .Values.defaults.retries }}
+    # Check timeouts
+    check_timeout: {{ .Values.defaults.check_timeout }}
+    # TCP optimizations
+    tcp_smart_connect: enabled
+    tcp_smart_accept: enabled
+    # Enable TCP logging
+    tcplog: true
+

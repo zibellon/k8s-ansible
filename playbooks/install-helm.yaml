@@ -1,0 +1,101 @@
+# =============================================================================
+# Install Helm on manager node
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/install-helm.yaml --limit k8s-manager-1
+# =============================================================================
+
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is a manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/install-helm.yaml --limit <manager_node>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Confirm target
+      debug:
+        msg: "Installing Helm on: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install Helm
+# =============================================================================
+- name: Install Helm
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # PRE-CHECK
+    # =========================================================================
+    - name: Check if Helm is installed
+      command: which helm
+      register: helm_pre_check
+      changed_when: false
+      failed_when: false
+
+    # =========================================================================
+    # INSTALL HELM
+    # =========================================================================
+    - name: Download Helm
+      get_url:
+        url: "https://get.helm.sh/helm-v{{ helm_version }}-linux-amd64.tar.gz"
+        dest: /tmp/helm.tar.gz
+      when: helm_pre_check.rc != 0
+
+    - name: Extract Helm
+      unarchive:
+        src: /tmp/helm.tar.gz
+        dest: /tmp
+        remote_src: yes
+      when: helm_pre_check.rc != 0
+
+    - name: Install Helm to /usr/local/bin
+      copy:
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        mode: '0755'
+        remote_src: yes
+      when: helm_pre_check.rc != 0
+
+    - name: Cleanup temp files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/helm.tar.gz
+        - /tmp/linux-amd64
+      when: helm_pre_check.rc != 0
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: Check Helm version
+      command: helm version
+      register: helm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert Helm is installed
+      assert:
+        that:
+          - helm_check.rc == 0
+        fail_msg: "Helm is NOT installed!"
+        success_msg: "Helm: OK"
+
+    - name: Print Helm version
+      debug:
+        msg: "Helm: {{ helm_check.stdout }}"

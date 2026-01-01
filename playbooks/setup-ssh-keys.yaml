@@ -1,0 +1,48 @@
+---
+# =============================================================================
+# Setup SSH key authentication
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/setup-ssh-keys.yaml --limit k8s-worker-1
+# =============================================================================
+
+# =============================================================================
+# Play 0: Pre-check - validate limit specified
+# =============================================================================
+- name: Pre-check - validate limit specified
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/setup-ssh-keys.yaml --limit <node>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Confirm target
+      debug:
+        msg: "Setting up SSH keys on: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Setup SSH key authentication
+# =============================================================================
+- name: Setup SSH key authentication
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Copy SSH public key to servers
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', ssh_public_key_path) }}"
+
+    - name: Verify SSH key was added
+      command: cat ~/.ssh/authorized_keys
+      register: authorized_keys_result
+      changed_when: false
+
+    - name: Print result
+      debug:
+        msg: "SSH key added for {{ ansible_user }}@{{ inventory_hostname }}: {{ authorized_keys_result.stdout }}"

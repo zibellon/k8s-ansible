@@ -1,0 +1,102 @@
+# =============================================================================
+# GITLAB CONFIG INSTALLATION (NetworkPolicies)
+# =============================================================================
+
+- name: Install GitLab config resources
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # CHECK EXISTING INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Check if gitlab-config is already installed
+      command: helm list -n {{ gitlab_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set gitlab_config_installed fact
+      set_fact:
+        gitlab_config_installed: "{{ 'gitlab-config' in helm_list_result.stdout }}"
+
+    - name: Debug installation status
+      debug:
+        msg: "gitlab-config installed: {{ gitlab_config_installed }}"
+
+    # -------------------------------------------------------------------------
+    # COPY LOCAL HELM CHART
+    # -------------------------------------------------------------------------
+
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/gitlab-config"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old gitlab-config chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/gitlab-config"
+        state: absent
+
+    - name: Copy gitlab-config chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/gitlab-config/"
+        dest: "{{ remote_charts_dir }}/gitlab-config/"
+        mode: "0644"
+
+    # -------------------------------------------------------------------------
+    # CREATE VALUES FILE
+    # -------------------------------------------------------------------------
+
+    - name: Create gitlab-config values file
+      copy:
+        dest: "{{ remote_charts_dir }}/gitlab-config/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ gitlab_namespace }}
+          gitlab:
+            sshPortExternal: {{ gitlab_ssh_port_external }}
+            vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
+            vpnIps:
+            {% for ip in vpn_ips %}
+              - "{{ ip }}"
+            {% endfor %}
+          traefik:
+            namespace: {{ traefik_namespace }}
+          haproxy:
+            namespace: {{ haproxy_namespace }}
+
+    # -------------------------------------------------------------------------
+    # INSTALL OR UPGRADE CHART
+    # -------------------------------------------------------------------------
+
+    - name: Install gitlab-config via Helm (first time)
+      command: >
+        helm install gitlab-config {{ remote_charts_dir }}/gitlab-config
+        --namespace {{ gitlab_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/gitlab-config/values-override.yaml
+      when: not gitlab_config_installed
+
+    - name: Upgrade gitlab-config via Helm (update)
+      command: >
+        helm upgrade gitlab-config {{ remote_charts_dir }}/gitlab-config
+        --namespace {{ gitlab_namespace }}
+        --values {{ remote_charts_dir }}/gitlab-config/values-override.yaml
+      when: gitlab_config_installed
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Verify gitlab-config installation
+      command: helm list -n {{ gitlab_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show Helm release
+      debug:
+        var: helm_verify.stdout_lines

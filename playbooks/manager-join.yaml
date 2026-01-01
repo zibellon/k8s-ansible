@@ -1,0 +1,262 @@
+---
+# =============================================================================
+# Join control-plane (manager) node to the cluster
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit k8s-manager-2
+# =============================================================================
+# NOTE: First manager must be initialized with init-cluster.yaml
+# =============================================================================
+
+# =============================================================================
+# Play 0: Pre-check - validate target is a manager node (not the master one)
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Find master manager
+      set_fact:
+        master_manager_fact: "{{ item }}"
+      loop: "{{ groups['managers'] }}"
+      when: hostvars[item].is_master | default(false)
+      run_once: true
+
+    - name: Fail if no master manager found
+      fail:
+        msg: "ERROR: No manager with is_master: true found in hosts.yaml"
+      when: master_manager_fact is not defined
+      run_once: true
+
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit <manager_node>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if target is the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is the master manager. Use init-cluster.yaml instead."
+      when: inventory_hostname == master_manager_fact
+
+    - name: Confirm target
+      debug:
+        msg: "Adding control-plane node: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Get join command, certificate-key and check existing nodes
+# =============================================================================
+- name: Get cluster info
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    # Get existing nodes from first manager
+    - name: Get cluster nodes
+      command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
+      delegate_to: "{{ master_manager_fact }}"
+      register: cluster_nodes_result
+      changed_when: false
+      run_once: true
+
+    - name: Set existing nodes as fact
+      set_fact:
+        existing_nodes_fact: "{{ cluster_nodes_result.stdout.split() }}"
+
+    - name: Print existing nodes
+      debug:
+        msg: "Nodes in cluster: {{ existing_nodes_fact }}"
+      run_once: true
+
+    # Generate certificate-key and upload certs (required for control-plane join)
+    - name: Generate certificate-key
+      command: kubeadm certs certificate-key
+      delegate_to: "{{ master_manager_fact }}"
+      register: cert_key_result
+      changed_when: false
+      run_once: true
+
+    - name: Set certificate-key as fact
+      set_fact:
+        certificate_key_fact: "{{ cert_key_result.stdout }}"
+
+    - name: Upload certs with certificate-key
+      command: >-
+        kubeadm init phase upload-certs --upload-certs
+        --certificate-key {{ certificate_key_fact }}
+      delegate_to: "{{ master_manager_fact }}"
+      changed_when: false
+      run_once: true
+
+    - name: Print certificate-key
+      debug:
+        msg: "Certificate key: {{ certificate_key_fact }}"
+      run_once: true
+
+    # Get full join command with certificate-key (includes --control-plane)
+    - name: Generate join command
+      command: >-
+        kubeadm token create --print-join-command
+        --certificate-key {{ certificate_key_fact }}
+      delegate_to: "{{ master_manager_fact }}"
+      register: join_command_result
+      changed_when: false
+      run_once: true
+
+    - name: Set join command as fact
+      set_fact:
+        kubeadm_join_command_fact: "{{ join_command_result.stdout }}"
+
+    - name: Print join command
+      debug:
+        msg: "{{ kubeadm_join_command_fact }}"
+      run_once: true
+
+# =============================================================================
+# Play 2: Join manager to cluster
+# =============================================================================
+- name: Join manager to cluster
+  hosts: managers
+  become: true
+
+  tasks:
+    - name: Check if already joined
+      set_fact:
+        is_already_joined_fact: "{{ new_hostname in existing_nodes_fact }}"
+
+    - name: Skip if already joined
+      debug:
+        msg: "{{ new_hostname }} is already in cluster - skipping"
+      when: is_already_joined_fact
+
+    # Join as control-plane (command already includes --control-plane --certificate-key)
+    - name: Join cluster as control-plane
+      command: "{{ kubeadm_join_command_fact }}"
+      register: join_result
+      when: not is_already_joined_fact
+
+    - name: Print join result
+      debug:
+        msg: "{{ join_result.stdout_lines }}"
+      when: not is_already_joined_fact and join_result.stdout_lines is defined
+
+    # Verify kubelet
+    - name: Wait for kubelet
+      pause:
+        seconds: 15
+      when: not is_already_joined_fact
+
+    - name: Check kubelet status
+      command: systemctl is-active kubelet
+      register: kubelet_status
+      changed_when: false
+      failed_when: false
+
+    - name: Assert kubelet is running
+      assert:
+        that:
+          - kubelet_status.stdout == 'active'
+        fail_msg: "kubelet is NOT running!"
+        success_msg: "{{ new_hostname }}: kubelet running"
+
+    # =========================================================================
+    # CONFIGURE KUBECTL (control-plane specific)
+    # =========================================================================
+    - name: Create .kube directory
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0755'
+
+    - name: Copy admin.conf to .kube/config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        mode: '0600'
+
+    # =========================================================================
+    # REMOVE CONTROL-PLANE TAINT
+    # =========================================================================
+    - name: Remove NoSchedule taint from control-plane
+      command: >-
+        kubectl taint nodes {{ new_hostname }}
+        node-role.kubernetes.io/control-plane:NoSchedule-
+      register: untaint_result
+      failed_when: false
+
+    - name: Assert taint removal result
+      assert:
+        that:
+          - untaint_result.rc == 0 or 'not found' in untaint_result.stderr
+        fail_msg: "Failed to remove taint: {{ untaint_result.stderr }}"
+        success_msg: >-
+          {{ new_hostname }}: {{ 'Taint removed' if untaint_result.rc == 0 else 'Taint not exist' }}
+
+    # =========================================================================
+    # APPLY NODE LABELS
+    # =========================================================================
+    - name: Apply node labels
+      command: "kubectl label nodes {{ new_hostname }} {{ item }} --overwrite"
+      loop: "{{ node_labels | default([]) }}"
+      when: node_labels is defined and node_labels | length > 0
+      register: label_result
+      failed_when: false
+
+    - name: Print applied labels
+      debug:
+        msg: "Applied labels to {{ new_hostname }}: {{ node_labels }}"
+      when: node_labels is defined and node_labels | length > 0
+
+    # =========================================================================
+    # APPLY LONGHORN DEFAULT NODE TAGS
+    # =========================================================================
+    - name: Apply Longhorn default node tags annotation
+      command: >-
+        kubectl annotate nodes {{ new_hostname }}
+        node.longhorn.io/default-node-tags='{{ longhorn_default_tags | to_json }}'
+        --overwrite
+      when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
+      register: longhorn_tags_result
+      failed_when: false
+
+    - name: Print applied Longhorn tags
+      debug:
+        msg: "Applied Longhorn tags to {{ new_hostname }}: {{ longhorn_default_tags }}"
+      when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
+
+
+# =============================================================================
+# Play 3: Verify on manager
+# =============================================================================
+- name: Verify cluster nodes
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for node registration
+      pause:
+        seconds: 5
+      run_once: true
+
+    - name: Get cluster nodes
+      command: kubectl get nodes -o wide
+      delegate_to: "{{ master_manager_fact }}"
+      register: final_nodes_result
+      changed_when: false
+      run_once: true
+
+    - name: Print cluster status
+      debug:
+        msg:
+          - "=== Cluster Nodes ==="
+          - "{{ final_nodes_result.stdout_lines }}"
+      run_once: true

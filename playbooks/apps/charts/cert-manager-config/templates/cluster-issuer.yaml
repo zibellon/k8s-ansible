@@ -1,0 +1,28 @@
+# =============================================================================
+# CLUSTER ISSUER FOR LET'S ENCRYPT
+# =============================================================================
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.clusterIssuer.name }}
+spec:
+  acme:
+    server: {{ .Values.clusterIssuer.server }}
+    email: {{ .Values.clusterIssuer.email }}
+    privateKeySecretRef:
+      name: {{ .Values.clusterIssuer.privateKeySecretName }}
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ .Values.clusterIssuer.ingressClass }}
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "{{ .Values.clusterIssuer.ingressClass }}"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "{{ .Values.clusterIssuer.traefikEntrypoint }}"
+            podTemplate:
+              metadata:
+                labels:
+                  app-key: acme-solver-traefik-master
+                  app-env: prod

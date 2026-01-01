@@ -1,0 +1,186 @@
+# =============================================================================
+# GITLAB INSTALLATION
+# Requires: gitlab-minio to be installed first
+# =============================================================================
+
+- name: Install GitLab
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify dependencies
+    # -------------------------------------------------------------------------
+
+    - name: Check if gitlab-minio is installed
+      command: helm status gitlab-minio -n {{ gitlab_namespace }}
+      register: gitlab_minio_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if gitlab-minio is not installed
+      fail:
+        msg: "gitlab-minio must be installed first. Run gitlab-minio-install.yaml"
+      when: gitlab_minio_check.rc != 0
+
+    - name: Check if registry keys secret exists
+      command: kubectl get secret {{ gitlab_minio_registry_keys_secret_name }} -n {{ gitlab_namespace }}
+      register: registry_keys_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if registry keys secret does not exist
+      fail:
+        msg: "MinIO registry keys secret not found. Ensure gitlab-minio-install.yaml completed successfully"
+      when: registry_keys_check.rc != 0
+
+    # -------------------------------------------------------------------------
+    # CHECK EXISTING INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Check if gitlab is already installed
+      command: helm list -n {{ gitlab_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set gitlab_installed fact
+      set_fact:
+        gitlab_installed: "{{ 'gitlab' in helm_list_result.stdout and 'gitlab-minio' not in helm_list_result.stdout.split('\n') | select('equalto', 'gitlab') | list }}"
+
+    - name: More precise check for gitlab installation
+      set_fact:
+        gitlab_installed: "{{ helm_list_result.stdout_lines | select('equalto', 'gitlab') | list | length > 0 }}"
+
+    - name: Debug installation status
+      debug:
+        msg: "gitlab installed: {{ gitlab_installed }}"
+
+    # -------------------------------------------------------------------------
+    # COPY LOCAL HELM CHART
+    # -------------------------------------------------------------------------
+
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/gitlab"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old gitlab chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/gitlab"
+        state: absent
+
+    - name: Copy gitlab chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/gitlab/"
+        dest: "{{ remote_charts_dir }}/gitlab/"
+        mode: "0644"
+
+    # -------------------------------------------------------------------------
+    # CREATE VALUES FILE
+    # -------------------------------------------------------------------------
+
+    - name: Create gitlab values file
+      copy:
+        dest: "{{ remote_charts_dir }}/gitlab/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ gitlab_namespace }}
+          image: {{ gitlab_image }}
+          storageClass: {{ gitlab_storage_class }}
+          storageClassLogs: {{ gitlab_storage_class_logs }}
+          storageConfig: 1Gi
+          storageData: 20Gi
+          storageLogs: 5Gi
+          domain: {{ gitlab_domain }}
+          registryDomain: {{ gitlab_registry_domain }}
+          pagesDomain: {{ gitlab_pages_domain }}
+          secretName: {{ gitlab_https_secret_name }}
+          sshPortExternal: {{ gitlab_ssh_port_external }}
+          minioServiceUrl: "http://svc-gitlab-minio:9000"
+          minioRegistryKeysSecretName: {{ gitlab_minio_registry_keys_secret_name }}
+          ingress:
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+          haproxy:
+            namespace: {{ haproxy_namespace }}
+            ingressClass: {{ haproxy_ingress_class }}
+          resources:
+            requests:
+              memory: 2G
+            limits:
+              memory: 3G
+
+    # -------------------------------------------------------------------------
+    # INSTALL OR UPGRADE CHART
+    # -------------------------------------------------------------------------
+
+    - name: Install gitlab via Helm (first time)
+      command: >
+        helm install gitlab {{ remote_charts_dir }}/gitlab
+        --namespace {{ gitlab_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/gitlab/values-override.yaml
+      when: not gitlab_installed
+
+    - name: Upgrade gitlab via Helm (update)
+      command: >
+        helm upgrade gitlab {{ remote_charts_dir }}/gitlab
+        --namespace {{ gitlab_namespace }}
+        --values {{ remote_charts_dir }}/gitlab/values-override.yaml
+      when: gitlab_installed
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR GITLAB TO BE READY
+    # -------------------------------------------------------------------------
+
+    - name: Wait for GitLab deployment to be ready (this may take 5-10 minutes)
+      command: kubectl rollout status deployment/gitlab -n {{ gitlab_namespace }} --timeout=600s
+      when: not gitlab_installed
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Verify gitlab installation
+      command: helm list -n {{ gitlab_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show Helm releases
+      debug:
+        var: helm_verify.stdout_lines
+
+    - name: Verify GitLab pods
+      command: kubectl get pods -n {{ gitlab_namespace }} -l app-key=gitlab
+      register: pods_verify
+      changed_when: false
+
+    - name: Show GitLab pods
+      debug:
+        var: pods_verify.stdout_lines
+
+    - name: Verify Ingresses
+      command: kubectl get ingress -n {{ gitlab_namespace }}
+      register: ingress_verify
+      changed_when: false
+
+    - name: Show Ingresses
+      debug:
+        var: ingress_verify.stdout_lines
+
+    - name: Show GitLab access info
+      debug:
+        msg:
+          - "GitLab Web UI: https://{{ gitlab_domain }}"
+          - "GitLab Registry: https://{{ gitlab_registry_domain }}"
+          - "GitLab Pages: https://{{ gitlab_pages_domain }}"
+          - "GitLab SSH: {{ gitlab_domain }}:{{ gitlab_ssh_port_external }}"
+          - "Initial root password: check /etc/gitlab/initial_root_password inside the container"
+

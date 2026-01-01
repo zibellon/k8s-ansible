@@ -1,0 +1,94 @@
+# =============================================================================
+# ARGOCD PROJECTS AND APPLICATIONS
+# =============================================================================
+
+---
+# Default project - DISABLED (no permissions)
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: {{ .Values.namespace }}
+spec:
+  sourceRepos: []
+  sourceNamespaces: []
+  destinations: []
+  clusterResourceBlacklist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceBlacklist:
+    - group: "*"
+      kind: "*"
+
+---
+# Root project - FULL permissions for app-of-apps
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: prj-root
+  namespace: {{ .Values.namespace }}
+spec:
+  sourceRepos:
+    - "*"
+  sourceNamespaces:
+    - "*"
+  destinations:
+    - name: "*"
+      namespace: "*"
+      server: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+---
+# Root application (app-of-apps)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-of-apps-root
+  namespace: {{ .Values.namespace }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io/background
+spec:
+  project: prj-root
+  revisionHistoryLimit: 3
+  source:
+    repoURL: {{ .Values.gitlab.internalUrl }}
+    targetRevision: master
+    path: argocd-system
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
+      - ApplyOutOfSyncOnly=true
+      - PrunePropagationPolicy=background
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 1
+        maxDuration: 30s
+
+---
+# SSH key for GitLab repo-creds (global, not project-scoped)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-ops-root-key-internal
+  namespace: {{ .Values.namespace }}
+  labels:
+    argocd.argoproj.io/secret-type: repo-creds
+type: Opaque
+stringData:
+  type: git
+  url: {{ .Values.gitlab.internalUrl }}
+  sshPrivateKey: |
+{{ .Values.gitlab.sshPrivateKey | indent 4 }}

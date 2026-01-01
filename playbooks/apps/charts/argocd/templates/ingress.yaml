@@ -1,0 +1,57 @@
+# =============================================================================
+# ARGOCD INGRESS (HTTPS with cert-manager + Traefik IngressRoute)
+# =============================================================================
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.ingress.secretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.ingress.secretName }}
+  dnsNames:
+    - "{{ .Values.ingress.uiDomain }}"
+    - "{{ .Values.ingress.rpcDomain }}"
+  issuerRef:
+    name: {{ .Values.ingress.clusterIssuer }}
+    kind: ClusterIssuer
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ingress-argocd-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    - {{ .Values.ingress.entrypoint }}
+  routes:
+    - kind: Rule # UI access
+      match: Host(`{{ .Values.ingress.uiDomain }}`)
+      priority: 10
+      {{- if .Values.ingress.vpnOnlyEnabled }}
+      middlewares:
+        - name: vpn-only
+          namespace: {{ .Values.traefik.namespace }}
+      {{- end }}
+      services:
+        - name: argocd-server
+          port: 80
+    - kind: Rule # gRPC access
+      match: Host(`{{ .Values.ingress.rpcDomain }}`) && Header(`Content-Type`, `application/grpc`)
+      priority: 11
+      {{- if .Values.ingress.vpnOnlyEnabled }}
+      middlewares:
+        - name: vpn-only
+          namespace: {{ .Values.traefik.namespace }}
+      {{- end }}
+      services:
+        - name: argocd-server
+          port: 80
+          scheme: h2c
+  tls:
+    secretName: {{ .Values.ingress.secretName }}
+

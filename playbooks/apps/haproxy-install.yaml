@@ -1,0 +1,175 @@
+# =============================================================================
+# Install HAProxy + haproxy-config
+# - haproxy: official Helm chart from haproxytech
+# - haproxy-config: local chart (Global, Defaults, NetworkPolicies)
+# =============================================================================
+
+- name: Install HAProxy via Helm
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # CHECK EXISTING INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Check if haproxy is already installed
+      command: helm list -n {{ haproxy_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set haproxy_installed fact
+      set_fact:
+        haproxy_installed: "{{ 'haproxy-ingress' in helm_list_result.stdout }}"
+
+    - name: Debug haproxy installation status
+      debug:
+        msg: "HAProxy installed: {{ haproxy_installed }}"
+
+    # -------------------------------------------------------------------------
+    # ADD HELM REPOSITORY
+    # -------------------------------------------------------------------------
+
+    - name: Add haproxy Helm repository
+      command: helm repo add haproxytech https://haproxytech.github.io/helm-charts --force-update
+      when: not haproxy_installed
+
+    - name: Update Helm repositories
+      command: helm repo update
+      when: not haproxy_installed
+
+    # -------------------------------------------------------------------------
+    # CREATE VALUES FILE
+    # -------------------------------------------------------------------------
+
+    - name: Ensure haproxy charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/haproxy"
+        state: directory
+        mode: "0755"
+      when: not haproxy_installed
+
+    - name: Create haproxy values file
+      copy:
+        dest: "{{ remote_charts_dir }}/haproxy/values-override.yaml"
+        mode: "0644"
+        content: |
+          controller:
+            kind: DaemonSet
+            ingressClassResource:
+              name: {{ haproxy_ingress_class }}
+            ingressClass: {{ haproxy_ingress_class }}
+            podLabels:
+              app-key: haproxy
+              app-env: prod
+            defaultTLSSecret:
+              enabled: false
+            logging:
+              level: info
+              traffic:
+                address: stdout
+                format: raw
+                facility: daemon
+            service:
+              enabled: true
+              type: ClusterIP
+              enablePorts:
+                http: false
+                https: false
+                quic: false
+          serviceAccount:
+            create: true
+      when: not haproxy_installed
+
+    # -------------------------------------------------------------------------
+    # INSTALL HAPROXY
+    # -------------------------------------------------------------------------
+
+    - name: Install HAProxy via Helm
+      command: >
+        helm install haproxy-ingress haproxytech/kubernetes-ingress
+        --namespace {{ haproxy_namespace }}
+        --create-namespace
+        --version {{ haproxy_chart_version }}
+        --values {{ remote_charts_dir }}/haproxy/values-override.yaml
+      when: not haproxy_installed
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Wait for HAProxy DaemonSet to be ready
+      command: kubectl rollout status daemonset/haproxy-ingress-kubernetes-ingress -n {{ haproxy_namespace }} --timeout=300s
+      when: not haproxy_installed
+
+    # -------------------------------------------------------------------------
+    # INSTALL HAPROXY-CONFIG (Global, Defaults, NetworkPolicies)
+    # -------------------------------------------------------------------------
+
+    - name: Check if haproxy-config is already installed
+      command: helm list -n {{ haproxy_namespace }} -q
+      register: haproxy_config_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set haproxy_config_installed fact
+      set_fact:
+        haproxy_config_installed: "{{ 'haproxy-config' in haproxy_config_check.stdout }}"
+
+    - name: Ensure haproxy-config charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/haproxy-config"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old haproxy-config chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/haproxy-config"
+        state: absent
+
+    - name: Copy haproxy-config chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/haproxy-config/"
+        dest: "{{ remote_charts_dir }}/haproxy-config/"
+        mode: "0644"
+
+    - name: Create haproxy-config values file
+      copy:
+        dest: "{{ remote_charts_dir }}/haproxy-config/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ haproxy_namespace }}
+          ingressClass: {{ haproxy_ingress_class }}
+
+    - name: Install haproxy-config via Helm (first time)
+      command: >
+        helm install haproxy-config {{ remote_charts_dir }}/haproxy-config
+        --namespace {{ haproxy_namespace }}
+        --values {{ remote_charts_dir }}/haproxy-config/values-override.yaml
+      when: not haproxy_config_installed
+
+    - name: Upgrade haproxy-config via Helm (update)
+      command: >
+        helm upgrade haproxy-config {{ remote_charts_dir }}/haproxy-config
+        --namespace {{ haproxy_namespace }}
+        --values {{ remote_charts_dir }}/haproxy-config/values-override.yaml
+      when: haproxy_config_installed
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Verify HAProxy Helm releases
+      command: helm list -n {{ haproxy_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show Helm releases
+      debug:
+        var: helm_verify.stdout_lines
+
+    - name: Confirm installation
+      debug:
+        msg: "haproxy-ingress + haproxy-config: OK"

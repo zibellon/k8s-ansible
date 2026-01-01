@@ -1,0 +1,209 @@
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: {{ .Values.ingressClass }}
+spec:
+  controller: traefik.io/ingress-controller
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik-ingress-controller
+  namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traefik-ingress-controller
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - services
+      - secrets
+      - nodes
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingresses
+      - ingressclasses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - update
+  - apiGroups:
+      - traefik.io
+    resources:
+      - middlewares
+      - middlewaretcps
+      - ingressroutes
+      - traefikservices
+      - ingressroutetcps
+      - ingressrouteudps
+      - tlsoptions
+      - tlsstores
+      - serverstransports
+      - serverstransporttcps
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traefik-ingress-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik-ingress-controller
+subjects:
+  - kind: ServiceAccount
+    name: traefik-ingress-controller
+    namespace: {{ .Values.namespace }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: traefik-master
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    matchLabels:
+      app-key: traefik
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: traefik
+        app-env: prod
+    spec:
+      serviceAccountName: traefik-ingress-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsGroup: 65532
+        runAsUser: 65532
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: traefik
+          image: {{ .Values.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          args:
+            - --log.level=DEBUG
+            - --log.format=json
+            - --accesslog=true
+            - --accesslog.format=json
+            # Metrics (Prometheus)
+            - --metrics.prometheus=true
+            # API + Dashboard
+            - --api.insecure=true
+            - --api.dashboard=true
+            - --api.debug=true
+            # Providers
+            - --providers.kubernetescrd=true
+            - --providers.kubernetescrd.ingressclass={{ .Values.ingressClass }}
+            - --providers.kubernetescrd.allowcrossnamespace=true
+            - --providers.kubernetesingress=true
+            - --providers.kubernetesingress.ingressclass={{ .Values.ingressClass }}
+            # EntryPoints (traefik-web = HTTP)
+            - --entryPoints.{{ .Values.entryPoints.web }}.address=:80
+            - --entryPoints.{{ .Values.entryPoints.web }}.asDefault=true
+            - --entryPoints.{{ .Values.entryPoints.web }}.forwardedHeaders.insecure=true
+            - --entryPoints.{{ .Values.entryPoints.web }}.proxyProtocol.insecure=true
+            - --entryPoints.{{ .Values.entryPoints.web }}.transport.respondingTimeouts.idleTimeout=600
+            - --entryPoints.{{ .Values.entryPoints.web }}.transport.respondingTimeouts.writeTimeout=600
+            - --entryPoints.{{ .Values.entryPoints.web }}.transport.respondingTimeouts.readTimeout=600
+            # EntryPoints (traefik-websecure = HTTPS)
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.address=:443
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.http.tls
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.asDefault=true
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.forwardedHeaders.insecure=true
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.proxyProtocol.insecure=true
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.transport.respondingTimeouts.idleTimeout=600
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.transport.respondingTimeouts.writeTimeout=600
+            - --entryPoints.{{ .Values.entryPoints.websecure }}.transport.respondingTimeouts.readTimeout=600
+          ports:
+            - name: "web"
+              containerPort: 80
+            - name: "websecure"
+              containerPort: 443
+            - name: "dashboard"
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-traefik-master
+  namespace: {{ .Values.namespace }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app-key: traefik
+    app-env: prod
+  ports:
+    - name: web
+      port: 80
+      targetPort: 80
+      nodePort: 80
+    - name: websecure
+      port: 443
+      targetPort: 443
+      nodePort: 443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-traefik-master-dashboard
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app-key: traefik
+    app-env: prod
+  ports:
+    - name: dashboard
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+

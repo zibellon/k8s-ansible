@@ -1,0 +1,92 @@
+# ------
+# В каком порядке готовить сервера
+# ------
+1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
+   1. Инициализация ноды
+2. `ansible-playbook -i hosts.yaml playbooks/init-cluster.yaml --limit k8s-manager-1`
+   1. инициализация кластера. Именно команда: `kubeadm init ...`
+3. ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1
+   1. присоединение к кластеру, если до этого уже был node-install
+4. присоединение к кластеру
+   1. Если до этого уже был node-install
+      1. ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1
+   2. Если не было
+      1. ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1
+      2. ansible-playbook -i hosts.yaml node-worker-add.yaml --limit k8s-worker-1
+
+# ------
+# В каком порядке устанавливать
+# ------
+1. cilium
+   1. ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1
+   2. ставится: cilium + host-network-policy + kube-system-network-policy
+2. cert-manager
+   1. ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1
+   2. Ставится: cert-manager + network-policy
+3. traefik
+   1. ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1
+   2. Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+   3. Ставится: traefik + network-policy + ingress (dashboard)
+4. cilium-post (Hubble UI Ingress + NetworkPolicy для kube-system)
+   1. ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1
+   2. Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+   3. Ставится: network-policy + ingress (hubble-ui)
+5. haproxy
+   1. ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1
+   2. Ставится: haproxy + network-policy
+6. longhorn
+   1. ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1
+   2. Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+   3. Ставится: longhorn + network-policy + ingress
+7. gitlab-config
+   1. ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1
+   2. Ставится: network-policy
+8. gitlab-minio
+   1. ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1
+   2. Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
+   3. Ставится: gitlab-minio + ingress
+9. gitlab
+   1. ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1
+   2. Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
+   3. Ставится: gitlab + ingress
+10. argocd
+    1. ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1
+    2. Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
+    3. Ставится: argocd + network-policy + ingress + git-ops
+
+# ------
+# Как и что обновлять
+# ------
+1. cilium
+   1. Установка идет через официальный helm
+   2. Только параметры в `hosts.yaml`
+2. cert-manager
+   1. Установка идет через официальный helm
+   2. Только параметры в `hosts.yaml`
+3. traefik
+   1. Установка через yaml -> helm
+   2. Руками обновить CRDs. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+   3. Руками обновить RBAC. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml
+   4. Версия в `hosts.yaml`
+4. cilium-post
+   1. Установка через yaml -> helm
+   2. Только параметры в `hosts.yaml`
+5. haproxy
+   1. Установка идет через официальный helm
+   2. Только параметры в `hosts.yaml`
+6. longhorn
+   1. Установка через yaml -> helm
+   2. Скачать новый yaml. https://raw.githubusercontent.com/longhorn/longhorn/v1.10.1/deploy/longhorn.yaml
+   3. Важно! Установка идет через HELM -> надо из yaml манифеста удалить `kind: Namespace`. Уначе будет ошибка
+   4. Поменять ВСЕ вхождения `namespace: longhorn-system` -> `namespace: {{ .Values.namespace }}` (там около 20 вхождения)
+   5. Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
+   6. Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
+7. gitlab + gitlab-minio
+   1. Установка через yaml -> helm
+   2. Только параметры в `hosts.yaml`
+8. argocd
+   1. Установка через yaml -> helm
+   2. Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+   3. Поменять ВСЕ вхождения `namespace: argocd` -> `namespace: {{ .Values.namespace }}` (там 3 вхождения, для RoleBinding)
+   4. Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
+   5. Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`

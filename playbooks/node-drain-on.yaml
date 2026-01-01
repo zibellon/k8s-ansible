@@ -1,0 +1,139 @@
+---
+# =============================================================================
+# Drain node for maintenance
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit k8s-worker-3
+#
+# This playbook:
+#   1. Cordons the node (disables scheduling)
+#   2. Drains all pods (with Longhorn eviction support)
+#
+# After running this playbook, you can safely:
+#   - Reboot the node
+#   - Perform maintenance (disk replacement, OS upgrade, etc.)
+# =============================================================================
+
+# =============================================================================
+# Play 0: Pre-check - validate limit specified
+# =============================================================================
+- name: Pre-check - validate limit specified
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit <node>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Confirm target
+      debug:
+        msg: "Draining node: {{ inventory_hostname }} ({{ new_hostname }})"
+
+# =============================================================================
+# Play 1: Determine master manager
+# =============================================================================
+- name: Determine master manager
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Find master manager
+      set_fact:
+        master_manager_fact: "{{ item }}"
+      loop: "{{ groups['managers'] }}"
+      when: hostvars[item].is_master | default(false)
+      run_once: true
+
+    - name: Fail if no master manager found
+      fail:
+        msg: "ERROR: No manager with is_master: true found in hosts.yaml"
+      when: master_manager_fact is not defined
+      run_once: true
+
+    - name: Print master manager
+      debug:
+        msg: "Master manager: {{ master_manager_fact }}"
+      run_once: true
+
+# =============================================================================
+# Play 2: Cordon and Drain node (executed from manager)
+# =============================================================================
+- name: Cordon and Drain node
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    drain_timeout: "10m"
+
+  tasks:
+    # =========================================================================
+    # PRE-CHECK: Verify node exists and is Ready
+    # =========================================================================
+    - name: Check node status
+      command: kubectl get node {{ new_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      delegate_to: "{{ master_manager_fact }}"
+      register: node_status
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if node not found
+      fail:
+        msg: "Node {{ new_hostname }} not found in cluster!"
+      when: node_status.rc != 0
+
+    - name: Show node status
+      debug:
+        msg: "Node {{ new_hostname }} Ready: {{ node_status.stdout }}"
+
+    # =========================================================================
+    # CORDON: Disable scheduling on node
+    # =========================================================================
+    - name: Cordon node
+      command: kubectl cordon {{ new_hostname }}
+      delegate_to: "{{ master_manager_fact }}"
+      register: cordon_result
+      changed_when: "'cordoned' in cordon_result.stdout"
+
+    - name: Show cordon result
+      debug:
+        msg: "{{ cordon_result.stdout }}"
+
+    # =========================================================================
+    # DRAIN: Evict all pods from node
+    # =========================================================================
+    - name: Drain node (this may take a while if Longhorn needs to evict replicas)
+      command: >
+        kubectl drain {{ new_hostname }}
+        --ignore-daemonsets
+        --delete-emptydir-data
+        --timeout={{ drain_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      register: drain_result
+      failed_when: false
+
+    - name: Show drain result
+      debug:
+        msg: "{{ drain_result.stdout_lines | default(['Drain completed']) }}"
+
+    - name: Show drain warnings (if any)
+      debug:
+        msg: "WARNING: {{ drain_result.stderr_lines }}"
+      when: drain_result.stderr_lines is defined and drain_result.stderr_lines | length > 0
+
+    - name: Check drain success
+      set_fact:
+        drain_success: "{{ drain_result.rc == 0 }}"
+
+    - name: Warn if drain failed
+      debug:
+        msg: |
+          WARNING: Drain did not complete successfully!
+          This may happen if Longhorn is still evicting replicas.
+          You can proceed with maintenance, but be aware of potential issues.
+          
+          To force continue anyway, kubelet will be stopped.
+      when: not drain_success

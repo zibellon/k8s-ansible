@@ -1,0 +1,164 @@
+# =============================================================================
+# TRAEFIK INSTALLATION VIA LOCAL HELM CHART
+# Installs Traefik CRDs first, then Traefik as DaemonSet
+# =============================================================================
+
+- name: Install Traefik via local Helm chart
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # CHECK EXISTING INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Check if traefik-crds is already installed
+      command: helm list -A -q
+      register: helm_list_all
+      changed_when: false
+      failed_when: false
+
+    - name: Set traefik_crds_installed fact
+      set_fact:
+        traefik_crds_installed: "{{ 'traefik-crds' in helm_list_all.stdout }}"
+
+    - name: Check if traefik is already installed
+      command: helm list -n {{ traefik_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set traefik_installed fact
+      set_fact:
+        traefik_installed: "{{ 'traefik' in helm_list_result.stdout and 'traefik-crds' not in helm_list_result.stdout }}"
+
+    - name: Debug installation status
+      debug:
+        msg: "Traefik CRDs installed: {{ traefik_crds_installed }}, Traefik installed: {{ traefik_installed }}"
+
+    # -------------------------------------------------------------------------
+    # COPY LOCAL HELM CHARTS
+    # -------------------------------------------------------------------------
+
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}"
+        state: directory
+        mode: "0755"
+
+    # traefik-crds chart
+    - name: Remove old traefik-crds chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/traefik-crds"
+        state: absent
+
+    - name: Copy traefik-crds chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/traefik-crds/"
+        dest: "{{ remote_charts_dir }}/traefik-crds/"
+        mode: "0644"
+
+    # traefik chart
+    - name: Remove old traefik chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/traefik"
+        state: absent
+
+    - name: Copy traefik chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/traefik/"
+        dest: "{{ remote_charts_dir }}/traefik/"
+        mode: "0644"
+
+    # -------------------------------------------------------------------------
+    # INSTALL TRAEFIK CRDs FIRST
+    # -------------------------------------------------------------------------
+
+    - name: Install traefik-crds via Helm (first time)
+      command: >
+        helm install traefik-crds {{ remote_charts_dir }}/traefik-crds
+        --namespace kube-system
+      when: not traefik_crds_installed
+
+    - name: Upgrade traefik-crds via Helm (update)
+      command: >
+        helm upgrade traefik-crds {{ remote_charts_dir }}/traefik-crds
+        --namespace kube-system
+      when: traefik_crds_installed
+
+    - name: Wait for Traefik CRDs to be established
+      command: >
+        kubectl wait --for=condition=Established crd/ingressroutes.traefik.io
+        crd/ingressroutetcps.traefik.io
+        crd/ingressrouteudps.traefik.io
+        crd/middlewares.traefik.io
+        crd/middlewaretcps.traefik.io
+        crd/serverstransports.traefik.io
+        crd/serverstransporttcps.traefik.io
+        crd/tlsoptions.traefik.io
+        crd/tlsstores.traefik.io
+        crd/traefikservices.traefik.io
+        --timeout=60s
+      changed_when: false
+
+    # -------------------------------------------------------------------------
+    # CREATE VALUES FILE
+    # -------------------------------------------------------------------------
+
+    - name: Create traefik values file
+      copy:
+        dest: "{{ remote_charts_dir }}/traefik/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ traefik_namespace }}
+          image: "traefik:v{{ traefik_version }}"
+          ingressClass: {{ traefik_ingress_class }}
+          entryPoints:
+            web: {{ traefik_web_entrypoint }}
+            websecure: {{ traefik_websecure_entrypoint }}
+          vpnIps:
+          {% for ip in vpn_ips %}
+            - "{{ ip }}"
+          {% endfor %}
+          dashboard:
+            domain: {{ traefik_dashboard_domain }}
+            secretName: {{ traefik_dashboard_https_secret_name }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
+
+    # -------------------------------------------------------------------------
+    # INSTALL OR UPGRADE TRAEFIK
+    # -------------------------------------------------------------------------
+
+    - name: Install traefik via Helm (first time)
+      command: >
+        helm install traefik {{ remote_charts_dir }}/traefik
+        --namespace {{ traefik_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/traefik/values-override.yaml
+      when: not traefik_installed
+
+    - name: Upgrade traefik via Helm (update)
+      command: >
+        helm upgrade traefik {{ remote_charts_dir }}/traefik
+        --namespace {{ traefik_namespace }}
+        --values {{ remote_charts_dir }}/traefik/values-override.yaml
+      when: traefik_installed
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Wait for Traefik DaemonSet to be ready
+      command: kubectl rollout status daemonset/traefik-master -n {{ traefik_namespace }} --timeout=300s
+      when: not traefik_installed
+
+    - name: Verify Traefik installation
+      command: helm list -n {{ traefik_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show Traefik Helm release
+      debug:
+        var: helm_verify.stdout_lines

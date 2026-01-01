@@ -1,0 +1,217 @@
+# =============================================================================
+# Initialize Kubernetes cluster on master manager node
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/init-cluster.yaml --limit k8s-manager-1
+# =============================================================================
+# NOTE: Run ONLY on the master manager (is_master: true)
+# =============================================================================
+
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/init-cluster.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Initializing cluster on master manager: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Initialize Kubernetes cluster
+# =============================================================================
+- name: Initialize Kubernetes cluster
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # PRE-CHECK
+    # =========================================================================
+    - name: Check if cluster is already initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeadm_already_init_pre_check
+
+    - name: Print cluster status
+      debug:
+        msg: "{{ 'Cluster already init, skip' if kubeadm_already_init_pre_check.stat.exists else 'Cluster not init, proceeding...' }}"
+
+    # =========================================================================
+    # KUBEADM CONFIG
+    # =========================================================================
+    - name: Build certSANs list
+      set_fact:
+        cert_sans: >-
+          {{
+            [haproxy_apiserver_lb_host, 'localhost'] +
+            groups['managers'] | map('extract', hostvars, 'ansible_host') | list
+          }}
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    - name: Create kubeadm config
+      copy:
+        dest: /root/kubeadm-config.yaml
+        content: |
+          apiVersion: kubeadm.k8s.io/v1beta4
+          kind: InitConfiguration
+          localAPIEndpoint:
+            advertiseAddress: "{{ ansible_host }}"
+            bindPort: 6443
+          nodeRegistration:
+            criSocket: "unix:///var/run/containerd/containerd.sock"
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta4
+          kind: ClusterConfiguration
+          kubernetesVersion: "{{ k8s_full_version }}"
+          controlPlaneEndpoint: "{{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}"
+          apiServer:
+            extraArgs:
+              - name: service-node-port-range
+                value: "{{ node_port_start }}-{{ node_port_end }}"
+            certSANs: {{ cert_sans | to_json }}
+          networking:
+            serviceSubnet: "{{ service_subnet }}"
+            podSubnet: "{{ pod_subnet }}"
+            dnsDomain: "{{ dns_domain }}"
+          controllerManager:
+            extraArgs:
+              - name: allocate-node-cidrs
+                value: "false"
+          ---
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          kind: KubeletConfiguration
+          cgroupDriver: systemd
+          containerLogMaxSize: 100Mi
+          containerLogMaxFiles: 5
+          ---
+          apiVersion: kubeproxy.config.k8s.io/v1alpha1
+          kind: KubeProxyConfiguration
+          mode: ipvs
+        mode: '0644'
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    # =========================================================================
+    # KUBEADM INIT
+    # =========================================================================
+    - name: Init cluster with kubeadm
+      command: >-
+        kubeadm init
+        --skip-phases=addon/kube-proxy
+        --config /root/kubeadm-config.yaml
+        --upload-certs
+      register: kubeadm_init_result
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    - name: Print kubeadm init output
+      debug:
+        msg: "{{ kubeadm_init_result.stdout_lines }}"
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    # =========================================================================
+    # CONFIGURE KUBECTL
+    # =========================================================================
+    - name: Create .kube directory
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0755'
+
+    - name: Copy admin.conf to .kube/config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        mode: '0600'
+
+    # =========================================================================
+    # REMOVE CONTROL-PLANE TAINT (optional)
+    # =========================================================================
+    - name: Remove NoSchedule taint from control-plane
+      command: >-
+        kubectl taint nodes {{ new_hostname }}
+        node-role.kubernetes.io/control-plane:NoSchedule-
+      register: untaint_result
+      failed_when: false
+
+    - name: Assert taint removal result
+      assert:
+        that:
+          - untaint_result.rc == 0 or 'not found' in untaint_result.stderr
+        fail_msg: "Failed to remove taint: {{ untaint_result.stderr }}"
+        success_msg: >-
+          {{ new_hostname }}: {{ 'Taint removed' if untaint_result.rc == 0 else 'Taint not exist' }}
+
+    # =========================================================================
+    # APPLY NODE LABELS
+    # =========================================================================
+    - name: Apply node labels
+      command: "kubectl label nodes {{ new_hostname }} {{ item }} --overwrite"
+      loop: "{{ node_labels | default([]) }}"
+      when: node_labels is defined and node_labels | length > 0
+      register: label_result
+      failed_when: false
+
+    - name: Print applied labels
+      debug:
+        msg: "Applied labels to {{ new_hostname }}: {{ node_labels }}"
+      when: node_labels is defined and node_labels | length > 0
+
+    # =========================================================================
+    # APPLY LONGHORN DEFAULT NODE TAGS
+    # =========================================================================
+    - name: Apply Longhorn default node tags annotation
+      command: >-
+        kubectl annotate nodes {{ new_hostname }}
+        node.longhorn.io/default-node-tags='{{ longhorn_default_tags | to_json }}'
+        --overwrite
+      when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
+      register: longhorn_tags_result
+      failed_when: false
+
+    - name: Print applied Longhorn tags
+      debug:
+        msg: "Applied Longhorn tags to {{ new_hostname }}: {{ longhorn_default_tags }}"
+      when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: Check cluster nodes
+      command: kubectl get nodes -o wide
+      register: nodes_check
+      changed_when: false
+
+    - name: Check cluster pods
+      command: kubectl get pods -A
+      register: pods_check
+      changed_when: false
+
+    - name: Print final status
+      debug:
+        msg:
+          - "=== Cluster Initialized ==="
+          - "Nodes:"
+          - "{{ nodes_check.stdout_lines }}"
+          - "Pods:"
+          - "{{ pods_check.stdout_lines }}"

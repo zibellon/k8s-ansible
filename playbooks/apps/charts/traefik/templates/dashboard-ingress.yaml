@@ -1,0 +1,49 @@
+# =============================================================================
+# TRAEFIK DASHBOARD INGRESS (HTTPS with cert-manager)
+# =============================================================================
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.dashboard.secretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.dashboard.secretName }}
+  dnsNames:
+    - "{{ .Values.dashboard.domain }}"
+  issuerRef:
+    name: {{ .Values.dashboard.clusterIssuer }}
+    kind: ClusterIssuer
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-traefik-dashboard-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.entryPoints.websecure }}"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.dashboard.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  tls:
+    - hosts:
+        - {{ .Values.dashboard.domain }}
+      secretName: {{ .Values.dashboard.secretName }}
+  rules:
+    - host: {{ .Values.dashboard.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-traefik-master-dashboard
+                port:
+                  number: 8080
+

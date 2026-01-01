@@ -1,0 +1,189 @@
+# =============================================================================
+# Install Cilium CNI via Helm on manager node
+# Replaces kube-proxy, enables Hubble and host firewall
+# Includes: cilium-config (NetworkPolicies)
+# For Hubble UI Ingress use: cilium-hubble-install.yaml
+# =============================================================================
+
+---
+- name: Install Cilium CNI
+  hosts: managers
+  become: true
+
+  tasks:
+    # =========================================================================
+    # PRE-CHECK
+    # =========================================================================
+    - name: Check if Cilium is already installed
+      command: helm list -n {{ cilium_namespace }} -q
+      register: cilium_pre_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set cilium_installed fact
+      set_fact:
+        cilium_installed: "{{ 'cilium' in cilium_pre_check.stdout }}"
+
+    - name: Show Cilium status
+      debug:
+        msg: "Cilium already installed: {{ cilium_installed }}"
+
+    # =========================================================================
+    # ADD HELM REPO
+    # =========================================================================
+    - name: Add Cilium Helm repository
+      command: helm repo add cilium https://helm.cilium.io/ --force-update
+      failed_when: false
+
+    - name: Update Helm repositories
+      command: helm repo update
+      changed_when: false
+
+    # =========================================================================
+    # CREATE VALUES FILE
+    # =========================================================================
+    - name: Ensure cilium charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/cilium"
+        state: directory
+        mode: "0755"
+
+    - name: Create cilium values file
+      copy:
+        dest: "{{ remote_charts_dir }}/cilium/values-override.yaml"
+        mode: "0644"
+        content: |
+          ipam:
+            operator:
+              clusterPoolIPv4PodCIDRList:
+                - {{ pod_subnet }}
+              clusterPoolIPv4MaskSize: {{ cilium_mask_size }}
+          kubeProxyReplacement: true
+          kubeProxyReplacementHealthzBindAddr: "0.0.0.0:10256"
+          k8sServiceHost: {{ haproxy_apiserver_lb_host }}
+          k8sServicePort: {{ haproxy_apiserver_lb_port }}
+          nodePort:
+            range: "{{ node_port_start }},{{ node_port_end }}"
+          hubble:
+            relay:
+              enabled: true
+            ui:
+              enabled: true
+            peerService:
+              clusterDomain: {{ dns_domain }}
+          hostFirewall:
+            enabled: true
+
+    # =========================================================================
+    # INSTALL CILIUM
+    # =========================================================================
+    - name: Install Cilium via Helm (first time)
+      command: >
+        helm install cilium cilium/cilium
+        --version {{ cilium_version }}
+        --namespace {{ cilium_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/cilium/values-override.yaml
+      when: not cilium_installed
+
+    - name: Upgrade Cilium via Helm (update)
+      command: >
+        helm upgrade cilium cilium/cilium
+        --version {{ cilium_version }}
+        --namespace {{ cilium_namespace }}
+        --values {{ remote_charts_dir }}/cilium/values-override.yaml
+      when: cilium_installed
+
+    # =========================================================================
+    # WAIT FOR CILIUM TO BE READY
+    # =========================================================================
+    - name: Wait for Cilium pods to be ready (timeout 5 min)
+      command: kubectl wait --for=condition=ready pod -l k8s-app=cilium -n {{ cilium_namespace }} --timeout=300s
+      register: cilium_wait
+      retries: 3
+      delay: 10
+      until: cilium_wait.rc == 0
+
+    # =========================================================================
+    # INSTALL CILIUM-CONFIG
+    # =========================================================================
+    - name: Check if cilium-config is already installed
+      command: helm list -n {{ cilium_namespace }} -q
+      register: cilium_config_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set cilium_config_installed fact
+      set_fact:
+        cilium_config_installed: "{{ 'cilium-config' in cilium_config_check.stdout }}"
+
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old cilium-config chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/cilium-config"
+        state: absent
+
+    - name: Copy cilium-config chart to server
+      copy:
+        src: "{{ playbook_dir }}/charts/cilium-config/"
+        dest: "{{ remote_charts_dir }}/cilium-config/"
+        mode: "0644"
+
+    - name: Create cilium-config values file
+      copy:
+        dest: "{{ remote_charts_dir }}/cilium-config/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ cilium_namespace }}
+
+    - name: Install cilium-config via Helm (first time)
+      command: >
+        helm install cilium-config {{ remote_charts_dir }}/cilium-config
+        --namespace {{ cilium_namespace }}
+        --values {{ remote_charts_dir }}/cilium-config/values-override.yaml
+      when: not cilium_config_installed
+
+    - name: Upgrade cilium-config via Helm (update)
+      command: >
+        helm upgrade cilium-config {{ remote_charts_dir }}/cilium-config
+        --namespace {{ cilium_namespace }}
+        --values {{ remote_charts_dir }}/cilium-config/values-override.yaml
+      when: cilium_config_installed
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: Get Cilium Helm release info
+      command: helm list -n {{ cilium_namespace }}
+      register: helm_list
+      changed_when: false
+
+    - name: Print Helm release info
+      debug:
+        msg: "{{ helm_list.stdout_lines }}"
+
+    - name: Get Cilium pods status
+      command: kubectl get pods -n {{ cilium_namespace }} -o wide
+      register: cilium_pods
+      changed_when: false
+
+    - name: Print Cilium pods status
+      debug:
+        msg: "{{ cilium_pods.stdout_lines }}"
+
+    - name: Assert Cilium is installed via Helm
+      command: helm status cilium -n {{ cilium_namespace }}
+      register: cilium_status
+      changed_when: false
+
+    - name: Confirm Cilium installation
+      assert:
+        that:
+          - cilium_status.rc == 0
+        fail_msg: "Cilium is NOT installed!"
+        success_msg: "Cilium: OK (installed via Helm)"

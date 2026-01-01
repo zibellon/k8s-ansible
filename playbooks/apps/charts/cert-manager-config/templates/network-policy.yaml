@@ -1,0 +1,125 @@
+# =============================================================================
+# CERT-MANAGER NETWORK POLICIES
+# =============================================================================
+
+---
+# Deny all traffic in cert-manager namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for all pods in cert-manager namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# CERT-MANAGER CONTROLLER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cert-manager-controller
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: controller
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 9402 # Prometheus metrics scraping
+  egress:
+    # API server for certificate resources
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # ACME providers (Let's Encrypt) + self-check HTTP requests
+    # Self-check goes to external IP which routes back to traefik
+    - ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+
+# =============================================================================
+# CERT-MANAGER WEBHOOK
+# =============================================================================
+
+---
+# Allow webhook from API server
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cert-manager-webhook
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: webhook
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # API server calls webhook for validation/mutation
+    - ports:
+        - protocol: TCP
+          port: 10250
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443 # kube-api-server
+
+# =============================================================================
+# CERT-MANAGER CAINJECTOR
+# =============================================================================
+
+---
+# Allow cainjector egress to API server
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cert-manager-cainjector
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: cainjector
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443 # kube-api-server

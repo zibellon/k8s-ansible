@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app-key: gitlab
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: gitlab
+        app-env: prod
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        node-type: worker
+      volumes:
+        - name: gitlab-config-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-config-data
+        - name: gitlab-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-data
+        - name: gitlab-log-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-log-data
+      containers:
+        - name: gitlab
+          image: {{ .Values.image }}
+          env:
+            - name: GITLAB_OMNIBUS_CONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-gitlab-omnibus-config
+                  key: gitlab_omnibus_config
+            # MinIO credentials from auto-generated secret
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioRegistryKeysSecretName }}
+                  key: access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioRegistryKeysSecretName }}
+                  key: secret-key
+          ports:
+            - name: web
+              containerPort: 80
+              protocol: TCP
+            - name: registry
+              containerPort: 81
+              protocol: TCP
+            - name: pages
+              containerPort: 82
+              protocol: TCP
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+          volumeMounts:
+            - name: gitlab-config-data
+              mountPath: /etc/gitlab
+              subPath: gitlab-config
+            - name: gitlab-data
+              mountPath: /var/opt/gitlab
+              subPath: gitlab-data
+            - name: gitlab-log-data
+              mountPath: /var/log/gitlab
+              subPath: gitlab-logs
+          resources:
+            requests:
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              memory: {{ .Values.resources.limits.memory }}
+

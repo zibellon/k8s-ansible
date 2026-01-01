@@ -1,0 +1,236 @@
+# =============================================================================
+# GITLAB MINIO INSTALLATION
+# Installs MinIO, creates buckets (registry, runner-cache) and access keys
+# =============================================================================
+
+- name: Install GitLab MinIO
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # CHECK EXISTING INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Check if gitlab-minio is already installed
+      command: helm list -n {{ gitlab_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set gitlab_minio_installed fact
+      set_fact:
+        gitlab_minio_installed: "{{ 'gitlab-minio' in helm_list_result.stdout }}"
+
+    - name: Debug installation status
+      debug:
+        msg: "gitlab-minio installed: {{ gitlab_minio_installed }}"
+
+    # -------------------------------------------------------------------------
+    # COPY LOCAL HELM CHART
+    # -------------------------------------------------------------------------
+
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/gitlab-minio"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old gitlab-minio chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/gitlab-minio"
+        state: absent
+
+    - name: Copy gitlab-minio chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/gitlab-minio/"
+        dest: "{{ remote_charts_dir }}/gitlab-minio/"
+        mode: "0644"
+
+    # -------------------------------------------------------------------------
+    # CREATE VALUES FILE
+    # -------------------------------------------------------------------------
+
+    - name: Create gitlab-minio values file
+      copy:
+        dest: "{{ remote_charts_dir }}/gitlab-minio/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ gitlab_namespace }}
+          image: {{ gitlab_minio_image }}
+          storageClass: {{ gitlab_minio_storage_class }}
+          storageSize: {{ gitlab_minio_storage_size }}
+          rootUser: {{ gitlab_minio_root_user }}
+          rootPassword: {{ gitlab_minio_root_password }}
+          ingress:
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            domain: {{ gitlab_minio_domain }}
+            apiDomain: {{ gitlab_minio_api_domain }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            secretName: {{ gitlab_minio_https_secret_name }}
+            vpnOnlyEnabled: {{ gitlab_minio_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    # -------------------------------------------------------------------------
+    # INSTALL OR UPGRADE CHART
+    # -------------------------------------------------------------------------
+
+    - name: Install gitlab-minio via Helm (first time)
+      command: >
+        helm install gitlab-minio {{ remote_charts_dir }}/gitlab-minio
+        --namespace {{ gitlab_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/gitlab-minio/values-override.yaml
+      when: not gitlab_minio_installed
+
+    - name: Upgrade gitlab-minio via Helm (update)
+      command: >
+        helm upgrade gitlab-minio {{ remote_charts_dir }}/gitlab-minio
+        --namespace {{ gitlab_namespace }}
+        --values {{ remote_charts_dir }}/gitlab-minio/values-override.yaml
+      when: gitlab_minio_installed
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR MINIO TO BE READY
+    # -------------------------------------------------------------------------
+    - name: Wait for MinIO deployment to be ready
+      command: kubectl rollout status deployment/gitlab-minio -n {{ gitlab_namespace }} --timeout=300s
+      when: not gitlab_minio_installed
+
+    # -------------------------------------------------------------------------
+    # CREATE BUCKET AND ACCESS KEYS
+    # -------------------------------------------------------------------------
+
+    # Check existing secrets
+    - name: Check if registry keys secret exists
+      command: kubectl get secret {{ gitlab_minio_registry_keys_secret_name }} -n {{ gitlab_namespace }}
+      register: registry_keys_secret_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check if runner-cache keys secret exists
+      command: kubectl get secret {{ gitlab_minio_runner_cache_keys_secret_name }} -n {{ gitlab_namespace }}
+      register: runner_cache_keys_secret_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set secrets exist facts
+      set_fact:
+        registry_keys_exist: "{{ registry_keys_secret_check.rc == 0 }}"
+        runner_cache_keys_exist: "{{ runner_cache_keys_secret_check.rc == 0 }}"
+
+    # MinIO setup
+    - name: Wait for MinIO pod to be fully ready
+      command: kubectl wait --for=condition=ready pod -l app-key=gitlab-minio -n {{ gitlab_namespace }} --timeout=120s
+
+    - name: Get MinIO pod name
+      command: kubectl get pods -n {{ gitlab_namespace }} -l app-key=gitlab-minio -o jsonpath='{.items[0].metadata.name}'
+      register: minio_pod_name
+
+    - name: Configure mc alias in MinIO pod
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
+        mc alias set init_alias http://localhost:9000 '{{ gitlab_minio_root_user }}' '{{ gitlab_minio_root_password }}'
+
+    # ---------
+    # Create buckets (registry, runner-cache)
+    # ---------
+    - name: Create registry bucket
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
+        mc mb init_alias/{{ gitlab_minio_registry_bucket_name }} --ignore-existing
+
+    - name: Create runner-cache bucket
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
+        mc mb init_alias/{{ gitlab_minio_runner_cache_bucket_name }} --ignore-existing
+
+    # ---------
+    # Registry access key
+    # ---------
+    - name: Create access key for GitLab registry
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
+        mc admin accesskey create init_alias {{ gitlab_minio_root_user }} --name '{{ gitlab_minio_registry_key_name }}' --json
+      register: registry_accesskey_result
+      when: not registry_keys_exist
+
+    - name: Parse registry access key JSON
+      set_fact:
+        registry_access_key: "{{ (registry_accesskey_result.stdout | from_json).accessKey }}"
+        registry_secret_key: "{{ (registry_accesskey_result.stdout | from_json).secretKey }}"
+      when: not registry_keys_exist
+
+    - name: Create Kubernetes secret with MinIO registry keys
+      command: >
+        kubectl create secret generic {{ gitlab_minio_registry_keys_secret_name }}
+        --namespace {{ gitlab_namespace }}
+        --from-literal=access-key={{ registry_access_key }}
+        --from-literal=secret-key={{ registry_secret_key }}
+      when: not registry_keys_exist
+
+    # ---------
+    # Runner-cache access key
+    # ---------
+    - name: Create access key for GitLab runner-cache
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
+        mc admin accesskey create init_alias {{ gitlab_minio_root_user }} --name '{{ gitlab_minio_runner_cache_key_name }}' --json
+      register: runner_cache_accesskey_result
+      when: not runner_cache_keys_exist
+
+    - name: Parse runner-cache access key JSON
+      set_fact:
+        runner_cache_access_key: "{{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}"
+        runner_cache_secret_key: "{{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}"
+      when: not runner_cache_keys_exist
+
+    - name: Create Kubernetes secret with MinIO runner-cache keys
+      command: >
+        kubectl create secret generic {{ gitlab_minio_runner_cache_keys_secret_name }}
+        --namespace {{ gitlab_namespace }}
+        --from-literal=access-key={{ runner_cache_access_key }}
+        --from-literal=secret-key={{ runner_cache_secret_key }}
+      when: not runner_cache_keys_exist
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Verify gitlab-minio installation
+      command: helm list -n {{ gitlab_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show Helm release
+      debug:
+        var: helm_verify.stdout_lines
+
+    - name: Verify MinIO pods
+      command: kubectl get pods -n {{ gitlab_namespace }} -l app-key=gitlab-minio
+      register: pods_verify
+      changed_when: false
+
+    - name: Show MinIO pods
+      debug:
+        var: pods_verify.stdout_lines
+
+    - name: Verify registry keys secret exists
+      command: kubectl get secret {{ gitlab_minio_registry_keys_secret_name }} -n {{ gitlab_namespace }}
+      register: registry_secret_verify
+      changed_when: false
+
+    - name: Verify runner-cache keys secret exists
+      command: kubectl get secret {{ gitlab_minio_runner_cache_keys_secret_name }} -n {{ gitlab_namespace }}
+      register: runner_cache_secret_verify
+      changed_when: false
+
+    - name: Show secrets status
+      debug:
+        msg:
+          - "Registry keys secret: {{ 'OK' if registry_secret_verify.rc == 0 else 'MISSING' }}"
+          - "Runner-cache keys secret: {{ 'OK' if runner_cache_secret_verify.rc == 0 else 'MISSING' }}"
+

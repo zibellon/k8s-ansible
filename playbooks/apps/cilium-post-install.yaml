@@ -1,0 +1,107 @@
+# =============================================================================
+# Install Cilium post-config via Helm on manager node
+# Requires: Cilium, cert-manager, traefik
+# Includes: Hubble UI Ingress + NetworkPolicy for cilium namespace
+# =============================================================================
+
+---
+- name: Install Cilium Post-Config
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # PRE-CHECK
+    # =========================================================================
+    - name: Check if cilium-post-config is already installed
+      command: helm list -n {{ cilium_namespace }} -q
+      register: cilium_post_config_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set cilium_post_config_installed fact
+      set_fact:
+        cilium_post_config_installed: "{{ 'cilium-post-config' in cilium_post_config_check.stdout }}"
+
+    - name: Show cilium-post-config status
+      debug:
+        msg: "cilium-post-config already installed: {{ cilium_post_config_installed }}"
+
+    # =========================================================================
+    # COPY CHART TO SERVER
+    # =========================================================================
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old cilium-post-config chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/cilium-post-config"
+        state: absent
+
+    - name: Copy cilium-post-config chart to server
+      copy:
+        src: "{{ playbook_dir }}/charts/cilium-post-config/"
+        dest: "{{ remote_charts_dir }}/cilium-post-config/"
+        mode: "0644"
+
+    - name: Create cilium-post-config values file
+      copy:
+        dest: "{{ remote_charts_dir }}/cilium-post-config/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ cilium_namespace }}
+          hubbleUi:
+            domain: {{ cilium_hubble_ui_domain }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            secretName: {{ cilium_hubble_ui_https_secret_name }}
+            vpnOnlyEnabled: {{ cilium_hubble_ui_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    # =========================================================================
+    # INSTALL CILIUM-POST-CONFIG
+    # =========================================================================
+    - name: Install cilium-post-config via Helm (first time)
+      command: >
+        helm install cilium-post-config {{ remote_charts_dir }}/cilium-post-config
+        --namespace {{ cilium_namespace }}
+        --values {{ remote_charts_dir }}/cilium-post-config/values-override.yaml
+      when: not cilium_post_config_installed
+
+    - name: Upgrade cilium-post-config via Helm (update)
+      command: >
+        helm upgrade cilium-post-config {{ remote_charts_dir }}/cilium-post-config
+        --namespace {{ cilium_namespace }}
+        --values {{ remote_charts_dir }}/cilium-post-config/values-override.yaml
+      when: cilium_post_config_installed
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: Get Helm release info
+      command: helm list -n {{ cilium_namespace }}
+      register: helm_list
+      changed_when: false
+
+    - name: Print Helm release info
+      debug:
+        msg: "{{ helm_list.stdout_lines }}"
+
+    - name: Assert cilium-post-config is installed via Helm
+      command: helm status cilium-post-config -n {{ cilium_namespace }}
+      register: cilium_post_config_status
+      changed_when: false
+
+    - name: Confirm cilium-post-config installation
+      assert:
+        that:
+          - cilium_post_config_status.rc == 0
+        fail_msg: "cilium-post-config is NOT installed!"
+        success_msg: "cilium-post-config: OK (installed via Helm)"
+

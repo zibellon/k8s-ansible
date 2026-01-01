@@ -1,0 +1,131 @@
+# =============================================================================
+# ARGOCD INSTALLATION VIA LOCAL HELM CHART
+# Downloads official manifests, modifies configs, installs via Helm
+# =============================================================================
+
+- name: Install ArgoCD via local Helm chart
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # CHECK EXISTING INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Check if argocd is already installed
+      command: helm list -n {{ argocd_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set argocd_installed fact
+      set_fact:
+        argocd_installed: "{{ 'argocd' in helm_list_result.stdout }}"
+
+    - name: Debug argocd installation status
+      debug:
+        msg: "ArgoCD installed: {{ argocd_installed }}"
+
+    # -------------------------------------------------------------------------
+    # COPY LOCAL HELM CHART
+    # -------------------------------------------------------------------------
+
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old argocd chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/argocd"
+        state: absent
+
+    - name: Copy argocd chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/argocd/"
+        dest: "{{ remote_charts_dir }}/argocd/"
+        mode: "0644"
+
+    # -------------------------------------------------------------------------
+    # CREATE VALUES FILE WITH SSH KEY
+    # -------------------------------------------------------------------------
+
+    - name: Create values file with SSH key
+      copy:
+        dest: "{{ remote_charts_dir }}/argocd-values.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ argocd_namespace }}
+          ingress:
+            uiDomain: {{ argocd_ui_domain }}
+            rpcDomain: {{ argocd_rpc_domain }}
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            secretName: {{ argocd_https_secret_name }}
+            vpnOnlyEnabled: {{ argocd_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+          gitlab:
+            internalUrl: "{{ argocd_gitlab_internal_url }}"
+            sshPrivateKey: |-
+              {{ argocd_gitlab_ssh_key | indent(14) }}
+
+    # -------------------------------------------------------------------------
+    # INSTALL OR UPGRADE CHART
+    # -------------------------------------------------------------------------
+
+    - name: Install argocd via Helm (first time)
+      command: >
+        helm install argocd {{ remote_charts_dir }}/argocd
+        --namespace {{ argocd_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/argocd-values.yaml
+      when: not argocd_installed
+
+    - name: Upgrade argocd via Helm (update)
+      command: >
+        helm upgrade argocd {{ remote_charts_dir }}/argocd
+        --namespace {{ argocd_namespace }}
+        --values {{ remote_charts_dir }}/argocd-values.yaml
+      when: argocd_installed
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Wait for ArgoCD server to be ready
+      command: kubectl rollout status deployment/argocd-server -n {{ argocd_namespace }} --timeout=300s
+      when: not argocd_installed
+
+    - name: Verify ArgoCD installation
+      command: helm list -n {{ argocd_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show ArgoCD Helm release
+      debug:
+        var: helm_verify.stdout_lines
+
+    - name: Get ArgoCD initial admin password
+      shell: kubectl get secret argocd-initial-admin-secret -n {{ argocd_namespace }} -o jsonpath='{.data.password}' | base64 --decode
+      register: argocd_password
+      changed_when: false
+      failed_when: false
+
+    - name: Show ArgoCD admin password
+      debug:
+        msg: "ArgoCD admin password: {{ argocd_password.stdout }}"
+      when: argocd_password.rc == 0
+
+    - name: Verify NetworkPolicies
+      command: kubectl get networkpolicies -n {{ argocd_namespace }}
+      register: np_verify
+      changed_when: false
+
+    - name: Show NetworkPolicies
+      debug:
+        var: np_verify.stdout_lines
+

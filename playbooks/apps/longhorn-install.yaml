@@ -1,0 +1,117 @@
+# =============================================================================
+# LONGHORN INSTALLATION (hardcoded manifest + custom configs)
+# =============================================================================
+
+- name: Install Longhorn
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # CHECK EXISTING INSTALLATION
+    # =========================================================================
+    - name: Check if longhorn is already installed
+      command: helm list -n {{ longhorn_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set longhorn_installed fact
+      set_fact:
+        longhorn_installed: "{{ 'longhorn' in helm_list_result.stdout }}"
+
+    - name: Debug installation status
+      debug:
+        msg: "longhorn installed: {{ longhorn_installed }}"
+
+    # =========================================================================
+    # COPY LOCAL HELM CHART
+    # =========================================================================
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/longhorn"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old longhorn chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/longhorn"
+        state: absent
+
+    - name: Copy longhorn chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/longhorn/"
+        dest: "{{ remote_charts_dir }}/longhorn/"
+        mode: "0644"
+
+    # =========================================================================
+    # CREATE VALUES FILE
+    # =========================================================================
+    - name: Create longhorn values file
+      copy:
+        dest: "{{ remote_charts_dir }}/longhorn/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ longhorn_namespace }}
+          ingress:
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            domain: {{ longhorn_ui_domain }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            secretName: {{ longhorn_ui_https_secret_name }}
+            vpnOnlyEnabled: {{ longhorn_ui_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+          s3Backup:
+            accessKeyId: "{{ longhorn_s3_access_key_id }}"
+            secretAccessKey: "{{ longhorn_s3_secret_access_key }}"
+            endpoint: "{{ longhorn_s3_endpoint }}"
+
+    # =========================================================================
+    # INSTALL OR UPGRADE CHART
+    # =========================================================================
+    - name: Install longhorn via Helm (first time)
+      command: >
+        helm install longhorn {{ remote_charts_dir }}/longhorn
+        --namespace {{ longhorn_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/longhorn/values-override.yaml
+      when: not longhorn_installed
+
+    - name: Upgrade longhorn via Helm (update)
+      command: >
+        helm upgrade longhorn {{ remote_charts_dir }}/longhorn
+        --namespace {{ longhorn_namespace }}
+        --values {{ remote_charts_dir }}/longhorn/values-override.yaml
+      when: longhorn_installed
+
+    # =========================================================================
+    # WAIT FOR LONGHORN TO BE READY
+    # =========================================================================
+    - name: Wait for Longhorn manager DaemonSet to be ready
+      command: kubectl rollout status daemonset/longhorn-manager -n {{ longhorn_namespace }} --timeout=300s
+      when: not longhorn_installed
+
+    - name: Wait for Longhorn UI deployment to be ready
+      command: kubectl rollout status deployment/longhorn-ui -n {{ longhorn_namespace }} --timeout=120s
+      when: not longhorn_installed
+
+    # =========================================================================
+    # VERIFY INSTALLATION
+    # =========================================================================
+    - name: Verify longhorn installation
+      command: helm list -n {{ longhorn_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show Helm release
+      debug:
+        var: helm_verify.stdout_lines
+
+    - name: Show Longhorn access info
+      debug:
+        msg:
+          - "Longhorn UI: https://{{ longhorn_ui_domain }}"
+          - "Longhorn UI VPN-only: {{ longhorn_ui_vpn_only_enabled }}"
+

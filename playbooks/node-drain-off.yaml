@@ -1,0 +1,97 @@
+---
+# =============================================================================
+# Return node to cluster after maintenance
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/node-drain-off.yaml --limit k8s-worker-3
+#
+# This playbook:
+#   1. Waits for node to be Ready
+#   2. Uncordons the node (enables scheduling)
+# =============================================================================
+
+# =============================================================================
+# Play 0: Pre-check - validate limit specified
+# =============================================================================
+- name: Pre-check - validate limit specified
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/node-drain-off.yaml --limit <node>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Confirm target
+      debug:
+        msg: "Uncordoning node: {{ inventory_hostname }} ({{ new_hostname }})"
+
+# =============================================================================
+# Play 1: Determine master manager
+# =============================================================================
+- name: Determine master manager
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Find master manager
+      set_fact:
+        master_manager_fact: "{{ item }}"
+      loop: "{{ groups['managers'] }}"
+      when: hostvars[item].is_master | default(false)
+      run_once: true
+
+    - name: Fail if no master manager found
+      fail:
+        msg: "ERROR: No manager with is_master: true found in hosts.yaml"
+      when: master_manager_fact is not defined
+      run_once: true
+
+    - name: Print master manager
+      debug:
+        msg: "Master manager: {{ master_manager_fact }}"
+      run_once: true
+
+# =============================================================================
+# Play 2: Wait for node to be Ready and Uncordon
+# =============================================================================
+- name: Return node to cluster
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    wait_timeout: 300  # 5 minutes
+    wait_interval: 10  # check every 10 seconds
+
+  tasks:
+    # =========================================================================
+    # WAIT FOR NODE READY
+    # =========================================================================
+    - name: Wait for node to be Ready
+      command: kubectl get node {{ new_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      delegate_to: "{{ master_manager_fact }}"
+      register: node_ready_check
+      until: node_ready_check.stdout == 'True'
+      retries: "{{ (wait_timeout / wait_interval) | int }}"
+      delay: "{{ wait_interval }}"
+      changed_when: false
+
+    - name: Show node Ready status
+      debug:
+        msg: "Node {{ new_hostname }} is Ready"
+
+    # =========================================================================
+    # UNCORDON: Enable scheduling on node
+    # =========================================================================
+    - name: Uncordon node
+      command: kubectl uncordon {{ new_hostname }}
+      delegate_to: "{{ master_manager_fact }}"
+      register: uncordon_result
+      changed_when: "'uncordoned' in uncordon_result.stdout"
+
+    - name: Show uncordon result
+      debug:
+        msg: "{{ uncordon_result.stdout }}"

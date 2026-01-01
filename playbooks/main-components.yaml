@@ -1,0 +1,346 @@
+---
+# =============================================================================
+# Install containerd + kubeadm/kubelet/kubectl
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/main-components.yaml --limit k8s-worker-1
+# =============================================================================
+
+# =============================================================================
+# Play 0: Pre-check - validate limit specified
+# =============================================================================
+- name: Pre-check - validate limit specified
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/main-components.yaml --limit <node>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Confirm target
+      debug:
+        msg: "Installing Kubernetes components on: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install containerd + kubeadm/kubelet/kubectl
+# =============================================================================
+- name: Install containerd + kubeadm/kubelet/kubectl
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # KUBERNETES APT REPOSITORY
+    # =========================================================================
+    - name: Install required packages for apt repo
+      apt:
+        name: "{{ apt_repo_package_list }}"
+        state: present
+        update_cache: yes
+
+    # /etc/apt/keyrings already exists on Ubuntu 22.04+
+    - name: Ensure /etc/apt/keyrings exists
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    # Key is re-downloaded on each run to support k8s version changes
+    - name: Download Kubernetes apt key
+      shell: >-
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/Release.key
+        | gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Add Kubernetes apt repository
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        content: |
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/ /
+        mode: '0644'
+
+    # =========================================================================
+    # CONTAINERD
+    # =========================================================================
+    - name: Pre-Check if containerd is installed
+      command: which containerd
+      register: containerd_pre_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download containerd
+      get_url:
+        url: "https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+        dest: /tmp/containerd.tar.gz
+      when: containerd_pre_check.rc != 0
+
+    - name: Extract containerd to /usr/local
+      unarchive:
+        src: /tmp/containerd.tar.gz
+        dest: /usr/local
+        remote_src: yes
+      when: containerd_pre_check.rc != 0
+
+    - name: Download containerd.service
+      get_url:
+        url: https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+        dest: /usr/lib/systemd/system/containerd.service
+        mode: '0644'
+
+    - name: Enable and start containerd
+      systemd:
+        name: containerd
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    # =========================================================================
+    # RUNC
+    # =========================================================================
+    - name: Pre-Check if runc is installed
+      command: which runc
+      register: runc_pre_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download runc
+      get_url:
+        url: "https://github.com/opencontainers/runc/releases/download/v{{ runc_version }}/runc.amd64"
+        dest: /tmp/runc.amd64
+        mode: '0755'
+      when: runc_pre_check.rc != 0
+
+    - name: Install runc
+      copy:
+        src: /tmp/runc.amd64
+        dest: /usr/local/sbin/runc
+        mode: '0755'
+        remote_src: yes
+      when: runc_pre_check.rc != 0
+
+    # =========================================================================
+    # CNI PLUGINS
+    # =========================================================================
+    - name: Pre-Check if CNI plugins are installed
+      stat:
+        path: /opt/cni/bin/bridge
+      register: cni_pre_check
+
+    - name: Create /opt/cni/bin directory
+      file:
+        path: /opt/cni/bin
+        state: directory
+        mode: '0755'
+
+    - name: Download CNI plugins
+      get_url:
+        url: "https://github.com/containernetworking/plugins/releases/download/v{{ cni_plugins_version }}/cni-plugins-linux-amd64-v{{ cni_plugins_version }}.tgz"
+        dest: /tmp/cni-plugins.tgz
+      when: not cni_pre_check.stat.exists
+
+    - name: Extract CNI plugins
+      unarchive:
+        src: /tmp/cni-plugins.tgz
+        dest: /opt/cni/bin
+        remote_src: yes
+      when: not cni_pre_check.stat.exists
+
+    # =========================================================================
+    # CONTAINERD CONFIG
+    # =========================================================================
+
+    - name: Create /etc/containerd directory
+      file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
+
+    - name: Check if containerd config exists
+      stat:
+        path: /etc/containerd/config.toml
+      register: containerd_config_stat
+
+    - name: Generate default containerd config
+      shell: containerd config default > /etc/containerd/config.toml
+      when: >-
+        not containerd_config_stat.stat.exists or
+        force_containerd_config_regenerate
+      register: containerd_config_result
+
+    - name: Enable SystemdCgroup in containerd config
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+      register: containerd_cgroup_result
+
+    # =========================================================================
+    # REGISTRY MIRROR (docker.io rate limits workaround)
+    # =========================================================================
+
+    - name: Create certs.d directory for docker.io
+      file:
+        path: /etc/containerd/certs.d/docker.io
+        state: directory
+        mode: '0755'
+
+    - name: Create docker.io mirror config
+      copy:
+        dest: /etc/containerd/certs.d/docker.io/hosts.toml
+        content: |
+          server = "https://docker.io"
+
+          [host."https://mirror.gcr.io"]
+            capabilities = ["pull","resolve"]
+        mode: '0644'
+      register: docker_mirror_result
+
+    # containerd 2.x already has config_path = '/etc/containerd/certs.d:/etc/docker/certs.d' by default
+    - name: Restart containerd
+      systemd:
+        name: containerd
+        state: restarted
+      when: >-
+        containerd_cgroup_result.changed or
+        docker_mirror_result.changed or
+        containerd_config_result.changed
+
+    # =========================================================================
+    # KUBEADM, KUBELET, KUBECTL
+    # =========================================================================
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install kubelet, kubeadm, kubectl
+      apt:
+        name: "{{ k8s_package_list }}"
+        state: present
+
+    - name: Hold kubelet, kubeadm, kubectl versions
+      command: apt-mark hold {{ k8s_package_list | join(' ') }}
+      changed_when: false
+
+    - name: Enable kubelet
+      systemd:
+        name: kubelet
+        enabled: yes
+        state: started
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    # ======
+    # APT REPO PACKAGES
+    # ======
+    - name: Check apt repo packages are installed
+      command: dpkg -l {{ item }}
+      register: apt_repo_pkg_check
+      changed_when: false
+      failed_when: false
+      loop: "{{ apt_repo_package_list }}"
+
+    - name: Assert apt repo packages are installed
+      assert:
+        that:
+          - item.rc == 0
+        fail_msg: "{{ item.item }} is NOT installed!"
+        quiet: true
+      loop: "{{ apt_repo_pkg_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ======
+    # CONTAINERD
+    # ======
+    - name: Check containerd version
+      command: containerd --version
+      register: containerd_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert containerd is installed
+      assert:
+        that:
+          - containerd_check.rc == 0
+        fail_msg: "containerd is NOT installed!"
+        success_msg: "containerd: OK"
+
+    # ======
+    # RUNC
+    # ======
+    - name: Check runc version
+      command: runc --version
+      register: runc_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert runc is installed
+      assert:
+        that:
+          - runc_check.rc == 0
+        fail_msg: "runc is NOT installed!"
+        success_msg: "runc: OK"
+
+    # ======
+    # KUBEADM
+    # ======
+    - name: Check kubeadm version
+      command: kubeadm version -o json
+      register: kubeadm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert kubeadm is installed
+      assert:
+        that:
+          - kubeadm_check.rc == 0
+        fail_msg: "kubeadm is NOT installed!"
+        success_msg: "kubeadm: OK"
+
+    # ======
+    # KUBELET
+    # ======
+    - name: Check kubelet version
+      command: kubelet --version
+      register: kubelet_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert kubelet is installed
+      assert:
+        that:
+          - kubelet_check.rc == 0
+        fail_msg: "kubelet is NOT installed!"
+        success_msg: "kubelet: OK"
+
+    # ======
+    # KUBECTL
+    # ======
+    - name: Check kubectl version
+      command: kubectl version --client -o json
+      register: kubectl_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert kubectl is installed
+      assert:
+        that:
+          - kubectl_check.rc == 0
+        fail_msg: "kubectl is NOT installed!"
+        success_msg: "kubectl: OK"
+
+    - name: Print final status
+      debug:
+        msg:
+          - "=== Kubernetes Components Installed ==="
+          - "containerd: {{ containerd_check.stdout }}"
+          - "runc: {{ runc_check.stdout_lines[0] }}"
+          - "kubeadm: {{ kubeadm_check.stdout }}"
+          - "kubelet: {{ kubelet_check.stdout }}"
+          - "kubectl: {{ kubectl_check.stdout }}"
