@@ -107,6 +107,10 @@
        2. network-policy
        3. ingress (argocd-ui, h2c-grpc)
        4. git-ops
+11. argocd-restart
+    1.  Если изменились конфиги = ConfigMap, argocd их не подцепит автоматически
+    2.  Нужен ручной рестарт
+    3.  `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
 
 # Как и что обновлять
 1. cilium
