@@ -147,6 +147,61 @@
       when: not gitlab_installed
 
     # -------------------------------------------------------------------------
+    # SAVE INITIAL ROOT PASSWORD TO SECRET (first install only)
+    # -------------------------------------------------------------------------
+
+    - name: Check if root password secret already exists
+      command: kubectl get secret {{ gitlab_root_password_secret_name }} -n {{ gitlab_namespace }}
+      register: root_password_secret_check
+      changed_when: false
+      failed_when: false
+      when: not gitlab_installed
+
+    - name: Get GitLab pod name
+      shell: kubectl get pod -n {{ gitlab_namespace }} -l app-key=gitlab -o jsonpath='{.items[0].metadata.name}'
+      register: gitlab_pod_name
+      when:
+        - not gitlab_installed
+        - root_password_secret_check.rc != 0
+
+    - name: Wait for GitLab to generate initial root password
+      shell: >
+        kubectl exec {{ gitlab_pod_name.stdout }} -n {{ gitlab_namespace }} --
+        cat /etc/gitlab/initial_root_password
+      register: gitlab_root_password_file
+      until: gitlab_root_password_file.rc == 0
+      retries: 60
+      delay: 5
+      when:
+        - not gitlab_installed
+        - root_password_secret_check.rc != 0
+
+    - name: Extract password from file content
+      set_fact:
+        gitlab_root_password: "{{ gitlab_root_password_file.stdout | regex_search('Password: (.+)', '\\1') | first }}"
+      when:
+        - not gitlab_installed
+        - root_password_secret_check.rc != 0
+        - gitlab_root_password_file.rc == 0
+
+    - name: Create secret with root password
+      command: >
+        kubectl create secret generic {{ gitlab_root_password_secret_name }}
+        --namespace {{ gitlab_namespace }}
+        --from-literal=password={{ gitlab_root_password }}
+      when:
+        - not gitlab_installed
+        - root_password_secret_check.rc != 0
+        - gitlab_root_password | length > 0
+
+    - name: Show root password saved info
+      debug:
+        msg: "GitLab root password saved to secret: {{ gitlab_root_password_secret_name }}"
+      when:
+        - not gitlab_installed
+        - root_password_secret_check.rc != 0
+
+    # -------------------------------------------------------------------------
     # VERIFY INSTALLATION
     # -------------------------------------------------------------------------
 
@@ -184,5 +239,5 @@
           - "GitLab Registry: https://{{ gitlab_registry_domain }}"
           - "GitLab Pages: https://{{ gitlab_pages_domain }}"
           - "GitLab SSH: {{ gitlab_domain }}:{{ gitlab_ssh_port_external }}"
-          - "Initial root password: check /etc/gitlab/initial_root_password inside the container"
+          - "Root password: kubectl get secret {{ gitlab_root_password_secret_name }} -n {{ gitlab_namespace }} -o jsonpath='{.data.password}' | base64 -d"
 
