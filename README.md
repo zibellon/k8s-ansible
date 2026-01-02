@@ -48,41 +48,65 @@
 
 # В каком порядке устанавливать
 1. cilium
-   1. ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1
-   2. ставится: cilium + host-network-policy + kube-system-network-policy
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
+   2. Ставится
+      1. cilium
+      2. host-network-policy
+      3. kube-system-network-policy
 2. cert-manager
-   1. ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1
-   2. Ставится: cert-manager + network-policy
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
+   2. Ставится
+      1. cert-manager
+      2. network-policy
 3. traefik
-   1. ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
    2. Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится: traefik + network-policy + ingress (dashboard)
-4. cilium-post (Hubble UI Ingress + NetworkPolicy для kube-system)
-   1. ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1
+   3. Ставится
+      1. traefik
+      2. network-policy
+      3. ingress (dashboard)
+4. cilium-post
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
    2. Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится: network-policy + ingress (hubble-ui)
-5. haproxy
-   1. ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1
-   2. Ставится: haproxy + network-policy
+   3. Ставится
+      1. network-policy (для kube-system)
+      2. ingress (hubble-ui)
+5. haproxy-ingress
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+   2. Ставится
+      1. haproxy-ingress
+      2. network-policy
 6. longhorn
-   1. ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
    2. Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится: longhorn + network-policy + ingress
+   3. Ставится
+      1. longhorn
+      2. network-policy
+      3. ingress (longhorn-ui)
 7. gitlab-config
-   1. ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1
-   2. Ставится: network-policy
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1`
+   2. Ставится
+      1. network-policy
 8. gitlab-minio
-   1. ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
    2. Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится: gitlab-minio + ingress
+   3. Ставится
+      1. gitlab-minio
+      2. ingress (minio-api, minio-console-ui)
 9. gitlab
-   1. ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1
+   1. `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1`
    2. Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится: gitlab + ingress
+   3. Ставится
+      1. gitlab
+      2. ingress (git, pages, registry, ssh-tcp)
 10. argocd
-    1. ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1
+    1. `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
     2. Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
-    3. Ставится: argocd + network-policy + ingress + git-ops
+    3. Ставится
+       1. argocd
+       2. network-policy
+       3. ingress (argocd-ui, h2c-grpc)
+       4. git-ops
 
 # Как и что обновлять
 1. cilium
