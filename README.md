@@ -13,22 +13,38 @@
    1. Инициализация кластера. Именно команда: `kubeadm init ...`
 
 # Присоединение worker-node
-1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
+1. Добавить в hosts.yaml нового worker
+2. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
    1. Инициализация ноды
-2. `ansible-playbook -i hosts.yaml playbooks/worker-join.yaml --limit k8s-worker-1`
+3. `ansible-playbook -i hosts.yaml playbooks/worker-join.yaml --limit k8s-worker-1`
    1. Получение токена и вызов команды `kubeadm join ...`
 
 # Присоединение manager-node
-1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
+1. Добавить в hosts.yaml нового manager
+2. `ansible-playbook -i hosts.yaml playbooks/haproxy-apiserver-lb.yaml --limit k8s-manager-1`
+   1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих manager
+   2. По одному за раз
+   3. Через `--limit ....` указать manager
+3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
    1. Инициализация ноды
-2. `ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit k8s-manager-2`
+4. `ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit k8s-manager-2`
    1. Загрузка сертификатов в k8s.secrets, получение токена и вызов команды `kubeadm join ...`
 
-# Обслуживание сервера (cordon + drain) и возврат в строй
+# Обслуживание сервера (cordon + drain) и возврат в работу
 1. `ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit k8s-worker-3`
    1. Вывод ноды на обслуживание
 2. `ansible-playbook -i hosts.yaml playbooks/node-drain-off.yaml --limit k8s-worker-3`
-   1. Вернуть ноду в строй
+   1. Вернуть ноду в работу
+
+# Удаление node
+1. `ansible-playbook -i hosts.yaml playbooks/node-remove.yaml --limit k8s-worker-4`
+   1. Отключение node от кластера
+   2. Перед этим - надо выполнить `ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit k8s-worker-3`
+
+# Очистка сервера, от всех компонентов k8s
+1. `ansible-playbook -i hosts.yaml playbooks/server-clean.yaml --limit k8s-worker-4`
+   1. Выполнение команды  `kubeadm reset --force`
+   2. Удаление директорий для k8s
 
 # В каком порядке устанавливать
 1. cilium
