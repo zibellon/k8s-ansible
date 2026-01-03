@@ -42,7 +42,7 @@
 - name: Initialize Kubernetes cluster
   hosts: managers
   become: true
-  gather_facts: false
+  gather_facts: true
 
   tasks:
     # =========================================================================
@@ -64,7 +64,7 @@
       set_fact:
         cert_sans: >-
           {{
-            [haproxy_apiserver_lb_host, 'localhost'] +
+            [haproxy_apiserver_lb_host, 'localhost', ansible_facts['default_ipv4']['address']] +
             groups['managers'] | map('extract', hostvars, 'ansible_host') | list
           }}
       when: not kubeadm_already_init_pre_check.stat.exists
@@ -76,7 +76,7 @@
           apiVersion: kubeadm.k8s.io/v1beta4
           kind: InitConfiguration
           localAPIEndpoint:
-            advertiseAddress: "{{ ansible_host }}"
+            advertiseAddress: "{{ ansible_facts['default_ipv4']['address'] }}"
             bindPort: 6443
           nodeRegistration:
             criSocket: "unix:///var/run/containerd/containerd.sock"
@@ -129,19 +129,23 @@
       when: not kubeadm_already_init_pre_check.stat.exists
 
     # =========================================================================
-    # CONFIGURE KUBECTL
+    # CONFIGURE KUBECTL (for ansible_user)
     # =========================================================================
-    - name: Create .kube directory
+    - name: Create .kube directory for ansible_user
       file:
-        path: /root/.kube
+        path: "~{{ ansible_user }}/.kube"
         state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: '0755'
 
-    - name: Copy admin.conf to .kube/config
+    - name: Copy admin.conf to ansible_user .kube/config
       copy:
         src: /etc/kubernetes/admin.conf
-        dest: /root/.kube/config
+        dest: "~{{ ansible_user }}/.kube/config"
         remote_src: yes
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: '0600'
 
     # =========================================================================
