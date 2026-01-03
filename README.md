@@ -138,10 +138,16 @@
    5. Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
    6. Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
    7. Пример обновленного конфига - `apps-config/longhorn.yaml`
-7. gitlab + gitlab-minio
+7. gitlab-minio
    1. Установка через yaml -> helm
    2. Только параметры в `hosts.yaml`
-8. argocd
+8. gitlab
+   1. Установка через yaml -> helm
+   2. Только параметры в `hosts.yaml`
+   3. Важный момент про config. Для deployment используется `checksum/config: ...`
+      1. При обновлении конфига `/gitlab/templates/configmap.yaml` POD c GitLab будет перезапущен
+      2. checksum/config - вычисляется через HELM (include ...)
+9.  argocd
    1. Установка через yaml -> helm
    2. Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
    3. Поменять ВСЕ вхождения `namespace: argocd` -> `namespace: {{ .Values.namespace }}` (там 3 вхождения, для RoleBinding)
