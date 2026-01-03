@@ -20,9 +20,13 @@
       when: ansible_limit is not defined
       run_once: true
 
-    - name: Fail if not a manager node
-      fail:
-        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+    - name: Skip worker nodes (Helm is only installed on managers)
+      debug:
+        msg: "Skipping {{ inventory_hostname }} - not a manager node"
+      when: inventory_hostname not in groups['managers']
+
+    - name: End play for worker nodes
+      meta: end_host
       when: inventory_hostname not in groups['managers']
 
     - name: Confirm target
