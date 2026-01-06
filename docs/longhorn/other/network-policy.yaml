@@ -1,0 +1,214 @@
+# =============================================================================
+# LONGHORN NETWORK POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in longhorn-system namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: longhorn-system
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for all pods in longhorn-system namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: longhorn-system
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# LONGHORN INTERNAL COMMUNICATION
+# =============================================================================
+# Longhorn uses many dynamic ports for gRPC between components.
+# To simplify, allow all TCP traffic between Longhorn pods within namespace.
+# =============================================================================
+
+---
+# Allow all ingress from Longhorn components to Longhorn components
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-longhorn-internal
+  namespace: longhorn-system
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From any pod in longhorn-system namespace
+    - from:
+        - podSelector: {}
+  egress:
+    # To any pod in longhorn-system namespace
+    - to:
+        - podSelector: {}
+    # API server for all components
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # Kubelet for CSI operations (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 10250
+    # S3 endpoints (HTTPS)
+    - ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Allow webhook ingress from API server (runs on hostNetwork)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-longhorn-webhook
+  namespace: longhorn-system
+spec:
+  podSelector:
+    matchLabels:
+      app: longhorn-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    # API server calls admission webhook - allow from anywhere
+    - ports:
+        - protocol: TCP
+          port: 9502 # admission webhook
+        - protocol: TCP
+          port: 9503 # recovery backend
+
+# =============================================================================
+# LONGHORN UI
+# =============================================================================
+
+---
+# Allow longhorn-ui ingress from traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-longhorn-ui
+  namespace: longhorn-system
+spec:
+  podSelector:
+    matchLabels:
+      app: longhorn-ui
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-traefik-master
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge)
+# =============================================================================
+
+---
+# Allow ACME solver pod ingress from traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: longhorn-system
+spec:
+  podSelector:
+    matchLabels:
+      app-key: acme-solver-traefik-master
+      app-env: prod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-traefik-master
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# -----------------------------------------------------------------------------
+# LONGHORN UI
+# -----------------------------------------------------------------------------
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ns-longhorn-system-allow-traefik
+  namespace: ns-traefik-master
+spec:
+  podSelector:
+    matchLabels:
+      app-key: traefik
+      app-env: prod
+  policyTypes:
+    - Egress
+  egress:
+    # To longhorn-ui
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: longhorn-system
+          podSelector:
+            matchLabels:
+              app: longhorn-ui
+      ports:
+        - protocol: TCP
+          port: 8000
+    # ACME solver in longhorn-system
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: longhorn-system
+          podSelector:
+            matchLabels:
+              app-key: acme-solver-traefik-master
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089

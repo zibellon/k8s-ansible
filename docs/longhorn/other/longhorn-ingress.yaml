@@ -1,0 +1,40 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cert-longhorn-ui # Никак не связано с secretName. Просто - одинаковые названия
+  namespace: longhorn-system
+spec:
+  secretName: cert-longhorn-ui # Название секрета, где лежит сертификат. Используется в Traefik.IngressRoute
+  dnsNames:
+    - "longhorn-ui-k8s.my-domain.com"
+  issuerRef:
+    name: cluster-issuer-acme-prod # Название объекта CLUSTER_ISSUER
+    kind: ClusterIssuer
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-longhorn-ui-https
+  namespace: longhorn-system
+  annotations:
+    kubernetes.io/ingress.class: "traefik-master-lb"
+    traefik.ingress.kubernetes.io/router.entrypoints: "traefik-websecure"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: ns-traefik-master-vpn-only@kubernetescrd
+spec:
+  ingressClassName: traefik-master-lb
+  tls:
+    - hosts:
+        - longhorn-ui-k8s.my-domain.com
+      secretName: cert-longhorn-ui
+  rules:
+    - host: longhorn-ui-k8s.my-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: longhorn-frontend
+                port:
+                  number: 80
