@@ -1,0 +1,89 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-main-auth
+  namespace: ns-traefik-master
+type: Opaque
+stringData:
+  # Format: username:hashed-password (one per line)
+  users: |
+    "admin_123:super-secret-password-bcrypt"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: main-auth
+  namespace: ns-traefik-master
+spec:
+  basicAuth:
+    secret: secret-main-auth
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: vpn-only
+  namespace: ns-traefik-master
+spec:
+  ipAllowList:
+    sourceRange:
+      - "xxx.xxx.xxx.xxx/32"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: http-to-https
+  namespace: ns-traefik-master
+spec:
+  redirectRegex:
+    regex: "^http://(.+)"
+    replacement: "https://${1}"
+    permanent: true
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: http-www-to-https
+  namespace: ns-traefik-master
+spec:
+  redirectRegex:
+    regex: "^http://www.(.+)"
+    replacement: "https://${1}"
+    permanent: true
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: http-www-to-http
+  namespace: ns-traefik-master
+spec:
+  redirectRegex:
+    regex: "^http://www.(.+)"
+    replacement: "http://${1}"
+    permanent: true
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-www-to-https
+  namespace: ns-traefik-master
+spec:
+  redirectRegex:
+    regex: "^https://www.(.+)"
+    replacement: "https://${1}"
+    permanent: true
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: all-to-https
+  namespace: ns-traefik-master
+spec:
+  redirectRegex:
+    regex: "(^https://www.|^http://www.|^http://)(.+)"
+    replacement: "https://${2}"
+    permanent: true

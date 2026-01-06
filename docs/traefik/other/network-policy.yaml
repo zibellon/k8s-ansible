@@ -1,0 +1,119 @@
+# =============================================================================
+# TRAEFIK NETWORK POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in traefik namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: ns-traefik-master
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: ns-traefik-master
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# TRAEFIK (external traffic)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik
+  namespace: ns-traefik-master
+spec:
+  podSelector:
+    matchLabels:
+      app-key: traefik
+      app-env: prod
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 80 # web
+        - protocol: TCP
+          port: 443 # websecure
+        - protocol: TCP
+          port: 8080 # dashboard (ClusterIP only, restrict if needed)
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443
+    - to:
+        - podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-traefik-master
+          podSelector:
+            matchLabels:
+              app-key: acme-solver-traefik-master
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089 # ACME solver listens on 8089
+
+# =============================================================================
+# ACME SOLVER PODS (created by cert-manager for HTTP-01 challenges)
+# =============================================================================
+
+---
+# Allow ACME solver pod ingress from traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: ns-traefik-master
+spec:
+  podSelector:
+    matchLabels:
+      app-key: acme-solver-traefik-master
+      app-env: prod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089
