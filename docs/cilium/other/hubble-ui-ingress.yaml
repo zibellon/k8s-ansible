@@ -1,0 +1,40 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cert-cilium-hubble-ui # Никак не связано с secretName. Просто - одинаковые названия
+  namespace: kube-system
+spec:
+  secretName: cert-cilium-hubble-ui # Название секрета, где лежит сертификат. Используется в Traefik.IngressRoute
+  dnsNames:
+    - "cilium-hubble-ui-k8s.my-domain.com"
+  issuerRef:
+    name: cluster-issuer-acme-prod # Название объекта CLUSTER_ISSUER
+    kind: ClusterIssuer
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-cilium-hubble-ui-https
+  namespace: kube-system
+  annotations:
+    kubernetes.io/ingress.class: "traefik-master-lb"
+    traefik.ingress.kubernetes.io/router.entrypoints: "traefik-websecure"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: ns-traefik-master-vpn-only@kubernetescrd
+spec:
+  ingressClassName: traefik-master-lb
+  tls:
+    - hosts:
+        - cilium-hubble-ui-k8s.my-domain.com
+      secretName: cert-cilium-hubble-ui
+  rules:
+    - host: cilium-hubble-ui-k8s.my-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hubble-ui
+                port:
+                  number: 80
