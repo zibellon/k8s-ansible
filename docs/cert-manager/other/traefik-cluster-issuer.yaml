@@ -1,0 +1,41 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: cluster-issuer-acme-prod
+spec:
+  acme:
+    # server: https://acme-staging-v02.api.letsencrypt.org/directory
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: some-email-123@gmail.com
+    privateKeySecretRef:
+      name: cluster-issuer-acme-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            # This field configures the field ingressClassName on the created Ingress resources
+            # used to solve ACME challenges that use this challenge solver.
+            # This is the recommended way of configuring the ingress class.
+            # Only one of class, name or ingressClassName may be specified.
+            ingressClassName: traefik-master-lb
+            
+            # This field configures the annotation kubernetes.io/ingress.class when creating Ingress resources
+            # to solve ACME challenges that use this challenge solver
+            # Only one of class, name or ingressClassName may be specified.
+            # class: traefik-master-lb
+
+            # что будет добавлено к kind: Ingress (для прохождения acme-challenge)
+            ingressTemplate:
+              metadata:
+                # labels:
+                  # app-key: http01-challenge-traefik-master
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-master-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "traefik-web"
+            # что будет добавлено к kind: Pod (для прохождения acme-challenge)
+            podTemplate:
+              metadata:
+                labels:
+                  app-key: acme-solver-traefik-master
+                  app-env: prod
+                # annotations:
+                  # some-annotation: value
