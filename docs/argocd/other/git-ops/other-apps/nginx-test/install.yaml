@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ns-nginx-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-test
+  namespace: ns-nginx-test
+spec:
+  replicas: 2 # Какое количество реплик надо держать
+  selector:
+    matchLabels:
+      rs-ctrl-key: nginx-test
+  template:
+    metadata:
+      labels:
+        # Выбор для replicas. Именно эта labels будет указана на три строчки вышел, для ReplicaSet, чтобы управлять репликами
+        rs-ctrl-key: nginx-test
+        # Выбор для service. В service будет selector ИМЕННО по этой labels
+        svc-route-key: nginx-test
+    spec:
+      containers:
+        - name: nginx-test
+          image: nginx:1.28.0
+          ports:
+            - name: web-htpp
+              containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-nginx-test
+  namespace: ns-nginx-test
+spec:
+  selector:
+    svc-route-key: nginx-test
+  type: ClusterIP
+  ports:
+    - name: nginx-test-http
+      port: 80 # Эти два поля, всегда ставятся одинаковыми
+      targetPort: 80 #
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-test-http
+  namespace: ns-nginx-test
+  annotations:
+    kubernetes.io/ingress.class: "traefik-master-lb"
+spec:
+  rules:
+    - host: nginx-test.my-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-nginx-test
+                port:
+                  number: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-nginx-test-traefik
+  namespace: ns-nginx-test
+spec:
+  selector:
+    svc-route-key: nginx-test
+  type: ClusterIP
+  ports:
+    - name: nginx-test-traefik-http
+      port: 80 # Эти два поля, всегда ставятся одинаковыми
+      targetPort: 80 #
+      protocol: TCP
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nginx-test-http-traefik-route
+  namespace: ns-nginx-test
+  annotations:
+    kubernetes.io/ingress.class: "traefik-master-lb"
+spec:
+  entryPoints:
+    - traefik-web
+  routes:
+    - match: Host(`nginx-test-traefik.my-domain.com`)
+      kind: Rule
+      services:
+        - name: svc-nginx-test-traefik
+          port: 80

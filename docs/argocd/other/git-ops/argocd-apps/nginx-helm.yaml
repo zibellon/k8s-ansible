@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: prj-nginx-helm
+  namespace: argocd
+spec:
+  sourceRepos:
+    - "*" # Бери состояние Откуда угодно 
+  sourceNamespaces:
+    - "*" # ???
+  destinations:
+    - name: "*" # Обновляй состояние Где угодно
+      namespace: "*" # Обновляй состояние Где угодно
+      server: "*" # Обновляй состояние Где угодно 
+  clusterResourceWhitelist:
+    - group: "*" # Создавай Любые ресурсы (На уровне cluster)
+      kind: "*" # Создавай Любые ресурсы (На уровне cluster)
+  namespaceResourceWhitelist:
+    - group: "*" # Создавай Любые ресурсы (На уровне namespace)
+      kind: "*" # Создавай Любые ресурсы (На уровне namespace)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-nginx-helm
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io/background
+spec:
+  project: prj-nginx-helm
+  revisionHistoryLimit: 3
+  source:
+    repoURL: ssh://git@svc-gitlab.ns-gitlab.svc.cluster.local:22/.../xxx/.../git-ops.git
+    targetRevision: master
+    path: argocd-client/nginx-helm
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ns-nginx-helm
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - PrunePropagationPolicy=background

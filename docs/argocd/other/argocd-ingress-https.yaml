@@ -1,0 +1,46 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cert-argocd # Никак не связано с secretName. Просто - одинаковые названия
+  namespace: argocd
+spec:
+  secretName: cert-argocd # Название секрета, где лежит сертификат. Используется в Traefik.IngressRoute
+  dnsNames:
+    - "argocd-ui-k8s.my-domain.com"
+    - "argocd-rpc-k8s.my-domain.com"
+  issuerRef:
+    name: cluster-issuer-acme-prod # Название объекта CLUSTER_ISSUER
+    kind: ClusterIssuer
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ingress-argocd-https
+  namespace: argocd
+  annotations:
+    kubernetes.io/ingress.class: "traefik-master-lb"
+spec:
+  entryPoints:
+    - traefik-websecure
+  routes:
+    - kind: Rule # Доступ к UI
+      match: Host(`argocd-ui-k8s.my-domain.com`)
+      priority: 10
+      middlewares:
+        - name: vpn-only
+          namespace: ns-traefik-master
+      services:
+        - name: argocd-server
+          port: 80
+    - kind: Rule # Доступ к gRPC
+      match: Host(`argocd-rpc-k8s.my-domain.com`) && Header(`Content-Type`, `application/grpc`)
+      priority: 11
+      middlewares:
+        - name: vpn-only
+          namespace: ns-traefik-master
+      services:
+        - name: argocd-server
+          port: 80
+          scheme: h2c
+  tls:
+    secretName: cert-argocd

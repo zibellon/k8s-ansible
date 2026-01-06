@@ -1,0 +1,84 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  sourceRepos: [] # Никаких источников
+  sourceNamespaces: [] # ???
+  destinations: [] # никуда нельзя делать deploy
+  clusterResourceBlacklist:
+    - group: "*" # Создавать ничего нельзя (На уровне cluster)
+      kind: "*" # Создавать ничего нельзя (На уровне cluster)
+  namespaceResourceBlacklist:
+    - group: "*" # Создавать ничего нельзя (На уровне namespace)
+      kind: "*" # Создавать ничего нельзя (На уровне namespace)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: prj-root
+  namespace: argocd
+spec:
+  sourceRepos:
+    - "*" # Бери состояние Откуда угодно 
+  sourceNamespaces:
+    - "*" # ???
+  destinations:
+    - name: "*" # Обновляй состояние Где угодно
+      namespace: "*" # Обновляй состояние Где угодно
+      server: "*" # Обновляй состояние Где угодно 
+  clusterResourceWhitelist:
+    - group: "*" # Создавай Любые ресурсы (На уровне cluster)
+      kind: "*" # Создавай Любые ресурсы (На уровне cluster)
+  namespaceResourceWhitelist:
+    - group: "*" # Создавай Любые ресурсы (На уровне namespace)
+      kind: "*" # Создавай Любые ресурсы (На уровне namespace)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-of-apps-root
+  namespace: argocd
+  finalizers: # Если мы удаляем ЭТОТ ресурс (Argo_Application), оно тянет за собой cascade, все подконтрольные ресурсы
+    - resources-finalizer.argocd.argoproj.io/background
+spec:
+  project: prj-root
+  revisionHistoryLimit: 3 # На сколько версий можно откатиться назад
+  source:
+    repoURL: ssh://git@svc-gitlab.ns-gitlab.svc.cluster.local:22/.../xxx/.../git-ops.git
+    targetRevision: master # Какая ветка
+    path: argocd-system # какая директория
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true # Удаляй все, чего нет в GIT. Если в git удалили - в момент SYNC оно тоже удалится
+      selfHeal: true # Если какой-то ресурс, подконтрольный ArgoCD изменили руками в k8s -> argoCD вернет его на место (git = правда)
+      allowEmpty: true # Можно иметь Application, БЕЗ подконтрольных ресурсов
+    syncOptions:
+      - SkipDryRunOnMissingResource=true # не проверяй готовность CRD
+      - ApplyOutOfSyncOnly=true # Применяй только нужные изменения (По дефолту - применяется ВСЕ)
+      - PrunePropagationPolicy=background # Удаляй ресурсы, АЛЯ в фоне, а не в синхронном режиме
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 1
+        maxDuration: 30s
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-ops-root-key-internal
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repo-creds
+type: Opaque
+stringData:
+  type: git
+  url: ssh://git@svc-gitlab.ns-gitlab.svc.cluster.local:22/.../xxx/.../git-ops.git
+  sshPrivateKey: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    ...xxx...
+    -----END OPENSSH PRIVATE KEY-----
