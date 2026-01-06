@@ -1,0 +1,74 @@
+apiVersion: ingress.v1.haproxy.org/v1
+kind: Global
+metadata:
+  name: haproxy-global
+  namespace: ns-haproxy-master
+  annotations:
+    ingress.class: "haproxy-master-lb"
+spec:
+  config:
+    # Max connections (20K per БД × кол-во БД, с запасом)
+    maxconn: 10000
+    # Threads (по количеству CPU cores)
+    nbthread: 2
+    # Tune options
+    tune_options:
+      # Buffer size for large queries (32KB)
+      bufsize: 32768
+      # Max rewrite size (8KB)
+      maxrewrite: 8192
+      # Receive buffer (32KB)
+      rcvbuf_client: 32768
+      rcvbuf_server: 32768
+      # Send buffer (32KB)
+      sndbuf_client: 32768
+      sndbuf_server: 32768
+      # Max concurrent connections per thread
+      maxaccept: 32
+      # Run queue depth
+      runqueue_depth: 128 # обрабатывает за один цикл scheduler
+
+  # Logging
+  log_targets:
+    - index: 0
+      address: stdout
+      facility: daemon
+      format: raw
+      level: warning
+---
+apiVersion: ingress.v1.haproxy.org/v1
+kind: Defaults
+metadata:
+  name: haproxy-defaults
+  namespace: ns-haproxy-master
+  annotations:
+    ingress.class: "haproxy-master-lb"
+spec:
+  config:
+    mode: tcp
+    # Timeouts (in milliseconds)
+    client_timeout: 3600000 # 1 hour
+    server_timeout: 3600000 # 1 hour
+    connect_timeout: 5000 # 5 seconds
+    queue_timeout: 60000 # 1 minute in queue
+    # TCP Keepalive - critical for long-lived PostgreSQL connections
+    tcpka: enabled
+    clitcpka: enabled
+    srvtcpka: enabled
+    # Keepalive parameters (in milliseconds)
+    clitcpka_idle: 60000 # Start keepalive after 60s idle
+    clitcpka_intvl: 10000 # Keepalive interval 10s
+    clitcpka_cnt: 3 # 3 probes before disconnect
+    # ---
+    srvtcpka_idle: 60000
+    srvtcpka_intvl: 10000
+    srvtcpka_cnt: 3
+    # Retries
+    retries: 5
+    # Check timeouts
+    check_timeout: 5000
+    # TCP optimizations
+    tcp_smart_connect: enabled
+    tcp_smart_accept: enabled
+    # Enable TCP logging
+    tcplog: true

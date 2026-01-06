@@ -1,0 +1,93 @@
+---
+apiVersion: ingress.v1.haproxy.org/v1
+kind: TCP
+metadata:
+  name: pg-dev-host
+  namespace: ns-backend-123
+  annotations:
+    ingress.class: "haproxy-master-lb" # важное поле, без него не работает
+spec:
+  - name: pg-dev-host
+    frontend:
+      name: fe-pg-dev-host
+      binds:
+        - port: 28945
+    service:
+      name: svc-some-pg-dev
+      port: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-some-pg-dev-host
+  namespace: ns-haproxy-master
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app-key: haproxy
+    app-env: prod
+  ports:
+    - name: tcp
+      port: 28945
+      targetPort: 28945
+      nodePort: 28945 # Доступно на ВСЕХ Node в Cluster
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: np-some-pg-dev-host
+  namespace: ns-haproxy-master
+spec:
+  podSelector:
+    matchLabels:
+      app-key: haproxy
+      app-env: prod
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 1.2.3.4/32
+            # cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 28945 # PostgreSQL
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-backend-123
+          podSelector:
+            matchLabels:
+              app-key: some-pg
+              app-env: dev
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pg-dev-ingress-haproxy
+  namespace: ns-backend-123
+spec:
+  podSelector:
+    matchLabels:
+      app-key: some-pg
+      app-env: dev
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-haproxy-master
+          podSelector:
+            matchLabels:
+              app-key: haproxy
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 5432
