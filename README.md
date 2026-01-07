@@ -107,15 +107,23 @@
        2. network-policy
        3. ingress (argocd-ui, h2c-grpc)
        4. git-ops
-11. argocd-restart
-    1.  Если изменились конфиги = ConfigMap, argocd их не подцепит автоматически
-    2.  Нужен ручной рестарт
-    3.  `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
 
-# Как и что обновлять
+# дополнительные playbook
+1. cilium-restart
+   1. Если изменились конфиги = ConfigMap, Cilium их не подцепит автоматически
+   2. Нужен ручной рестарт
+   3. `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
+2. argocd-restart
+   1. Если изменились конфиги = ConfigMap, argocd их не подцепит автоматически
+   2. Нужен ручной рестарт
+   3. `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
+3.  
+
+# Как и что обновлять (новые версии или новые параметры)
 1. cilium
    1. Установка идет через официальный helm
    2. Только параметры в `hosts.yaml`
+   3. После применения нового манифеста - выполнить `cilium-restart`
 2. cert-manager
    1. Установка идет через официальный helm
    2. Только параметры в `hosts.yaml`
@@ -127,7 +135,7 @@
 4. cilium-post
    1. Установка через yaml -> helm
    2. Только параметры в `hosts.yaml`
-5. haproxy
+5. haproxy-ingress
    1. Установка идет через официальный helm
    2. Только параметры в `hosts.yaml`
 6. longhorn
