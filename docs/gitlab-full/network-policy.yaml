@@ -1,0 +1,275 @@
+# =============================================================================
+# GITLAB NAMESPACE NETWORK POLICIES
+# =============================================================================
+# Full policies for ns-gitlab namespace:
+# - GitLab, MinIO, GitLab Runner
+# - ACME solver, Traefik egress
+# =============================================================================
+
+---
+# Default deny all traffic in ns-gitlab namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: ns-gitlab
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for all pods in ns-gitlab namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: ns-gitlab
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# GITLAB
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gitlab
+  namespace: ns-gitlab
+spec:
+  podSelector:
+    matchLabels:
+      app-key: gitlab
+      app-env: prod
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # TRAEFIK, https | https - registry, pages
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-traefik-master
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 80 # web
+        - protocol: TCP
+          port: 81 # registry
+        - protocol: TCP
+          port: 82 # pages
+    # HA-PROXY, ssh, 22 port
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-haproxy-master
+          podSelector:
+            matchLabels:
+              app-key: haproxy
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 22
+  egress:
+    # INTERNAL MINIO - registry storage backend
+    - to:
+        - podSelector:
+            matchLabels:
+              app-key: gitlab-minio
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 9000 # MinIO API
+    # HTTPS for webhooks, external git repos, package registries, MinIO (via Traefik)
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+# =============================================================================
+# GITLAB MINIO
+# =============================================================================
+
+---
+# Allow MinIO ingress from pods within ns-gitlab (for GitLab access)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gitlab-minio
+  namespace: ns-gitlab
+spec:
+  podSelector:
+    matchLabels:
+      app-key: gitlab-minio
+      app-env: prod
+  policyTypes:
+    - Ingress
+  ingress:
+    # From any pod in ns-gitlab namespace (GitLab will use this)
+    - from:
+        - podSelector:
+            matchLabels:
+              app-key: gitlab
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 9000 # API
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-traefik-master
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 9000 # API
+        - protocol: TCP
+          port: 9001 # Console
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge)
+# =============================================================================
+
+---
+# Allow ACME solver pod ingress from traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: ns-gitlab
+spec:
+  podSelector:
+    matchLabels:
+      app-key: acme-solver-traefik-master
+      app-env: prod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-traefik-master
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# TRAEFIK EGRESS TO GITLAB (in ns-traefik-master namespace)
+# =============================================================================
+
+---
+# Traefik -> ns-gitlab (MinIO + GitLab + ACME solver)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ns-gitlab-allow-traefik
+  namespace: ns-traefik-master
+spec:
+  podSelector:
+    matchLabels:
+      app-key: traefik
+      app-env: prod
+  policyTypes:
+    - Egress
+  egress:
+    # MinIO API + console
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-gitlab
+          podSelector:
+            matchLabels:
+              app-key: gitlab-minio
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 9000 # MinIO API
+        - protocol: TCP
+          port: 9001 # MinIO console
+    # GitLab (web, registry, pages, ssh)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-gitlab
+          podSelector:
+            matchLabels:
+              app-key: gitlab
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 80 # web
+        - protocol: TCP
+          port: 81 # registry
+        - protocol: TCP
+          port: 82 # pages
+    # ACME solver in ns-gitlab
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-gitlab
+          podSelector:
+            matchLabels:
+              app-key: acme-solver-traefik-master
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ns-gitlab-allow-haproxy
+  namespace: ns-haproxy-master
+spec:
+  podSelector:
+    matchLabels:
+      app-key: haproxy
+      app-env: prod
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 3714
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ns-gitlab
+          podSelector:
+            matchLabels:
+              app-key: gitlab
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 22

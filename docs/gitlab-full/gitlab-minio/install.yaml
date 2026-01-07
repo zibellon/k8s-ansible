@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ns-gitlab
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-lh-gitlab-minio-data
+  namespace: ns-gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: lh-major-worker-multi-best-effort
+  resources:
+    requests:
+      storage: 30Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-gitlab-minio
+  namespace: ns-gitlab
+type: Opaque
+data:
+  root-user: some_admin
+  root-password: some_password
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab-minio
+  namespace: ns-gitlab
+spec:
+  replicas: 1
+  strategy:
+    type: "Recreate"
+  selector:
+    matchLabels:
+      app-key: gitlab-minio
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: gitlab-minio
+        app-env: prod
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: gitlab-minio-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-minio-data
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: gitlab-minio
+          image: "minio/minio:RELEASE.2025-04-22T22-12-26Z"
+          command: ["minio", "server", "--console-address", ":9001", "/data"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: secret-gitlab-minio
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: secret-gitlab-minio
+                  key: root-password
+          ports:
+            - name: api
+              containerPort: 9000
+              protocol: TCP
+            - name: console
+              containerPort: 9001
+              protocol: TCP
+          volumeMounts:
+            - name: gitlab-minio-data
+              mountPath: /data
+              subPath: some-data
+            - name: tmp
+              mountPath: /tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-gitlab-minio
+  namespace: ns-gitlab
+spec:
+  type: ClusterIP
+  selector:
+    app-key: gitlab-minio
+    app-env: prod
+  ports:
+    - port: 9000
+      targetPort: 9000
+      protocol: TCP
+      name: api
+    - port: 9001
+      targetPort: 9001
+      protocol: TCP
+      name: console

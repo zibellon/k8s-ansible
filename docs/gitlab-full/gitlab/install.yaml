@@ -1,0 +1,192 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ns-gitlab
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-lh-gitlab-config-data
+  namespace: ns-gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: lh-major-multi-best-effort
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-lh-gitlab-data
+  namespace: ns-gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: lh-major-multi-best-effort
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-lh-gitlab-log-data
+  namespace: ns-gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: lh-major-worker-multi-best-effort
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-gitlab-omnibus-config
+  namespace: ns-gitlab
+data:
+  # Этот ключ (omnibus_config) будет использоваться в Deployment
+  gitlab_omnibus_config: |
+    external_url 'https://gitlab.my-domain.com'
+    nginx['listen_port'] = 80
+    nginx['listen_https'] = false
+    registry_external_url 'https://gitlab-registry.my-domain.com'
+    gitlab_rails['registry_enabled'] = true
+    registry['enable'] = true
+    registry_nginx['enable'] = true
+    registry_nginx['listen_port'] = 81
+    registry_nginx['listen_https'] = false
+    registry['storage'] = {
+      's3' => {
+        'accesskey' => 'some_access_key',
+        'secretkey' => 'some_secret_key',
+        'bucket' => 'registry',
+        'region' => 'us-east-1',
+        'regionendpoint' => 'http://svc-gitlab-minio:9000',
+        'checksum_disabled' => true,
+        'pathstyle' => true
+      },
+      'redirect' => {
+        'disable' => true
+      }
+    }
+    pages_external_url 'https://gitlab-pages.my-domain.com'
+    gitlab_pages['enable'] = true
+    pages_nginx['enable'] = true
+    pages_nginx['listen_port'] = 82
+    pages_nginx['listen_https'] = false
+    gitlab_rails['gitlab_ssh_host'] = 'gitlab.my-domain.com'
+    gitlab_rails['gitlab_shell_ssh_port'] = 3714
+    gitlab_rails['smtp_enable'] = false
+    gitlab_rails['lfs_enabled'] = false
+    gitlab_rails['gitlab_kas_enabled'] = false
+    gitlab_kas['enable'] = false
+    alertmanager['enable'] = false
+    prometheus_monitoring['enable'] = false
+    prometheus['enable'] = false
+    sidekiq['metrics_enabled'] = false
+    sidekiq['concurrency'] = 10
+    puma['worker_processes'] = 0
+    puma['worker_timeout'] = 180
+    gitlab_rails['max_request_duration_seconds'] = 170
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: ns-gitlab
+spec:
+  replicas: 1
+  strategy:
+    type: "Recreate"
+  selector:
+    matchLabels:
+      app-key: gitlab
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: gitlab
+        app-env: prod
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      volumes:
+        - name: gitlab-config-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-config-data
+        - name: gitlab-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-data
+        - name: gitlab-log-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-log-data
+      containers:
+        - name: gitlab
+          image: gitlab/gitlab-ce:16.11.10-ce.0
+          env:
+            - name: GITLAB_OMNIBUS_CONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-gitlab-omnibus-config # Имя ConfigMap
+                  key: gitlab_omnibus_config # Ключ в ConfigMap, содержащий конфигурацию
+          ports:
+            - name: web
+              containerPort: 80
+              protocol: TCP
+            - name: registry
+              containerPort: 81
+              protocol: TCP
+            - name: pages
+              containerPort: 82
+              protocol: TCP
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+          volumeMounts:
+            - name: gitlab-config-data
+              mountPath: /etc/gitlab
+              subPath: some-data
+            - name: gitlab-data
+              mountPath: /var/opt/gitlab
+              subPath: some-data
+            - name: gitlab-log-data
+              mountPath: /var/log/gitlab
+              subPath: some-data
+          resources:
+            limits:
+              memory: 3G
+            requests:
+              memory: 2G
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-gitlab
+  namespace: ns-gitlab
+spec:
+  type: ClusterIP
+  selector:
+    app-key: gitlab
+    app-env: prod
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: web
+    - port: 81
+      targetPort: 81
+      protocol: TCP
+      name: registry
+    - port: 82
+      targetPort: 82
+      protocol: TCP
+      name: pages
+    - port: 22
+      targetPort: 22
+      protocol: TCP
+      name: ssh

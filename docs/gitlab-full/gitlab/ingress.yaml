@@ -1,0 +1,64 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cert-gitlab # Никак не связано с secretName. Просто - одинаковые названия
+  namespace: ns-gitlab
+spec:
+  secretName: cert-gitlab # Название секрета, где лежит сертификат. Используется в Traefik.IngressRoute
+  dnsNames:
+    - "gitlab.my-domain.com"
+    - "gitlab-registry.my-domain.com"
+    - "gitlab-pages.my-domain.com"
+  issuerRef:
+    name: cluster-issuer-acme-prod # Название объекта CLUSTER_ISSUER
+    kind: ClusterIssuer
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-gitlab-https
+  namespace: ns-gitlab
+  annotations:
+    kubernetes.io/ingress.class: "traefik-master-lb"
+    traefik.ingress.kubernetes.io/router.entrypoints: "traefik-websecure"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik-master-lb
+  tls:
+    - hosts:
+        - gitlab.my-domain.com
+        - gitlab-registry.my-domain.com
+        - gitlab-pages.my-domain.com
+      secretName: cert-gitlab
+  rules:
+    - host: gitlab.my-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab
+                port:
+                  number: 80
+    - host: gitlab-registry.my-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab
+                port:
+                  number: 81
+    - host: gitlab-pages.my-domain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab
+                port:
+                  number: 82
+
