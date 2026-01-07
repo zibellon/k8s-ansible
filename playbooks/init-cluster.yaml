@@ -64,7 +64,8 @@
       set_fact:
         cert_sans: >-
           {{
-            [haproxy_apiserver_lb_host, 'localhost', ansible_facts['default_ipv4']['address']] +
+            [haproxy_apiserver_lb_host, 'localhost', api_server_advertise_address] +
+            groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list +
             groups['managers'] | map('extract', hostvars, 'ansible_host') | list
           }}
       when: not kubeadm_already_init_pre_check.stat.exists
@@ -76,8 +77,8 @@
           apiVersion: kubeadm.k8s.io/v1beta4
           kind: InitConfiguration
           localAPIEndpoint:
-            advertiseAddress: "{{ ansible_facts['default_ipv4']['address'] }}"
-            bindPort: 6443
+            advertiseAddress: "{{ api_server_advertise_address }}"
+            bindPort: {{ api_server_bind_port }}
           nodeRegistration:
             criSocket: "unix:///var/run/containerd/containerd.sock"
           ---
