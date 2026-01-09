@@ -46,119 +46,156 @@
    1. Выполнение команды  `kubeadm reset --force`
    2. Удаление директорий для k8s
 
-# В каком порядке устанавливать
-1. cilium
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
-   2. Ставится
-      1. cilium
-      2. host-network-policy
-      3. kube-system-network-policy
-2. cert-manager
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
-   2. Ставится
-      1. cert-manager
-      2. network-policy
-3. traefik
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
-   2. Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится
-      1. traefik
-      2. network-policy
-      3. ingress (dashboard)
-4. cilium-post
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
-   2. Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится
-      1. network-policy (для kube-system)
-      2. ingress (hubble-ui)
-5. haproxy-ingress
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
-   2. Ставится
-      1. haproxy-ingress
-      2. network-policy
-6. longhorn
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
-   2. Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится
-      1. longhorn
-      2. network-policy
-      3. ingress (longhorn-ui)
-7. gitlab-config
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1`
-   2. Ставится
-      1. network-policy
-8. gitlab-minio
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
-   2. Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится
-      1. gitlab-minio
-      2. ingress (minio-api, minio-console-ui)
-9. gitlab
-   1. `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1`
-   2. Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
-   3. Ставится
-      1. gitlab
-      2. ingress (git, pages, registry, ssh-tcp)
-10. argocd
-    1. `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
-    2. Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
-    3. Ставится
-       1. argocd
-       2. network-policy
-       3. ingress (argocd-ui, h2c-grpc)
-       4. git-ops
+# Компоненты === Приложения
 
-# дополнительные playbook
-1. cilium-restart
-   1. Если изменились конфиги = ConfigMap, Cilium их не подцепит автоматически
-   2. Нужен ручной рестарт
-   3. `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
-2. argocd-restart
-   1. Если изменились конфиги = ConfigMap, argocd их не подцепит автоматически
-   2. Нужен ручной рестарт
-   3. `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
-3.  
+## Cilium. Официальный helm
+## Если изменились конфиги = ConfigMap, Cilium их не подцепит автоматически
+## Если посмотреть в то, что генерируется при `helm template` - то у Deployment/DaemonSet - нет checksum, на основе ConfigMap
+## Можно сделать предположение, что для применения новых ConfigMap - надо сделать ручной restart
+##
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
+  - Что ставится: cilium, host-network-policy, kube-system-network-policy
+- обновление (версия)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
+- обновление (конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
 
-# Как и что обновлять (новые версии или новые параметры)
-1. cilium
-   1. Установка идет через официальный helm
-   2. Только параметры в `hosts.yaml`
-   3. После применения нового манифеста - выполнить `cilium-restart`
-2. cert-manager
-   1. Установка идет через официальный helm
-   2. Только параметры в `hosts.yaml`
-3. traefik
-   1. Установка через yaml -> helm
-   2. Руками обновить CRDs. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
-   3. Руками обновить RBAC. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml
-   4. Версия в `hosts.yaml`
-4. cilium-post
-   1. Установка через yaml -> helm
-   2. Только параметры в `hosts.yaml`
-5. haproxy-ingress
-   1. Установка идет через официальный helm
-   2. Только параметры в `hosts.yaml`
-6. longhorn
-   1. Установка через yaml -> helm
-   2. Скачать новый yaml. https://raw.githubusercontent.com/longhorn/longhorn/v1.10.1/deploy/longhorn.yaml
-   3. Важно! Установка идет через HELM -> надо из yaml манифеста удалить `kind: Namespace`. Уначе будет ошибка
-   4. Поменять ВСЕ вхождения `namespace: longhorn-system` -> `namespace: {{ .Values.namespace }}` (там около 20 вхождения)
-   5. Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
-   6. Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
-   7. Пример обновленного конфига - `apps-config/longhorn.yaml`
-7. gitlab-minio
-   1. Установка через yaml -> helm
-   2. Только параметры в `hosts.yaml`
-8. gitlab
-   1. Установка через yaml -> helm
-   2. Только параметры в `hosts.yaml`
-   3. Важный момент про config. Для deployment используется `checksum/config: ...`
-      1. При обновлении конфига `/gitlab/templates/configmap.yaml` POD c GitLab будет перезапущен
-      2. checksum/config - вычисляется через HELM (include ...)
-9.  argocd
-   1. Установка через yaml -> helm
-   2. Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-   3. Поменять ВСЕ вхождения `namespace: argocd` -> `namespace: {{ .Values.namespace }}` (там 3 вхождения, для RoleBinding)
-   4. Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
-   5. Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
-   6. Пример обновленного конфига - `apps-config/argocd.yaml`
+## cert-manager. Официальный helm
+## 
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
+  - Что ставится: cert-manager, network-policy
+- обновление (версия)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
+- обновление (конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
+
+## traefik (ingress). yaml -> helm
+## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+##
+- установка
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+  - Ставится: traefik, network-policy, ingress (dashboard)
+- обновление (версия)
+  - Руками обновить CRDs. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+  - Руками обновить RBAC. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+- обновление (конфиг)
+  - Параметры - перечисляются в traefik-cli (как аргументы при запуске)
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+
+## cilium-post (относится к cilium). yaml -> helm
+## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Это просто дополнительная конфигурация
+##
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
+  - Ставится: network-policy (для kube-system), ingress (hubble-ui)
+- обновление (Версия + конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
+
+## haproxy (ingress-2). Официальный helm
+## Автоматически подхватывает конфиг, который генерируется через CRD
+##
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+  - Ставится: haproxy-ingress, network-policy
+- обновление (версия)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+- обновление (конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+
+## longhorn. yaml -> helm
+## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Автоматически подхватывает конфиг. Обновили конфиг в ConfigMap -> сразу подхватил и начал использовать
+## 
+- установка
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
+  - Ставится: longhorn, network-policy, ingress (longhorn-ui)
+- обновление (версия)
+  - Параметры в `hosts.yaml`
+  - Скачать новый yaml. https://raw.githubusercontent.com/longhorn/longhorn/v1.10.1/deploy/longhorn.yaml
+  - Важно! Установка идет через HELM -> надо из yaml манифеста удалить `kind: Namespace`. Уначе будет ошибка
+  - Поменять ВСЕ вхождения `namespace: longhorn-system` -> `namespace: {{ .Values.namespace }}` (там около 20 вхождения)
+  - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
+  - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
+  - Пример обновленного конфига - `docs/longhorn/other/...`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
+- обновление (конфиг)
+  - Параметры в `hosts.yaml`
+  - Обновить необходимые параметры в `playbooks/apps/charts/longhorn/...`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
+
+## gitlab-config. yaml -> helm
+##
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1`
+  - Ставится: network-policy
+- обновление (версия + конфиг)
+  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1`
+
+## gitlab-minio. yaml -> helm
+## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
+## 
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
+  - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
+- обновление (версия + конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
+
+## gitlab. yaml -> helm
+## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Важный момент про config
+1. Для deployment используется `checksum/config: ...`
+2. При обновлении конфига `/gitlab/templates/configmap.yaml` POD c GitLab будет перезапущен
+3. checksum/config - вычисляется через HELM (include ...)
+## 
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1`
+  - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
+- обновление (версия + конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1`
+
+## argocd. yaml -> helm
+## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Нет автоматической обработки новых конфигов (Как у Cilium). То есть: После обновления конфигов - ручной restart
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
+  - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), git-ops
+- обновление (версия)
+  - Только параметры в `hosts.yaml`
+  - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+  - Поменять ВСЕ вхождения `namespace: argocd` -> `namespace: {{ .Values.namespace }}` (там 3 вхождения, для RoleBinding)
+  - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
+  - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
+  - Пример обновленного конфига - `docs/arocd/...`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
+- обновление (конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
