@@ -22,9 +22,9 @@
 # Присоединение manager-node
 1. Добавить в hosts.yaml нового manager
 2. `ansible-playbook -i hosts.yaml playbooks/haproxy-apiserver-lb.yaml --limit k8s-manager-1`
-   1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих manager
+   1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (mamnegr + worker)
    2. По одному за раз
-   3. Через `--limit ....` указать manager
+   3. Через `--limit ....` указать название Node
 3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
    1. Инициализация ноды
 4. `ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit k8s-manager-2`
@@ -45,6 +45,18 @@
 1. `ansible-playbook -i hosts.yaml playbooks/server-clean.yaml --limit k8s-worker-4`
    1. Выполнение команды  `kubeadm reset --force`
    2. Удаление директорий для k8s
+
+# haproxy-apiserver-lb
+## В конфиге указаны ip адреса всех maanger-node + балансировка между ними
+## Запускается как static-pod на каждой node в кластере
+## Чтобы спровоцировать перезапуск
+- Или обновить спецификацию Pod.yaml. kubelet - автоматически ее подцепит (отслеживает директорию со static-pod) и сделает перезапуск
+- Или обновить конфиг, что в свою очередь спровоцирует обновление Pod.yaml
+  - В аннотация указано: checksum/config: "{{ haproxy_config_content | hash('sha256') }}"
+  - Это функционал ansible
+  - Почему нельзя использовать helm ? Потому-что эот Pod запускается как static-pod
+  - и отвечает за доступ к kube-api
+  - То есть: пока-что он не запустится -> доступа к kube-api НЕТ -> через helm ничего создать нельзя
 
 # Компоненты === Приложения
 
