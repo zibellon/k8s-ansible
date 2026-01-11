@@ -101,16 +101,33 @@
         dest: /etc/modprobe.d/softdog.conf
         content: |
           options softdog soft_margin={{ softdog_timeout }}
+          install softdog /sbin/modprobe --ignore-install softdog
         mode: '0644'
       register: softdog_conf_result
 
-    - name: Add softdog to modules autoload
+    - name: Create softdog systemd service
       copy:
-        dest: /etc/modules-load.d/softdog.conf
+        dest: /etc/systemd/system/softdog.service
         content: |
-          softdog
+          [Unit]
+          Description=Load softdog watchdog module
+          After=systemd-modules-load.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/sbin/modprobe softdog
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
         mode: '0644'
-      register: softdog_autoload_result
+      register: softdog_service_result
+
+    - name: Enable softdog service
+      systemd:
+        name: softdog.service
+        enabled: true
+        daemon_reload: true
 
     # =========================================================================
     # REBOOT
@@ -124,7 +141,7 @@
         sysctl_conf_create_result.changed
         or modules_conf_create_result.changed
         or softdog_conf_result.changed
-        or softdog_autoload_result.changed
+        or softdog_service_result.changed
         or (swap_pre_check.stdout | length > 0)
 
     # =========================================================================
