@@ -1,0 +1,146 @@
+# =============================================================================
+# OLM V0 INSTALLATION VIA LOCAL HELM CHART
+# Installs OLM CRDs first, then OLM components
+# =============================================================================
+
+- name: Install OLM v0 via local Helm chart
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # CHECK EXISTING INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Check if olm-v0 is already installed
+      command: helm list -n {{ olm_namespace }} -q
+      register: helm_list_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set olm_installed fact
+      set_fact:
+        olm_installed: "{{ 'olm-v0' in helm_list_result.stdout }}"
+
+    - name: Debug installation status
+      debug:
+        msg: "OLM v0 installed: {{ olm_installed }}"
+
+    # -------------------------------------------------------------------------
+    # COPY LOCAL HELM CHARTS
+    # -------------------------------------------------------------------------
+
+    - name: Ensure remote charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}"
+        state: directory
+        mode: "0755"
+
+    # olm-v0-crds
+    - name: Remove old olm-v0-crds from remote server
+      file:
+        path: "{{ remote_charts_dir }}/olm-v0-crds"
+        state: absent
+
+    - name: Copy olm-v0-crds to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/olm-v0-crds/"
+        dest: "{{ remote_charts_dir }}/olm-v0-crds/"
+        mode: "0644"
+
+    # olm-v0 chart
+    - name: Remove old olm-v0 chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/olm-v0"
+        state: absent
+
+    - name: Copy olm-v0 chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/olm-v0/"
+        dest: "{{ remote_charts_dir }}/olm-v0/"
+        mode: "0644"
+
+    # -------------------------------------------------------------------------
+    # INSTALL OLM CRDs FIRST
+    # -------------------------------------------------------------------------
+
+    - name: Install olm-v0-crds via kubectl
+      command: kubectl create -f {{ remote_charts_dir }}/olm-v0-crds/crds.yaml
+      failed_when: false
+
+    - name: Wait for OLM CRDs to be established
+      command: >
+        kubectl wait --for=condition=Established
+        crd/catalogsources.operators.coreos.com
+        crd/clusterserviceversions.operators.coreos.com
+        crd/installplans.operators.coreos.com
+        crd/olmconfigs.operators.coreos.com
+        crd/operatorconditions.operators.coreos.com
+        crd/operatorgroups.operators.coreos.com
+        crd/operators.operators.coreos.com
+        crd/subscriptions.operators.coreos.com
+        --timeout=60s
+      changed_when: false
+
+    # -------------------------------------------------------------------------
+    # CREATE VALUES FILE
+    # -------------------------------------------------------------------------
+
+    - name: Create olm-v0 values file
+      copy:
+        dest: "{{ remote_charts_dir }}/olm-v0/values-override.yaml"
+        mode: "0644"
+        content: |
+          replicas: 1
+
+    # -------------------------------------------------------------------------
+    # INSTALL OR UPGRADE OLM
+    # -------------------------------------------------------------------------
+
+    - name: Install olm-v0 via Helm (first time)
+      command: >
+        helm install olm-v0 {{ remote_charts_dir }}/olm-v0
+        --namespace {{ olm_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/olm-v0/values-override.yaml
+      when: not olm_installed
+
+    - name: Upgrade olm-v0 via Helm (update)
+      command: >
+        helm upgrade olm-v0 {{ remote_charts_dir }}/olm-v0
+        --namespace {{ olm_namespace }}
+        --values {{ remote_charts_dir }}/olm-v0/values-override.yaml
+      when: olm_installed
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: Wait for OLM Operator to be ready
+      command: kubectl rollout status deployment/olm-operator -n {{ olm_namespace }} --timeout=300s
+      when: not olm_installed
+
+    - name: Wait for Catalog Operator to be ready
+      command: kubectl rollout status deployment/catalog-operator -n {{ olm_namespace }} --timeout=300s
+      when: not olm_installed
+
+    - name: Wait for PackageServer CSV to succeed
+      command: >
+        kubectl wait --for=jsonpath='{.status.phase}'=Succeeded
+        csv/packageserver -n {{ olm_namespace }}
+        --timeout=300s
+      when: not olm_installed
+      register: packageserver_wait
+      retries: 3
+      delay: 10
+      until: packageserver_wait.rc == 0
+
+    - name: Verify OLM installation
+      command: helm list -n {{ olm_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: Show OLM Helm release
+      debug:
+        var: helm_verify.stdout_lines
