@@ -13,16 +13,6 @@
     # CHECK EXISTING INSTALLATION
     # -------------------------------------------------------------------------
 
-    - name: Check if traefik-crds is already installed
-      command: helm list -A -q
-      register: helm_list_all
-      changed_when: false
-      failed_when: false
-
-    - name: Set traefik_crds_installed fact
-      set_fact:
-        traefik_crds_installed: "{{ 'traefik-crds' in helm_list_all.stdout }}"
-
     - name: Check if traefik is already installed
       command: helm list -n {{ traefik_namespace }} -q
       register: helm_list_result
@@ -35,7 +25,7 @@
 
     - name: Debug installation status
       debug:
-        msg: "Traefik CRDs installed: {{ traefik_crds_installed }}, Traefik installed: {{ traefik_installed }}"
+        msg: "Traefik installed: {{ traefik_installed }}"
 
     # -------------------------------------------------------------------------
     # COPY LOCAL HELM CHARTS
@@ -47,13 +37,13 @@
         state: directory
         mode: "0755"
 
-    # traefik-crds chart
-    - name: Remove old traefik-crds chart from remote server
+    # traefik-crds
+    - name: Remove old traefik-crds from remote server
       file:
         path: "{{ remote_charts_dir }}/traefik-crds"
         state: absent
 
-    - name: Copy traefik-crds chart to remote server
+    - name: Copy traefik-crds to remote server
       copy:
         src: "{{ playbook_dir }}/charts/traefik-crds/"
         dest: "{{ remote_charts_dir }}/traefik-crds/"
@@ -75,17 +65,9 @@
     # INSTALL TRAEFIK CRDs FIRST
     # -------------------------------------------------------------------------
 
-    - name: Install traefik-crds via Helm (first time)
-      command: >
-        helm install traefik-crds {{ remote_charts_dir }}/traefik-crds
-        --namespace kube-system
-      when: not traefik_crds_installed
-
-    - name: Upgrade traefik-crds via Helm (update)
-      command: >
-        helm upgrade traefik-crds {{ remote_charts_dir }}/traefik-crds
-        --namespace kube-system
-      when: traefik_crds_installed
+    - name: Install traefik-crds via kubectl
+      command: kubectl create -f {{ remote_charts_dir }}/traefik-crds/crds.yaml
+      failed_when: false
 
     - name: Wait for Traefik CRDs to be established
       command: >
