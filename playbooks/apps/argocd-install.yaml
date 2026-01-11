@@ -28,7 +28,7 @@
         msg: "ArgoCD installed: {{ argocd_installed }}"
 
     # -------------------------------------------------------------------------
-    # COPY LOCAL HELM CHART
+    # COPY LOCAL HELM CHARTS
     # -------------------------------------------------------------------------
 
     - name: Ensure remote charts directory exists
@@ -37,6 +37,19 @@
         state: directory
         mode: "0755"
 
+    # argocd-crds
+    - name: Remove old argocd-crds from remote server
+      file:
+        path: "{{ remote_charts_dir }}/argocd-crds"
+        state: absent
+
+    - name: Copy argocd-crds to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/argocd-crds/"
+        dest: "{{ remote_charts_dir }}/argocd-crds/"
+        mode: "0644"
+
+    # argocd chart
     - name: Remove old argocd chart from remote server
       file:
         path: "{{ remote_charts_dir }}/argocd"
@@ -47,6 +60,23 @@
         src: "{{ playbook_dir }}/charts/argocd/"
         dest: "{{ remote_charts_dir }}/argocd/"
         mode: "0644"
+
+    # -------------------------------------------------------------------------
+    # INSTALL ARGOCD CRDs FIRST
+    # -------------------------------------------------------------------------
+
+    - name: Install argocd-crds via kubectl
+      command: kubectl create -f {{ remote_charts_dir }}/argocd-crds/crds.yaml
+      failed_when: false
+
+    - name: Wait for ArgoCD CRDs to be established
+      command: >
+        kubectl wait --for=condition=Established
+        crd/applications.argoproj.io
+        crd/applicationsets.argoproj.io
+        crd/appprojects.argoproj.io
+        --timeout=60s
+      changed_when: false
 
     # -------------------------------------------------------------------------
     # CREATE VALUES FILE WITH SSH KEY
