@@ -217,7 +217,9 @@
 - обновление (версия)
   - Только параметры в `hosts.yaml`
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-  - Поменять ВСЕ вхождения `namespace: argocd` -> `namespace: {{ .Values.namespace }}` (там 3 вхождения, для RoleBinding)
+  - Разнести yaml на два файла
+    - `playbooks/apps/charts/argocd/templates/argocd.yaml` - все, кроме CRD
+    - `playbooks/apps/charts/argocd-crds/crds.yaml` - только CRD (там примерно 24к строк)
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
   - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/arocd/...`
