@@ -93,6 +93,26 @@
       register: modules_conf_create_result
 
     # =========================================================================
+    # SOFTDOG (WATCHDOG FOR MEDIK8S)
+    # =========================================================================
+
+    - name: Create softdog modprobe config
+      copy:
+        dest: /etc/modprobe.d/softdog.conf
+        content: |
+          options softdog soft_margin={{ softdog_timeout }}
+        mode: '0644'
+      register: softdog_conf_result
+
+    - name: Add softdog to modules autoload
+      copy:
+        dest: /etc/modules-load.d/softdog.conf
+        content: |
+          softdog
+        mode: '0644'
+      register: softdog_autoload_result
+
+    # =========================================================================
     # REBOOT
     # =========================================================================
 
@@ -103,6 +123,8 @@
       when: >-
         sysctl_conf_create_result.changed
         or modules_conf_create_result.changed
+        or softdog_conf_result.changed
+        or softdog_autoload_result.changed
         or (swap_pre_check.stdout | length > 0)
 
     # =========================================================================
