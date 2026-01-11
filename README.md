@@ -137,6 +137,7 @@
 ## longhorn. yaml -> helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Автоматически подхватывает конфиг. Обновили конфиг в ConfigMap -> сразу подхватил и начал использовать
+## `namespace: longhorn-system`, МЕНЯТЬ НЕЛЬЗЯ. Так написано в документации
 ## 
 - установка
   - Параметры в `hosts.yaml`
@@ -145,9 +146,8 @@
 - обновление (версия)
   - Параметры в `hosts.yaml`
   - Скачать новый yaml. https://raw.githubusercontent.com/longhorn/longhorn/v1.10.1/deploy/longhorn.yaml
-  - Важно! Установка идет через HELM -> надо из yaml манифеста удалить `kind: Namespace`. Уначе будет ошибка
-  - Поменять ВСЕ вхождения `namespace: longhorn-system` -> `namespace: {{ .Values.namespace }}` (там около 20 вхождения)
-  - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
+  - Есть изменения в дефолтных конфигах. Их надо не потерять
+  - То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
   - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/longhorn/other/...`
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`

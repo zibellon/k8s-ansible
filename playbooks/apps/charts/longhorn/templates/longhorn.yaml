@@ -18,7 +18,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: longhorn-service-account
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -29,7 +29,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: longhorn-ui-service-account
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -40,7 +40,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: longhorn-support-bundle
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -51,7 +51,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: longhorn-default-resource
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -64,7 +64,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: longhorn-default-setting
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -86,7 +86,7 @@ data:
     disable-scheduling-on-cordoned-node: false
     replica-auto-balance: "best-effort"
     remove-snapshots-during-filesystem-trim: true
-    node-down-pod-deletion-policy: "delete-both-statefulset-and-deployment-pod"
+    node-down-pod-deletion-policy: "do-nothing"
     node-drain-policy: "block-for-eviction"
 ---
 # Source: longhorn/templates/storageclass.yaml
@@ -94,7 +94,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: longhorn-storageclass
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -4071,7 +4071,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: longhorn-service-account
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 ---
 # Source: longhorn/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -4089,14 +4089,14 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: longhorn-support-bundle
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 ---
 # Source: longhorn/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: longhorn
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -4129,7 +4129,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: longhorn
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -4137,7 +4137,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: longhorn-service-account
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 ---
 # Source: longhorn/templates/daemonset-sa.yaml
 apiVersion: v1
@@ -4149,7 +4149,7 @@ metadata:
     app.kubernetes.io/version: v1.10.1
     app: longhorn-manager
   name: longhorn-backend
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4169,7 +4169,7 @@ metadata:
     app.kubernetes.io/version: v1.10.1
     app: longhorn-ui
   name: longhorn-frontend
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4190,7 +4190,7 @@ metadata:
     app.kubernetes.io/version: v1.10.1
     app: longhorn-admission-webhook
   name: longhorn-admission-webhook
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4210,7 +4210,7 @@ metadata:
     app.kubernetes.io/version: v1.10.1
     app: longhorn-recovery-backend
   name: longhorn-recovery-backend
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4230,7 +4230,7 @@ metadata:
     app.kubernetes.io/version: v1.10.1
     app: longhorn-manager
   name: longhorn-manager
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 spec:
   selector:
     matchLabels:
@@ -4349,7 +4349,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: longhorn-driver-deployer
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -4423,7 +4423,7 @@ metadata:
     app.kubernetes.io/version: v1.10.1
     app: longhorn-ui
   name: longhorn-ui
-  namespace: {{ .Values.namespace }}
+  namespace: longhorn-system
 spec:
   replicas: 1
   selector:
@@ -4465,3 +4465,6 @@ spec:
       - emptyDir: {}
         name: var-run
       priorityClassName: "longhorn-critical"
+---
+# Source: longhorn/templates/validate-psp-install.yaml
+#
