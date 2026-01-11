@@ -134,6 +134,21 @@
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
 
+## olm. yaml -> helm
+##
+- установка
+  - Никаких переменных в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/olm-v0-install.yaml --limit k8s-manager-1`
+  - Ставится: немного компонентов
+- обновление (версия + конфиг)
+  - Никаких переменных в `hosts.yaml`
+  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/crds.yaml
+  - Положить сожержимое в `playbooks/apps/charts/olm-v0-crds/crds.yaml`
+  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml
+  - Положить сожержимое в `playbooks/apps/charts/olm-v0/templates/olm-v0-install.yaml`
+  - Перенести содержимое namespace в `playbooks/apps/charts/olm-v0/namespaces.yaml` и удалить из оригинала
+  - `ansible-playbook -i hosts.yaml playbooks/apps/olm-v0-install.yaml --limit k8s-manager-1`
+
 ## longhorn. yaml -> helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Автоматически подхватывает конфиг. Обновили конфиг в ConfigMap -> сразу подхватил и начал использовать
