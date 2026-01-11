@@ -162,6 +162,16 @@ EOF
 # как увидеть Endpoints, куда идет трафик реально
 `kubectl get EndpointSlice kubernetes -o yaml`
 
+# Как проверять watchdog | softdog
+lsmod | grep soft
+softdog                12288  0
+
+cat /sys/class/watchdog/watchdog0/timeout
+30
+
+ls -la /dev/watchdog
+crw------- 1 root root 10, 130 Jan 11 20:45 /dev/watchdog
+
 ## Ответ
 addressType: IPv4
 apiVersion: discovery.k8s.io/v1
