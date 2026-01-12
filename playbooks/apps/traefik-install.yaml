@@ -42,24 +42,6 @@
 
   tasks:
     # -------------------------------------------------------------------------
-    # CHECK EXISTING INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Check if traefik is already installed
-      command: helm list -n {{ traefik_namespace }} -q
-      register: helm_list_result
-      changed_when: false
-      failed_when: false
-
-    - name: Set traefik_installed fact
-      set_fact:
-        traefik_installed: "{{ 'traefik' in helm_list_result.stdout and 'traefik-crds' not in helm_list_result.stdout }}"
-
-    - name: Debug installation status
-      debug:
-        msg: "Traefik installed: {{ traefik_installed }}"
-
-    # -------------------------------------------------------------------------
     # COPY LOCAL HELM CHARTS
     # -------------------------------------------------------------------------
 
@@ -69,19 +51,7 @@
         state: directory
         mode: "0755"
 
-    # traefik-crds
-    - name: Remove old traefik-crds from remote server
-      file:
-        path: "{{ remote_charts_dir }}/traefik-crds"
-        state: absent
-
-    - name: Copy traefik-crds to remote server
-      copy:
-        src: "{{ playbook_dir }}/charts/traefik-crds/"
-        dest: "{{ remote_charts_dir }}/traefik-crds/"
-        mode: "0644"
-
-    # traefik chart
+    # traefik chart (includes crds/ subdirectory)
     - name: Remove old traefik chart from remote server
       file:
         path: "{{ remote_charts_dir }}/traefik"
@@ -97,8 +67,8 @@
     # INSTALL TRAEFIK CRDs FIRST
     # -------------------------------------------------------------------------
 
-    - name: Install traefik-crds via kubectl
-      command: kubectl create -f {{ remote_charts_dir }}/traefik-crds/crds.yaml
+    - name: Install traefik CRDs via kubectl
+      command: kubectl create -f {{ remote_charts_dir }}/traefik/crds/crds.yaml
       failed_when: false
 
     - name: Wait for Traefik CRDs to be established
@@ -142,20 +112,18 @@
     # INSTALL OR UPGRADE TRAEFIK
     # -------------------------------------------------------------------------
 
-    - name: Install traefik via Helm (first time)
+    - name: Install or upgrade traefik via Helm
       command: >
-        helm install traefik {{ remote_charts_dir }}/traefik
+        helm upgrade --install traefik {{ remote_charts_dir }}/traefik
         --namespace {{ traefik_namespace }}
         --create-namespace
         --values {{ remote_charts_dir }}/traefik/values-override.yaml
-      when: not traefik_installed
-
-    - name: Upgrade traefik via Helm (update)
-      command: >
-        helm upgrade traefik {{ remote_charts_dir }}/traefik
-        --namespace {{ traefik_namespace }}
-        --values {{ remote_charts_dir }}/traefik/values-override.yaml
-      when: traefik_installed
+        --skip-crds
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ traefik_helm_timeout }}
 
     # -------------------------------------------------------------------------
     # VERIFY INSTALLATION
@@ -163,7 +131,6 @@
 
     - name: Wait for Traefik DaemonSet to be ready
       command: kubectl rollout status daemonset/traefik-master -n {{ traefik_namespace }} --timeout=300s
-      when: not traefik_installed
 
     - name: Verify Traefik installation
       command: helm list -n {{ traefik_namespace }}

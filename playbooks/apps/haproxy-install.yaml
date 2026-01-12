@@ -43,34 +43,14 @@
 
   tasks:
     # -------------------------------------------------------------------------
-    # CHECK EXISTING INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Check if haproxy is already installed
-      command: helm list -n {{ haproxy_namespace }} -q
-      register: helm_list_result
-      changed_when: false
-      failed_when: false
-
-    - name: Set haproxy_installed fact
-      set_fact:
-        haproxy_installed: "{{ 'haproxy-ingress' in helm_list_result.stdout }}"
-
-    - name: Debug haproxy installation status
-      debug:
-        msg: "HAProxy installed: {{ haproxy_installed }}"
-
-    # -------------------------------------------------------------------------
     # ADD HELM REPOSITORY
     # -------------------------------------------------------------------------
 
     - name: Add haproxy Helm repository
       command: helm repo add haproxytech https://haproxytech.github.io/helm-charts --force-update
-      when: not haproxy_installed
 
     - name: Update Helm repositories
       command: helm repo update
-      when: not haproxy_installed
 
     # -------------------------------------------------------------------------
     # CREATE VALUES FILE
@@ -81,7 +61,6 @@
         path: "{{ remote_charts_dir }}/haproxy"
         state: directory
         mode: "0755"
-      when: not haproxy_installed
 
     - name: Create haproxy values file
       copy:
@@ -113,20 +92,23 @@
                 quic: false
           serviceAccount:
             create: true
-      when: not haproxy_installed
 
     # -------------------------------------------------------------------------
     # INSTALL HAPROXY
     # -------------------------------------------------------------------------
 
-    - name: Install HAProxy via Helm
+    - name: Install or upgrade HAProxy via Helm
       command: >
-        helm install haproxy-ingress haproxytech/kubernetes-ingress
+        helm upgrade --install haproxy-ingress haproxytech/kubernetes-ingress
         --namespace {{ haproxy_namespace }}
         --create-namespace
         --version {{ haproxy_chart_version }}
         --values {{ remote_charts_dir }}/haproxy/values-override.yaml
-      when: not haproxy_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ haproxy_helm_timeout }}
 
     # -------------------------------------------------------------------------
     # VERIFY INSTALLATION
@@ -134,21 +116,10 @@
 
     - name: Wait for HAProxy DaemonSet to be ready
       command: kubectl rollout status daemonset/haproxy-ingress-kubernetes-ingress -n {{ haproxy_namespace }} --timeout=300s
-      when: not haproxy_installed
 
     # -------------------------------------------------------------------------
     # INSTALL HAPROXY-CONFIG (Global, Defaults, NetworkPolicies)
     # -------------------------------------------------------------------------
-
-    - name: Check if haproxy-config is already installed
-      command: helm list -n {{ haproxy_namespace }} -q
-      register: haproxy_config_check
-      changed_when: false
-      failed_when: false
-
-    - name: Set haproxy_config_installed fact
-      set_fact:
-        haproxy_config_installed: "{{ 'haproxy-config' in haproxy_config_check.stdout }}"
 
     - name: Ensure haproxy-config charts directory exists
       file:
@@ -175,19 +146,16 @@
           namespace: {{ haproxy_namespace }}
           ingressClass: {{ haproxy_ingress_class }}
 
-    - name: Install haproxy-config via Helm (first time)
+    - name: Install or upgrade haproxy-config via Helm
       command: >
-        helm install haproxy-config {{ remote_charts_dir }}/haproxy-config
+        helm upgrade --install haproxy-config {{ remote_charts_dir }}/haproxy-config
         --namespace {{ haproxy_namespace }}
         --values {{ remote_charts_dir }}/haproxy-config/values-override.yaml
-      when: not haproxy_config_installed
-
-    - name: Upgrade haproxy-config via Helm (update)
-      command: >
-        helm upgrade haproxy-config {{ remote_charts_dir }}/haproxy-config
-        --namespace {{ haproxy_namespace }}
-        --values {{ remote_charts_dir }}/haproxy-config/values-override.yaml
-      when: haproxy_config_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ haproxy_config_helm_timeout }}
 
     # -------------------------------------------------------------------------
     # VERIFY INSTALLATION

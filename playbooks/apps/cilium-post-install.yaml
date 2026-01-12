@@ -43,23 +43,6 @@
 
   tasks:
     # =========================================================================
-    # PRE-CHECK
-    # =========================================================================
-    - name: Check if cilium-post-config is already installed
-      command: helm list -n {{ cilium_namespace }} -q
-      register: cilium_post_config_check
-      changed_when: false
-      failed_when: false
-
-    - name: Set cilium_post_config_installed fact
-      set_fact:
-        cilium_post_config_installed: "{{ 'cilium-post-config' in cilium_post_config_check.stdout }}"
-
-    - name: Show cilium-post-config status
-      debug:
-        msg: "cilium-post-config already installed: {{ cilium_post_config_installed }}"
-
-    # =========================================================================
     # COPY CHART TO SERVER
     # =========================================================================
     - name: Ensure remote charts directory exists
@@ -98,19 +81,16 @@
     # =========================================================================
     # INSTALL CILIUM-POST-CONFIG
     # =========================================================================
-    - name: Install cilium-post-config via Helm (first time)
+    - name: Install or upgrade cilium-post-config via Helm
       command: >
-        helm install cilium-post-config {{ remote_charts_dir }}/cilium-post-config
+        helm upgrade --install cilium-post-config {{ remote_charts_dir }}/cilium-post-config
         --namespace {{ cilium_namespace }}
         --values {{ remote_charts_dir }}/cilium-post-config/values-override.yaml
-      when: not cilium_post_config_installed
-
-    - name: Upgrade cilium-post-config via Helm (update)
-      command: >
-        helm upgrade cilium-post-config {{ remote_charts_dir }}/cilium-post-config
-        --namespace {{ cilium_namespace }}
-        --values {{ remote_charts_dir }}/cilium-post-config/values-override.yaml
-      when: cilium_post_config_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cilium_post_config_helm_timeout }}
 
     # =========================================================================
     # VERIFICATION

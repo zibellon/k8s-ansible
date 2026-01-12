@@ -36,28 +36,6 @@
       when: registry_keys_check.rc != 0
 
     # -------------------------------------------------------------------------
-    # CHECK EXISTING INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Check if gitlab is already installed
-      command: helm list -n {{ gitlab_namespace }} -q
-      register: helm_list_result
-      changed_when: false
-      failed_when: false
-
-    - name: Set gitlab_installed fact
-      set_fact:
-        gitlab_installed: "{{ 'gitlab' in helm_list_result.stdout and 'gitlab-minio' not in helm_list_result.stdout.split('\n') | select('equalto', 'gitlab') | list }}"
-
-    - name: More precise check for gitlab installation
-      set_fact:
-        gitlab_installed: "{{ helm_list_result.stdout_lines | select('equalto', 'gitlab') | list | length > 0 }}"
-
-    - name: Debug installation status
-      debug:
-        msg: "gitlab installed: {{ gitlab_installed }}"
-
-    # -------------------------------------------------------------------------
     # COPY LOCAL HELM CHART
     # -------------------------------------------------------------------------
 
@@ -123,20 +101,17 @@
     # INSTALL OR UPGRADE CHART
     # -------------------------------------------------------------------------
 
-    - name: Install gitlab via Helm (first time)
+    - name: Install or upgrade gitlab via Helm
       command: >
-        helm install gitlab {{ remote_charts_dir }}/gitlab
+        helm upgrade --install gitlab {{ remote_charts_dir }}/gitlab
         --namespace {{ gitlab_namespace }}
         --create-namespace
         --values {{ remote_charts_dir }}/gitlab/values-override.yaml
-      when: not gitlab_installed
-
-    - name: Upgrade gitlab via Helm (update)
-      command: >
-        helm upgrade gitlab {{ remote_charts_dir }}/gitlab
-        --namespace {{ gitlab_namespace }}
-        --values {{ remote_charts_dir }}/gitlab/values-override.yaml
-      when: gitlab_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ gitlab_helm_timeout }}
 
     # -------------------------------------------------------------------------
     # WAIT FOR GITLAB TO BE READY
@@ -144,7 +119,6 @@
 
     - name: Wait for GitLab deployment to be ready (this may take 5-10 minutes)
       command: kubectl rollout status deployment/gitlab -n {{ gitlab_namespace }} --timeout=600s
-      when: not gitlab_installed
 
     # -------------------------------------------------------------------------
     # SAVE INITIAL ROOT PASSWORD TO SECRET (first install only)
@@ -155,14 +129,11 @@
       register: root_password_secret_check
       changed_when: false
       failed_when: false
-      when: not gitlab_installed
 
     - name: Get GitLab pod name
       shell: kubectl get pod -n {{ gitlab_namespace }} -l app-key=gitlab -o jsonpath='{.items[0].metadata.name}'
       register: gitlab_pod_name
-      when:
-        - not gitlab_installed
-        - root_password_secret_check.rc != 0
+      when: root_password_secret_check.rc != 0
 
     - name: Wait for GitLab to generate initial root password
       shell: >
@@ -172,15 +143,12 @@
       until: gitlab_root_password_file.rc == 0
       retries: 60
       delay: 5
-      when:
-        - not gitlab_installed
-        - root_password_secret_check.rc != 0
+      when: root_password_secret_check.rc != 0
 
     - name: Extract password from file content
       set_fact:
         gitlab_root_password: "{{ gitlab_root_password_file.stdout | regex_search('Password: (.+)', '\\1') | first }}"
       when:
-        - not gitlab_installed
         - root_password_secret_check.rc != 0
         - gitlab_root_password_file.rc == 0
 
@@ -190,16 +158,13 @@
         --namespace {{ gitlab_namespace }}
         --from-literal=password={{ gitlab_root_password }}
       when:
-        - not gitlab_installed
         - root_password_secret_check.rc != 0
         - gitlab_root_password | length > 0
 
     - name: Show root password saved info
       debug:
         msg: "GitLab root password saved to secret: {{ gitlab_root_password_secret_name }}"
-      when:
-        - not gitlab_installed
-        - root_password_secret_check.rc != 0
+      when: root_password_secret_check.rc != 0
 
     # -------------------------------------------------------------------------
     # VERIFY INSTALLATION

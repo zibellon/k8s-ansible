@@ -10,24 +10,6 @@
 
   tasks:
     # -------------------------------------------------------------------------
-    # CHECK EXISTING INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Check if argocd is already installed
-      command: helm list -n {{ argocd_namespace }} -q
-      register: helm_list_result
-      changed_when: false
-      failed_when: false
-
-    - name: Set argocd_installed fact
-      set_fact:
-        argocd_installed: "{{ 'argocd' in helm_list_result.stdout }}"
-
-    - name: Debug argocd installation status
-      debug:
-        msg: "ArgoCD installed: {{ argocd_installed }}"
-
-    # -------------------------------------------------------------------------
     # COPY LOCAL HELM CHARTS
     # -------------------------------------------------------------------------
 
@@ -36,18 +18,6 @@
         path: "{{ remote_charts_dir }}"
         state: directory
         mode: "0755"
-
-    # argocd-crds
-    - name: Remove old argocd-crds from remote server
-      file:
-        path: "{{ remote_charts_dir }}/argocd-crds"
-        state: absent
-
-    - name: Copy argocd-crds to remote server
-      copy:
-        src: "{{ playbook_dir }}/charts/argocd-crds/"
-        dest: "{{ remote_charts_dir }}/argocd-crds/"
-        mode: "0644"
 
     # argocd chart
     - name: Remove old argocd chart from remote server
@@ -66,7 +36,7 @@
     # -------------------------------------------------------------------------
 
     - name: Install argocd-crds via kubectl
-      command: kubectl create -f {{ remote_charts_dir }}/argocd-crds/crds.yaml
+      command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
       failed_when: false
 
     - name: Wait for ArgoCD CRDs to be established
@@ -107,20 +77,18 @@
     # INSTALL OR UPGRADE CHART
     # -------------------------------------------------------------------------
 
-    - name: Install argocd via Helm (first time)
+    - name: Install or upgrade argocd via Helm
       command: >
-        helm install argocd {{ remote_charts_dir }}/argocd
+        helm upgrade --install argocd {{ remote_charts_dir }}/argocd
         --namespace {{ argocd_namespace }}
         --create-namespace
         --values {{ remote_charts_dir }}/argocd-values.yaml
-      when: not argocd_installed
-
-    - name: Upgrade argocd via Helm (update)
-      command: >
-        helm upgrade argocd {{ remote_charts_dir }}/argocd
-        --namespace {{ argocd_namespace }}
-        --values {{ remote_charts_dir }}/argocd-values.yaml
-      when: argocd_installed
+        --cleanup-on-fail
+        --skip-crds
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ argocd_helm_timeout }}
 
     # -------------------------------------------------------------------------
     # VERIFY INSTALLATION
@@ -128,7 +96,6 @@
 
     - name: Wait for ArgoCD server to be ready
       command: kubectl rollout status deployment/argocd-server -n {{ argocd_namespace }} --timeout=300s
-      when: not argocd_installed
 
     - name: Verify ArgoCD installation
       command: helm list -n {{ argocd_namespace }}

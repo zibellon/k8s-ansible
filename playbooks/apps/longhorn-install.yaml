@@ -9,23 +9,6 @@
 
   tasks:
     # =========================================================================
-    # CHECK EXISTING INSTALLATION
-    # =========================================================================
-    - name: Check if longhorn is already installed
-      command: helm list -n {{ longhorn_namespace }} -q
-      register: helm_list_result
-      changed_when: false
-      failed_when: false
-
-    - name: Set longhorn_installed fact
-      set_fact:
-        longhorn_installed: "{{ 'longhorn' in helm_list_result.stdout }}"
-
-    - name: Debug installation status
-      debug:
-        msg: "longhorn installed: {{ longhorn_installed }}"
-
-    # =========================================================================
     # COPY LOCAL HELM CHART
     # =========================================================================
     - name: Ensure remote charts directory exists
@@ -71,31 +54,26 @@
     # =========================================================================
     # INSTALL OR UPGRADE CHART
     # =========================================================================
-    - name: Install longhorn via Helm (first time)
+    - name: Install or upgrade longhorn via Helm
       command: >
-        helm install longhorn {{ remote_charts_dir }}/longhorn
+        helm upgrade --install longhorn {{ remote_charts_dir }}/longhorn
         --namespace {{ longhorn_namespace }}
         --create-namespace
         --values {{ remote_charts_dir }}/longhorn/values-override.yaml
-      when: not longhorn_installed
-
-    - name: Upgrade longhorn via Helm (update)
-      command: >
-        helm upgrade longhorn {{ remote_charts_dir }}/longhorn
-        --namespace {{ longhorn_namespace }}
-        --values {{ remote_charts_dir }}/longhorn/values-override.yaml
-      when: longhorn_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ longhorn_helm_timeout }}
 
     # =========================================================================
     # WAIT FOR LONGHORN TO BE READY
     # =========================================================================
     - name: Wait for Longhorn manager DaemonSet to be ready
       command: kubectl rollout status daemonset/longhorn-manager -n {{ longhorn_namespace }} --timeout=300s
-      when: not longhorn_installed
 
     - name: Wait for Longhorn UI deployment to be ready
       command: kubectl rollout status deployment/longhorn-ui -n {{ longhorn_namespace }} --timeout=120s
-      when: not longhorn_installed
 
     # =========================================================================
     # VERIFY INSTALLATION

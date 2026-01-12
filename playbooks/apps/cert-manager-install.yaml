@@ -12,23 +12,6 @@
 
   tasks:
     # =========================================================================
-    # PRE-CHECK
-    # =========================================================================
-    - name: Check if cert-manager is already installed
-      command: helm list -n {{ cert_manager_namespace }} -q
-      register: certmanager_pre_check
-      changed_when: false
-      failed_when: false
-
-    - name: Set certmanager_installed fact
-      set_fact:
-        certmanager_installed: "{{ 'cert-manager' in certmanager_pre_check.stdout }}"
-
-    - name: Show cert-manager status
-      debug:
-        msg: "cert-manager installed: {{ certmanager_installed }}"
-
-    # =========================================================================
     # ADD HELM REPO
     # =========================================================================
     - name: Add Jetstack Helm repository
@@ -59,22 +42,18 @@
     # =========================================================================
     # INSTALL OR UPGRADE CERT-MANAGER
     # =========================================================================
-    - name: Install cert-manager via Helm (first time)
+    - name: Install or upgrade cert-manager via Helm
       command: >
-        helm install cert-manager jetstack/cert-manager
+        helm upgrade --install cert-manager jetstack/cert-manager
         --namespace {{ cert_manager_namespace }}
         --create-namespace
         --version v{{ cert_manager_version }}
         --values {{ remote_charts_dir }}/cert-manager/values-override.yaml
-      when: not certmanager_installed
-
-    - name: Upgrade cert-manager via Helm (update)
-      command: >
-        helm upgrade cert-manager jetstack/cert-manager
-        --namespace {{ cert_manager_namespace }}
-        --version v{{ cert_manager_version }}
-        --values {{ remote_charts_dir }}/cert-manager/values-override.yaml
-      when: certmanager_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cert_manager_helm_timeout }}
 
     # =========================================================================
     # WAIT FOR CERT-MANAGER TO BE READY
@@ -89,16 +68,6 @@
     # =========================================================================
     # INSTALL CERT-MANAGER-CONFIG (NetworkPolicy + ClusterIssuer)
     # =========================================================================
-    - name: Check if cert-manager-config is already installed
-      command: helm list -n {{ cert_manager_namespace }} -q
-      register: certmanager_config_check
-      changed_when: false
-      failed_when: false
-
-    - name: Set certmanager_config_installed fact
-      set_fact:
-        certmanager_config_installed: "{{ 'cert-manager-config' in certmanager_config_check.stdout }}"
-
     - name: Ensure cert-manager-config charts directory exists
       file:
         path: "{{ remote_charts_dir }}/cert-manager-config"
@@ -128,19 +97,16 @@
             ingressClass: {{ traefik_ingress_class }}
             traefikEntrypoint: {{ traefik_web_entrypoint }}
 
-    - name: Install cert-manager-config via Helm (first time)
+    - name: Install or upgrade cert-manager-config via Helm
       command: >
-        helm install cert-manager-config {{ remote_charts_dir }}/cert-manager-config
+        helm upgrade --install cert-manager-config {{ remote_charts_dir }}/cert-manager-config
         --namespace {{ cert_manager_namespace }}
         --values {{ remote_charts_dir }}/cert-manager-config/values-override.yaml
-      when: not certmanager_config_installed
-
-    - name: Upgrade cert-manager-config via Helm (update)
-      command: >
-        helm upgrade cert-manager-config {{ remote_charts_dir }}/cert-manager-config
-        --namespace {{ cert_manager_namespace }}
-        --values {{ remote_charts_dir }}/cert-manager-config/values-override.yaml
-      when: certmanager_config_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cert_manager_config_helm_timeout }}
 
     # =========================================================================
     # VERIFICATION

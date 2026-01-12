@@ -9,24 +9,6 @@
 
   tasks:
     # -------------------------------------------------------------------------
-    # CHECK EXISTING INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Check if gitlab-config is already installed
-      command: helm list -n {{ gitlab_namespace }} -q
-      register: helm_list_result
-      changed_when: false
-      failed_when: false
-
-    - name: Set gitlab_config_installed fact
-      set_fact:
-        gitlab_config_installed: "{{ 'gitlab-config' in helm_list_result.stdout }}"
-
-    - name: Debug installation status
-      debug:
-        msg: "gitlab-config installed: {{ gitlab_config_installed }}"
-
-    # -------------------------------------------------------------------------
     # COPY LOCAL HELM CHART
     # -------------------------------------------------------------------------
 
@@ -70,20 +52,17 @@
     # INSTALL OR UPGRADE CHART
     # -------------------------------------------------------------------------
 
-    - name: Install gitlab-config via Helm (first time)
+    - name: Install or upgrade gitlab-config via Helm
       command: >
-        helm install gitlab-config {{ remote_charts_dir }}/gitlab-config
+        helm upgrade --install gitlab-config {{ remote_charts_dir }}/gitlab-config
         --namespace {{ gitlab_namespace }}
         --create-namespace
         --values {{ remote_charts_dir }}/gitlab-config/values-override.yaml
-      when: not gitlab_config_installed
-
-    - name: Upgrade gitlab-config via Helm (update)
-      command: >
-        helm upgrade gitlab-config {{ remote_charts_dir }}/gitlab-config
-        --namespace {{ gitlab_namespace }}
-        --values {{ remote_charts_dir }}/gitlab-config/values-override.yaml
-      when: gitlab_config_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ gitlab_config_helm_timeout }}
 
     # -------------------------------------------------------------------------
     # VERIFY INSTALLATION

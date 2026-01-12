@@ -12,23 +12,6 @@
 
   tasks:
     # =========================================================================
-    # PRE-CHECK
-    # =========================================================================
-    - name: Check if Cilium is already installed
-      command: helm list -n {{ cilium_namespace }} -q
-      register: cilium_pre_check
-      changed_when: false
-      failed_when: false
-
-    - name: Set cilium_installed fact
-      set_fact:
-        cilium_installed: "{{ 'cilium' in cilium_pre_check.stdout }}"
-
-    - name: Show Cilium status
-      debug:
-        msg: "Cilium already installed: {{ cilium_installed }}"
-
-    # =========================================================================
     # ADD HELM REPO
     # =========================================================================
     - name: Add Cilium Helm repository
@@ -77,22 +60,18 @@
     # =========================================================================
     # INSTALL CILIUM
     # =========================================================================
-    - name: Install Cilium via Helm (first time)
+    - name: Install or upgrade Cilium via Helm
       command: >
-        helm install cilium cilium/cilium
+        helm upgrade --install cilium cilium/cilium
         --version {{ cilium_version }}
         --namespace {{ cilium_namespace }}
         --create-namespace
         --values {{ remote_charts_dir }}/cilium/values-override.yaml
-      when: not cilium_installed
-
-    - name: Upgrade Cilium via Helm (update)
-      command: >
-        helm upgrade cilium cilium/cilium
-        --version {{ cilium_version }}
-        --namespace {{ cilium_namespace }}
-        --values {{ remote_charts_dir }}/cilium/values-override.yaml
-      when: cilium_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cilium_helm_timeout }}
 
     # =========================================================================
     # WAIT FOR CILIUM TO BE READY
@@ -107,16 +86,6 @@
     # =========================================================================
     # INSTALL CILIUM-CONFIG
     # =========================================================================
-    - name: Check if cilium-config is already installed
-      command: helm list -n {{ cilium_namespace }} -q
-      register: cilium_config_check
-      changed_when: false
-      failed_when: false
-
-    - name: Set cilium_config_installed fact
-      set_fact:
-        cilium_config_installed: "{{ 'cilium-config' in cilium_config_check.stdout }}"
-
     - name: Ensure remote charts directory exists
       file:
         path: "{{ remote_charts_dir }}"
@@ -141,19 +110,16 @@
         content: |
           namespace: {{ cilium_namespace }}
 
-    - name: Install cilium-config via Helm (first time)
+    - name: Install or upgrade cilium-config via Helm
       command: >
-        helm install cilium-config {{ remote_charts_dir }}/cilium-config
+        helm upgrade --install cilium-config {{ remote_charts_dir }}/cilium-config
         --namespace {{ cilium_namespace }}
         --values {{ remote_charts_dir }}/cilium-config/values-override.yaml
-      when: not cilium_config_installed
-
-    - name: Upgrade cilium-config via Helm (update)
-      command: >
-        helm upgrade cilium-config {{ remote_charts_dir }}/cilium-config
-        --namespace {{ cilium_namespace }}
-        --values {{ remote_charts_dir }}/cilium-config/values-override.yaml
-      when: cilium_config_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cilium_config_helm_timeout }}
 
     # =========================================================================
     # VERIFICATION

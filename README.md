@@ -6,6 +6,26 @@
    2. workers
       1. Добавить все сервера, с которыми будет производится работа
 
+# Подготовка
+1. Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx)
+   1. ip addr show
+   2. Пример вывода - ниже
+   3. Надо достать ip адрес. В данном случае: `10.129.0.27`
+
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host noprefixroute 
+       valid_lft forever preferred_lft forever
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
+    link/ether d0:0d:bd:92:06:81 brd ff:ff:ff:ff:ff:ff
+    altname enp7s0
+    inet 10.129.0.27/24 metric 100 brd 10.129.0.255 scope global dynamic eth0
+       valid_lft 4294967229sec preferred_lft 4294967229sec
+    inet6 fe80::d20d:bdff:fe92:681/64 scope link 
+       valid_lft forever preferred_lft forever
+
 # Первичная инициализация кластера
 1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
    1. Инициализация ноды

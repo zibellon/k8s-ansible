@@ -10,24 +10,6 @@
 
   tasks:
     # -------------------------------------------------------------------------
-    # CHECK EXISTING INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Check if gitlab-minio is already installed
-      command: helm list -n {{ gitlab_namespace }} -q
-      register: helm_list_result
-      changed_when: false
-      failed_when: false
-
-    - name: Set gitlab_minio_installed fact
-      set_fact:
-        gitlab_minio_installed: "{{ 'gitlab-minio' in helm_list_result.stdout }}"
-
-    - name: Debug installation status
-      debug:
-        msg: "gitlab-minio installed: {{ gitlab_minio_installed }}"
-
-    # -------------------------------------------------------------------------
     # COPY LOCAL HELM CHART
     # -------------------------------------------------------------------------
 
@@ -78,27 +60,23 @@
     # INSTALL OR UPGRADE CHART
     # -------------------------------------------------------------------------
 
-    - name: Install gitlab-minio via Helm (first time)
+    - name: Install or upgrade gitlab-minio via Helm
       command: >
-        helm install gitlab-minio {{ remote_charts_dir }}/gitlab-minio
+        helm upgrade --install gitlab-minio {{ remote_charts_dir }}/gitlab-minio
         --namespace {{ gitlab_namespace }}
         --create-namespace
         --values {{ remote_charts_dir }}/gitlab-minio/values-override.yaml
-      when: not gitlab_minio_installed
-
-    - name: Upgrade gitlab-minio via Helm (update)
-      command: >
-        helm upgrade gitlab-minio {{ remote_charts_dir }}/gitlab-minio
-        --namespace {{ gitlab_namespace }}
-        --values {{ remote_charts_dir }}/gitlab-minio/values-override.yaml
-      when: gitlab_minio_installed
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ gitlab_minio_helm_timeout }}
 
     # -------------------------------------------------------------------------
     # WAIT FOR MINIO TO BE READY
     # -------------------------------------------------------------------------
     - name: Wait for MinIO deployment to be ready
       command: kubectl rollout status deployment/gitlab-minio -n {{ gitlab_namespace }} --timeout=300s
-      when: not gitlab_minio_installed
 
     # -------------------------------------------------------------------------
     # CREATE BUCKET AND ACCESS KEYS
