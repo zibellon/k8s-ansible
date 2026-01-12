@@ -9,6 +9,7 @@
 - name: Install Cilium CNI
   hosts: managers
   become: true
+  gather_facts: false
 
   tasks:
     # =========================================================================
@@ -109,6 +110,23 @@
         mode: "0644"
         content: |
           namespace: {{ cilium_namespace }}
+          nodeIps: {{
+            (
+              (groups['managers'] + groups['workers'])
+              | map('extract', hostvars, 'ansible_host')
+              | map('regex_replace', '$', '/32')
+              | list
+              +
+              (groups['managers'])
+              | map('extract', hostvars, 'api_server_advertise_address')
+              | map('regex_replace', '$', '/32')
+              | list
+              +
+              (groups['workers'])
+              | map('extract', hostvars, 'internal_ip')
+              | map('regex_replace', '$', '/32')
+              | list
+            ) | to_json }}
 
     - name: Install or upgrade cilium-config via Helm
       command: >

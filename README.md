@@ -6,11 +6,11 @@
    2. workers
       1. Добавить все сервера, с которыми будет производится работа
 
-# Подготовка
-1. Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx)
-   1. ip addr show
-   2. Пример вывода - ниже
-   3. Надо достать ip адрес. В данном случае: `10.129.0.27`
+# Подготовка_1
+## Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx)
+1. ip addr show
+2. Пример вывода - ниже
+3. Надо достать ip адрес. В данном случае: `10.129.0.27`
 
 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
@@ -25,6 +25,25 @@
        valid_lft 4294967229sec preferred_lft 4294967229sec
     inet6 fe80::d20d:bdff:fe92:681/64 scope link 
        valid_lft forever preferred_lft forever
+
+# Подготовка_2
+## занести внутренний ip адрес для worker_node в hosts.yaml
+## его надо будет разрешить в cilium-host-firewall, чтобы можно было делать join
+## есть два варианта
+1. сначала ВСЕ join -> потом install cilium
+   1. тут проблем нет
+   2. cluster-init
+   3. worker/manager join
+   4. потом install cilium
+2. install cilium -> потом join
+   1. при install cilium - устанавливается host-firewall
+   2. Входящий трафик разрешается только из известных источникой (внутри кластера, cilium.entities)
+   3. Пока-что Node не добавлена в кластер = она world (внешний мир)
+   4. Трафик запрещен на уровне Cilium.CCNP
+   5. Нужно в Cilium.CCNP добавить ВСЕ ip адреса, всех NODE которые будут внутри кластера
+   6. Добавить новый сервер в hosts.yaml
+   7. обновить Cilium.CCNP = вызвать `hosts.yaml playbooks/apps/cilium-install.yaml`
+   8. после этого сделать: `... join ...`
 
 # Первичная инициализация кластера
 1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
@@ -168,6 +187,12 @@
   - Положить сожержимое в `playbooks/apps/charts/olm-v0/templates/olm-v0-install.yaml`
   - Перенести содержимое namespace в `playbooks/apps/charts/olm-v0/namespaces.yaml` и удалить из оригинала
   - `ansible-playbook -i hosts.yaml playbooks/apps/olm-v0-install.yaml --limit k8s-manager-1`
+
+## medik8s. Установка идет через kubectl apply -f ...
+##
+- установка
+  - Много переменных в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/medik8s-install.yaml --limit k8s-manager-1`
 
 ## longhorn. yaml -> helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
