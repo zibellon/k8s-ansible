@@ -43,10 +43,17 @@
   tasks:
     # =========================================================================
     # BUILD MANAGER IPS LIST
+    # On managers: 127.0.0.1 first (local API server), then other managers
+    # On workers: only remote manager IPs
     # =========================================================================
-    - name: Build list of manager IPs
+    - name: Build list of manager IPs for HAProxy backend
       set_fact:
-        manager_ips: "{{ groups['managers'] | map('extract', hostvars, 'ansible_host') | list }}"
+        manager_ips: >-
+          {{
+            (['127.0.0.1'] if inventory_hostname in groups['managers'] else [])
+            +
+            (groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list)
+          }}
       run_once: true
 
     - name: Print manager IPs

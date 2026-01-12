@@ -163,14 +163,21 @@ EOF
 `kubectl get EndpointSlice kubernetes -o yaml`
 
 # Как проверять watchdog | softdog
-lsmod | grep soft
+`lsmod | grep soft`
+## Вывод
 softdog                12288  0
 
-cat /sys/class/watchdog/watchdog0/timeout
+`cat /sys/class/watchdog/watchdog0/timeout`
+## Вывод
 30
 
-ls -la /dev/watchdog
+`ls -la /dev/watchdog`
+## Вывод
 crw------- 1 root root 10, 130 Jan 11 20:45 /dev/watchdog
+
+# как работать с `crictl`
+`sudo crictl ps -a` - посмотреть список контейнеров (аналог - docker ps -a)
+`sudo crictl logs <CONTAINER_ID>` - посмотреть логи контейнера (поддержка --tail | -f)
 
 ## Ответ
 addressType: IPv4
