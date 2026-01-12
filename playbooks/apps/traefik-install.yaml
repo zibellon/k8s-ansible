@@ -3,6 +3,38 @@
 # Installs Traefik CRDs first, then Traefik as DaemonSet
 # =============================================================================
 
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Installing Traefik on master manager: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install Traefik via local Helm chart
+# =============================================================================
 - name: Install Traefik via local Helm chart
   hosts: managers
   become: true

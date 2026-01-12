@@ -108,18 +108,6 @@
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
 
-## cilium-post (относится к cilium). yaml -> helm
-## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-## Это просто дополнительная конфигурация
-##
-- установка
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
-  - Ставится: network-policy (для kube-system), ingress (hubble-ui)
-- обновление (Версия + конфиг)
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
-
 ## haproxy (ingress-2). Официальный helm
 ## Автоматически подхватывает конфиг, который генерируется через CRD
 ##
@@ -133,6 +121,18 @@
 - обновление (конфиг)
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+
+## cilium-post (относится к cilium). yaml -> helm
+## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Это просто дополнительная конфигурация
+##
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
+  - Ставится: network-policy (для kube-system), ingress (hubble-ui)
+- обновление (Версия + конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
 
 ## olm. yaml -> helm
 ##
