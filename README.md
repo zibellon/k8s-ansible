@@ -194,7 +194,7 @@
 - обновление (версия + конфиг)
   - Никаких переменных в `hosts.yaml`
   - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/crds.yaml
-  - Положить сожержимое в `playbooks/apps/charts/olm-v0-crds/crds.yaml`
+  - Положить сожержимое в `playbooks/apps/charts/olm-v0/crds/crds.yaml`
   - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml
   - Положить сожержимое в `playbooks/apps/charts/olm-v0/templates/olm-v0-install.yaml`
   - Перенести содержимое namespace в `playbooks/apps/charts/olm-v0/namespaces.yaml` и удалить из оригинала
@@ -276,7 +276,7 @@
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на два файла
     - `playbooks/apps/charts/argocd/templates/argocd.yaml` - все, кроме CRD
-    - `playbooks/apps/charts/argocd-crds/crds.yaml` - только CRD (там примерно 24к строк)
+    - `playbooks/apps/charts/argocd/crds/crds.yaml` - только CRD (там примерно 24к строк)
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
   - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/arocd/...`
