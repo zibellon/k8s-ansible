@@ -45,7 +45,7 @@
         crd/applications.argoproj.io
         crd/applicationsets.argoproj.io
         crd/appprojects.argoproj.io
-        --timeout=60s
+        --timeout={{ argocd_crds_timeout }}
       changed_when: false
 
     # -------------------------------------------------------------------------
@@ -94,8 +94,18 @@
     # VERIFY INSTALLATION
     # -------------------------------------------------------------------------
 
-    - name: Wait for ArgoCD server to be ready
-      command: kubectl rollout status deployment/argocd-server -n {{ argocd_namespace }} --timeout=300s
+    - name: Wait for ArgoCD StatefulSet to be ready
+      command: kubectl rollout status statefulset/argocd-application-controller -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
+
+    - name: Wait for ArgoCD Deployments to be ready
+      command: kubectl rollout status deployment/{{ item }} -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
+      loop:
+        - argocd-applicationset-controller
+        - argocd-dex-server
+        - argocd-notifications-controller
+        - argocd-redis
+        - argocd-repo-server
+        - argocd-server
 
     - name: Verify ArgoCD installation
       command: helm list -n {{ argocd_namespace }}

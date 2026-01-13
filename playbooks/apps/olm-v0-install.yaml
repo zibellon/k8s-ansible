@@ -82,7 +82,7 @@
         crd/operatorgroups.operators.coreos.com
         crd/operators.operators.coreos.com
         crd/subscriptions.operators.coreos.com
-        --timeout=60s
+        --timeout={{ olm_crds_timeout }}
       changed_when: false
 
     # -------------------------------------------------------------------------
@@ -124,16 +124,16 @@
     # -------------------------------------------------------------------------
 
     - name: Wait for OLM Operator to be ready
-      command: kubectl rollout status deployment/olm-operator -n {{ olm_namespace }} --timeout=300s
+      command: kubectl rollout status deployment/olm-operator -n {{ olm_namespace }} --timeout={{ olm_rollout_timeout }}
 
     - name: Wait for Catalog Operator to be ready
-      command: kubectl rollout status deployment/catalog-operator -n {{ olm_namespace }} --timeout=300s
+      command: kubectl rollout status deployment/catalog-operator -n {{ olm_namespace }} --timeout={{ olm_rollout_timeout }}
 
     - name: Wait for PackageServer CSV to succeed
       command: >
         kubectl wait --for=jsonpath='{.status.phase}'=Succeeded
         csv/packageserver -n {{ olm_namespace }}
-        --timeout=300s
+        --timeout={{ olm_rollout_timeout }}
       register: packageserver_wait
       retries: 3
       delay: 10

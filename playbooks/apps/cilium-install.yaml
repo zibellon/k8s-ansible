@@ -77,12 +77,18 @@
     # =========================================================================
     # WAIT FOR CILIUM TO BE READY
     # =========================================================================
-    - name: Wait for Cilium pods to be ready (timeout 5 min)
-      command: kubectl wait --for=condition=ready pod -l k8s-app=cilium -n {{ cilium_namespace }} --timeout=300s
-      register: cilium_wait
-      retries: 3
-      delay: 10
-      until: cilium_wait.rc == 0
+    - name: Wait for Cilium DaemonSet rollouts to complete
+      command: kubectl rollout status daemonset/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_daemonset_rollout_timeout }}
+      loop:
+        - cilium
+        - cilium-envoy
+
+    - name: Wait for Cilium Deployment rollouts to complete
+      command: kubectl rollout status deployment/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_deployment_rollout_timeout }}
+      loop:
+        - cilium-operator
+        - hubble-relay
+        - hubble-ui
 
     # =========================================================================
     # INSTALL CILIUM-CONFIG

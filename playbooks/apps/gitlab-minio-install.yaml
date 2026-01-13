@@ -76,7 +76,7 @@
     # WAIT FOR MINIO TO BE READY
     # -------------------------------------------------------------------------
     - name: Wait for MinIO deployment to be ready
-      command: kubectl rollout status deployment/gitlab-minio -n {{ gitlab_namespace }} --timeout=300s
+      command: kubectl rollout status deployment/gitlab-minio -n {{ gitlab_namespace }} --timeout={{ gitlab_minio_rollout_timeout }}
 
     # -------------------------------------------------------------------------
     # CREATE BUCKET AND ACCESS KEYS
@@ -101,9 +101,6 @@
         runner_cache_keys_exist: "{{ runner_cache_keys_secret_check.rc == 0 }}"
 
     # MinIO setup
-    - name: Wait for MinIO pod to be fully ready
-      command: kubectl wait --for=condition=ready pod -l app-key=gitlab-minio -n {{ gitlab_namespace }} --timeout=120s
-
     - name: Get MinIO pod name
       command: kubectl get pods -n {{ gitlab_namespace }} -l app-key=gitlab-minio -o jsonpath='{.items[0].metadata.name}'
       register: minio_pod_name

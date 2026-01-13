@@ -58,12 +58,12 @@
     # =========================================================================
     # WAIT FOR CERT-MANAGER TO BE READY
     # =========================================================================
-    - name: Wait for cert-manager pods to be ready (timeout 3 min)
-      command: kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n {{ cert_manager_namespace }} --timeout=180s
-      register: certmanager_wait
-      retries: 3
-      delay: 10
-      until: certmanager_wait.rc == 0
+    - name: Wait for cert-manager Deployments to be ready
+      command: kubectl rollout status deployment/{{ item }} -n {{ cert_manager_namespace }} --timeout={{ cert_manager_rollout_timeout }}
+      loop:
+        - cert-manager
+        - cert-manager-cainjector
+        - cert-manager-webhook
 
     # =========================================================================
     # INSTALL CERT-MANAGER-CONFIG (NetworkPolicy + ClusterIssuer)
