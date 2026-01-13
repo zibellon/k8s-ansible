@@ -22,23 +22,26 @@
        valid_lft forever preferred_lft forever
 
 # Подготовка_2
-## занести внутренний ip адрес для worker_node в hosts.yaml
+## занести внутренний `ip` в `hosts.yaml`
 ## его надо будет разрешить в cilium-host-firewall, чтобы можно было делать join
 ## есть два варианта
 1. сначала ВСЕ join -> потом install cilium
-   1. тут проблем нет
+   1. При таком сценарии проблем нет
    2. cluster-init
    3. worker/manager join
-   4. потом install cilium
+   4. install cilium + cilium-host-firewall
+   5. Все node уже внутри кластера и Cilium про них знает
 2. install cilium -> потом join
-   1. при install cilium - устанавливается host-firewall
-   2. Входящий трафик разрешается только из известных источникой (внутри кластера, cilium.entities)
-   3. Пока-что Node не добавлена в кластер = она world (внешний мир)
-   4. Трафик запрещен на уровне Cilium.CCNP
-   5. Нужно в Cilium.CCNP добавить ВСЕ ip адреса, всех NODE которые будут внутри кластера
-   6. Добавить новый сервер в hosts.yaml
-   7. обновить Cilium.CCNP = вызвать `hosts.yaml playbooks/apps/cilium-install.yaml`
-   8. после этого сделать: `... join ...`
+   1. install cilium + cilium-host-firewall
+   2. Входящий трафик разрешается только от известных источников (внутри кластера, cilium.entities)
+   3. Пока Node не добавлена в кластер = cilium видит ее как world (внешний мир)
+   4. Трафик запрещен на уровне cilium-host-firewall
+   5. при выполнении команды JOIN - timeout. Так как Node не может подключиться к кластеру
+   6. Как решать
+   7. Добавить новый сервер в hosts.yaml
+   8. Обновить cilium-host-firewall. Вызвать `hosts.yaml playbooks/apps/cilium-install.yaml`
+   9. Это автоматически добавит в cilium-host-firewall новые ip адреса и обновит политику на сервере
+   10. После этого сделать: `... join ...`
 
 # Конфигурация файла hosts.yaml
 1. Сервера
@@ -149,6 +152,9 @@
   - Параметры - перечисляются в traefik-cli (как аргументы при запуске)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+- Дополнительно
+  - Есть команда для перезапуска DaemonSet
+  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-restart.yaml`
 
 ## haproxy (ingress-2). Официальный helm
 ## Автоматически подхватывает конфиг, который генерируется через CRD
@@ -163,6 +169,9 @@
 - обновление (конфиг)
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+- Дополнительно
+  - Есть команда для перезапуска DaemonSet
+  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-restart.yaml`
 
 ## cilium-post (относится к cilium). yaml -> helm
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
