@@ -1,0 +1,38 @@
+# =============================================================================
+# Playbook: Collect network interface information from all nodes
+# Usage: ansible-playbook -i hosts.yaml node-info.yaml
+# =============================================================================
+---
+- name: Collect network interface info from all nodes
+  hosts: managers:workers
+  gather_facts: true
+
+  tasks:
+    - name: Display node network interfaces
+      debug:
+        msg: |
+          ========================================
+          Node: {{ inventory_hostname }}
+          SSH Host: {{ ansible_host }}
+          ========================================
+          {% for iface in ansible_interfaces | sort %}
+          {% set iface_data = hostvars[inventory_hostname]['ansible_' + iface] | default({}) %}
+          Interface: {{ iface }}
+            Type: {{ iface_data.type | default('unknown') }}
+            MAC: {{ iface_data.macaddress | default('N/A') }}
+            MTU: {{ iface_data.mtu | default('N/A') }}
+          {% if iface_data.ipv4 is defined %}
+            IPv4: {{ iface_data.ipv4.address }}/{{ iface_data.ipv4.netmask }}
+          {% endif %}
+          {% if iface_data.ipv4_secondaries is defined %}
+          {% for secondary in iface_data.ipv4_secondaries %}
+            IPv4 (secondary): {{ secondary.address }}/{{ secondary.netmask }}
+          {% endfor %}
+          {% endif %}
+          {% if iface_data.ipv6 is defined %}
+          {% for ipv6 in iface_data.ipv6 %}
+            IPv6: {{ ipv6.address }}/{{ ipv6.prefix }}
+          {% endfor %}
+          {% endif %}
+          {% endfor %}
+          ========================================
