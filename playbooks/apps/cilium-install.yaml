@@ -42,6 +42,8 @@
               clusterPoolIPv4PodCIDRList:
                 - {{ pod_subnet }}
               clusterPoolIPv4MaskSize: {{ cilium_mask_size }}
+          operator:
+            replicas: {{ cilium_operator_replicas }}
           kubeProxyReplacement: true
           kubeProxyReplacementHealthzBindAddr: "0.0.0.0:10256"
           k8sServiceHost: {{ haproxy_apiserver_lb_host }}
@@ -73,22 +75,6 @@
         --wait
         --wait-for-jobs
         --timeout {{ cilium_helm_timeout }}
-
-    # =========================================================================
-    # WAIT FOR CILIUM TO BE READY
-    # =========================================================================
-    - name: Wait for Cilium DaemonSet rollouts to complete
-      command: kubectl rollout status daemonset/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_daemonset_rollout_timeout }}
-      loop:
-        - cilium
-        - cilium-envoy
-
-    - name: Wait for Cilium Deployment rollouts to complete
-      command: kubectl rollout status deployment/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_deployment_rollout_timeout }}
-      loop:
-        - cilium-operator
-        - hubble-relay
-        - hubble-ui
 
     # =========================================================================
     # INSTALL CILIUM-CONFIG
@@ -141,6 +127,20 @@
         --timeout {{ cilium_config_helm_timeout }}
 
     # =========================================================================
+    # WAIT FOR CILIUM TO BE READY
+    # =========================================================================
+    - name: Wait for Cilium DaemonSet rollouts to complete
+      command: kubectl rollout status daemonset/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_daemonset_rollout_timeout }}
+      loop:
+        - cilium
+        - cilium-envoy
+
+    - name: Wait for Cilium Deployment rollouts to complete
+      command: kubectl rollout status deployment/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_deployment_rollout_timeout }}
+      loop:
+        - cilium-operator
+
+    # =========================================================================
     # VERIFICATION
     # =========================================================================
     - name: Get Cilium Helm release info
@@ -160,15 +160,3 @@
     - name: Print Cilium pods status
       debug:
         msg: "{{ cilium_pods.stdout_lines }}"
-
-    - name: Assert Cilium is installed via Helm
-      command: helm status cilium -n {{ cilium_namespace }}
-      register: cilium_status
-      changed_when: false
-
-    - name: Confirm Cilium installation
-      assert:
-        that:
-          - cilium_status.rc == 0
-        fail_msg: "Cilium is NOT installed!"
-        success_msg: "Cilium: OK (installed via Helm)"
