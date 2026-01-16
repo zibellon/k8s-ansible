@@ -51,6 +51,13 @@
    2. workers
       1. Добавить все сервера, с которыми будет производится работа
 
+# Важно про `namespace`
+## Сменить namespace МОЖНО для любых компонентов
+## Сменить namespace НЕЛЬЗЯ для. Так указано в официальной документации
+- olm
+- longhorn-system
+- argocd
+
 # Первичная инициализация кластера
 1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
    1. Инициализация ноды
