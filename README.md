@@ -156,9 +156,10 @@
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
 - обновление (конфиг)
-  - Параметры - перечисляются в traefik-cli (как аргументы при запуске)
+  - Параметры - в traefik-cli (как аргументы при запуске)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-restart.yaml --limit k8s-manager-1`
 - Дополнительно
   - Есть команда для перезапуска DaemonSet
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-restart.yaml`
@@ -176,6 +177,7 @@
 - обновление (конфиг)
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-restart.yaml --limit k8s-manager-1`
 - Дополнительно
   - Есть команда для перезапуска DaemonSet
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-restart.yaml`
@@ -213,10 +215,11 @@
   - Много переменных в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/medik8s-install.yaml --limit k8s-manager-1`
 
-## longhorn. yaml -> helm
+## longhorn. Официальный helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Автоматически подхватывает конфиг. Обновили конфиг в ConfigMap -> сразу подхватил и начал использовать
 ## `namespace: longhorn-system`, МЕНЯТЬ НЕЛЬЗЯ. Так написано в документации
+## Пример обновленного конфига - `docs/longhorn/other/...`
 ## 
 - установка
   - Параметры в `hosts.yaml`
@@ -224,16 +227,9 @@
   - Ставится: longhorn, network-policy, ingress (longhorn-ui)
 - обновление (версия)
   - Параметры в `hosts.yaml`
-  - Скачать новый yaml. https://raw.githubusercontent.com/longhorn/longhorn/v1.10.1/deploy/longhorn.yaml
-  - Удалить `kind: Namespace`. Так как - helm его сам создаст в момент установки
-  - Есть изменения в дефолтных конфигах. Их надо не потерять
-  - То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
-  - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
-  - Пример обновленного конфига - `docs/longhorn/other/...`
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
 - обновление (конфиг)
   - Параметры в `hosts.yaml`
-  - Обновить необходимые параметры в `playbooks/apps/charts/longhorn/...`
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
 
 ## gitlab-config. yaml -> helm
