@@ -1,5 +1,8 @@
 # =============================================================================
-# LONGHORN NETWORK POLICIES
+# LONGHORN HARDENED NETWORK POLICIES
+# =============================================================================
+# Complete NetworkPolicy set for longhorn-system namespace
+# Replaces the broad "allow-longhorn-internal" policy with strict per-component rules
 # =============================================================================
 
 ---
@@ -8,7 +11,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: deny-all
-  namespace: longhorn-system
+  namespace: {{ .Values.namespace }}
 spec:
   podSelector: {}
   policyTypes:
@@ -16,12 +19,12 @@ spec:
     - Egress
 
 ---
-# Allow DNS for all pods in longhorn-system namespace
+# DNS for all pods
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dns-egress
-  namespace: longhorn-system
+  namespace: {{ .Values.namespace }}
 spec:
   podSelector: {}
   policyTypes:
@@ -41,52 +44,82 @@ spec:
           port: 53
 
 # =============================================================================
-# LONGHORN INTERNAL COMMUNICATION
-# =============================================================================
-# Longhorn uses many dynamic ports for gRPC between components.
-# To simplify, allow all TCP traffic between Longhorn pods within namespace.
+# LONGHORN MANAGER (DaemonSet)
 # =============================================================================
 
 ---
-# Allow all ingress from Longhorn components to Longhorn components
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-longhorn-internal
-  namespace: longhorn-system
+  name: allow-longhorn-manager
+  namespace: {{ .Values.namespace }}
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels:
+      app: longhorn-manager
   policyTypes:
     - Ingress
     - Egress
   ingress:
-    # From any pod in longhorn-system namespace
+    # From longhorn-ui → manager API
     - from:
-        - podSelector: {}
+        - podSelector:
+            matchLabels:
+              app: longhorn-ui
+      ports:
+        - protocol: TCP
+          port: 9500
+    # From CSI controllers → manager API
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - csi-attacher
+                  - csi-provisioner
+                  - csi-resizer
+                  - csi-snapshotter
+                  - longhorn-csi-plugin
+      ports:
+        - protocol: TCP
+          port: 9500
+    # From recurring jobs → manager API
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: recurring-job.longhorn.io
+                operator: Exists
+      ports:
+        - protocol: TCP
+          port: 9500
+    # From instance-manager → gRPC callbacks
+    - from:
+        - podSelector:
+            matchLabels:
+              longhorn.io/component: instance-manager
   egress:
-    # To any pod in longhorn-system namespace
-    - to:
-        - podSelector: {}
-    # API server for all components
+    # To API server (hostNetwork)
     - ports:
         - protocol: TCP
           port: 6443
-    # Kubelet for CSI operations (hostNetwork)
-    - ports:
-        - protocol: TCP
-          port: 10250
-    # S3 endpoints (HTTPS)
+    # To S3 for backups
     - ports:
         - protocol: TCP
           port: 443
+    # To instance-manager → gRPC control
+    - to:
+        - podSelector:
+            matchLabels:
+              longhorn.io/component: instance-manager
 
 ---
-# Allow webhook ingress from API server (runs on hostNetwork)
+# Admission webhook ingress from API server (hostNetwork - no selector)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-longhorn-webhook
-  namespace: longhorn-system
+  namespace: {{ .Values.namespace }}
 spec:
   podSelector:
     matchLabels:
@@ -94,24 +127,22 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # API server calls admission webhook - allow from anywhere
     - ports:
         - protocol: TCP
-          port: 9502 # admission webhook
+          port: 9502
         - protocol: TCP
-          port: 9503 # recovery backend
+          port: 9503
 
 # =============================================================================
 # LONGHORN UI
 # =============================================================================
 
 ---
-# Allow longhorn-ui ingress from traefik
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-longhorn-ui
-  namespace: longhorn-system
+  namespace: {{ .Values.namespace }}
 spec:
   podSelector:
     matchLabels:
@@ -120,10 +151,11 @@ spec:
     - Ingress
     - Egress
   ingress:
+    # From Traefik only
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ns-traefik-master
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
           podSelector:
             matchLabels:
               app-key: traefik
@@ -132,6 +164,309 @@ spec:
         - protocol: TCP
           port: 8000
   egress:
+    # To longhorn-manager API only
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+
+# =============================================================================
+# LONGHORN DRIVER DEPLOYER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-longhorn-driver-deployer
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: longhorn-driver-deployer
+  policyTypes:
+    - Egress
+  egress:
+    # To API server only (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+
+# =============================================================================
+# INSTANCE MANAGER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-instance-manager
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      longhorn.io/component: instance-manager
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From longhorn-manager → gRPC control
+    - from:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+    # From other instance-managers → replica sync
+    - from:
+        - podSelector:
+            matchLabels:
+              longhorn.io/component: instance-manager
+    # From longhorn-csi-plugin → data path
+    - from:
+        - podSelector:
+            matchLabels:
+              app: longhorn-csi-plugin
+    # From recurring jobs → snapshot/backup operations
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: recurring-job.longhorn.io
+                operator: Exists
+  egress:
+    # To longhorn-manager → callbacks
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+    # To other instance-managers → replica sync
+    - to:
+        - podSelector:
+            matchLabels:
+              longhorn.io/component: instance-manager
+
+# =============================================================================
+# CSI ATTACHER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-csi-attacher
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: csi-attacher
+  policyTypes:
+    - Egress
+  egress:
+    # To API server (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To longhorn-manager API
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+
+# =============================================================================
+# CSI PROVISIONER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-csi-provisioner
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: csi-provisioner
+  policyTypes:
+    - Egress
+  egress:
+    # To API server (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To longhorn-manager API
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+
+# =============================================================================
+# CSI RESIZER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-csi-resizer
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: csi-resizer
+  policyTypes:
+    - Egress
+  egress:
+    # To API server (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To longhorn-manager API
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+
+# =============================================================================
+# CSI SNAPSHOTTER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-csi-snapshotter
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: csi-snapshotter
+  policyTypes:
+    - Egress
+  egress:
+    # To API server (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To longhorn-manager API
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+
+# =============================================================================
+# CSI PLUGIN (DaemonSet)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-csi-plugin
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: longhorn-csi-plugin
+  policyTypes:
+    - Egress
+  egress:
+    # To API server (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To kubelet for volume mount (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 10250
+    # To instance-manager → data path
+    - to:
+        - podSelector:
+            matchLabels:
+              longhorn.io/component: instance-manager
+    # To longhorn-manager → volume operations
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+
+# =============================================================================
+# RECURRING JOBS (backup, snapshot, trim, etc.)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-recurring-jobs
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: recurring-job.longhorn.io
+        operator: Exists
+  policyTypes:
+    - Egress
+  egress:
+    # To API server (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To longhorn-manager
+    - to:
+        - podSelector:
+            matchLabels:
+              app: longhorn-manager
+      ports:
+        - protocol: TCP
+          port: 9500
+    # To instance-manager for snapshot/backup
+    - to:
+        - podSelector:
+            matchLabels:
+              longhorn.io/component: instance-manager
+    # To S3 for backup
+    - ports:
+        - protocol: TCP
+          port: 443
+
+# =============================================================================
+# HELM UPGRADE HOOKS (pre-upgrade, post-upgrade jobs)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-longhorn-upgrade-jobs
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: longhorn
+  policyTypes:
+    - Egress
+  egress:
+    # To API server (hostNetwork)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To longhorn-manager API
     - to:
         - podSelector:
             matchLabels:
@@ -145,12 +480,11 @@ spec:
 # =============================================================================
 
 ---
-# Allow ACME solver pod ingress from traefik
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-acme-solver
-  namespace: longhorn-system
+  namespace: {{ .Values.namespace }}
 spec:
   podSelector:
     matchLabels:
@@ -162,7 +496,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ns-traefik-master
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
           podSelector:
             matchLabels:
               app-key: traefik
@@ -180,7 +514,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ns-longhorn-system-allow-traefik
-  namespace: ns-traefik-master
+  namespace: {{ .Values.traefik.namespace }}
 spec:
   podSelector:
     matchLabels:
@@ -193,7 +527,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: longhorn-system
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
           podSelector:
             matchLabels:
               app: longhorn-ui
@@ -204,7 +538,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: longhorn-system
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
           podSelector:
             matchLabels:
               app-key: acme-solver-traefik-master
