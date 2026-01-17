@@ -174,3 +174,12 @@ kubectl apply -f longhorn.yaml
 vim longhorn-ingress.yaml
 ## Активация
 kubectl apply -f longhorn-ingress.yaml
+
+## HELM
+helm repo add longhorn https://charts.longhorn.io --force-update
+
+helm repo update
+
+helm template longhorn longhorn/longhorn \
+   --namespace longhorn-system \
+   --values ./lh-values.yaml > lh-install.yaml
