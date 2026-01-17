@@ -116,6 +116,7 @@
 ## Если изменились конфиги = ConfigMap, Cilium их не подцепит автоматически
 ## Если посмотреть в то, что генерируется при `helm template` - то у Deployment/DaemonSet - нет checksum, на основе ConfigMap
 ## Можно сделать предположение, что для применения новых ConfigMap - надо сделать ручной restart
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/cilium-install.yaml`
 ##
 - установка
   - Только параметры в `hosts.yaml`
@@ -131,6 +132,7 @@
   - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
 
 ## cert-manager. Официальный helm
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/cert-manager-install.yaml`
 ## 
 - установка
   - Только параметры в `hosts.yaml`
@@ -145,6 +147,7 @@
 
 ## traefik (ingress). yaml -> helm
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/traefik-install.yaml`
 ##
 - установка
   - Параметры в `hosts.yaml`
@@ -166,6 +169,7 @@
 
 ## haproxy (ingress-2). Официальный helm
 ## Автоматически подхватывает конфиг, который генерируется через CRD
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/haproxy-install.yaml`
 ##
 - установка
   - Только параметры в `hosts.yaml`
@@ -195,6 +199,7 @@
   - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
 
 ## olm. yaml -> helm
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/olm-v0-install.yaml`
 ##
 - установка
   - Никаких переменных в `hosts.yaml`
@@ -220,6 +225,7 @@
 ## Автоматически подхватывает конфиг. Обновили конфиг в ConfigMap -> сразу подхватил и начал использовать
 ## `namespace: longhorn-system`, МЕНЯТЬ НЕЛЬЗЯ. Так написано в документации
 ## Пример обновленного конфига - `docs/longhorn/other/...`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/longhorn-install.yaml`
 ## 
 - установка
   - Параметры в `hosts.yaml`
@@ -270,6 +276,8 @@
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Нет автоматической обработки новых конфигов (Как у Cilium). То есть: После обновления конфигов - ручной restart
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/argocd-install.yaml`
+##
 - установка
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
