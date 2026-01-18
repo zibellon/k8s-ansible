@@ -1,6 +1,9 @@
 # =============================================================================
-# OLM V0 INSTALLATION VIA LOCAL HELM CHART
-# Installs OLM CRDs first, then OLM components
+# Install OLM v0 via local Helm chart
+# Steps:
+#   1. olm-v0/pre: No resources (README only)
+#   2. olm-v0/install: CRDs + Namespaces + Helm chart
+#   3. olm-v0/post: No resources (README only)
 # =============================================================================
 
 ---
@@ -41,37 +44,41 @@
   gather_facts: false
 
   tasks:
-    # -------------------------------------------------------------------------
-    # COPY LOCAL HELM CHARTS
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # STEP 1: OLM-V0/PRE (No resources)
+    # =========================================================================
 
-    - name: Ensure remote charts directory exists
+    - name: "[olm-v0-pre] Skip - no pre-install resources"
+      debug:
+        msg: "olm-v0/pre: No resources to install"
+
+    # =========================================================================
+    # STEP 2: OLM-V0/INSTALL (CRDs + Namespaces + Helm)
+    # =========================================================================
+
+    - name: "[olm-v0-install] Ensure remote charts directory exists"
       file:
         path: "{{ remote_charts_dir }}"
         state: directory
         mode: "0755"
 
-    # olm-v0 chart (includes crds/ subdirectory)
-    - name: Remove old olm-v0 chart from remote server
+    - name: "[olm-v0-install] Remove old chart from remote server"
       file:
-        path: "{{ remote_charts_dir }}/olm-v0"
+        path: "{{ remote_charts_dir }}/olm-v0/install"
         state: absent
 
-    - name: Copy olm-v0 chart to remote server
+    - name: "[olm-v0-install] Copy chart to server"
       copy:
-        src: "{{ playbook_dir }}/charts/olm-v0/"
-        dest: "{{ remote_charts_dir }}/olm-v0/"
+        src: "{{ playbook_dir }}/charts/olm-v0/install/"
+        dest: "{{ remote_charts_dir }}/olm-v0/install/"
         mode: "0644"
 
-    # -------------------------------------------------------------------------
-    # INSTALL OLM CRDs FIRST
-    # -------------------------------------------------------------------------
-
-    - name: Install olm-v0 CRDs via kubectl
-      command: kubectl create -f {{ remote_charts_dir }}/olm-v0/crds/crds.yaml
+    # Install CRDs first
+    - name: "[olm-v0-install] Install OLM CRDs via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/olm-v0/install/crds/crds.yaml
       failed_when: false
 
-    - name: Wait for OLM CRDs to be established
+    - name: "[olm-v0-install] Wait for OLM CRDs to be established"
       command: >
         kubectl wait --for=condition=Established
         crd/catalogsources.operators.coreos.com
@@ -85,33 +92,24 @@
         --timeout={{ olm_crds_timeout }}
       changed_when: false
 
-    # -------------------------------------------------------------------------
-    # CREATE OLM NAMESPACES
-    # -------------------------------------------------------------------------
+    # Create namespaces
+    - name: "[olm-v0-install] Apply OLM namespaces (olm + operators)"
+      command: kubectl apply -f {{ remote_charts_dir }}/olm-v0/install/namespaces.yaml
 
-    - name: Apply OLM namespaces (olm + operators)
-      command: kubectl apply -f {{ remote_charts_dir }}/olm-v0/namespaces.yaml
-
-    # -------------------------------------------------------------------------
-    # CREATE VALUES FILE
-    # -------------------------------------------------------------------------
-
-    - name: Create olm-v0 values file
+    # Create values file
+    - name: "[olm-v0-install] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/olm-v0/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/olm-v0/install/values-override.yaml"
         mode: "0644"
         content: |
           replicas: 1
 
-    # -------------------------------------------------------------------------
-    # INSTALL OR UPGRADE OLM
-    # -------------------------------------------------------------------------
-
-    - name: Install or upgrade olm-v0 via Helm
+    # Install Helm chart
+    - name: "[olm-v0-install] Install or upgrade via Helm (skip-crds)"
       command: >
-        helm upgrade --install olm-v0 {{ remote_charts_dir }}/olm-v0
+        helm upgrade --install olm-v0 {{ remote_charts_dir }}/olm-v0/install
         --namespace {{ olm_namespace }}
-        --values {{ remote_charts_dir }}/olm-v0/values-override.yaml
+        --values {{ remote_charts_dir }}/olm-v0/install/values-override.yaml
         --skip-crds
         --cleanup-on-fail
         --atomic
@@ -119,16 +117,17 @@
         --wait-for-jobs
         --timeout {{ olm_helm_timeout }}
 
-    # -------------------------------------------------------------------------
-    # VERIFY INSTALLATION
-    # -------------------------------------------------------------------------
-    - name: Wait for Catalog Operator to be ready
+    # =========================================================================
+    # WAIT FOR OLM TO BE READY
+    # =========================================================================
+
+    - name: "[olm-v0-install] Wait for OLM operators to be ready"
       command: kubectl rollout status deployment/{{ item }} -n {{ olm_namespace }} --timeout={{ olm_rollout_timeout }}
       loop:
         - olm-operator
         - catalog-operator
 
-    - name: Wait for PackageServer CSV to succeed
+    - name: "[olm-v0-install] Wait for PackageServer CSV to succeed"
       command: >
         kubectl wait --for=jsonpath='{.status.phase}'=Succeeded
         csv/packageserver -n {{ olm_namespace }}
@@ -138,11 +137,27 @@
       delay: 10
       until: packageserver_wait.rc == 0
 
-    - name: Verify OLM installation
+    # =========================================================================
+    # STEP 3: OLM-V0/POST (No resources)
+    # =========================================================================
+
+    - name: "[olm-v0-post] Skip - no post-install resources"
+      debug:
+        msg: "olm-v0/post: No resources to install"
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: Get OLM Helm releases
       command: helm list -n {{ olm_namespace }}
-      register: helm_verify
+      register: helm_list
       changed_when: false
 
-    - name: Show OLM Helm release
+    - name: Print Helm releases
       debug:
-        var: helm_verify.stdout_lines
+        msg: "{{ helm_list.stdout_lines }}"
+
+    - name: Installation complete
+      debug:
+        msg: "olm-v0: OK"
