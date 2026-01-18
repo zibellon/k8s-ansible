@@ -1,6 +1,9 @@
 # =============================================================================
-# TRAEFIK INSTALLATION VIA LOCAL HELM CHART
-# Installs Traefik CRDs first, then Traefik as DaemonSet
+# Install Traefik via local Helm chart
+# Steps:
+#   1. traefik/pre: NetworkPolicies for traefik namespace
+#   2. CRDs (kubectl create -f) + traefik/install (DaemonSet, Services, RBAC)
+#   3. traefik/post: Middlewares + Dashboard Ingress
 # =============================================================================
 
 ---
@@ -41,39 +44,70 @@
   gather_facts: false
 
   tasks:
-    # -------------------------------------------------------------------------
-    # COPY LOCAL HELM CHARTS
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # STEP 1: TRAEFIK/PRE (NetworkPolicies)
+    # =========================================================================
 
-    - name: Ensure remote charts directory exists
+    - name: "[traefik-pre] Ensure remote charts directory exists"
       file:
         path: "{{ remote_charts_dir }}"
         state: directory
         mode: "0755"
 
-    # traefik chart (includes crds/ subdirectory)
-    - name: Remove old traefik chart from remote server
+    - name: "[traefik-pre] Remove old chart from remote server"
       file:
-        path: "{{ remote_charts_dir }}/traefik"
+        path: "{{ remote_charts_dir }}/traefik/pre"
         state: absent
 
-    - name: Copy traefik chart to remote server
+    - name: "[traefik-pre] Copy chart to server"
       copy:
-        src: "{{ playbook_dir }}/charts/traefik/"
-        dest: "{{ remote_charts_dir }}/traefik/"
+        src: "{{ playbook_dir }}/charts/traefik/pre/"
+        dest: "{{ remote_charts_dir }}/traefik/pre/"
         mode: "0644"
 
-    # -------------------------------------------------------------------------
-    # INSTALL TRAEFIK CRDs FIRST
-    # -------------------------------------------------------------------------
+    - name: "[traefik-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/traefik/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ traefik_namespace }}
 
-    - name: Install traefik CRDs via kubectl
-      command: kubectl create -f {{ remote_charts_dir }}/traefik/crds/crds.yaml
+    - name: "[traefik-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install traefik-pre {{ remote_charts_dir }}/traefik/pre
+        --namespace {{ traefik_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/traefik/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ traefik_helm_timeout }}
+
+    # =========================================================================
+    # STEP 2: CRDs + TRAEFIK/INSTALL
+    # =========================================================================
+
+    - name: "[traefik-install] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/traefik/install"
+        state: absent
+
+    - name: "[traefik-install] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/traefik/install/"
+        dest: "{{ remote_charts_dir }}/traefik/install/"
+        mode: "0644"
+
+    # Install CRDs separately via kubectl
+    - name: "[traefik-install] Install Traefik CRDs via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/traefik/install/crds/crds.yaml
       failed_when: false
 
-    - name: Wait for Traefik CRDs to be established
+    - name: "[traefik-install] Wait for CRDs to be established"
       command: >
-        kubectl wait --for=condition=Established crd/ingressroutes.traefik.io
+        kubectl wait --for=condition=Established
+        crd/ingressroutes.traefik.io
         crd/ingressroutetcps.traefik.io
         crd/ingressrouteudps.traefik.io
         crd/middlewares.traefik.io
@@ -86,18 +120,59 @@
         --timeout={{ traefik_crds_timeout }}
       changed_when: false
 
-    # -------------------------------------------------------------------------
-    # CREATE VALUES FILE
-    # -------------------------------------------------------------------------
-
-    - name: Create traefik values file
+    - name: "[traefik-install] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/traefik/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/traefik/install/values-override.yaml"
         mode: "0644"
         content: |
           namespace: {{ traefik_namespace }}
           daemonsetName: {{ traefik_daemonset_name }}
           image: "traefik:v{{ traefik_version }}"
+          ingressClass: {{ traefik_ingress_class }}
+          entryPoints:
+            web: {{ traefik_web_entrypoint }}
+            websecure: {{ traefik_websecure_entrypoint }}
+
+    - name: "[traefik-install] Install or upgrade via Helm (skip-crds)"
+      command: >
+        helm upgrade --install traefik {{ remote_charts_dir }}/traefik/install
+        --namespace {{ traefik_namespace }}
+        --values {{ remote_charts_dir }}/traefik/install/values-override.yaml
+        --skip-crds
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ traefik_helm_timeout }}
+
+    # =========================================================================
+    # WAIT FOR TRAEFIK TO BE READY
+    # =========================================================================
+
+    - name: "[traefik-install] Wait for DaemonSet to be ready"
+      command: kubectl rollout status daemonset/{{ traefik_daemonset_name }} -n {{ traefik_namespace }} --timeout={{ traefik_rollout_timeout }}
+
+    # =========================================================================
+    # STEP 3: TRAEFIK/POST (Middlewares + Dashboard Ingress)
+    # =========================================================================
+
+    - name: "[traefik-post] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/traefik/post"
+        state: absent
+
+    - name: "[traefik-post] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/traefik/post/"
+        dest: "{{ remote_charts_dir }}/traefik/post/"
+        mode: "0644"
+
+    - name: "[traefik-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/traefik/post/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ traefik_namespace }}
           ingressClass: {{ traefik_ingress_class }}
           entryPoints:
             web: {{ traefik_web_entrypoint }}
@@ -109,35 +184,30 @@
             clusterIssuer: {{ cert_manager_cluster_issuer }}
             vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
 
-    # -------------------------------------------------------------------------
-    # INSTALL OR UPGRADE TRAEFIK
-    # -------------------------------------------------------------------------
-
-    - name: Install or upgrade traefik via Helm
+    - name: "[traefik-post] Install or upgrade via Helm"
       command: >
-        helm upgrade --install traefik {{ remote_charts_dir }}/traefik
+        helm upgrade --install traefik-post {{ remote_charts_dir }}/traefik/post
         --namespace {{ traefik_namespace }}
-        --create-namespace
-        --values {{ remote_charts_dir }}/traefik/values-override.yaml
-        --skip-crds
+        --values {{ remote_charts_dir }}/traefik/post/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
         --wait-for-jobs
         --timeout {{ traefik_helm_timeout }}
 
-    # -------------------------------------------------------------------------
-    # VERIFY INSTALLATION
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
 
-    - name: Wait for Traefik DaemonSet to be ready
-      command: kubectl rollout status daemonset/{{ traefik_daemonset_name }} -n {{ traefik_namespace }} --timeout={{ traefik_rollout_timeout }}
-
-    - name: Verify Traefik installation
+    - name: Get Traefik Helm releases
       command: helm list -n {{ traefik_namespace }}
-      register: helm_verify
+      register: helm_list
       changed_when: false
 
-    - name: Show Traefik Helm release
+    - name: Print Helm releases
       debug:
-        var: helm_verify.stdout_lines
+        msg: "{{ helm_list.stdout_lines }}"
+
+    - name: Installation complete
+      debug:
+        msg: "traefik-pre + traefik + traefik-post: OK"
