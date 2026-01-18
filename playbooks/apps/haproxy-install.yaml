@@ -1,7 +1,9 @@
 # =============================================================================
-# Install HAProxy + haproxy-config
-# - haproxy: official Helm chart from haproxytech
-# - haproxy-config: local chart (Global, Defaults, NetworkPolicies)
+# Install HAProxy via Helm
+# Steps:
+#   1. haproxy/pre: NetworkPolicies for haproxy namespace
+#   2. Official haproxytech/kubernetes-ingress chart
+#   3. haproxy/post: Global + Defaults configuration
 # =============================================================================
 
 ---
@@ -42,27 +44,57 @@
   gather_facts: false
 
   tasks:
-    # -------------------------------------------------------------------------
-    # ADD HELM REPOSITORY
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # STEP 1: HAPROXY/PRE (NetworkPolicies)
+    # =========================================================================
 
-    - name: Add haproxy Helm repository
-      command: helm repo add haproxytech https://haproxytech.github.io/helm-charts --force-update
-
-    - name: Update Helm repositories
-      command: helm repo update
-
-    # -------------------------------------------------------------------------
-    # CREATE VALUES FILE
-    # -------------------------------------------------------------------------
-
-    - name: Ensure haproxy charts directory exists
+    - name: "[haproxy-pre] Ensure remote charts directory exists"
       file:
-        path: "{{ remote_charts_dir }}/haproxy"
+        path: "{{ remote_charts_dir }}"
         state: directory
         mode: "0755"
 
-    - name: Create haproxy values file
+    - name: "[haproxy-pre] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/haproxy/pre"
+        state: absent
+
+    - name: "[haproxy-pre] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/haproxy/pre/"
+        dest: "{{ remote_charts_dir }}/haproxy/pre/"
+        mode: "0644"
+
+    - name: "[haproxy-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/haproxy/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ haproxy_namespace }}
+
+    - name: "[haproxy-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install haproxy-pre {{ remote_charts_dir }}/haproxy/pre
+        --namespace {{ haproxy_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/haproxy/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ haproxy_helm_timeout }}
+
+    # =========================================================================
+    # STEP 2: OFFICIAL HAPROXYTECH/KUBERNETES-INGRESS
+    # =========================================================================
+
+    - name: "[haproxy-install] Add haproxy Helm repository"
+      command: helm repo add haproxytech https://haproxytech.github.io/helm-charts --force-update
+
+    - name: "[haproxy-install] Update Helm repositories"
+      command: helm repo update
+
+    - name: "[haproxy-install] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/haproxy/values-override.yaml"
         mode: "0644"
@@ -94,15 +126,10 @@
           serviceAccount:
             create: true
 
-    # -------------------------------------------------------------------------
-    # INSTALL HAPROXY
-    # -------------------------------------------------------------------------
-
-    - name: Install or upgrade HAProxy via Helm
+    - name: "[haproxy-install] Install or upgrade HAProxy via Helm"
       command: >
         helm upgrade --install haproxy-ingress haproxytech/kubernetes-ingress
         --namespace {{ haproxy_namespace }}
-        --create-namespace
         --version {{ haproxy_chart_version }}
         --values {{ remote_charts_dir }}/haproxy/values-override.yaml
         --cleanup-on-fail
@@ -111,11 +138,7 @@
         --wait-for-jobs
         --timeout {{ haproxy_helm_timeout }}
 
-    # -------------------------------------------------------------------------
-    # WAIT FOR HAPROXY CRDs
-    # -------------------------------------------------------------------------
-
-    - name: Wait for HAProxy CRDs to be established
+    - name: "[haproxy-install] Wait for HAProxy CRDs to be established"
       command: >
         kubectl wait --for=condition=Established
         crd/backends.ingress.v1.haproxy.org
@@ -125,66 +148,56 @@
         --timeout={{ haproxy_crds_timeout }}
       changed_when: false
 
-    # -------------------------------------------------------------------------
-    # INSTALL HAPROXY-CONFIG (Global, Defaults, NetworkPolicies)
-    # -------------------------------------------------------------------------
+    - name: "[haproxy-install] Wait for DaemonSet to be ready"
+      command: kubectl rollout status daemonset/{{ haproxy_daemonset_name }} -n {{ haproxy_namespace }} --timeout={{ haproxy_rollout_timeout }}
 
-    - name: Ensure haproxy-config charts directory exists
-      file:
-        path: "{{ remote_charts_dir }}/haproxy-config"
-        state: directory
-        mode: "0755"
+    # =========================================================================
+    # STEP 3: HAPROXY/POST (Global + Defaults config)
+    # =========================================================================
 
-    - name: Remove old haproxy-config chart from remote server
+    - name: "[haproxy-post] Remove old chart from remote server"
       file:
-        path: "{{ remote_charts_dir }}/haproxy-config"
+        path: "{{ remote_charts_dir }}/haproxy/post"
         state: absent
 
-    - name: Copy haproxy-config chart to remote server
+    - name: "[haproxy-post] Copy chart to server"
       copy:
-        src: "{{ playbook_dir }}/charts/haproxy-config/"
-        dest: "{{ remote_charts_dir }}/haproxy-config/"
+        src: "{{ playbook_dir }}/charts/haproxy/post/"
+        dest: "{{ remote_charts_dir }}/haproxy/post/"
         mode: "0644"
 
-    - name: Create haproxy-config values file
+    - name: "[haproxy-post] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/haproxy-config/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/haproxy/post/values-override.yaml"
         mode: "0644"
         content: |
           namespace: {{ haproxy_namespace }}
           ingressClass: {{ haproxy_ingress_class }}
 
-    - name: Install or upgrade haproxy-config via Helm
+    - name: "[haproxy-post] Install or upgrade via Helm"
       command: >
-        helm upgrade --install haproxy-config {{ remote_charts_dir }}/haproxy-config
+        helm upgrade --install haproxy-post {{ remote_charts_dir }}/haproxy/post
         --namespace {{ haproxy_namespace }}
-        --values {{ remote_charts_dir }}/haproxy-config/values-override.yaml
+        --values {{ remote_charts_dir }}/haproxy/post/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
         --wait-for-jobs
         --timeout {{ haproxy_config_helm_timeout }}
 
-    # -------------------------------------------------------------------------
-    # VERIFY INSTALLATION
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
 
-    - name: Wait for HAProxy DaemonSet to be ready
-      command: kubectl rollout status daemonset/{{ haproxy_daemonset_name }} -n {{ haproxy_namespace }} --timeout={{ haproxy_rollout_timeout }}
-
-    # -------------------------------------------------------------------------
-    # VERIFY INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Verify HAProxy Helm releases
+    - name: Get HAProxy Helm releases
       command: helm list -n {{ haproxy_namespace }}
-      register: helm_verify
+      register: helm_list
       changed_when: false
 
-    - name: Show Helm releases
+    - name: Print Helm releases
       debug:
-        var: helm_verify.stdout_lines
+        msg: "{{ helm_list.stdout_lines }}"
 
-    - name: Confirm installation
+    - name: Installation complete
       debug:
-        msg: "haproxy-ingress + haproxy-config: OK"
+        msg: "haproxy-pre + haproxy-ingress + haproxy-post: OK"
