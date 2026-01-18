@@ -1,7 +1,9 @@
 # =============================================================================
-# Install Longhorn + longhorn-config
-# - longhorn: official Helm chart from longhorn
-# - longhorn-config: local chart (NetworkPolicies, StorageClasses, Ingress, S3 Secret)
+# Install Longhorn via Helm
+# Steps:
+#   1. longhorn/pre: NetworkPolicies for longhorn namespace
+#   2. Official longhorn/longhorn chart
+#   3. longhorn/post: StorageClasses, Ingress, S3 Backup Secret
 # =============================================================================
 
 ---
@@ -42,27 +44,59 @@
   gather_facts: false
 
   tasks:
-    # -------------------------------------------------------------------------
-    # ADD HELM REPOSITORY
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # STEP 1: LONGHORN/PRE (NetworkPolicies)
+    # =========================================================================
 
-    - name: Add Longhorn Helm repository
-      command: helm repo add longhorn https://charts.longhorn.io --force-update
-
-    - name: Update Helm repositories
-      command: helm repo update
-
-    # -------------------------------------------------------------------------
-    # CREATE VALUES FILE FOR OFFICIAL LONGHORN
-    # -------------------------------------------------------------------------
-
-    - name: Ensure longhorn charts directory exists
+    - name: "[longhorn-pre] Ensure remote charts directory exists"
       file:
-        path: "{{ remote_charts_dir }}/longhorn"
+        path: "{{ remote_charts_dir }}"
         state: directory
         mode: "0755"
 
-    - name: Create longhorn values file
+    - name: "[longhorn-pre] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/longhorn/pre"
+        state: absent
+
+    - name: "[longhorn-pre] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/longhorn/pre/"
+        dest: "{{ remote_charts_dir }}/longhorn/pre/"
+        mode: "0644"
+
+    - name: "[longhorn-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/longhorn/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ longhorn_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    - name: "[longhorn-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install longhorn-pre {{ remote_charts_dir }}/longhorn/pre
+        --namespace {{ longhorn_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/longhorn/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ longhorn_helm_timeout }}
+
+    # =========================================================================
+    # STEP 2: OFFICIAL LONGHORN/LONGHORN
+    # =========================================================================
+
+    - name: "[longhorn-install] Add Longhorn Helm repository"
+      command: helm repo add longhorn https://charts.longhorn.io --force-update
+
+    - name: "[longhorn-install] Update Helm repositories"
+      command: helm repo update
+
+    - name: "[longhorn-install] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/longhorn/values-override.yaml"
         mode: "0644"
@@ -93,15 +127,10 @@
             replicas: 1
             affinity: {}
 
-    # -------------------------------------------------------------------------
-    # INSTALL LONGHORN
-    # -------------------------------------------------------------------------
-
-    - name: Install or upgrade Longhorn via Helm
+    - name: "[longhorn-install] Install or upgrade Longhorn via Helm"
       command: >
         helm upgrade --install longhorn longhorn/longhorn
         --namespace {{ longhorn_namespace }}
-        --create-namespace
         --version {{ longhorn_chart_version }}
         --values {{ remote_charts_dir }}/longhorn/values-override.yaml
         --cleanup-on-fail
@@ -110,11 +139,7 @@
         --wait-for-jobs
         --timeout {{ longhorn_helm_timeout }}
 
-    # -------------------------------------------------------------------------
-    # WAIT FOR LONGHORN CRDs
-    # -------------------------------------------------------------------------
-
-    - name: Wait for Longhorn CRDs to be established
+    - name: "[longhorn-install] Wait for Longhorn CRDs to be established"
       command: >
         kubectl wait --for=condition=Established
         crd/backingimagedatasources.longhorn.io
@@ -142,30 +167,30 @@
         --timeout={{ longhorn_crds_timeout }}
       changed_when: false
 
-    # -------------------------------------------------------------------------
-    # INSTALL LONGHORN-CONFIG (NetworkPolicies, StorageClasses, Ingress, S3 Secret)
-    # -------------------------------------------------------------------------
+    - name: "[longhorn-install] Wait for Longhorn manager DaemonSet to be ready"
+      command: kubectl rollout status daemonset/longhorn-manager -n {{ longhorn_namespace }} --timeout={{ longhorn_manager_rollout_timeout }}
 
-    - name: Ensure longhorn-config charts directory exists
-      file:
-        path: "{{ remote_charts_dir }}/longhorn-config"
-        state: directory
-        mode: "0755"
+    - name: "[longhorn-install] Wait for Longhorn UI deployment to be ready"
+      command: kubectl rollout status deployment/longhorn-ui -n {{ longhorn_namespace }} --timeout={{ longhorn_ui_rollout_timeout }}
 
-    - name: Remove old longhorn-config chart from remote server
+    # =========================================================================
+    # STEP 3: LONGHORN/POST (StorageClasses + Ingress + S3)
+    # =========================================================================
+
+    - name: "[longhorn-post] Remove old chart from remote server"
       file:
-        path: "{{ remote_charts_dir }}/longhorn-config"
+        path: "{{ remote_charts_dir }}/longhorn/post"
         state: absent
 
-    - name: Copy longhorn-config chart to remote server
+    - name: "[longhorn-post] Copy chart to server"
       copy:
-        src: "{{ playbook_dir }}/charts/longhorn-config/"
-        dest: "{{ remote_charts_dir }}/longhorn-config/"
+        src: "{{ playbook_dir }}/charts/longhorn/post/"
+        dest: "{{ remote_charts_dir }}/longhorn/post/"
         mode: "0644"
 
-    - name: Create longhorn-config values file
+    - name: "[longhorn-post] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/longhorn-config/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/longhorn/post/values-override.yaml"
         mode: "0644"
         content: |
           namespace: {{ longhorn_namespace }}
@@ -183,39 +208,29 @@
             secretAccessKey: "{{ longhorn_s3_secret_access_key }}"
             endpoint: "{{ longhorn_s3_endpoint }}"
 
-    - name: Install or upgrade longhorn-config via Helm
+    - name: "[longhorn-post] Install or upgrade via Helm"
       command: >
-        helm upgrade --install longhorn-config {{ remote_charts_dir }}/longhorn-config
+        helm upgrade --install longhorn-post {{ remote_charts_dir }}/longhorn/post
         --namespace {{ longhorn_namespace }}
-        --values {{ remote_charts_dir }}/longhorn-config/values-override.yaml
+        --values {{ remote_charts_dir }}/longhorn/post/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
         --wait-for-jobs
         --timeout {{ longhorn_config_helm_timeout }}
 
-    # -------------------------------------------------------------------------
-    # WAIT FOR LONGHORN TO BE READY
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
 
-    - name: Wait for Longhorn manager DaemonSet to be ready
-      command: kubectl rollout status daemonset/longhorn-manager -n {{ longhorn_namespace }} --timeout={{ longhorn_manager_rollout_timeout }}
-
-    - name: Wait for Longhorn UI deployment to be ready
-      command: kubectl rollout status deployment/longhorn-ui -n {{ longhorn_namespace }} --timeout={{ longhorn_ui_rollout_timeout }}
-
-    # -------------------------------------------------------------------------
-    # VERIFY INSTALLATION
-    # -------------------------------------------------------------------------
-
-    - name: Verify Longhorn Helm releases
+    - name: Get Longhorn Helm releases
       command: helm list -n {{ longhorn_namespace }}
-      register: helm_verify
+      register: helm_list
       changed_when: false
 
-    - name: Show Helm releases
+    - name: Print Helm releases
       debug:
-        var: helm_verify.stdout_lines
+        msg: "{{ helm_list.stdout_lines }}"
 
     - name: Show Longhorn access info
       debug:
@@ -223,6 +238,6 @@
           - "Longhorn UI: https://{{ longhorn_ui_domain }}"
           - "Longhorn UI VPN-only: {{ longhorn_ui_vpn_only_enabled }}"
 
-    - name: Confirm installation
+    - name: Installation complete
       debug:
-        msg: "longhorn + longhorn-config: OK"
+        msg: "longhorn-pre + longhorn + longhorn-post: OK"
