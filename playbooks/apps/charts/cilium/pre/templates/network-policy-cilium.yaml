@@ -1,3 +1,7 @@
+# =============================================================================
+# CILIUM NAMESPACE NETWORK POLICIES
+# =============================================================================
+
 # Default deny
 ---
 apiVersion: networking.k8s.io/v1
@@ -11,36 +15,34 @@ spec:
     - Ingress
     - Egress
 
-# CoreDNS
+# DNS for all pods in cilium namespace
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-coredns
+  name: allow-dns-egress
   namespace: {{ .Values.namespace }}
 spec:
-  podSelector:
-    matchLabels:
-      k8s-app: kube-dns
+  podSelector: {}
   policyTypes:
-    - Ingress
     - Egress
-  ingress:
-    # DNS queries from all pods in cluster
-    - ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
   egress:
-    # Upstream DNS servers (external)
-    - ports:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
           port: 53
-        - protocol: TCP
-          port: 6443 # API server for service discovery
+
+# =============================================================================
+# HUBBLE COMPONENTS
+# =============================================================================
 
 # Hubble Relay
 ---
@@ -69,10 +71,6 @@ spec:
           port: 4222
   egress:
     - ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
         - protocol: TCP
           port: 4244 # hubble-peer (cilium agents)
         - protocol: TCP
@@ -93,7 +91,16 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - ports:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
         - protocol: TCP
           port: 8081
   egress:
@@ -105,19 +112,14 @@ spec:
         - protocol: TCP
           port: 4245
     - ports:
-        - protocol: UDP
-          port: 53
         - protocol: TCP
-          port: 53
-        - protocol: TCP
-          port: 6443
+          port: 6443 # API server
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge)
 # =============================================================================
 
 ---
-# Allow ACME solver pod ingress from traefik
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -144,14 +146,14 @@ spec:
           port: 8089
 
 # =============================================================================
-# TRAEFIK EGRESS TO cilium
+# TRAEFIK EGRESS TO CILIUM (in traefik namespace)
 # =============================================================================
 
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: "ns-{{ .Values.namespace }}-allow-traefik"
+  name: ns-cilium-allow-traefik
   namespace: {{ .Values.traefik.namespace }}
 spec:
   podSelector:
@@ -172,7 +174,7 @@ spec:
       ports:
         - protocol: TCP
           port: 8081
-    # ACME solver in Cilium
+    # ACME solver in Cilium namespace
     - to:
         - namespaceSelector:
             matchLabels:
@@ -184,4 +186,3 @@ spec:
       ports:
         - protocol: TCP
           port: 8089
-

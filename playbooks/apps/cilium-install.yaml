@@ -1,11 +1,45 @@
 # =============================================================================
-# Install Cilium CNI via Helm on manager node
-# Replaces kube-proxy, enables Hubble and host firewall
-# Includes: cilium-config (NetworkPolicies)
-# For Hubble UI Ingress use: cilium-hubble-install.yaml
+# Install Cilium CNI via Helm
+# Steps:
+#   1. cilium-pre: NetworkPolicies for kube-system and cilium namespaces
+#   2. Official Cilium Helm chart (replaces kube-proxy, enables Hubble, host firewall)
+#   3. cilium-post: CiliumClusterwideNetworkPolicy for host protection
+#
+# For Hubble UI Ingress use separate playbook: cilium-hubble-install.yaml
 # =============================================================================
 
 ---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Installing Cilium on master manager: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install Cilium
+# =============================================================================
 - name: Install Cilium CNI
   hosts: managers
   become: true
@@ -13,26 +47,66 @@
 
   tasks:
     # =========================================================================
-    # ADD HELM REPO
+    # STEP 1: CILIUM-PRE (NetworkPolicies)
     # =========================================================================
-    - name: Add Cilium Helm repository
+
+    - name: "[cilium-pre] Ensure remote charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: "[cilium-pre] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/cilium/pre"
+        state: absent
+
+    - name: "[cilium-pre] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/cilium/pre/"
+        dest: "{{ remote_charts_dir }}/cilium/pre/"
+        mode: "0644"
+
+    - name: "[cilium-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/cilium/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ cilium_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    - name: "[cilium-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install cilium-pre {{ remote_charts_dir }}/cilium/pre
+        --namespace {{ cilium_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/cilium/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cilium_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 2: OFFICIAL CILIUM HELM
+    # =========================================================================
+
+    - name: "[cilium] Add Cilium Helm repository"
       command: helm repo add cilium https://helm.cilium.io/ --force-update
       failed_when: false
 
-    - name: Update Helm repositories
+    - name: "[cilium] Update Helm repositories"
       command: helm repo update
       changed_when: false
 
-    # =========================================================================
-    # CREATE VALUES FILE
-    # =========================================================================
-    - name: Ensure cilium charts directory exists
+    - name: "[cilium] Ensure charts directory exists"
       file:
         path: "{{ remote_charts_dir }}/cilium"
         state: directory
         mode: "0755"
 
-    - name: Create cilium values file
+    - name: "[cilium] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/cilium/values-override.yaml"
         mode: "0644"
@@ -60,15 +134,11 @@
           hostFirewall:
             enabled: true
 
-    # =========================================================================
-    # INSTALL CILIUM
-    # =========================================================================
-    - name: Install or upgrade Cilium via Helm
+    - name: "[cilium] Install or upgrade via Helm"
       command: >
         helm upgrade --install cilium cilium/cilium
         --version {{ cilium_version }}
         --namespace {{ cilium_namespace }}
-        --create-namespace
         --values {{ remote_charts_dir }}/cilium/values-override.yaml
         --cleanup-on-fail
         --atomic
@@ -79,7 +149,8 @@
     # =========================================================================
     # WAIT FOR CILIUM CRDs
     # =========================================================================
-    - name: Wait for Cilium CRDs to be established
+
+    - name: "[cilium] Wait for CRDs to be established"
       command: >
         kubectl wait --for=condition=Established
         crd/ciliumcidrgroups.cilium.io
@@ -96,31 +167,40 @@
       changed_when: false
 
     # =========================================================================
-    # INSTALL CILIUM-CONFIG
+    # WAIT FOR CILIUM PODS
     # =========================================================================
-    - name: Ensure remote charts directory exists
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
 
-    - name: Remove old cilium-config chart from remote server
+    - name: "[cilium] Wait for DaemonSet rollouts"
+      command: kubectl rollout status daemonset/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_daemonset_rollout_timeout }}
+      loop:
+        - cilium
+        - cilium-envoy
+
+    - name: "[cilium] Wait for Deployment rollouts"
+      command: kubectl rollout status deployment/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_deployment_rollout_timeout }}
+      loop:
+        - cilium-operator
+
+    # =========================================================================
+    # STEP 3: CILIUM-POST (CiliumClusterwideNetworkPolicy)
+    # =========================================================================
+
+    - name: "[cilium-post] Remove old chart from remote server"
       file:
-        path: "{{ remote_charts_dir }}/cilium-config"
+        path: "{{ remote_charts_dir }}/cilium/post"
         state: absent
 
-    - name: Copy cilium-config chart to server
+    - name: "[cilium-post] Copy chart to server"
       copy:
-        src: "{{ playbook_dir }}/charts/cilium-config/"
-        dest: "{{ remote_charts_dir }}/cilium-config/"
+        src: "{{ playbook_dir }}/charts/cilium/post/"
+        dest: "{{ remote_charts_dir }}/cilium/post/"
         mode: "0644"
 
-    - name: Create cilium-config values file
+    - name: "[cilium-post] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/cilium-config/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/cilium/post/values-override.yaml"
         mode: "0644"
         content: |
-          namespace: {{ cilium_namespace }}
           nodeIps: {{
             (
               (groups['managers'] + groups['workers'])
@@ -134,11 +214,11 @@
               | list
             ) | to_json }}
 
-    - name: Install or upgrade cilium-config via Helm
+    - name: "[cilium-post] Install or upgrade via Helm"
       command: >
-        helm upgrade --install cilium-config {{ remote_charts_dir }}/cilium-config
+        helm upgrade --install cilium-post {{ remote_charts_dir }}/cilium/post
         --namespace {{ cilium_namespace }}
-        --values {{ remote_charts_dir }}/cilium-config/values-override.yaml
+        --values {{ remote_charts_dir }}/cilium/post/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
@@ -146,28 +226,15 @@
         --timeout {{ cilium_config_helm_timeout }}
 
     # =========================================================================
-    # WAIT FOR CILIUM TO BE READY
-    # =========================================================================
-    - name: Wait for Cilium DaemonSet rollouts to complete
-      command: kubectl rollout status daemonset/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_daemonset_rollout_timeout }}
-      loop:
-        - cilium
-        - cilium-envoy
-
-    - name: Wait for Cilium Deployment rollouts to complete
-      command: kubectl rollout status deployment/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_deployment_rollout_timeout }}
-      loop:
-        - cilium-operator
-
-    # =========================================================================
     # VERIFICATION
     # =========================================================================
-    - name: Get Cilium Helm release info
+
+    - name: Get Cilium Helm releases
       command: helm list -n {{ cilium_namespace }}
       register: helm_list
       changed_when: false
 
-    - name: Print Helm release info
+    - name: Print Helm releases
       debug:
         msg: "{{ helm_list.stdout_lines }}"
 
@@ -179,3 +246,7 @@
     - name: Print Cilium pods status
       debug:
         msg: "{{ cilium_pods.stdout_lines }}"
+
+    - name: Installation complete
+      debug:
+        msg: "cilium-pre + cilium + cilium-post: OK"
