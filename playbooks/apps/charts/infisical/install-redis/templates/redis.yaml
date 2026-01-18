@@ -1,0 +1,111 @@
+# =============================================================================
+# INFISICAL REDIS (redis-stack)
+# =============================================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-infisical-redis-data
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.redis.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.storageSize }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: infisical-secret-redis
+  namespace: {{ .Values.namespace }}
+type: Opaque
+stringData:
+  REDIS_ARGS: {{ .Values.redis.args | quote }}
+  REDIS_PASSWORD: {{ .Values.redis.password | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infisical-redis
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app-key: infisical-redis
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: infisical-redis
+        app-env: prod
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      automountServiceAccountToken: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: pvc-infisical-redis-data
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: REDIS_ARGS
+              valueFrom:
+                secretKeyRef:
+                  name: infisical-secret-redis
+                  key: REDIS_ARGS
+          ports:
+            - name: tcp
+              containerPort: {{ .Values.redis.port }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+              subPath: redisdata
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-infisical-redis
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app-key: infisical-redis
+    app-env: prod
+  ports:
+    - port: {{ .Values.redis.port }}
+      targetPort: {{ .Values.redis.port }}
+      protocol: TCP
+      name: tcp

@@ -1,0 +1,530 @@
+# =============================================================================
+# Install Infisical
+# - pre: NetworkPolicies
+# - install-pg: PostgreSQL
+# - install-redis: Redis
+# - install-secrets: Secrets for official Helm chart
+# - install-infisical: Official Helm chart
+# - post: Ingress
+# =============================================================================
+
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/infisical-install.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Installing Infisical on master manager: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install Infisical via Helm
+# =============================================================================
+- name: Install Infisical via Helm
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # STEP 1: GENERATE/RETRIEVE SECRETS (IDEMPOTENT)
+    # =========================================================================
+
+    # -------------------------------------------------------------------------
+    # Check existing secrets
+    # -------------------------------------------------------------------------
+
+    - name: "[secrets] Check if PostgreSQL secret exists"
+      command: kubectl get secret infisical-secret-postgres -n {{ infisical_namespace }} -o jsonpath='{.data.POSTGRES_PASSWORD}'
+      register: existing_pg_secret
+      failed_when: false
+      changed_when: false
+
+    - name: "[secrets] Check if Redis secret exists"
+      command: kubectl get secret infisical-secret-redis -n {{ infisical_namespace }} -o jsonpath='{.data.REDIS_ARGS}'
+      register: existing_redis_secret
+      failed_when: false
+      changed_when: false
+
+    - name: "[secrets] Check if Infisical secrets exist"
+      command: kubectl get secret infisical-secrets -n {{ infisical_namespace }} -o jsonpath='{.data.AUTH_SECRET}'
+      register: existing_infisical_secret
+      failed_when: false
+      changed_when: false
+
+    # -------------------------------------------------------------------------
+    # Decode existing secrets if they exist
+    # -------------------------------------------------------------------------
+
+    - name: "[secrets] Decode existing PostgreSQL password"
+      set_fact:
+        infisical_pg_password: "{{ existing_pg_secret.stdout | b64decode }}"
+      when: existing_pg_secret.rc == 0 and existing_pg_secret.stdout != ""
+
+    - name: "[secrets] Decode existing Redis password"
+      command: kubectl get secret infisical-secret-redis -n {{ infisical_namespace }} -o jsonpath='{.data.REDIS_PASSWORD}'
+      register: existing_redis_password_b64
+      when: existing_redis_secret.rc == 0 and existing_redis_secret.stdout != ""
+      changed_when: false
+
+    - name: "[secrets] Set existing Redis password and rebuild ARGS"
+      set_fact:
+        infisical_redis_password: "{{ existing_redis_password_b64.stdout | b64decode }}"
+        infisical_redis_args: "--save 60 1 --requirepass {{ existing_redis_password_b64.stdout | b64decode }}"
+      when: existing_redis_secret.rc == 0 and existing_redis_secret.stdout != ""
+
+    - name: "[secrets] Decode existing AUTH_SECRET"
+      command: kubectl get secret infisical-secrets -n {{ infisical_namespace }} -o jsonpath='{.data.AUTH_SECRET}'
+      register: existing_auth_secret_b64
+      when: existing_infisical_secret.rc == 0 and existing_infisical_secret.stdout != ""
+      changed_when: false
+
+    - name: "[secrets] Decode existing ENCRYPTION_KEY"
+      command: kubectl get secret infisical-secrets -n {{ infisical_namespace }} -o jsonpath='{.data.ENCRYPTION_KEY}'
+      register: existing_encryption_key_b64
+      when: existing_infisical_secret.rc == 0 and existing_infisical_secret.stdout != ""
+      changed_when: false
+
+    - name: "[secrets] Set existing Infisical secrets"
+      set_fact:
+        infisical_auth_secret: "{{ existing_auth_secret_b64.stdout | b64decode }}"
+        infisical_encryption_key: "{{ existing_encryption_key_b64.stdout | b64decode }}"
+      when: existing_infisical_secret.rc == 0 and existing_infisical_secret.stdout != ""
+
+    # -------------------------------------------------------------------------
+    # Generate new secrets if they don't exist
+    # -------------------------------------------------------------------------
+
+    - name: "[secrets] Generate new PostgreSQL password"
+      command: openssl rand -base64 24
+      register: new_pg_password
+      when: infisical_pg_password is not defined
+      changed_when: false
+
+    - name: "[secrets] Set new PostgreSQL password"
+      set_fact:
+        infisical_pg_password: "{{ new_pg_password.stdout }}"
+      when: new_pg_password is not skipped
+
+    - name: "[secrets] Generate new Redis password"
+      command: openssl rand -base64 24
+      register: new_redis_password
+      when: infisical_redis_password is not defined
+      changed_when: false
+
+    - name: "[secrets] Set new Redis password and ARGS"
+      set_fact:
+        infisical_redis_password: "{{ new_redis_password.stdout }}"
+        infisical_redis_args: "--save 60 1 --requirepass {{ new_redis_password.stdout }}"
+      when: new_redis_password is not skipped
+
+    - name: "[secrets] Generate new AUTH_SECRET"
+      command: openssl rand -hex 32
+      register: new_auth_secret
+      when: infisical_auth_secret is not defined
+      changed_when: false
+
+    - name: "[secrets] Set new AUTH_SECRET"
+      set_fact:
+        infisical_auth_secret: "{{ new_auth_secret.stdout }}"
+      when: new_auth_secret is not skipped
+
+    - name: "[secrets] Generate new ENCRYPTION_KEY"
+      command: openssl rand -hex 16
+      register: new_encryption_key
+      when: infisical_encryption_key is not defined
+      changed_when: false
+
+    - name: "[secrets] Set new ENCRYPTION_KEY"
+      set_fact:
+        infisical_encryption_key: "{{ new_encryption_key.stdout }}"
+      when: new_encryption_key is not skipped
+
+    # =========================================================================
+    # STEP 2: INSTALL PRE (NetworkPolicies)
+    # =========================================================================
+
+    - name: "[infisical-pre] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/pre"
+        state: directory
+        mode: "0755"
+
+    - name: "[infisical-pre] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/pre"
+        state: absent
+
+    - name: "[infisical-pre] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/infisical/pre/"
+        dest: "{{ remote_charts_dir }}/infisical/pre/"
+        mode: "0644"
+
+    - name: "[infisical-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/infisical/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ infisical_namespace }}
+          postgres:
+            port: {{ infisical_postgres_port }}
+          redis:
+            port: {{ infisical_redis_port }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    - name: "[infisical-pre] Install via Helm"
+      command: >
+        helm upgrade --install infisical-pre {{ remote_charts_dir }}/infisical/pre
+        --namespace {{ infisical_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/infisical/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ infisical_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 3: INSTALL PostgreSQL
+    # =========================================================================
+
+    - name: "[infisical-install-pg] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-pg"
+        state: directory
+        mode: "0755"
+
+    - name: "[infisical-install-pg] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-pg"
+        state: absent
+
+    - name: "[infisical-install-pg] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/infisical/install-pg/"
+        dest: "{{ remote_charts_dir }}/infisical/install-pg/"
+        mode: "0644"
+
+    - name: "[infisical-install-pg] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/infisical/install-pg/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ infisical_namespace }}
+          postgres:
+            image: {{ infisical_postgres_image }}
+            port: {{ infisical_postgres_port }}
+            storageClass: {{ infisical_storage_class }}
+            storageSize: {{ infisical_postgres_storage_size }}
+            username: "{{ infisical_postgres_username }}"
+            password: "{{ infisical_pg_password }}"
+
+    - name: "[infisical-install-pg] Install via Helm"
+      command: >
+        helm upgrade --install infisical-install-pg {{ remote_charts_dir }}/infisical/install-pg
+        --namespace {{ infisical_namespace }}
+        --values {{ remote_charts_dir }}/infisical/install-pg/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ infisical_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 4: WAIT FOR PostgreSQL + CREATE DATABASE
+    # =========================================================================
+
+    - name: "[infisical-install-pg] Wait for deployment to be ready"
+      command: kubectl rollout status deployment/infisical-postgres -n {{ infisical_namespace }} --timeout={{ infisical_postgres_rollout_timeout }}
+
+    - name: "[infisical-install-pg] Create database"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical-postgres -- \
+          psql -U {{ infisical_postgres_username }} -c "CREATE DATABASE {{ infisical_postgres_database }};" || true
+      register: create_db_result
+      changed_when: "'CREATE DATABASE' in create_db_result.stdout"
+
+    - name: "[infisical-install-pg] Grant privileges on database"
+      command: >
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical-postgres --
+        psql -U {{ infisical_postgres_username }} -c "GRANT ALL PRIVILEGES ON DATABASE {{ infisical_postgres_database }} TO {{ infisical_postgres_username }};"
+
+    # =========================================================================
+    # STEP 5: INSTALL Redis
+    # =========================================================================
+
+    - name: "[infisical-install-redis] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-redis"
+        state: directory
+        mode: "0755"
+
+    - name: "[infisical-install-redis] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-redis"
+        state: absent
+
+    - name: "[infisical-install-redis] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/infisical/install-redis/"
+        dest: "{{ remote_charts_dir }}/infisical/install-redis/"
+        mode: "0644"
+
+    - name: "[infisical-install-redis] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/infisical/install-redis/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ infisical_namespace }}
+          redis:
+            image: {{ infisical_redis_image }}
+            port: {{ infisical_redis_port }}
+            storageClass: {{ infisical_storage_class }}
+            storageSize: {{ infisical_redis_storage_size }}
+            args: "{{ infisical_redis_args }}"
+            password: "{{ infisical_redis_password }}"
+
+    - name: "[infisical-install-redis] Install via Helm"
+      command: >
+        helm upgrade --install infisical-install-redis {{ remote_charts_dir }}/infisical/install-redis
+        --namespace {{ infisical_namespace }}
+        --values {{ remote_charts_dir }}/infisical/install-redis/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ infisical_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 6: WAIT FOR Redis
+    # =========================================================================
+
+    - name: "[infisical-install-redis] Wait for deployment to be ready"
+      command: kubectl rollout status deployment/infisical-redis -n {{ infisical_namespace }} --timeout={{ infisical_redis_rollout_timeout }}
+
+    # =========================================================================
+    # STEP 7: INSTALL SECRETS (for official Helm chart)
+    # =========================================================================
+
+    - name: "[infisical-install-secrets] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-secrets"
+        state: directory
+        mode: "0755"
+
+    - name: "[infisical-install-secrets] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-secrets"
+        state: absent
+
+    - name: "[infisical-install-secrets] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/infisical/install-secrets/"
+        dest: "{{ remote_charts_dir }}/infisical/install-secrets/"
+        mode: "0644"
+
+    - name: "[infisical-install-secrets] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/infisical/install-secrets/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ infisical_namespace }}
+          dnsDomain: {{ dns_domain }}
+          postgres:
+            username: "{{ infisical_postgres_username }}"
+            password: "{{ infisical_pg_password }}"
+            port: {{ infisical_postgres_port }}
+            database: "{{ infisical_postgres_database }}"
+          redis:
+            password: "{{ infisical_redis_password }}"
+            port: {{ infisical_redis_port }}
+          infisicalSecrets:
+            authSecret: "{{ infisical_auth_secret }}"
+            encryptionKey: "{{ infisical_encryption_key }}"
+            siteUrl: "https://{{ infisical_domain }}"
+
+    - name: "[infisical-install-secrets] Install via Helm"
+      command: >
+        helm upgrade --install infisical-install-secrets {{ remote_charts_dir }}/infisical/install-secrets
+        --namespace {{ infisical_namespace }}
+        --values {{ remote_charts_dir }}/infisical/install-secrets/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ infisical_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 8: INSTALL OFFICIAL INFISICAL HELM CHART
+    # =========================================================================
+
+    - name: "[infisical] Add Helm repository"
+      command: helm repo add infisical-helm-charts https://dl.cloudsmith.io/public/infisical/helm-charts/helm/charts/ --force-update
+
+    - name: "[infisical] Update Helm repositories"
+      command: helm repo update
+
+    - name: "[infisical] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-infisical"
+        state: directory
+        mode: "0755"
+
+    - name: "[infisical] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/infisical/install-infisical/values-override.yaml"
+        mode: "0644"
+        content: |
+          # Disable built-in PostgreSQL (using external)
+          postgresql:
+            enabled: false
+
+          # Disable built-in Redis (using external)
+          redis:
+            enabled: false
+
+          # Disable built-in Ingress (using post chart)
+          ingress:
+            enabled: false
+
+          # Infisical settings
+          infisical:
+            enabled: true
+            name: infisical
+            replicaCount: {{ infisical_replicas }}
+            image:
+              repository: infisical/infisical
+              tag: "{{ infisical_chart_version }}"
+              pullPolicy: IfNotPresent
+            kubeSecretRef: "infisical-secrets"
+            serviceAccount:
+              create: true
+              annotations: {}
+            service:
+              type: ClusterIP
+            resources: {}
+            nodeSelector: {}
+
+    - name: "[infisical] Install via Helm"
+      command: >
+        helm upgrade --install infisical infisical-helm-charts/infisical-standalone
+        --namespace {{ infisical_namespace }}
+        --values {{ remote_charts_dir }}/infisical/install-infisical/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ infisical_helm_timeout }}
+
+    # =========================================================================
+    # STEP 9: WAIT FOR INFISICAL
+    # =========================================================================
+
+    - name: "[infisical] Wait for deployment to be ready"
+      command: kubectl rollout status deployment/infisical -n {{ infisical_namespace }} --timeout={{ infisical_rollout_timeout }}
+
+    # =========================================================================
+    # STEP 10: INSTALL POST (Ingress)
+    # =========================================================================
+
+    - name: "[infisical-post] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/post"
+        state: directory
+        mode: "0755"
+
+    - name: "[infisical-post] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/post"
+        state: absent
+
+    - name: "[infisical-post] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/infisical/post/"
+        dest: "{{ remote_charts_dir }}/infisical/post/"
+        mode: "0644"
+
+    - name: "[infisical-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/infisical/post/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ infisical_namespace }}
+          ingress:
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            domain: {{ infisical_domain }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            secretName: {{ infisical_https_secret_name }}
+            vpnOnlyEnabled: {{ infisical_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    - name: "[infisical-post] Install via Helm"
+      command: >
+        helm upgrade --install infisical-post {{ remote_charts_dir }}/infisical/post
+        --namespace {{ infisical_namespace }}
+        --values {{ remote_charts_dir }}/infisical/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ infisical_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 11: VERIFY AND OUTPUT CREDENTIALS
+    # =========================================================================
+
+    - name: "[verify] Check Helm releases"
+      command: helm list -n {{ infisical_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: "[verify] Show Helm releases"
+      debug:
+        var: helm_verify.stdout_lines
+
+    - name: "[credentials] Show all generated credentials"
+      debug:
+        msg:
+          - "=============================================="
+          - "INFISICAL CREDENTIALS"
+          - "=============================================="
+          - "PostgreSQL:"
+          - "  Username: postgres"
+          - "  Password: {{ infisical_pg_password }}"
+          - "  Database: infisical"
+          - "  Service: svc-infisical-postgres.{{ infisical_namespace }}.svc.{{ dns_domain }}:{{ infisical_postgres_port }}"
+          - ""
+          - "Redis:"
+          - "  Password: {{ infisical_redis_password }}"
+          - "  REDIS_ARGS: {{ infisical_redis_args }}"
+          - "  Service: svc-infisical-redis.{{ infisical_namespace }}.svc.{{ dns_domain }}:{{ infisical_redis_port }}"
+          - ""
+          - "Infisical:"
+          - "  AUTH_SECRET: {{ infisical_auth_secret }}"
+          - "  ENCRYPTION_KEY: {{ infisical_encryption_key }}"
+          - "  UI: https://{{ infisical_domain }}"
+          - "  VPN-only: {{ infisical_vpn_only_enabled }}"
+          - "=============================================="
+
+    - name: "[verify] Confirm installation"
+      debug:
+        msg: "Infisical installation: OK"

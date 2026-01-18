@@ -1,0 +1,234 @@
+# =============================================================================
+# INFISICAL NETWORK POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in infisical namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# POSTGRESQL POLICIES
+# =============================================================================
+
+---
+# PostgreSQL: allow ingress from Infisical
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app-key: infisical-postgres
+      app-env: prod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: infisical
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+
+# =============================================================================
+# REDIS POLICIES
+# =============================================================================
+
+---
+# Redis: allow ingress from Infisical
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app-key: infisical-redis
+      app-env: prod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: infisical
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+
+# =============================================================================
+# INFISICAL POLICIES
+# =============================================================================
+
+---
+# Infisical: allow egress to PostgreSQL, Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-infisical-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: infisical
+  policyTypes:
+    - Egress
+  egress:
+    # To PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app-key: infisical-postgres
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
+    # To Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app-key: infisical-redis
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+    # HTTPS for external services (SMTP, OAuth, etc)
+    - ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Infisical: allow ingress from Traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-infisical-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: infisical
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app-key: acme-solver-traefik-master
+      app-env: prod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# TRAEFIK EGRESS TO INFISICAL (in traefik namespace)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ns-infisical-allow-traefik
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app-key: traefik
+      app-env: prod
+  policyTypes:
+    - Egress
+  egress:
+    # To Infisical
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: infisical
+      ports:
+        - protocol: TCP
+          port: 8080
+    # ACME solver in infisical namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app-key: acme-solver-traefik-master
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8089

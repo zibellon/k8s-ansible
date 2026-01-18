@@ -1,0 +1,120 @@
+# =============================================================================
+# INFISICAL POSTGRESQL
+# =============================================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-infisical-postgres-data
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.postgres.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storageSize }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: infisical-secret-postgres
+  namespace: {{ .Values.namespace }}
+type: Opaque
+stringData:
+  POSTGRES_USER: {{ .Values.postgres.username | quote }}
+  POSTGRES_PASSWORD: {{ .Values.postgres.password | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infisical-postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app-key: infisical-postgres
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: infisical-postgres
+        app-env: prod
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      automountServiceAccountToken: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: pg-data
+          persistentVolumeClaim:
+            claimName: pvc-infisical-postgres-data
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: infisical-secret-postgres
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: infisical-secret-postgres
+                  key: POSTGRES_PASSWORD
+          ports:
+            - name: tcp
+              containerPort: {{ .Values.postgres.port }}
+          volumeMounts:
+            - name: pg-data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /var/run/postgresql
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-infisical-postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app-key: infisical-postgres
+    app-env: prod
+  ports:
+    - port: {{ .Values.postgres.port }}
+      targetPort: {{ .Values.postgres.port }}
+      protocol: TCP
+      name: tcp
