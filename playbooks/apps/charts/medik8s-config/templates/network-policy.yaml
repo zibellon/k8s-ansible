@@ -1,0 +1,162 @@
+# =============================================================================
+# MEDIK8S NETWORK POLICIES
+# Node Health Check Operator + Self Node Remediation
+# =============================================================================
+
+---
+# Default deny all traffic in operators namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: medik8s-deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: medik8s
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for medik8s pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: medik8s-allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: medik8s
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# NODE HEALTH CHECK CONTROLLER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-nhc-controller
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: node-healthcheck-operator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Metrics scraping
+    - ports:
+        - protocol: TCP
+          port: 8443
+    # Health probe
+    - ports:
+        - protocol: TCP
+          port: 8081
+  egress:
+    # API server for watching nodes and creating remediation CRs
+    - ports:
+        - protocol: TCP
+          port: 6443
+
+# =============================================================================
+# SELF NODE REMEDIATION CONTROLLER
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-snr-controller
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: self-node-remediation
+      app.kubernetes.io/component: manager
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Metrics scraping
+    - ports:
+        - protocol: TCP
+          port: 8443
+    # Health probe
+    - ports:
+        - protocol: TCP
+          port: 8081
+    # Webhook (validating/mutating)
+    - ports:
+        - protocol: TCP
+          port: 9443
+  egress:
+    # API server
+    - ports:
+        - protocol: TCP
+          port: 6443
+
+# =============================================================================
+# SELF NODE REMEDIATION DAEMONSET (runs on every node)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-snr-daemonset
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: self-node-remediation
+      app.kubernetes.io/component: agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Peer-to-peer health checks from other SNR agents
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: self-node-remediation
+              app.kubernetes.io/component: agent
+      ports:
+        - protocol: TCP
+          port: 30001
+    # Metrics scraping
+    - ports:
+        - protocol: TCP
+          port: 9440
+  egress:
+    # API server
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # Peer-to-peer health checks to other SNR agents
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: self-node-remediation
+              app.kubernetes.io/component: agent
+      ports:
+        - protocol: TCP
+          port: 30001

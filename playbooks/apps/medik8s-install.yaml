@@ -1,0 +1,301 @@
+# =============================================================================
+# MEDIK8S INSTALLATION (NO HELM)
+# Installs Node Health Check and Self Node Remediation operators via OLM
+# Requires: OLM v0 installed (olm-v0-install.yaml)
+# =============================================================================
+
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/medik8s-install.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Installing medik8s: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install medik8s
+# =============================================================================
+- name: Install medik8s
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure medik8s manifests directory exists
+      file:
+        path: "{{ remote_charts_dir }}/medik8s"
+        state: directory
+        mode: "0755"
+
+    # -------------------------------------------------------------------------
+    # APPLY OLM SUBSCRIPTIONS
+    # -------------------------------------------------------------------------
+
+    - name: Create Node Health Check Subscription manifest
+      copy:
+        dest: "{{ remote_charts_dir }}/medik8s/subscription-nhc.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: node-healthcheck-operator
+            namespace: {{ olm_operators_namespace }}
+          spec:
+            channel: stable
+            name: node-healthcheck-operator
+            source: operatorhubio-catalog
+            sourceNamespace: {{ olm_namespace }}
+
+    - name: Create Self Node Remediation Subscription manifest
+      copy:
+        dest: "{{ remote_charts_dir }}/medik8s/subscription-snr.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: self-node-remediation
+            namespace: {{ olm_operators_namespace }}
+          spec:
+            channel: stable
+            name: self-node-remediation
+            source: operatorhubio-catalog
+            sourceNamespace: {{ olm_namespace }}
+
+    - name: Apply Node Health Check Subscription
+      command: kubectl apply -f {{ remote_charts_dir }}/medik8s/subscription-nhc.yaml
+
+    - name: Apply Self Node Remediation Subscription
+      command: kubectl apply -f {{ remote_charts_dir }}/medik8s/subscription-snr.yaml
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR OPERATORS CSV TO BE READY
+    # -------------------------------------------------------------------------
+
+    - name: Wait for Self Node Remediation CSV to be ready
+      command: >
+        kubectl get csv -n {{ olm_operators_namespace }}
+        -l operators.coreos.com/self-node-remediation.{{ olm_operators_namespace }}=
+        -o jsonpath='{.items[0].status.phase}'
+      register: snr_csv_status
+      until: snr_csv_status.stdout == "Succeeded"
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Wait for Node Health Check CSV to be ready
+      command: >
+        kubectl get csv -n {{ olm_operators_namespace }}
+        -l operators.coreos.com/node-healthcheck-operator.{{ olm_operators_namespace }}=
+        -o jsonpath='{.items[0].status.phase}'
+      register: nhc_csv_status
+      until: nhc_csv_status.stdout == "Succeeded"
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Show CSV status
+      debug:
+        msg: "SNR CSV: {{ snr_csv_status.stdout }}, NHC CSV: {{ nhc_csv_status.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # INSTALL MEDIK8S-CONFIG (NetworkPolicies)
+    # -------------------------------------------------------------------------
+
+    - name: Ensure medik8s-config charts directory exists
+      file:
+        path: "{{ remote_charts_dir }}/medik8s-config"
+        state: directory
+        mode: "0755"
+
+    - name: Remove old medik8s-config chart from remote server
+      file:
+        path: "{{ remote_charts_dir }}/medik8s-config"
+        state: absent
+
+    - name: Copy medik8s-config chart to remote server
+      copy:
+        src: "{{ playbook_dir }}/charts/medik8s-config/"
+        dest: "{{ remote_charts_dir }}/medik8s-config/"
+        mode: "0644"
+
+    - name: Create medik8s-config values file
+      copy:
+        dest: "{{ remote_charts_dir }}/medik8s-config/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ olm_operators_namespace }}
+
+    - name: Install or upgrade medik8s-config via Helm
+      command: >
+        helm upgrade --install medik8s-config {{ remote_charts_dir }}/medik8s-config
+        --namespace {{ olm_operators_namespace }}
+        --values {{ remote_charts_dir }}/medik8s-config/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ medik8s_config_helm_timeout }}
+
+    # -------------------------------------------------------------------------
+    # APPLY MEDIK8S CONFIG
+    # -------------------------------------------------------------------------
+
+    - name: Create SelfNodeRemediationConfig manifest
+      copy:
+        dest: "{{ remote_charts_dir }}/medik8s/self-node-remediation-config.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: self-node-remediation.medik8s.io/v1alpha1
+          kind: SelfNodeRemediationConfig
+          metadata:
+            name: self-node-remediation-config
+            namespace: {{ olm_operators_namespace }}
+          spec:
+            watchdogFilePath: "{{ medik8s_watchdog_file_path }}"
+            apiCheckInterval: "{{ medik8s_api_check_interval }}"
+            apiServerTimeout: "{{ medik8s_api_server_timeout }}"
+            maxApiErrorThreshold: {{ medik8s_max_api_error_threshold }}
+            peerDialTimeout: "{{ medik8s_peer_dial_timeout }}"
+            peerRequestTimeout: "{{ medik8s_peer_request_timeout }}"
+            peerUpdateInterval: "{{ medik8s_peer_update_interval }}"
+            safeTimeToAssumeNodeRebootedSeconds: {{ medik8s_safe_time_to_assume_rebooted }}
+            isSoftwareRebootEnabled: true
+
+    - name: Create SelfNodeRemediationTemplate manifest
+      copy:
+        dest: "{{ remote_charts_dir }}/medik8s/self-node-remediation-template.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: self-node-remediation.medik8s.io/v1alpha1
+          kind: SelfNodeRemediationTemplate
+          metadata:
+            name: self-node-remediation-template
+            namespace: {{ olm_operators_namespace }}
+          spec:
+            template:
+              spec:
+                remediationStrategy: {{ medik8s_remediation_strategy }}
+
+    - name: Create NodeHealthCheck manifest for workers
+      copy:
+        dest: "{{ remote_charts_dir }}/medik8s/nhc-workers.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: remediation.medik8s.io/v1alpha1
+          kind: NodeHealthCheck
+          metadata:
+            name: nhc-workers
+          spec:
+            # Select worker nodes only (exclude control-plane/master)
+            selector:
+              matchExpressions:
+                - key: node-role.kubernetes.io/worker
+                  operator: Exists
+            minHealthy: "{{ medik8s_nhc_workers_min_healthy }}"
+            unhealthyConditions:
+              - type: Ready
+                status: "False"
+                duration: {{ medik8s_nhc_unhealthy_duration }}
+              - type: Ready
+                status: Unknown
+                duration: {{ medik8s_nhc_unhealthy_duration }}
+            remediationTemplate:
+              apiVersion: self-node-remediation.medik8s.io/v1alpha1
+              kind: SelfNodeRemediationTemplate
+              name: self-node-remediation-template
+              namespace: {{ olm_operators_namespace }}
+
+    - name: Create NodeHealthCheck manifest for control-plane
+      copy:
+        dest: "{{ remote_charts_dir }}/medik8s/nhc-control-plane.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: remediation.medik8s.io/v1alpha1
+          kind: NodeHealthCheck
+          metadata:
+            name: nhc-control-plane
+          spec:
+            # Select control-plane nodes only
+            selector:
+              matchExpressions:
+                - key: node-role.kubernetes.io/control-plane
+                  operator: Exists
+            minHealthy: "{{ medik8s_nhc_control_plane_min_healthy }}"
+            unhealthyConditions:
+              - type: Ready
+                status: "False"
+                duration: {{ medik8s_nhc_unhealthy_duration }}
+              - type: Ready
+                status: Unknown
+                duration: {{ medik8s_nhc_unhealthy_duration }}
+            remediationTemplate:
+              apiVersion: self-node-remediation.medik8s.io/v1alpha1
+              kind: SelfNodeRemediationTemplate
+              name: self-node-remediation-template
+              namespace: {{ olm_operators_namespace }}
+
+    - name: Apply SelfNodeRemediationConfig
+      command: kubectl apply -f {{ remote_charts_dir }}/medik8s/self-node-remediation-config.yaml
+
+    - name: Apply SelfNodeRemediationTemplate
+      command: kubectl apply -f {{ remote_charts_dir }}/medik8s/self-node-remediation-template.yaml
+
+    - name: Apply NodeHealthCheck for workers
+      command: kubectl apply -f {{ remote_charts_dir }}/medik8s/nhc-workers.yaml
+
+    - name: Apply NodeHealthCheck for control-plane
+      command: kubectl apply -f {{ remote_charts_dir }}/medik8s/nhc-control-plane.yaml
+
+    # -------------------------------------------------------------------------
+    # VERIFY INSTALLATION
+    # -------------------------------------------------------------------------
+
+    - name: List installed CSVs
+      command: kubectl get csv -n {{ olm_operators_namespace }}
+      register: csv_list
+      changed_when: false
+
+    - name: Show installed CSVs
+      debug:
+        var: csv_list.stdout_lines
+
+    - name: Check SelfNodeRemediationConfig
+      command: kubectl get selfnoderemediationconfig -n {{ olm_operators_namespace }}
+      register: snr_config_list
+      changed_when: false
+
+    - name: Show SelfNodeRemediationConfig
+      debug:
+        var: snr_config_list.stdout_lines
+
+    - name: Check NodeHealthCheck CR
+      command: kubectl get nodehealthcheck -A
+      register: nhc_list
+      changed_when: false
+      failed_when: false
+
+    - name: Show NodeHealthCheck CRs
+      debug:
+        var: nhc_list.stdout_lines
