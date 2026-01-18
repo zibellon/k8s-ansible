@@ -1,10 +1,43 @@
 # =============================================================================
-# Install cert-manager + cert-manager-config
-# - cert-manager: official Helm chart from jetstack
-# - cert-manager-config: local chart (NetworkPolicy + ClusterIssuer)
+# Install cert-manager via Helm
+# Steps:
+#   1. cert-manager/pre: NetworkPolicies for cert-manager namespace
+#   2. Official cert-manager Helm chart (jetstack/cert-manager)
+#   3. cert-manager/post: ClusterIssuer for Let's Encrypt
 # =============================================================================
 
 ---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Installing cert-manager on master manager: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install cert-manager
+# =============================================================================
 - name: Install cert-manager
   hosts: managers
   become: true
@@ -12,43 +45,77 @@
 
   tasks:
     # =========================================================================
-    # ADD HELM REPO
+    # STEP 1: CERT-MANAGER/PRE (NetworkPolicies)
     # =========================================================================
-    - name: Add Jetstack Helm repository
-      command: helm repo add jetstack https://charts.jetstack.io --force-update
-      failed_when: false
 
-    - name: Update Helm repositories
-      command: helm repo update
-      changed_when: false
-
-    # =========================================================================
-    # CREATE VALUES FILE
-    # =========================================================================
-    - name: Ensure cert-manager charts directory exists
+    - name: "[cert-manager-pre] Ensure remote charts directory exists"
       file:
-        path: "{{ remote_charts_dir }}/cert-manager"
+        path: "{{ remote_charts_dir }}"
         state: directory
         mode: "0755"
 
-    - name: Create cert-manager values file
+    - name: "[cert-manager-pre] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/cert-manager/pre"
+        state: absent
+
+    - name: "[cert-manager-pre] Copy chart to server"
       copy:
-        dest: "{{ remote_charts_dir }}/cert-manager/values-override.yaml"
+        src: "{{ playbook_dir }}/charts/cert-manager/pre/"
+        dest: "{{ remote_charts_dir }}/cert-manager/pre/"
+        mode: "0644"
+
+    - name: "[cert-manager-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/cert-manager/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ cert_manager_namespace }}
+
+    - name: "[cert-manager-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install cert-manager-pre {{ remote_charts_dir }}/cert-manager/pre
+        --namespace {{ cert_manager_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/cert-manager/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cert_manager_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 2: OFFICIAL CERT-MANAGER HELM
+    # =========================================================================
+
+    - name: "[cert-manager] Add Jetstack Helm repository"
+      command: helm repo add jetstack https://charts.jetstack.io --force-update
+      failed_when: false
+
+    - name: "[cert-manager] Update Helm repositories"
+      command: helm repo update
+      changed_when: false
+
+    - name: "[cert-manager] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/cert-manager/install"
+        state: directory
+        mode: "0755"
+
+    - name: "[cert-manager] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/cert-manager/install/values-override.yaml"
         mode: "0644"
         content: |
           crds:
             enabled: true
 
-    # =========================================================================
-    # INSTALL OR UPGRADE CERT-MANAGER
-    # =========================================================================
-    - name: Install or upgrade cert-manager via Helm
+    - name: "[cert-manager] Install or upgrade via Helm"
       command: >
         helm upgrade --install cert-manager jetstack/cert-manager
         --namespace {{ cert_manager_namespace }}
-        --create-namespace
         --version v{{ cert_manager_version }}
-        --values {{ remote_charts_dir }}/cert-manager/values-override.yaml
+        --values {{ remote_charts_dir }}/cert-manager/install/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
@@ -58,7 +125,8 @@
     # =========================================================================
     # WAIT FOR CERT-MANAGER CRDs
     # =========================================================================
-    - name: Wait for cert-manager CRDs to be established
+
+    - name: "[cert-manager] Wait for CRDs to be established"
       command: >
         kubectl wait --for=condition=Established
         crd/certificaterequests.cert-manager.io
@@ -71,52 +139,10 @@
       changed_when: false
 
     # =========================================================================
-    # INSTALL CERT-MANAGER-CONFIG (NetworkPolicy + ClusterIssuer)
+    # WAIT FOR CERT-MANAGER PODS
     # =========================================================================
-    - name: Ensure cert-manager-config charts directory exists
-      file:
-        path: "{{ remote_charts_dir }}/cert-manager-config"
-        state: directory
-        mode: "0755"
 
-    - name: Remove old cert-manager-config chart from remote server
-      file:
-        path: "{{ remote_charts_dir }}/cert-manager-config"
-        state: absent
-
-    - name: Copy cert-manager-config chart to server
-      copy:
-        src: "{{ playbook_dir }}/charts/cert-manager-config/"
-        dest: "{{ remote_charts_dir }}/cert-manager-config/"
-        mode: "0644"
-
-    - name: Create cert-manager-config values file
-      copy:
-        dest: "{{ remote_charts_dir }}/cert-manager-config/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ cert_manager_namespace }}
-          clusterIssuer:
-            name: {{ cert_manager_cluster_issuer }}
-            email: {{ cert_manager_acme_email }}
-            ingressClass: {{ traefik_ingress_class }}
-            traefikEntrypoint: {{ traefik_web_entrypoint }}
-
-    - name: Install or upgrade cert-manager-config via Helm
-      command: >
-        helm upgrade --install cert-manager-config {{ remote_charts_dir }}/cert-manager-config
-        --namespace {{ cert_manager_namespace }}
-        --values {{ remote_charts_dir }}/cert-manager-config/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --wait-for-jobs
-        --timeout {{ cert_manager_config_helm_timeout }}
-
-    # =========================================================================
-    # WAIT FOR CERT-MANAGER TO BE READY
-    # =========================================================================
-    - name: Wait for cert-manager Deployments to be ready
+    - name: "[cert-manager] Wait for Deployments to be ready"
       command: kubectl rollout status deployment/{{ item }} -n {{ cert_manager_namespace }} --timeout={{ cert_manager_rollout_timeout }}
       loop:
         - cert-manager
@@ -124,8 +150,46 @@
         - cert-manager-webhook
 
     # =========================================================================
+    # STEP 3: CERT-MANAGER/POST (ClusterIssuer)
+    # =========================================================================
+
+    - name: "[cert-manager-post] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/cert-manager/post"
+        state: absent
+
+    - name: "[cert-manager-post] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/cert-manager/post/"
+        dest: "{{ remote_charts_dir }}/cert-manager/post/"
+        mode: "0644"
+
+    - name: "[cert-manager-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/cert-manager/post/values-override.yaml"
+        mode: "0644"
+        content: |
+          clusterIssuer:
+            name: {{ cert_manager_cluster_issuer }}
+            email: {{ cert_manager_acme_email }}
+            ingressClass: {{ traefik_ingress_class }}
+            traefikEntrypoint: {{ traefik_web_entrypoint }}
+
+    - name: "[cert-manager-post] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install cert-manager-post {{ remote_charts_dir }}/cert-manager/post
+        --namespace {{ cert_manager_namespace }}
+        --values {{ remote_charts_dir }}/cert-manager/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ cert_manager_config_helm_timeout }}
+
+    # =========================================================================
     # VERIFICATION
     # =========================================================================
+
     - name: Get cert-manager Helm releases
       command: helm list -n {{ cert_manager_namespace }}
       register: helm_list
@@ -144,6 +208,6 @@
       debug:
         msg: "{{ certmanager_pods.stdout_lines }}"
 
-    - name: Confirm installation
+    - name: Installation complete
       debug:
-        msg: "cert-manager + cert-manager-config: OK"
+        msg: "cert-manager-pre + cert-manager + cert-manager-post: OK"
