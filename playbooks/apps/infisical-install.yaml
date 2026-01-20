@@ -444,22 +444,22 @@
       command: kubectl rollout status deployment/infisical -n {{ infisical_namespace }} --timeout={{ infisical_rollout_timeout }}
 
     # =========================================================================
-    # STEP 10: BOOTSTRAP INFISICAL
+    # STEP 10: BOOTSTRAP AND SETUP ROOT
     # =========================================================================
 
+    # --- 10.1: Generate bootstrap password ---
     - name: "[bootstrap] Generate bootstrap password"
       command: openssl rand -base64 24
       register: bootstrap_password
       changed_when: false
 
-    - name: "[bootstrap] Execute bootstrap via CLI"
+    # --- 10.2: Bootstrap via API ---
+    - name: "[bootstrap] Execute bootstrap via API"
       shell: |
         kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
-          infisical bootstrap \
-          --domain="http://localhost:8080" \
-          --email="{{ infisical_bootstrap_email }}" \
-          --password="{{ bootstrap_password.stdout }}" \
-          --organization="{{ infisical_bootstrap_organization }}"
+          curl -s -X POST http://localhost:8080/api/v1/admin/bootstrap \
+          -H "Content-Type: application/json" \
+          -d '{"email":"{{ infisical_bootstrap_email }}","password":"{{ bootstrap_password.stdout }}","organization":"{{ infisical_bootstrap_organization }}"}'
       register: bootstrap_result
       failed_when: false
 
@@ -469,32 +469,222 @@
           - "=============================================="
           - "INFISICAL BOOTSTRAP RESULT"
           - "=============================================="
-          - ""
           - "Bootstrap Email: {{ infisical_bootstrap_email }}"
           - "Bootstrap Password: {{ bootstrap_password.stdout }}"
           - "Organization: {{ infisical_bootstrap_organization }}"
-          - ""
           - "Exit Code: {{ bootstrap_result.rc }}"
-          - ""
-          - "API Response:"
-          - "{{ bootstrap_result.stdout | default('No stdout') }}"
-          - ""
-          - "Stderr (if any):"
-          - "{{ bootstrap_result.stderr | default('No stderr') }}"
+          - "API Response: {{ bootstrap_result.stdout | default('No stdout') }}"
           - "=============================================="
-
-    - name: "[bootstrap] Check if bootstrap was successful"
-      debug:
-        msg: "Bootstrap completed successfully!"
-      when: bootstrap_result.rc == 0
 
     - name: "[bootstrap] Check if already bootstrapped"
       debug:
         msg: "Instance may already be bootstrapped (check response above)"
-      when: bootstrap_result.rc != 0
+      when: bootstrap_result.rc != 0 or (bootstrap_result.stdout is defined and 'error' in bootstrap_result.stdout | lower)
+
+    # --- 10.3: Parse bootstrap response ---
+    - name: "[bootstrap] Parse bootstrap response"
+      set_fact:
+        admin_token: "{{ (bootstrap_result.stdout | from_json).identity.credentials.token }}"
+        org_id: "{{ (bootstrap_result.stdout | from_json).organization.id }}"
+      when: bootstrap_result.rc == 0 and bootstrap_result.stdout is defined and 'identity' in bootstrap_result.stdout
+
+    # --- 10.4: Create Machine Identity ---
+    - name: "[root-setup] Create Machine Identity"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v1/identities \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ admin_token }}" \
+          -d '{"name":"{{ infisical_root_identity_name }}","organizationId":"{{ org_id }}","role":"admin"}'
+      register: identity_result
+      when: admin_token is defined
+
+    - name: "[root-setup] Parse identity response"
+      set_fact:
+        root_identity_id: "{{ (identity_result.stdout | from_json).identity.id }}"
+      when: identity_result is not skipped and identity_result.stdout is defined
+
+    # --- 10.5: Attach Universal Auth ---
+    - name: "[root-setup] Attach Universal Auth"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v1/auth/universal-auth/identities/{{ root_identity_id }} \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ admin_token }}" \
+          -d '{"accessTokenTTL":2592000,"accessTokenMaxTTL":2592000}'
+      register: ua_result
+      when: root_identity_id is defined
+
+    # --- 10.6: Create Client Secret ---
+    - name: "[root-setup] Create Client Secret"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v1/auth/universal-auth/identities/{{ root_identity_id }}/client-secrets \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ admin_token }}" \
+          -d '{"description":"{{ infisical_root_client_secret_description }}","ttl":0}'
+      register: client_secret_result
+      when: root_identity_id is defined
+
+    - name: "[root-setup] Parse client secret response"
+      set_fact:
+        root_client_id: "{{ (ua_result.stdout | from_json).identityUniversalAuth.clientId }}"
+        root_client_secret: "{{ (client_secret_result.stdout | from_json).clientSecret }}"
+      when: client_secret_result is not skipped and client_secret_result.stdout is defined
+
+    # --- 10.7: Create Project ---
+    - name: "[root-setup] Create Project"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v2/workspace \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ admin_token }}" \
+          -d '{"projectName":"{{ infisical_root_project_name }}","slug":"{{ infisical_root_project_slug }}","type":"secret-manager","shouldCreateDefaultEnvs":true}'
+      register: project_result
+      when: admin_token is defined
+
+    - name: "[root-setup] Parse project response"
+      set_fact:
+        root_project_id: "{{ (project_result.stdout | from_json).project.id }}"
+      when: project_result is not skipped and project_result.stdout is defined
+
+    # --- 10.8: Add Identity to Project ---
+    - name: "[root-setup] Add Identity to Project"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v1/projects/{{ root_project_id }}/memberships/identities/{{ root_identity_id }} \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ admin_token }}" \
+          -d '{"role":"admin"}'
+      register: membership_result
+      when: root_project_id is defined and root_identity_id is defined
+
+    # --- 10.9: Login via Universal Auth ---
+    - name: "[root-setup] Login via Universal Auth"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v1/auth/universal-auth/login \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "clientId={{ root_client_id }}&clientSecret={{ root_client_secret }}"
+      register: ua_login_result
+      when: root_client_id is defined and root_client_secret is defined
+
+    - name: "[root-setup] Parse UA login response"
+      set_fact:
+        root_access_token: "{{ (ua_login_result.stdout | from_json).accessToken }}"
+      when: ua_login_result is not skipped and ua_login_result.stdout is defined
+
+    # --- 10.10: Create Secrets in Project ---
+    - name: "[root-setup] Create secret BOOTSTRAP_PASSWORD"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v4/secrets/BOOTSTRAP_PASSWORD \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ root_access_token }}" \
+          -d '{"projectId":"{{ root_project_id }}","environment":"{{ infisical_root_environment }}","secretValue":"{{ bootstrap_password.stdout }}","secretPath":"/","type":"shared"}'
+      when: root_access_token is defined
+
+    - name: "[root-setup] Create secret BOOTSTRAP_EMAIL"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v4/secrets/BOOTSTRAP_EMAIL \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ root_access_token }}" \
+          -d '{"projectId":"{{ root_project_id }}","environment":"{{ infisical_root_environment }}","secretValue":"{{ infisical_bootstrap_email }}","secretPath":"/","type":"shared"}'
+      when: root_access_token is defined
+
+    - name: "[root-setup] Create secret CLIENT_ID"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v4/secrets/CLIENT_ID \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ root_access_token }}" \
+          -d '{"projectId":"{{ root_project_id }}","environment":"{{ infisical_root_environment }}","secretValue":"{{ root_client_id }}","secretPath":"/","type":"shared"}'
+      when: root_access_token is defined
+
+    - name: "[root-setup] Create secret CLIENT_SECRET"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          curl -s -X POST http://localhost:8080/api/v4/secrets/CLIENT_SECRET \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer {{ root_access_token }}" \
+          -d '{"projectId":"{{ root_project_id }}","environment":"{{ infisical_root_environment }}","secretValue":"{{ root_client_secret }}","secretPath":"/","type":"shared"}'
+      when: root_access_token is defined
+
+    # --- 10.11: Show root setup results ---
+    - name: "[root-setup] Show root credentials"
+      debug:
+        msg:
+          - "=============================================="
+          - "INFISICAL ROOT SETUP RESULT"
+          - "=============================================="
+          - "Identity Name: {{ infisical_root_identity_name }}"
+          - "Identity ID: {{ root_identity_id | default('N/A') }}"
+          - "Client ID: {{ root_client_id | default('N/A') }}"
+          - "Client Secret: {{ root_client_secret | default('N/A') }}"
+          - "Project Name: {{ infisical_root_project_name }}"
+          - "Project ID: {{ root_project_id | default('N/A') }}"
+          - "Project Slug: {{ infisical_root_project_slug }}"
+          - "Environment: {{ infisical_root_environment }}"
+          - "=============================================="
+      when: root_client_id is defined
 
     # =========================================================================
-    # STEP 11: INSTALL POST (Ingress)
+    # STEP 11: INSTALL ESO ROOT (SecretStore + ExternalSecret)
+    # =========================================================================
+
+    - name: "[eso-root] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-eso-root"
+        state: directory
+        mode: "0755"
+      when: root_client_id is defined
+
+    - name: "[eso-root] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/infisical/install-eso-root"
+        state: absent
+      when: root_client_id is defined
+
+    - name: "[eso-root] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/infisical/install-eso-root/"
+        dest: "{{ remote_charts_dir }}/infisical/install-eso-root/"
+        mode: "0644"
+      when: root_client_id is defined
+
+    - name: "[eso-root] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/infisical/install-eso-root/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ infisical_namespace }}
+          dnsDomain: {{ dns_domain }}
+          credentials:
+            secretName: infisical-ua-credentials
+            clientId: {{ root_client_id }}
+            clientSecret: {{ root_client_secret }}
+          infisical:
+            namespace: {{ infisical_namespace }}
+            projectSlug: {{ infisical_root_project_slug }}
+            environment: {{ infisical_root_environment }}
+          target:
+            secretName: {{ infisical_root_eso_secret_name }}
+      when: root_client_id is defined
+
+    - name: "[eso-root] Install via Helm"
+      command: >
+        helm upgrade --install infisical-eso-root {{ remote_charts_dir }}/infisical/install-eso-root
+        --namespace {{ infisical_namespace }}
+        --values {{ remote_charts_dir }}/infisical/install-eso-root/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ infisical_config_helm_timeout }}
+      when: root_client_id is defined
+
+    # =========================================================================
+    # STEP 12: INSTALL POST (Ingress)
     # =========================================================================
 
     - name: "[infisical-post] Ensure charts directory exists"
@@ -541,7 +731,7 @@
         --timeout {{ infisical_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 12: VERIFY AND OUTPUT CREDENTIALS
+    # STEP 13: VERIFY AND OUTPUT CREDENTIALS
     # =========================================================================
 
     - name: "[verify] Check Helm releases"
