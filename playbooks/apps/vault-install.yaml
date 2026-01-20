@@ -1,0 +1,532 @@
+# =============================================================================
+# Install HashiCorp Vault
+# - pre: NetworkPolicies
+# - install: Official Helm chart (hashicorp/vault)
+# - post: Ingress
+# - install-eso-root: ESO integration for root credentials
+# =============================================================================
+
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Installing Vault on master manager: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install Vault via Helm
+# =============================================================================
+- name: Install Vault via Helm
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # STEP 1: INSTALL PRE (NetworkPolicies)
+    # =========================================================================
+
+    - name: "[vault-pre] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/vault/pre"
+        state: directory
+        mode: "0755"
+
+    - name: "[vault-pre] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/vault/pre"
+        state: absent
+
+    - name: "[vault-pre] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/vault/pre/"
+        dest: "{{ remote_charts_dir }}/vault/pre/"
+        mode: "0644"
+
+    - name: "[vault-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ vault_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+          externalSecrets:
+            namespace: {{ external_secrets_namespace }}
+
+    - name: "[vault-pre] Install via Helm"
+      command: >
+        helm upgrade --install vault-pre {{ remote_charts_dir }}/vault/pre
+        --namespace {{ vault_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/vault/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ vault_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 2: HELM REPO
+    # =========================================================================
+
+    - name: "[vault] Add Helm repository"
+      command: helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
+
+    - name: "[vault] Update Helm repositories"
+      command: helm repo update
+
+    # =========================================================================
+    # STEP 3: INSTALL VAULT (Official Helm Chart)
+    # =========================================================================
+
+    - name: "[vault] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/vault/install"
+        state: directory
+        mode: "0755"
+
+    - name: "[vault] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/install/values-override.yaml"
+        mode: "0644"
+        content: |
+          global:
+            enabled: true
+
+          server:
+            enabled: true
+            image:
+              repository: hashicorp/vault
+              tag: {{ vault_image_tag }}
+
+            standalone:
+              enabled: true
+              config: |
+                ui = true
+                listener "tcp" {
+                  tls_disable = 1
+                  address = "[::]:8200"
+                  cluster_address = "[::]:8201"
+                }
+                storage "raft" {
+                  path = "/vault/data"
+                }
+                service_registration "kubernetes" {}
+
+            dataStorage:
+              enabled: true
+              size: {{ vault_storage_size }}
+              storageClass: {{ vault_storage_class }}
+
+            resources: {}
+            nodeSelector: {}
+            affinity: ""
+
+          ui:
+            enabled: true
+            serviceType: ClusterIP
+
+          injector:
+            enabled: false
+
+    - name: "[vault] Install via Helm"
+      command: >
+        helm upgrade --install vault hashicorp/vault
+        --namespace {{ vault_namespace }}
+        --values {{ remote_charts_dir }}/vault/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ vault_helm_timeout }}
+
+    # =========================================================================
+    # STEP 4: WAIT FOR VAULT POD
+    # =========================================================================
+
+    - name: "[vault] Wait for StatefulSet to be ready"
+      command: kubectl rollout status statefulset/vault -n {{ vault_namespace }} --timeout={{ vault_rollout_timeout }}
+
+    # =========================================================================
+    # STEP 5: CHECK IF VAULT IS INITIALIZED
+    # =========================================================================
+
+    - name: "[vault] Check if Vault is initialized"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json 2>/dev/null | jq -r '.initialized'
+      register: vault_initialized
+      failed_when: false
+      changed_when: false
+
+    - name: "[vault] Show initialization status"
+      debug:
+        msg: "Vault initialized: {{ vault_initialized.stdout | default('unknown') }}"
+
+    # =========================================================================
+    # STEP 6: INITIALIZE VAULT (if not initialized)
+    # =========================================================================
+
+    - name: "[vault] Initialize Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator init \
+          -key-shares={{ vault_key_shares }} \
+          -key-threshold={{ vault_key_threshold }} \
+          -format=json
+      register: vault_init_result
+      when: vault_initialized.stdout == "false"
+
+    - name: "[vault] Parse init result"
+      set_fact:
+        vault_unseal_keys: "{{ (vault_init_result.stdout | from_json).unseal_keys_b64 }}"
+        vault_root_token: "{{ (vault_init_result.stdout | from_json).root_token }}"
+      when: vault_init_result is not skipped and vault_init_result.stdout is defined
+
+    - name: "[vault] Show initialization header"
+      debug:
+        msg:
+          - "=============================================="
+          - "VAULT INITIALIZATION RESULT"
+          - "=============================================="
+      when: vault_unseal_keys is defined
+
+    - name: "[vault] Show unseal keys"
+      debug:
+        msg: "Unseal Key {{ idx + 1 }}: {{ key }}"
+      loop: "{{ vault_unseal_keys }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+      when: vault_unseal_keys is defined
+
+    - name: "[vault] Show root token and footer"
+      debug:
+        msg:
+          - "Root Token: {{ vault_root_token }}"
+          - "=============================================="
+          - "IMPORTANT: Save these credentials securely!"
+          - "=============================================="
+      when: vault_root_token is defined
+
+    # =========================================================================
+    # STEP 7: UNSEAL VAULT (if just initialized)
+    # =========================================================================
+
+    - name: "[vault] Unseal Vault ({{ vault_key_threshold }} keys required)"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
+      loop: "{{ vault_unseal_keys[:vault_key_threshold | int] }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+        label: "Key {{ idx + 1 }}"
+      when: vault_unseal_keys is defined
+
+    - name: "[vault] Verify Vault is unsealed"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
+      register: vault_sealed_status
+      changed_when: false
+
+    - name: "[vault] Show seal status"
+      debug:
+        msg: "Vault sealed: {{ vault_sealed_status.stdout }}"
+
+    # =========================================================================
+    # STEP 8: CONFIGURE KUBERNETES AUTH (if just initialized)
+    # =========================================================================
+
+    - name: "[vault] Login with root token"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
+      when: vault_root_token is defined
+
+    - name: "[vault] Enable Kubernetes auth method"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault auth enable kubernetes
+      register: k8s_auth_result
+      failed_when: false
+      when: vault_root_token is defined
+
+    - name: "[vault] Configure Kubernetes auth"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/config
+        kubernetes_host="{{ vault_kubernetes_host }}"
+      when: vault_root_token is defined
+
+    # =========================================================================
+    # STEP 9: ENABLE KV SECRETS ENGINE (if just initialized)
+    # =========================================================================
+
+    - name: "[vault] Enable KV secrets engine"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault secrets enable -path={{ vault_kv_mount_path }} kv-v2
+      register: kv_enable_result
+      failed_when: false
+      when: vault_root_token is defined
+
+    # =========================================================================
+    # STEP 10: CREATE ADMIN POLICY AND ROLE (if just initialized)
+    # =========================================================================
+
+    - name: "[vault] Create admin policy"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ vault_admin_policy_name }} - <<'EOF'
+        # Full access to KV secrets
+        path "{{ vault_kv_mount_path }}/*" {
+          capabilities = ["create", "read", "update", "delete", "list"]
+        }
+        path "{{ vault_kv_mount_path }}/data/*" {
+          capabilities = ["create", "read", "update", "delete", "list"]
+        }
+        path "{{ vault_kv_mount_path }}/metadata/*" {
+          capabilities = ["read", "list", "delete"]
+        }
+
+        # Manage policies
+        path "sys/policies/acl/*" {
+          capabilities = ["create", "read", "update", "delete", "list"]
+        }
+
+        # Manage auth methods and roles
+        path "auth/*" {
+          capabilities = ["create", "read", "update", "delete", "list"]
+        }
+        EOF
+      when: vault_root_token is defined
+
+    - name: "[vault] Create admin Kubernetes auth role"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ vault_admin_role_name }}
+        bound_service_account_names={{ vault_admin_sa_name }}
+        bound_service_account_namespaces={{ vault_namespace }}
+        policies={{ vault_admin_policy_name }}
+        ttl=1h
+      when: vault_root_token is defined
+
+    # =========================================================================
+    # STEP 11: CREATE ADMIN SERVICE ACCOUNT (if just initialized)
+    # =========================================================================
+
+    - name: "[vault] Create admin ServiceAccount"
+      shell: |
+        kubectl apply -f - <<'EOF'
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: {{ vault_admin_sa_name }}
+          namespace: {{ vault_namespace }}
+        EOF
+      when: vault_root_token is defined
+
+    # =========================================================================
+    # STEP 12: SAVE VAULT CREDENTIALS TO VAULT (if just initialized)
+    # =========================================================================
+
+    - name: "[vault] Save credentials to Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/credentials \
+          {% for idx in range(vault_unseal_keys | length) %}
+          unseal_key_{{ idx + 1 }}="{{ vault_unseal_keys[idx] }}" \
+          {% endfor %}
+          root_token="{{ vault_root_token }}"
+      when: vault_unseal_keys is defined and vault_root_token is defined
+
+    # =========================================================================
+    # STEP 13: CREATE ESO ROOT POLICY AND ROLE (if just initialized)
+    # =========================================================================
+
+    - name: "[vault] Create ESO root policy"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ vault_eso_root_policy_name }} - <<'EOF'
+        path "{{ vault_kv_mount_path }}/data/{{ vault_self_creds_path }}/*" {
+          capabilities = ["read", "list"]
+        }
+        path "{{ vault_kv_mount_path }}/metadata/{{ vault_self_creds_path }}/*" {
+          capabilities = ["read", "list"]
+        }
+        EOF
+      when: vault_root_token is defined
+
+    - name: "[vault] Create ESO root Kubernetes auth role"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ vault_eso_root_role_name }}
+        bound_service_account_names={{ vault_eso_root_sa_name }}
+        bound_service_account_namespaces={{ vault_namespace }}
+        policies={{ vault_eso_root_policy_name }}
+        ttl=1h
+      when: vault_root_token is defined
+
+    # =========================================================================
+    # STEP 14: INSTALL ESO ROOT INTEGRATION (if just initialized)
+    # =========================================================================
+
+    - name: "[vault-eso-root] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/vault/install-eso-root"
+        state: directory
+        mode: "0755"
+      when: vault_root_token is defined
+
+    - name: "[vault-eso-root] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/vault/install-eso-root"
+        state: absent
+      when: vault_root_token is defined
+
+    - name: "[vault-eso-root] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/vault/install-eso-root/"
+        dest: "{{ remote_charts_dir }}/vault/install-eso-root/"
+        mode: "0644"
+      when: vault_root_token is defined
+
+    - name: "[vault-eso-root] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/install-eso-root/values-override.yaml"
+        mode: "0644"
+        content: |
+          dnsDomain: {{ dns_domain }}
+          vault:
+            namespace: {{ vault_namespace }}
+            kvMountPath: {{ vault_kv_mount_path }}
+            selfCredsPath: {{ vault_self_creds_path }}
+          esoRoot:
+            policyName: {{ vault_eso_root_policy_name }}
+            roleName: {{ vault_eso_root_role_name }}
+            saName: {{ vault_eso_root_sa_name }}
+          secretStore:
+            name: {{ vault_root_eso_secret_store_name }}
+          externalSecret:
+            name: {{ vault_root_eso_external_secret_name }}
+          targetSecret:
+            name: {{ vault_root_eso_secret_name }}
+      when: vault_root_token is defined
+
+    - name: "[vault-eso-root] Install via Helm"
+      command: >
+        helm upgrade --install vault-eso-root {{ remote_charts_dir }}/vault/install-eso-root
+        --namespace {{ vault_namespace }}
+        --values {{ remote_charts_dir }}/vault/install-eso-root/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ vault_config_helm_timeout }}
+      when: vault_root_token is defined
+
+    # =========================================================================
+    # STEP 15: INSTALL POST (Ingress)
+    # =========================================================================
+
+    - name: "[vault-post] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/vault/post"
+        state: directory
+        mode: "0755"
+
+    - name: "[vault-post] Remove old chart from remote"
+      file:
+        path: "{{ remote_charts_dir }}/vault/post"
+        state: absent
+
+    - name: "[vault-post] Copy chart to remote"
+      copy:
+        src: "{{ playbook_dir }}/charts/vault/post/"
+        dest: "{{ remote_charts_dir }}/vault/post/"
+        mode: "0644"
+
+    - name: "[vault-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/post/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ vault_namespace }}
+          ingress:
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            domain: {{ vault_domain }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            secretName: {{ vault_https_secret_name }}
+            vpnOnlyEnabled: {{ vault_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    - name: "[vault-post] Install via Helm"
+      command: >
+        helm upgrade --install vault-post {{ remote_charts_dir }}/vault/post
+        --namespace {{ vault_namespace }}
+        --values {{ remote_charts_dir }}/vault/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ vault_config_helm_timeout }}
+
+    # =========================================================================
+    # STEP 16: VERIFY AND OUTPUT CREDENTIALS
+    # =========================================================================
+
+    - name: "[verify] Check Helm releases"
+      command: helm list -n {{ vault_namespace }}
+      register: helm_verify
+      changed_when: false
+
+    - name: "[verify] Show Helm releases"
+      debug:
+        var: helm_verify.stdout_lines
+
+    - name: "[credentials] Show credentials header"
+      debug:
+        msg:
+          - "=============================================="
+          - "VAULT CREDENTIALS"
+          - "=============================================="
+
+    - name: "[credentials] Show unseal keys"
+      debug:
+        msg: "Unseal Key {{ idx + 1 }}: {{ key }}"
+      loop: "{{ vault_unseal_keys | default([]) }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+      when: vault_unseal_keys is defined
+
+    - name: "[credentials] Show unseal keys (already initialized)"
+      debug:
+        msg: "Unseal Keys: (already initialized - check Vault or K8s Secret)"
+      when: vault_unseal_keys is not defined
+
+    - name: "[credentials] Show remaining info"
+      debug:
+        msg:
+          - "Root Token: {{ vault_root_token | default('(already initialized)') }}"
+          - ""
+          - "Credentials stored in Vault:"
+          - "  Path: {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/credentials"
+          - ""
+          - "Credentials synced to K8s Secret (via ESO):"
+          - "  Secret: {{ vault_root_eso_secret_name }}"
+          - "  Namespace: {{ vault_namespace }}"
+          - ""
+          - "Vault UI: https://{{ vault_domain }}"
+          - "VPN-only: {{ vault_vpn_only_enabled }}"
+          - "=============================================="
+
+    - name: "[verify] Confirm installation"
+      debug:
+        msg: "Vault installation: OK"

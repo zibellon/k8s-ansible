@@ -1,9 +1,9 @@
 # =============================================================================
-# INFISICAL NETWORK POLICIES
+# VAULT NETWORK POLICIES
 # =============================================================================
 
 ---
-# Default deny all traffic in infisical namespace
+# Default deny all traffic in vault namespace
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -41,78 +41,25 @@ spec:
           port: 53
 
 # =============================================================================
-# POSTGRESQL POLICIES
+# VAULT POLICIES
 # =============================================================================
 
 ---
-# PostgreSQL: allow ingress from Infisical
+# Vault: allow ingress from Traefik (UI) and ESO (API), egress to kube-apiserver
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-postgres
+  name: allow-vault
   namespace: {{ .Values.namespace }}
 spec:
   podSelector:
     matchLabels:
-      app-key: infisical-postgres
-      app-env: prod
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: infisical
-      ports:
-        - protocol: TCP
-          port: {{ .Values.postgres.port }}
-
-# =============================================================================
-# REDIS POLICIES
-# =============================================================================
-
----
-# Redis: allow ingress from Infisical
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-redis
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app-key: infisical-redis
-      app-env: prod
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: infisical
-      ports:
-        - protocol: TCP
-          port: {{ .Values.redis.port }}
-
-# =============================================================================
-# INFISICAL POLICIES
-# =============================================================================
-
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-infisical
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: infisical
+      app.kubernetes.io/name: vault
   policyTypes:
     - Ingress
     - Egress
   ingress:
-    # From Traefik
+    # From Traefik (UI/API)
     - from:
         - namespaceSelector:
             matchLabels:
@@ -123,8 +70,8 @@ spec:
               app-env: prod
       ports:
         - protocol: TCP
-          port: 8080
-    # From External Secrets Operator
+          port: 8200
+    # From External Secrets Operator (API)
     - from:
         - namespaceSelector:
             matchLabels:
@@ -134,31 +81,32 @@ spec:
               app.kubernetes.io/name: external-secrets
       ports:
         - protocol: TCP
-          port: 8080
+          port: 8200
+    # Vault internal cluster communication
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+        - protocol: TCP
+          port: 8201
   egress:
-    # To PostgreSQL
-    - to:
-        - podSelector:
-            matchLabels:
-              app-key: infisical-postgres
-              app-env: prod
-      ports:
-        - protocol: TCP
-          port: {{ .Values.postgres.port }}
-    # To Redis
-    - to:
-        - podSelector:
-            matchLabels:
-              app-key: infisical-redis
-              app-env: prod
-      ports:
-        - protocol: TCP
-          port: {{ .Values.redis.port }}
-    # HTTPS for external services (SMTP, OAuth, etc)
+    # To kube-apiserver (for Kubernetes Auth)
     - ports:
         - protocol: TCP
-          port: 443
-
+          port: 6443
+    # Vault internal cluster communication
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+        - protocol: TCP
+          port: 8201
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge)
@@ -191,14 +139,14 @@ spec:
           port: 8089
 
 # =============================================================================
-# TRAEFIK EGRESS TO INFISICAL (in traefik namespace)
+# TRAEFIK EGRESS TO VAULT (in traefik namespace)
 # =============================================================================
 
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ns-infisical-allow-traefik
+  name: ns-vault-allow-traefik
   namespace: {{ .Values.traefik.namespace }}
 spec:
   podSelector:
@@ -208,18 +156,18 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # To Infisical
+    # To Vault
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.namespace }}
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: infisical
+              app.kubernetes.io/name: vault
       ports:
         - protocol: TCP
-          port: 8080
-    # ACME solver in infisical namespace
+          port: 8200
+    # ACME solver in vault namespace
     - to:
         - namespaceSelector:
             matchLabels:
@@ -233,14 +181,14 @@ spec:
           port: 8089
 
 # =============================================================================
-# EXTERNAL SECRETS EGRESS TO INFISICAL (in external-secrets namespace)
+# EXTERNAL SECRETS EGRESS TO VAULT (in external-secrets namespace)
 # =============================================================================
 
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ns-infisical-allow-external-secrets
+  name: ns-vault-allow-external-secrets
   namespace: {{ .Values.externalSecrets.namespace }}
 spec:
   podSelector:
@@ -249,14 +197,14 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # To Infisical API
+    # To Vault API
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.namespace }}
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: infisical
+              app.kubernetes.io/name: vault
       ports:
         - protocol: TCP
-          port: 8080
+          port: 8200
