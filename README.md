@@ -238,11 +238,26 @@
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
 
+## ---
+## После этого момента, можно запускать что-то, что требует volume
+## ---
+
 ## ExternalSecret. Официальный helm
+##
+- установка
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+  - Ставится: cert-controller, secrets-webhook, core
+- обновление (версия, конфиг)
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
 
+## Vault. Официальный helm
+##
 
-## Infisical. Официальный helm
-
+## ---
+## После этого момента, можно запускать что-то, что требует secrets
+## ---
 
 ## gitlab-config. yaml -> helm
 ##
