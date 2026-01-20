@@ -49,7 +49,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-postgres-ingress
+  name: allow-postgres
   namespace: {{ .Values.namespace }}
 spec:
   podSelector:
@@ -76,7 +76,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-redis-ingress
+  name: allow-redis
   namespace: {{ .Values.namespace }}
 spec:
   podSelector:
@@ -99,18 +99,42 @@ spec:
 # =============================================================================
 
 ---
-# Infisical: allow egress to PostgreSQL, Redis
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-infisical-egress
+  name: allow-infisical
   namespace: {{ .Values.namespace }}
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: infisical
   policyTypes:
+    - Ingress
     - Egress
+  ingress:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app-key: traefik
+              app-env: prod
+      ports:
+        - protocol: TCP
+          port: 8080
+    # From External Secrets Operator
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.externalSecrets.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: external-secrets
+      ports:
+        - protocol: TCP
+          port: 8080
   egress:
     # To PostgreSQL
     - to:
@@ -135,31 +159,6 @@ spec:
         - protocol: TCP
           port: 443
 
----
-# Infisical: allow ingress from Traefik
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-infisical-ingress
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: infisical
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
-          podSelector:
-            matchLabels:
-              app-key: traefik
-              app-env: prod
-      ports:
-        - protocol: TCP
-          port: 8080
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge)
@@ -232,3 +231,32 @@ spec:
       ports:
         - protocol: TCP
           port: 8089
+
+# =============================================================================
+# EXTERNAL SECRETS EGRESS TO INFISICAL (in external-secrets namespace)
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ns-infisical-allow-external-secrets
+  namespace: {{ .Values.externalSecrets.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: external-secrets
+  policyTypes:
+    - Egress
+  egress:
+    # To Infisical API
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: infisical
+      ports:
+        - protocol: TCP
+          port: 8080

@@ -193,6 +193,8 @@
             port: {{ infisical_redis_port }}
           traefik:
             namespace: {{ traefik_namespace }}
+          externalSecrets:
+            namespace: {{ external_secrets_namespace }}
 
     - name: "[infisical-pre] Install via Helm"
       command: >
@@ -442,7 +444,57 @@
       command: kubectl rollout status deployment/infisical -n {{ infisical_namespace }} --timeout={{ infisical_rollout_timeout }}
 
     # =========================================================================
-    # STEP 10: INSTALL POST (Ingress)
+    # STEP 10: BOOTSTRAP INFISICAL
+    # =========================================================================
+
+    - name: "[bootstrap] Generate bootstrap password"
+      command: openssl rand -base64 24
+      register: bootstrap_password
+      changed_when: false
+
+    - name: "[bootstrap] Execute bootstrap via CLI"
+      shell: |
+        kubectl exec -n {{ infisical_namespace }} deployment/infisical -- \
+          infisical bootstrap \
+          --domain="http://localhost:8080" \
+          --email="{{ infisical_bootstrap_email }}" \
+          --password="{{ bootstrap_password.stdout }}" \
+          --organization="{{ infisical_bootstrap_organization }}"
+      register: bootstrap_result
+      failed_when: false
+
+    - name: "[bootstrap] Show bootstrap result"
+      debug:
+        msg:
+          - "=============================================="
+          - "INFISICAL BOOTSTRAP RESULT"
+          - "=============================================="
+          - ""
+          - "Bootstrap Email: {{ infisical_bootstrap_email }}"
+          - "Bootstrap Password: {{ bootstrap_password.stdout }}"
+          - "Organization: {{ infisical_bootstrap_organization }}"
+          - ""
+          - "Exit Code: {{ bootstrap_result.rc }}"
+          - ""
+          - "API Response:"
+          - "{{ bootstrap_result.stdout | default('No stdout') }}"
+          - ""
+          - "Stderr (if any):"
+          - "{{ bootstrap_result.stderr | default('No stderr') }}"
+          - "=============================================="
+
+    - name: "[bootstrap] Check if bootstrap was successful"
+      debug:
+        msg: "Bootstrap completed successfully!"
+      when: bootstrap_result.rc == 0
+
+    - name: "[bootstrap] Check if already bootstrapped"
+      debug:
+        msg: "Instance may already be bootstrapped (check response above)"
+      when: bootstrap_result.rc != 0
+
+    # =========================================================================
+    # STEP 11: INSTALL POST (Ingress)
     # =========================================================================
 
     - name: "[infisical-post] Ensure charts directory exists"
@@ -489,7 +541,7 @@
         --timeout {{ infisical_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 11: VERIFY AND OUTPUT CREDENTIALS
+    # STEP 12: VERIFY AND OUTPUT CREDENTIALS
     # =========================================================================
 
     - name: "[verify] Check Helm releases"

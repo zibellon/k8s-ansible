@@ -238,6 +238,12 @@
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
 
+## ExternalSecret. Официальный helm
+
+
+## Infisical. Официальный helm
+
+
 ## gitlab-config. yaml -> helm
 ##
 - установка
