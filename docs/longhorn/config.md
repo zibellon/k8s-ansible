@@ -222,6 +222,8 @@ spec:
     2.  `sudo rm -R my-longhorn-volume`
 
 # Как настроить BACKUPS (S3)
+## После создания через UI, посмотреть как настраивать через код (yaml). Мб можно сразу делать через yaml
+## System backup: можно сделать только через `default-backup-target`. То есть - если такого таргета нет, то system-backup настроить нельзя
 1. Создать `bucket` - куда будут литься бэкапы
    1. Обычно это делается через S3-ui, что-то такое
 2. Получить ключи для бакета и S3:
@@ -256,6 +258,54 @@ spec:
       1. прицепить к groups (которые указали выше)
       2. В настройках выбрать НОВЫЙ backup-target
 
+# Как востановить из backup
+1. Все настроили, все запустили
+   1. Сейчас пустой кластер
+   2. Longhorn, подключили к S3
+2. Восстановить backup из S3
+   1. через UI, backups, выбрать нужный backup, restore-latest-backup
+   2. при восстановлении указать
+      1. Use Previous Name - true
+      2. Number of replicas - что будет в StorageClass
+      3. data-engine - что будет в StorageClass
+      4. accessMode - что будет в PVC
+      5. NodeTag + DistTag - что будет в StorageClass
+3. Дождаться восстановления. После - ДАННЫЕ будут уже на серверах, в блочных устройствах
+4. Перейти в раздел VOLUMES (longhorn-ui)
+   1. Там будет новый  volume
+   2. Нажать на кнопку - Create PVC
+   3. Название: как было раньше
+   4. И остальные параметры
+5. После этого - НАДО ОБЯЗАТЕЛЬНО создать: kubectl apply -f '..pvc...'
+   1. То есть: Longhorn создает PVC
+   2. Потом создаем PVC через kubectl
+
+# Правильное размещение pod + volume
+1. если выбрать best-effort (у storageclass)
+2. указать правила размещения реплик volume, например только на воркерах
+3. а нагрузку (pod) запустить на manager
+4. В Longhorn-UI будет гореть предупреждение: не получается выполнить правило best-effort
+5. Все будет работать исправно, но warning будет гореть
+
+# Обновление
+1. Делаем по инструкции из документации
+2. После запуска - оно стартует долго
+3. Там есть error
+   1. То есть: kubectl get po -n longhorn-system
+   2. Там будет несколько error
+4. Версия engine - обновилась, volume были замонтированы на стырой версии engine
+5. АВТОМАТИЧЕСКИ обновится не сможет
+   1. Заходим в UI - advanced
+   2. раздел: instance-manager-image
+   3. Там будет указано, сколько и каких engine запущено на каких серверах
+6. Чтобы обновить версию engine - надо останавливать workload (чтобы сделать detach volume)
+7. То есть:
+   1. Останавливаем workload
+   2. volume делает - detach
+   3. снова запускаем workload
+   4. volume делает - attach
+   5. новая версия engine подключилась
+
 # Что-то очень интересное про snapshot ....
 
 https://longhorn-host:XXXX/v1/volumes/pvc-e68224e4-d034-46eb-af04-ad9502629f1a?action=snapshotPurge
@@ -286,3 +336,6 @@ action=snapshotPurge -> Самое важное тут ...
    1. Force delete только для Deployment подов
 4. `delete-both-statefulset-and-deployment-pod`
    1. Force delete для всех типов подов
+
+## Обновление
+
