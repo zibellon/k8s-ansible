@@ -239,7 +239,7 @@
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
 
 ## ---
-## После этого момента, можно запускать что-то, что требует volume
+## Теперь, можно запускать что-то, что требует volume (PVC)
 ## ---
 
 ## ExternalSecret. Официальный helm
@@ -251,12 +251,25 @@
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+- Перезапуск
+  - Есть дополнительный playbook, для перезапуска
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-restart.yaml --limit k8s-manager-1`
 
 ## Vault. Официальный helm
 ##
+- установка
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit k8s-manager-1`
+  - Ставится: cert-controller, secrets-webhook, core
+- обновление (версия, конфиг)
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit k8s-manager-1`
+- Перезапуск
+  - Есть дополнительный playbook, для перезапуска
+  - `ansible-playbook -i hosts.yaml playbooks/apps/vault-restart.yaml --limit k8s-manager-1`
 
 ## ---
-## После этого момента, можно запускать что-то, что требует secrets
+## Теперь, можно запускать что-то, что требует secrets
 ## ---
 
 ## gitlab-config. yaml -> helm
