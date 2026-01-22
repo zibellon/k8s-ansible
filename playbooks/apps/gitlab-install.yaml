@@ -3,21 +3,23 @@
 # =============================================================================
 # Prerequisites:
 #   - Vault must be installed and unsealed
+#   - Vault policies and roles must be synced (vault-sync.yaml)
 #   - External Secrets Operator must be installed
 #
 # This playbook:
-#   1. Creates Vault policies and roles
-#   2. Stores MinIO root credentials in Vault
-#   3. Installs NetworkPolicies (gitlab-pre)
-#   4. Installs ESO resources (ServiceAccounts, SecretStores, ExternalSecrets)
-#   5. Waits for ESO to sync MinIO root credentials
-#   6. Installs MinIO
-#   7. Creates buckets and access keys
-#   8. Stores registry keys in Vault
-#   9. Waits for ESO to sync registry keys
-#   10. Installs GitLab
-#   11. Stores GitLab root password in Vault
-#   12. Installs Ingresses (gitlab-post)
+#   1. Stores MinIO root credentials in Vault
+#   2. Installs NetworkPolicies (gitlab-pre)
+#   3. Installs ESO resources (ServiceAccounts, SecretStores, ExternalSecrets)
+#   4. Waits for ESO to sync MinIO root credentials
+#   5. Installs MinIO
+#   6. Creates buckets and access keys
+#   7. Stores registry keys in Vault
+#   8. Waits for ESO to sync registry keys
+#   9. Installs GitLab
+#   10. Stores GitLab root password in Vault
+#   11. Installs Ingresses (gitlab-post)
+#
+# Note: Vault policies and roles are managed separately via vault-sync.yaml
 # =============================================================================
 
 ---
@@ -46,54 +48,9 @@
       when: vault_sealed_check.stdout == "true"
 
     # =========================================================================
-    # STEP 2: CREATE VAULT POLICIES AND ROLES
+    # STEP 2: GENERATE AND STORE MINIO ROOT CREDENTIALS IN VAULT
     # =========================================================================
-
-    - name: "[vault-setup] Create gitlab policy"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ gitlab_vault_policy_name }} - <<'EOF'
-        path "{{ vault_kv_mount_path }}/data/gitlab/*" {
-          capabilities = ["read", "list"]
-        }
-        path "{{ vault_kv_mount_path }}/metadata/gitlab/*" {
-          capabilities = ["read", "list"]
-        }
-        EOF
-      register: gitlab_policy_result
-      failed_when: false
-
-    - name: "[vault-setup] Create gitlab role"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ gitlab_vault_role_name }}
-        bound_service_account_names={{ gitlab_vault_sa_name }}
-        bound_service_account_namespaces={{ gitlab_namespace }}
-        policies={{ gitlab_vault_policy_name }}
-        ttl=1h
-
-    - name: "[vault-setup] Create gitlab-minio policy"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ gitlab_minio_vault_policy_name }} - <<'EOF'
-        path "{{ vault_kv_mount_path }}/data/gitlab-minio/*" {
-          capabilities = ["read", "list"]
-        }
-        path "{{ vault_kv_mount_path }}/metadata/gitlab-minio/*" {
-          capabilities = ["read", "list"]
-        }
-        EOF
-      register: minio_policy_result
-      failed_when: false
-
-    - name: "[vault-setup] Create gitlab-minio role"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ gitlab_minio_vault_role_name }}
-        bound_service_account_names={{ gitlab_minio_vault_sa_name }}
-        bound_service_account_namespaces={{ gitlab_namespace }}
-        policies={{ gitlab_minio_vault_policy_name }}
-        ttl=1h
-
-    # =========================================================================
-    # STEP 3: GENERATE AND STORE MINIO ROOT CREDENTIALS IN VAULT
-    # =========================================================================
+    # Note: Vault policies and roles must be created first via vault-sync.yaml
 
     - name: "[vault-secrets] Check if MinIO root secret exists in Vault"
       shell: |
@@ -120,7 +77,7 @@
       when: minio_root_secret_check.rc == 0
 
     # =========================================================================
-    # STEP 4: INSTALL GITLAB-PRE (NetworkPolicies)
+    # STEP 3: INSTALL GITLAB-PRE (NetworkPolicies)
     # =========================================================================
 
     - name: "[gitlab-pre] Ensure charts directory exists"
@@ -171,7 +128,7 @@
         --timeout {{ gitlab_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 5: INSTALL GITLAB-ESO (ServiceAccounts, SecretStores, ExternalSecrets)
+    # STEP 4: INSTALL GITLAB-ESO (ServiceAccounts, SecretStores, ExternalSecrets)
     # =========================================================================
 
     - name: "[gitlab-eso] Ensure charts directory exists"
@@ -224,7 +181,7 @@
         --timeout {{ gitlab_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 6: WAIT FOR MINIO ROOT SECRET TO BE SYNCED
+    # STEP 5: WAIT FOR MINIO ROOT SECRET TO BE SYNCED
     # =========================================================================
 
     - name: "[wait-eso] Wait for MinIO root secret to be created by ESO"
@@ -236,7 +193,7 @@
       changed_when: false
 
     # =========================================================================
-    # STEP 7: INSTALL GITLAB-MINIO
+    # STEP 6: INSTALL GITLAB-MINIO
     # =========================================================================
 
     - name: "[gitlab-minio] Ensure charts directory exists"
@@ -281,7 +238,7 @@
       command: kubectl rollout status deployment/gitlab-minio -n {{ gitlab_namespace }} --timeout={{ gitlab_minio_rollout_timeout }}
 
     # =========================================================================
-    # STEP 8: CREATE BUCKETS AND ACCESS KEYS
+    # STEP 7: CREATE BUCKETS AND ACCESS KEYS
     # =========================================================================
 
     - name: "[minio-setup] Check if registry keys exist in Vault"
@@ -350,7 +307,7 @@
       when: registry_keys_vault_check.rc == 0
 
     # =========================================================================
-    # STEP 9: WAIT FOR REGISTRY KEYS SECRET TO BE SYNCED
+    # STEP 8: WAIT FOR REGISTRY KEYS SECRET TO BE SYNCED
     # =========================================================================
 
     - name: "[wait-eso] Wait for registry keys secret to be created by ESO"
@@ -362,7 +319,7 @@
       changed_when: false
 
     # =========================================================================
-    # STEP 10: INSTALL GITLAB
+    # STEP 9: INSTALL GITLAB
     # =========================================================================
 
     - name: "[gitlab] Ensure charts directory exists"
@@ -425,7 +382,7 @@
       command: kubectl rollout status deployment/gitlab -n {{ gitlab_namespace }} --timeout={{ gitlab_rollout_timeout }}
 
     # =========================================================================
-    # STEP 11: SAVE GITLAB ROOT PASSWORD TO VAULT
+    # STEP 10: SAVE GITLAB ROOT PASSWORD TO VAULT
     # =========================================================================
 
     - name: "[gitlab-root] Check if root password exists in Vault"
@@ -472,7 +429,7 @@
       when: gitlab_root_vault_check.rc == 0
 
     # =========================================================================
-    # STEP 12: INSTALL GITLAB-POST (Ingresses)
+    # STEP 11: INSTALL GITLAB-POST (Ingresses)
     # =========================================================================
 
     - name: "[gitlab-post] Ensure charts directory exists"
