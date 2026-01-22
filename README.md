@@ -270,6 +270,13 @@
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
+## В файле hosts.yaml есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
+## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbooks/apps/vault-sync.yaml --limit k8s-manager-1`
+## План, при добавлении чего-то в VAULT
+## 1. добавить в hosts.yaml новые данные;
+## 2. Вызвать синхронизацию;
+## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
+## ВАЖНО: синхронизация только добавляет и обновляет структуру в VAULT. Удалять что-то - нужно руками
 ## ---
 
 ## gitlab-config. yaml -> helm
