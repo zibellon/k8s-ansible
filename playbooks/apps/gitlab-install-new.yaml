@@ -23,43 +23,15 @@
 # =============================================================================
 
 ---
-# =============================================================================
-# Play 0: Pre-check - validate target is the master manager
-# =============================================================================
-- name: Pre-check - validate target
-  hosts: all
-  gather_facts: false
-
-  tasks:
-    - name: Fail if no limit specified
-      fail:
-        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install-new.yaml --limit <master_manager>"
-      when: ansible_limit is not defined
-      run_once: true
-
-    - name: Fail if not a manager node
-      fail:
-        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
-      when: inventory_hostname not in groups['managers']
-
-    - name: Fail if not the master manager
-      fail:
-        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
-      when: not (is_master | default(false))
-
-    - name: Confirm target
-      debug:
-        msg: "Installing GitLab + MinIO on master manager: {{ inventory_hostname }}"
-
-# =============================================================================
-# Play 1: Install GitLab + MinIO
-# =============================================================================
 - name: Install GitLab + MinIO with Vault integration
   hosts: managers
   become: true
   gather_facts: false
 
   tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+
     # =========================================================================
     # STEP 1: CHECK VAULT IS READY
     # =========================================================================
