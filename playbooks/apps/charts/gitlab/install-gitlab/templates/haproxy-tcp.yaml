@@ -1,0 +1,35 @@
+# HAProxy TCP ingress for GitLab SSH
+apiVersion: ingress.v1.haproxy.org/v1
+kind: TCP
+metadata:
+  name: ingress-gitlab-ssh-tcp
+  namespace: {{ .Values.namespace }}
+  annotations:
+    ingress.class: "{{ .Values.haproxy.ingressClass }}"
+spec:
+  - name: tcp-gitlab-ssh
+    frontend:
+      name: fe-tcp-gitlab-ssh
+      binds:
+        - port: {{ .Values.sshPortExternal }}
+    service:
+      name: svc-gitlab
+      port: 22
+---
+# NodePort service for SSH in HAProxy namespace
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-tcp-gitlab-ssh
+  namespace: {{ .Values.haproxy.namespace }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app-key: haproxy
+    app-env: prod
+  ports:
+    - name: tcp
+      port: {{ .Values.sshPortExternal }}
+      targetPort: {{ .Values.sshPortExternal }}
+      nodePort: {{ .Values.sshPortExternal }}

@@ -1,0 +1,66 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.gitlab.secretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.gitlab.secretName }}
+  dnsNames:
+    - {{ .Values.gitlab.domain }}
+    - {{ .Values.gitlab.registryDomain }}
+    - {{ .Values.gitlab.pagesDomain }}
+  issuerRef:
+    name: {{ .Values.gitlab.clusterIssuer }}
+    kind: ClusterIssuer
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-gitlab-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.gitlab.entrypoint }}"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.gitlab.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.gitlab.ingressClass }}
+  tls:
+    - hosts:
+        - {{ .Values.gitlab.domain }}
+        - {{ .Values.gitlab.registryDomain }}
+        - {{ .Values.gitlab.pagesDomain }}
+      secretName: {{ .Values.gitlab.secretName }}
+  rules:
+    - host: {{ .Values.gitlab.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab
+                port:
+                  number: 80
+    - host: {{ .Values.gitlab.registryDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab
+                port:
+                  number: 81
+    - host: {{ .Values.gitlab.pagesDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab
+                port:
+                  number: 82

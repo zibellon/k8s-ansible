@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-gitlab-omnibus-config
+  namespace: {{ .Values.namespace }}
+data:
+  # This key will be used in Deployment via GITLAB_OMNIBUS_CONFIG env
+  # MinIO access/secret keys are injected via environment variables
+  gitlab_omnibus_config: |
+    external_url 'https://{{ .Values.ingress.domain }}'
+    nginx['listen_port'] = 80
+    nginx['listen_https'] = false
+    registry_external_url 'https://{{ .Values.ingress.registryDomain }}'
+    gitlab_rails['registry_enabled'] = true
+    registry['enable'] = true
+    registry_nginx['enable'] = true
+    registry_nginx['listen_port'] = 81
+    registry_nginx['listen_https'] = false
+    registry['storage'] = {
+      's3' => {
+        'accesskey' => ENV['MINIO_REGISTRY_ACCESS_KEY'],
+        'secretkey' => ENV['MINIO_REGISTRY_SECRET_KEY'],
+        'bucket' => '{{ .Values.minioRegistryBucketName }}',
+        'region' => 'us-east-1',
+        'regionendpoint' => '{{ .Values.minioServiceUrl }}',
+        'checksum_disabled' => true,
+        'pathstyle' => true
+      },
+      'redirect' => {
+        'disable' => true
+      }
+    }
+    pages_external_url 'https://{{ .Values.ingress.pagesDomain }}'
+    gitlab_pages['enable'] = true
+    pages_nginx['enable'] = true
+    pages_nginx['listen_port'] = 82
+    pages_nginx['listen_https'] = false
+    gitlab_rails['gitlab_ssh_host'] = '{{ .Values.ingress.domain }}'
+    gitlab_rails['gitlab_shell_ssh_port'] = {{ .Values.sshPortExternal }}
+    gitlab_rails['smtp_enable'] = false
+    gitlab_rails['lfs_enabled'] = false
+    gitlab_rails['gitlab_kas_enabled'] = false
+    gitlab_kas['enable'] = false
+    alertmanager['enable'] = false
+    prometheus_monitoring['enable'] = false
+    prometheus['enable'] = false
+    sidekiq['metrics_enabled'] = false
+    sidekiq['concurrency'] = 10
+    puma['worker_processes'] = 0
+    puma['worker_timeout'] = 180
+    gitlab_rails['max_request_duration_seconds'] = 170

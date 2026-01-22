@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app-key: gitlab
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: gitlab
+        app-env: prod
+      annotations:
+        # Trigger Recreate when ConfigMap changes
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      volumes:
+        - name: gitlab-config-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-config-data
+        - name: gitlab-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-data
+        - name: gitlab-log-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-log-data
+      containers:
+        - name: gitlab
+          image: {{ .Values.image }}
+          env:
+            - name: GITLAB_OMNIBUS_CONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-gitlab-omnibus-config
+                  key: gitlab_omnibus_config
+            # MinIO credentials from ESO-synced secret
+            - name: MINIO_REGISTRY_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioRegistryKeysSecretName }}
+                  key: access_key
+            - name: MINIO_REGISTRY_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minioRegistryKeysSecretName }}
+                  key: secret_key
+          ports:
+            - name: web
+              containerPort: 80
+              protocol: TCP
+            - name: registry
+              containerPort: 81
+              protocol: TCP
+            - name: pages
+              containerPort: 82
+              protocol: TCP
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+          volumeMounts:
+            - name: gitlab-config-data
+              mountPath: /etc/gitlab
+              subPath: gitlab-config
+            - name: gitlab-data
+              mountPath: /var/opt/gitlab
+              subPath: gitlab-data
+            - name: gitlab-log-data
+              mountPath: /var/log/gitlab
+              subPath: gitlab-logs
+          resources:
+            requests:
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              memory: {{ .Values.resources.limits.memory }}

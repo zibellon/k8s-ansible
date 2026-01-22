@@ -1,0 +1,123 @@
+# =============================================================================
+# Vault Projects Sync
+# =============================================================================
+# Synchronizes policies and roles from hosts.yaml to Vault
+#
+# This playbook:
+#   1. Reads vault_policies from hosts.yaml
+#   2. Reads vault_roles from hosts.yaml
+#   3. Creates/updates all policies in Vault
+#   4. Creates/updates all roles in Vault
+#
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/apps/vault-sync.yaml --limit manager-1
+# =============================================================================
+
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is the master manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/apps/vault-sync.yaml --limit <master_manager>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Fail if not a manager node
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+      when: inventory_hostname not in groups['managers']
+
+    - name: Fail if not the master manager
+      fail:
+        msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+      when: not (is_master | default(false))
+
+    - name: Confirm target
+      debug:
+        msg: "Syncing Vault projects on master manager: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Sync Vault policies and roles
+# =============================================================================
+- name: Sync Vault policies and roles
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # STEP 1: CHECK VAULT IS READY
+    # =========================================================================
+
+    - name: "[vault-check] Verify Vault is unsealed"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
+      register: vault_sealed_check
+      changed_when: false
+
+    - name: "[vault-check] Fail if Vault is sealed"
+      fail:
+        msg: "Vault is sealed. Please unseal Vault first."
+      when: vault_sealed_check.stdout == "true"
+
+    - name: "[vault-check] Vault is ready"
+      debug:
+        msg: "Vault is unsealed and ready"
+
+    # =========================================================================
+    # STEP 2: SYNC ALL POLICIES AND ROLES
+    # =========================================================================
+    # Uses shared tasks from tasks/tasks-vault-sync.yaml
+
+    - name: "[vault-sync] Sync policies and roles from hosts.yaml"
+      include_tasks: tasks/tasks-vault-sync.yaml
+
+    # =========================================================================
+    # STEP 3: VERIFICATION
+    # =========================================================================
+
+    - name: "[verify] List all policies in Vault"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy list
+      register: vault_policies_list
+      changed_when: false
+
+    - name: "[verify] Show policies"
+      debug:
+        var: vault_policies_list.stdout_lines
+
+    - name: "[verify] List all roles in Vault"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault list auth/kubernetes/role
+      register: vault_roles_list
+      changed_when: false
+      failed_when: false
+
+    - name: "[verify] Show roles"
+      debug:
+        var: vault_roles_list.stdout_lines
+
+    # =========================================================================
+    # SUMMARY
+    # =========================================================================
+
+    - name: "[summary] Sync completed"
+      debug:
+        msg:
+          - "=============================================="
+          - "VAULT PROJECTS SYNC COMPLETE"
+          - "=============================================="
+          - "Policies synced: {{ vault_policies | length }}"
+          - "Roles synced: {{ vault_roles | length }}"
+          - "=============================================="
+          - ""
+          - "Policies:"
+          - "{% for p in vault_policies %}  - {{ p.name }}\n{% endfor %}"
+          - ""
+          - "Roles:"
+          - "{% for r in vault_roles %}  - {{ r.name }} -> {{ r.sa_name }} ({{ r.namespace }})\n{% endfor %}"
+          - "=============================================="

@@ -1,0 +1,65 @@
+# =============================================================================
+# Vault Sync Policies and Roles
+# =============================================================================
+# Shared tasks for syncing policies and roles from hosts.yaml to Vault
+#
+# Used by:
+#   - vault-install.yaml (initial setup)
+#   - vault-sync.yaml (manual sync)
+#
+# Requires variables:
+#   - vault_namespace
+#   - vault_kv_mount_path
+#   - vault_policies (array)
+#   - vault_roles (array)
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Sync policies from vault_policies array
+# -------------------------------------------------------------------------
+- name: "[vault-sync] Show policies to sync"
+  debug:
+    msg: "Syncing {{ vault_policies | length }} policies"
+
+- name: "[vault-sync] Create/update policies"
+  shell: |
+    kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ item.name }} - <<'EOF'
+    {% for p in item.paths %}
+    {% if '*' in p.path %}
+    path "{{ vault_kv_mount_path }}/data/{{ p.path }}" {
+      capabilities = {{ p.capabilities | to_json }}
+    }
+    path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}" {
+      capabilities = {{ p.capabilities | to_json }}
+    }
+    {% else %}
+    path "{{ vault_kv_mount_path }}/data/{{ p.path }}/*" {
+      capabilities = {{ p.capabilities | to_json }}
+    }
+    path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}/*" {
+      capabilities = {{ p.capabilities | to_json }}
+    }
+    {% endif %}
+    {% endfor %}
+    EOF
+  loop: "{{ vault_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# -------------------------------------------------------------------------
+# Sync roles from vault_roles array
+# -------------------------------------------------------------------------
+- name: "[vault-sync] Show roles to sync"
+  debug:
+    msg: "Syncing {{ vault_roles | length }} roles"
+
+- name: "[vault-sync] Create/update roles"
+  command: >
+    kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ item.name }}
+    bound_service_account_names={{ item.sa_name }}
+    bound_service_account_namespaces={{ item.namespace }}
+    policies={{ item.policies | join(',') }}
+    ttl=1h
+  loop: "{{ vault_roles }}"
+  loop_control:
+    label: "{{ item.name }}"

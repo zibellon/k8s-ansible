@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab-minio
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app-key: gitlab-minio
+      app-env: prod
+  template:
+    metadata:
+      labels:
+        app-key: gitlab-minio
+        app-env: prod
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: gitlab-minio-data
+          persistentVolumeClaim:
+            claimName: pvc-lh-gitlab-minio-data
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: gitlab-minio
+          image: {{ .Values.image }}
+          command:
+            - minio
+            - server
+            - --console-address
+            - ":9001"
+            - /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          env:
+            # Credentials from ESO-synced secret
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.rootSecretName }}
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.rootSecretName }}
+                  key: root-password
+          ports:
+            - name: api
+              containerPort: 9000
+              protocol: TCP
+            - name: console
+              containerPort: 9001
+              protocol: TCP
+          volumeMounts:
+            - name: gitlab-minio-data
+              mountPath: /data
+              subPath: minio-data
+            - name: tmp
+              mountPath: /tmp

@@ -232,17 +232,98 @@ all:
     vault_kv_mount_path: "secret"
     # Vault self credentials path (where Vault stores its own credentials)
     vault_self_creds_path: "vault"
-    # Vault admin (for writing secrets)
-    vault_admin_policy_name: "vault-admin-policy"
-    vault_admin_role_name: "vault-admin-role"
-    vault_admin_sa_name: "vault-admin"
     # Vault ESO root integration (for storing vault credentials)
-    vault_eso_root_policy_name: "vault-eso-root-policy"
-    vault_eso_root_role_name: "vault-eso-root-role"
-    vault_eso_root_sa_name: "vault-eso-root-auth"
     vault_root_eso_secret_store_name: "vault-root"
     vault_root_eso_external_secret_name: "vault-credentials-sync"
     vault_root_eso_secret_name: "vault-root-credentials"
+
+    # ---------
+    # VAULT POLICIES (Single Source of Truth)
+    # ---------
+    vault_policies:
+      # ---------
+      # Vault self credentials (for ESO to read vault root credentials)
+      # ---------
+      - name: vault-eso-root-policy
+        paths:
+          - path: vault/*
+            capabilities: [read, list]
+
+      # ---------
+      # Vault Admin (full access for vault-admin SA)
+      # ---------
+      - name: vault-admin-policy
+        paths:
+          - path: "*"
+            capabilities: [create, read, update, delete, list]
+          - path: sys/policies/acl/*
+            capabilities: [create, read, update, delete, list]
+          - path: auth/*
+            capabilities: [create, read, update, delete, list]
+
+      # ---------
+      # GitLab (root password)
+      # ---------
+      - name: gitlab-read-policy
+        paths:
+          - path: gitlab/*
+            capabilities: [read, list]
+
+      # ---------
+      # GitLab MinIO (root credentials, registry keys, runner-cache keys)
+      # ---------
+      - name: gitlab-minio-read-policy
+        paths:
+          - path: gitlab-minio/*
+            capabilities: [read, list]
+
+      # ---------
+      # ArgoCD (admin password)
+      # ---------
+      - name: argocd-read-policy
+        paths:
+          - path: argocd/*
+            capabilities: [read, list]
+
+    # ---------
+    # VAULT ROLES (Single Source of Truth)
+    # ---------
+    vault_roles:
+      # ---------
+      # Vault ESO root (for reading vault credentials)
+      # ---------
+      - name: vault-eso-root-role
+        namespace: ns-vault
+        sa_name: vault-eso-root-auth
+        policies:
+          - vault-eso-root-policy
+
+      # ---------
+      # Vault Admin (for writing secrets from Ansible)
+      # ---------
+      - name: vault-admin-role
+        namespace: ns-vault
+        sa_name: vault-admin
+        policies:
+          - vault-admin-policy
+
+      # ---------
+      # GitLab
+      # ---------
+      - name: gitlab-role
+        namespace: ns-gitlab
+        sa_name: gitlab-vault-auth
+        policies:
+          - gitlab-read-policy
+
+      # ---------
+      # GitLab MinIO
+      # ---------
+      - name: gitlab-minio-role
+        namespace: ns-gitlab
+        sa_name: gitlab-minio-vault-auth
+        policies:
+          - gitlab-minio-read-policy
 
     # ------
     # GitLab MinIO

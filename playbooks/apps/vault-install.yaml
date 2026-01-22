@@ -282,61 +282,7 @@
       when: vault_root_token is defined
 
     # =========================================================================
-    # STEP 10: CREATE ADMIN POLICY AND ROLE (if just initialized)
-    # =========================================================================
-
-    - name: "[vault] Create admin policy"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ vault_admin_policy_name }} - <<'EOF'
-        # Full access to KV secrets
-        path "{{ vault_kv_mount_path }}/*" {
-          capabilities = ["create", "read", "update", "delete", "list"]
-        }
-        path "{{ vault_kv_mount_path }}/data/*" {
-          capabilities = ["create", "read", "update", "delete", "list"]
-        }
-        path "{{ vault_kv_mount_path }}/metadata/*" {
-          capabilities = ["read", "list", "delete"]
-        }
-
-        # Manage policies
-        path "sys/policies/acl/*" {
-          capabilities = ["create", "read", "update", "delete", "list"]
-        }
-
-        # Manage auth methods and roles
-        path "auth/*" {
-          capabilities = ["create", "read", "update", "delete", "list"]
-        }
-        EOF
-      when: vault_root_token is defined
-
-    - name: "[vault] Create admin Kubernetes auth role"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ vault_admin_role_name }}
-        bound_service_account_names={{ vault_admin_sa_name }}
-        bound_service_account_namespaces={{ vault_namespace }}
-        policies={{ vault_admin_policy_name }}
-        ttl=1h
-      when: vault_root_token is defined
-
-    # =========================================================================
-    # STEP 11: CREATE ADMIN SERVICE ACCOUNT (if just initialized)
-    # =========================================================================
-
-    - name: "[vault] Create admin ServiceAccount"
-      shell: |
-        kubectl apply -f - <<'EOF'
-        apiVersion: v1
-        kind: ServiceAccount
-        metadata:
-          name: {{ vault_admin_sa_name }}
-          namespace: {{ vault_namespace }}
-        EOF
-      when: vault_root_token is defined
-
-    # =========================================================================
-    # STEP 12: SAVE VAULT CREDENTIALS TO VAULT (if just initialized)
+    # STEP 10: SAVE VAULT CREDENTIALS TO VAULT (if just initialized)
     # =========================================================================
 
     - name: "[vault] Save credentials to Vault"
@@ -349,32 +295,15 @@
       when: vault_unseal_keys is defined and vault_root_token is defined
 
     # =========================================================================
-    # STEP 13: CREATE ESO ROOT POLICY AND ROLE (if just initialized)
+    # STEP 11: SYNC VAULT POLICIES AND ROLES (if just initialized)
     # =========================================================================
 
-    - name: "[vault] Create ESO root policy"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ vault_eso_root_policy_name }} - <<'EOF'
-        path "{{ vault_kv_mount_path }}/data/{{ vault_self_creds_path }}/*" {
-          capabilities = ["read", "list"]
-        }
-        path "{{ vault_kv_mount_path }}/metadata/{{ vault_self_creds_path }}/*" {
-          capabilities = ["read", "list"]
-        }
-        EOF
-      when: vault_root_token is defined
-
-    - name: "[vault] Create ESO root Kubernetes auth role"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ vault_eso_root_role_name }}
-        bound_service_account_names={{ vault_eso_root_sa_name }}
-        bound_service_account_namespaces={{ vault_namespace }}
-        policies={{ vault_eso_root_policy_name }}
-        ttl=1h
+    - name: "[vault-sync] Sync policies and roles from hosts.yaml"
+      include_tasks: tasks/tasks-vault-sync.yaml
       when: vault_root_token is defined
 
     # =========================================================================
-    # STEP 14: INSTALL ESO ROOT INTEGRATION (if just initialized)
+    # STEP 12: INSTALL ESO ROOT INTEGRATION (if just initialized)
     # =========================================================================
 
     - name: "[vault-eso-root] Ensure charts directory exists"
@@ -408,9 +337,10 @@
             kvMountPath: {{ vault_kv_mount_path }}
             selfCredsPath: {{ vault_self_creds_path }}
           esoRoot:
-            policyName: {{ vault_eso_root_policy_name }}
-            roleName: {{ vault_eso_root_role_name }}
-            saName: {{ vault_eso_root_sa_name }}
+            # Values from vault_roles array (vault-eso-root-role)
+            policyName: vault-eso-root-policy
+            roleName: vault-eso-root-role
+            saName: vault-eso-root-auth
           secretStore:
             name: {{ vault_root_eso_secret_store_name }}
           externalSecret:
@@ -431,7 +361,7 @@
       when: vault_root_token is defined
 
     # =========================================================================
-    # STEP 15: INSTALL POST (Ingress)
+    # STEP 13: INSTALL POST (Ingress)
     # =========================================================================
 
     - name: "[vault-post] Ensure charts directory exists"
@@ -478,7 +408,7 @@
         --timeout {{ vault_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 16: VERIFY AND OUTPUT CREDENTIALS
+    # STEP 14: VERIFY AND OUTPUT CREDENTIALS
     # =========================================================================
 
     - name: "[verify] Check Helm releases"
