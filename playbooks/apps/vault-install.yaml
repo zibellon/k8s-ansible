@@ -3,7 +3,7 @@
 # - pre: NetworkPolicies
 # - install: Official Helm chart (hashicorp/vault)
 # - post: Ingress
-# - install-eso-root: ESO integration for root credentials
+# - install-self-eso: ESO integration for self credentials
 # =============================================================================
 
 ---
@@ -60,24 +60,19 @@
         --timeout {{ vault_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 2: HELM REPO
+    # STEP 2: INSTALL VAULT (Local Helm Chart)
     # =========================================================================
 
-    - name: "[vault] Add Helm repository"
-      command: helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
-
-    - name: "[vault] Update Helm repositories"
-      command: helm repo update
-
-    # =========================================================================
-    # STEP 3: INSTALL VAULT (Official Helm Chart)
-    # =========================================================================
-
-    - name: "[vault] Ensure charts directory exists"
+    - name: "[vault] Remove old chart from remote"
       file:
         path: "{{ remote_charts_dir }}/vault/install"
-        state: directory
-        mode: "0755"
+        state: absent
+
+    - name: "[vault] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/vault/install/"
+        dest: "{{ remote_charts_dir }}/vault/install/"
+        mode: "0644"
 
     - name: "[vault] Create values file"
       copy:
@@ -105,7 +100,6 @@
                 storage "raft" {
                   path = "/vault/data"
                 }
-                service_registration "kubernetes" {}
 
             dataStorage:
               enabled: true
@@ -125,8 +119,9 @@
 
     - name: "[vault] Install via Helm"
       command: >
-        helm upgrade --install vault hashicorp/vault
+        helm upgrade --install vault {{ remote_charts_dir }}/vault/install
         --namespace {{ vault_namespace }}
+        --values {{ remote_charts_dir }}/vault/install/values.yaml
         --values {{ remote_charts_dir }}/vault/install/values-override.yaml
         --cleanup-on-fail
         --atomic
@@ -137,8 +132,11 @@
     # STEP 4: WAIT FOR VAULT POD
     # =========================================================================
 
-    - name: "[vault] Wait for StatefulSet to be ready"
-      command: kubectl rollout status statefulset/vault -n {{ vault_namespace }} --timeout={{ vault_rollout_timeout }}
+    - name: "[vault] Wait for pod to be Running"
+      command: >
+        kubectl wait --for=jsonpath='{.status.phase}'=Running
+        pod/vault-0 -n {{ vault_namespace }}
+        --timeout={{ vault_rollout_timeout }}
 
     # =========================================================================
     # STEP 5: CHECK IF VAULT IS INITIALIZED
@@ -154,6 +152,153 @@
     - name: "[vault] Show initialization status"
       debug:
         msg: "Vault initialized: {{ vault_initialized.stdout | default('unknown') }}"
+
+    # =========================================================================
+    # STEP 5.1: CHECK SEAL STATUS (if already initialized)
+    # =========================================================================
+
+    - name: "[vault] Check seal status"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
+      register: vault_sealed_check
+      when: vault_initialized.stdout == "true"
+      changed_when: false
+
+    - name: "[vault] Show seal status (already initialized)"
+      debug:
+        msg: "Vault sealed: {{ vault_sealed_check.stdout | default('unknown') }}"
+      when: vault_initialized.stdout == "true"
+
+    # =========================================================================
+    # STEP 5.2: GET CREDENTIALS FROM K8S SECRET (if sealed)
+    # =========================================================================
+
+    - name: "[vault] Get credentials from K8s Secret"
+      shell: |
+        kubectl get secret {{ vault_self_eso_secret_name }} -n {{ vault_namespace }} -o jsonpath='{.data}'
+      register: k8s_secret_data
+      when: vault_sealed_check.stdout | default('false') == 'true'
+      failed_when: false
+
+    - name: "[vault] Fail if no credentials available for unseal"
+      fail:
+        msg: "Vault is initialized and sealed, but no credentials found in K8s Secret '{{ vault_self_eso_secret_name }}'. Cannot unseal."
+      when:
+        - vault_sealed_check.stdout | default('false') == 'true'
+        - k8s_secret_data.stdout | default('') == '' or k8s_secret_data.rc != 0
+
+    - name: "[vault] Parse credentials from K8s Secret"
+      set_fact:
+        vault_unseal_keys:
+          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_1 | b64decode }}"
+          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_2 | b64decode }}"
+          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_3 | b64decode }}"
+        vault_root_token: "{{ (k8s_secret_data.stdout | from_json).root_token | b64decode }}"
+      when:
+        - vault_sealed_check.stdout | default('false') == 'true'
+        - k8s_secret_data.rc == 0
+
+    - name: "[vault] Unseal Vault with recovered keys"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
+      loop: "{{ vault_unseal_keys[:vault_key_threshold | int] }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+        label: "Key {{ idx + 1 }}"
+      when:
+        - vault_sealed_check.stdout | default('false') == 'true'
+        - vault_unseal_keys is defined
+
+    # =========================================================================
+    # STEP 5.3: GET ALL CREDENTIALS (if unsealed and already initialized)
+    # =========================================================================
+
+    # 1. First try K8s Secret (ESO synced) - get ALL data
+    - name: "[vault] Get credentials from K8s Secret"
+      shell: |
+        kubectl get secret {{ vault_self_eso_secret_name }} -n {{ vault_namespace }} -o jsonpath='{.data}'
+      register: k8s_secret_data
+      when:
+        - vault_initialized.stdout == "true"
+        - vault_sealed_check.stdout | default('true') == 'false'
+      failed_when: false
+
+    # Set ALL credentials from K8s Secret if found
+    - name: "[vault] Set credentials from K8s Secret"
+      set_fact:
+        vault_root_token: "{{ (k8s_secret_data.stdout | from_json).root_token | b64decode }}"
+        vault_unseal_keys:
+          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_1 | b64decode }}"
+          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_2 | b64decode }}"
+          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_3 | b64decode }}"
+      when:
+        - k8s_secret_data is defined
+        - k8s_secret_data.rc | default(1) == 0
+        - k8s_secret_data.stdout | default('') != ''
+        - (k8s_secret_data.stdout | from_json).root_token is defined
+        - (k8s_secret_data.stdout | from_json).unseal_key_1 is defined
+
+    # Login with K8s Secret token
+    - name: "[vault] Login with K8s Secret token"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
+      when:
+        - vault_initialized.stdout == "true"
+        - vault_sealed_check.stdout | default('true') == 'false'
+        - vault_root_token is defined
+
+    # 2. If K8s Secret failed, try Vault session
+    - name: "[vault] Check if authenticated (fallback)"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault token lookup
+      register: vault_auth_check
+      when:
+        - vault_initialized.stdout == "true"
+        - vault_sealed_check.stdout | default('true') == 'false'
+        - vault_root_token is not defined
+      failed_when: false
+      changed_when: false
+
+    # If authenticated, try to read ALL credentials from Vault
+    - name: "[vault] Read credentials from Vault (fallback)"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/credentials
+      register: vault_creds_read
+      when:
+        - vault_initialized.stdout == "true"
+        - vault_sealed_check.stdout | default('true') == 'false'
+        - vault_root_token is not defined
+        - vault_auth_check.rc | default(1) == 0
+      failed_when: false
+      changed_when: false
+
+    # Set ALL credentials from Vault if found
+    - name: "[vault] Set credentials from Vault"
+      set_fact:
+        vault_root_token: "{{ (vault_creds_read.stdout | from_json).data.data.root_token }}"
+        vault_unseal_keys:
+          - "{{ (vault_creds_read.stdout | from_json).data.data.unseal_key_1 }}"
+          - "{{ (vault_creds_read.stdout | from_json).data.data.unseal_key_2 }}"
+          - "{{ (vault_creds_read.stdout | from_json).data.data.unseal_key_3 }}"
+      when:
+        - vault_creds_read is defined
+        - vault_creds_read.rc | default(1) == 0
+        - vault_creds_read.stdout | default('') != ''
+
+    # FAIL if no credentials found anywhere
+    - name: "[vault] Fail if no credentials available"
+      fail:
+        msg: |
+          Vault is initialized and unsealed, but no credentials found.
+          Checked:
+            1. K8s Secret '{{ vault_self_eso_secret_name }}': {{ 'found' if k8s_secret_data.rc | default(1) == 0 and k8s_secret_data.stdout | default('') != '' else 'not found' }}
+            2. Vault session: {{ 'authenticated' if vault_auth_check.rc | default(1) == 0 else 'not authenticated' }}
+            3. Vault storage: {{ 'found' if vault_creds_read.rc | default(1) == 0 else 'not found or not checked' }}
+
+          BOTH root_token AND unseal_keys are REQUIRED.
+          Without unseal_keys, Vault will be permanently locked after restart!
+      when:
+        - vault_initialized.stdout == "true"
+        - vault_sealed_check.stdout | default('true') == 'false'
+        - vault_root_token is not defined
 
     # =========================================================================
     # STEP 6: INITIALIZE VAULT (if not initialized)
@@ -211,7 +356,7 @@
         index_var: idx
         loop_var: key
         label: "Key {{ idx + 1 }}"
-      when: vault_unseal_keys is defined
+      when: vault_init_result is not skipped
 
     - name: "[vault] Verify Vault is unsealed"
       shell: |
@@ -235,13 +380,13 @@
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault auth enable kubernetes
       register: k8s_auth_result
       failed_when: false
-      when: vault_root_token is defined
+      when: vault_init_result is not skipped
 
     - name: "[vault] Configure Kubernetes auth"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/config
         kubernetes_host="{{ vault_kubernetes_host }}"
-      when: vault_root_token is defined
+      when: vault_init_result is not skipped
 
     # =========================================================================
     # STEP 9: ENABLE KV SECRETS ENGINE (if just initialized)
@@ -251,7 +396,7 @@
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault secrets enable -path={{ vault_kv_mount_path }} kv-v2
       register: kv_enable_result
       failed_when: false
-      when: vault_root_token is defined
+      when: vault_init_result is not skipped
 
     # =========================================================================
     # STEP 10: SAVE VAULT CREDENTIALS TO VAULT (if just initialized)
@@ -264,73 +409,71 @@
           unseal_key_{{ idx + 1 }}="{{ vault_unseal_keys[idx] }}" \
           {% endfor %}
           root_token="{{ vault_root_token }}"
-      when: vault_unseal_keys is defined and vault_root_token is defined
+      when: vault_init_result is not skipped
 
     # =========================================================================
-    # STEP 11: SYNC VAULT POLICIES AND ROLES (if just initialized)
+    # STEP 11: SYNC VAULT POLICIES AND ROLES (ALWAYS)
     # =========================================================================
 
     - name: "[vault-sync] Sync policies and roles from hosts.yaml"
       include_tasks: tasks/tasks-vault-sync.yaml
-      when: vault_root_token is defined
 
     # =========================================================================
-    # STEP 12: INSTALL ESO ROOT INTEGRATION (if just initialized)
+    # STEP 12: INSTALL ESO ROOT INTEGRATION (if K8s Secret doesn't exist)
     # =========================================================================
 
-    - name: "[vault-eso-root] Ensure charts directory exists"
+    - name: "[vault-self-eso] Ensure charts directory exists"
       file:
-        path: "{{ remote_charts_dir }}/vault/install-eso-root"
+        path: "{{ remote_charts_dir }}/vault/install-self-eso"
         state: directory
         mode: "0755"
-      when: vault_root_token is defined
+      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
-    - name: "[vault-eso-root] Remove old chart from remote"
+    - name: "[vault-self-eso] Remove old chart from remote"
       file:
-        path: "{{ remote_charts_dir }}/vault/install-eso-root"
+        path: "{{ remote_charts_dir }}/vault/install-self-eso"
         state: absent
-      when: vault_root_token is defined
+      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
-    - name: "[vault-eso-root] Copy chart to remote"
+    - name: "[vault-self-eso] Copy chart to remote"
       copy:
-        src: "{{ playbook_dir }}/charts/vault/install-eso-root/"
-        dest: "{{ remote_charts_dir }}/vault/install-eso-root/"
+        src: "{{ playbook_dir }}/charts/vault/install-self-eso/"
+        dest: "{{ remote_charts_dir }}/vault/install-self-eso/"
         mode: "0644"
-      when: vault_root_token is defined
+      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
-    - name: "[vault-eso-root] Create values file"
+    - name: "[vault-self-eso] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/vault/install-eso-root/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/vault/install-self-eso/values-override.yaml"
         mode: "0644"
         content: |
-          dnsDomain: {{ dns_domain }}
+          clusterDomain: {{ dns_domain }}
           vault:
             namespace: {{ vault_namespace }}
             kvMountPath: {{ vault_kv_mount_path }}
             selfCredsPath: {{ vault_self_creds_path }}
-          esoRoot:
-            # Values from vault_roles array (vault-eso-root-role)
-            policyName: vault-eso-root-policy
-            roleName: vault-eso-root-role
-            saName: vault-eso-root-auth
+          selfEso:
+            policyName: {{ vault_self_eso_policy_name }}
+            roleName: {{ vault_self_eso_role_name }}
+            saName: {{ vault_self_eso_sa_name }}
           secretStore:
-            name: {{ vault_root_eso_secret_store_name }}
+            name: {{ vault_self_eso_secret_store_name }}
           externalSecret:
-            name: {{ vault_root_eso_external_secret_name }}
+            name: {{ vault_self_eso_external_secret_name }}
           targetSecret:
-            name: {{ vault_root_eso_secret_name }}
-      when: vault_root_token is defined
+            name: {{ vault_self_eso_secret_name }}
+      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
-    - name: "[vault-eso-root] Install via Helm"
+    - name: "[vault-self-eso] Install via Helm"
       command: >
-        helm upgrade --install vault-eso-root {{ remote_charts_dir }}/vault/install-eso-root
+        helm upgrade --install vault-self-eso {{ remote_charts_dir }}/vault/install-self-eso
         --namespace {{ vault_namespace }}
-        --values {{ remote_charts_dir }}/vault/install-eso-root/values-override.yaml
+        --values {{ remote_charts_dir }}/vault/install-self-eso/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
         --timeout {{ vault_config_helm_timeout }}
-      when: vault_root_token is defined
+      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
     # =========================================================================
     # STEP 13: INSTALL POST (Ingress)
@@ -422,7 +565,7 @@
           - "  Path: {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/credentials"
           - ""
           - "Credentials synced to K8s Secret (via ESO):"
-          - "  Secret: {{ vault_root_eso_secret_name }}"
+          - "  Secret: {{ vault_self_eso_secret_name }}"
           - "  Namespace: {{ vault_namespace }}"
           - ""
           - "Vault UI: https://{{ vault_domain }}"

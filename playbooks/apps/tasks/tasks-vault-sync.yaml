@@ -12,6 +12,7 @@
 #   - vault_kv_mount_path
 #   - vault_policies (array)
 #   - vault_roles (array)
+#   - remote_charts_dir
 # =============================================================================
 
 # -------------------------------------------------------------------------
@@ -21,27 +22,50 @@
   debug:
     msg: "Syncing {{ vault_policies | length }} policies"
 
-- name: "[vault-sync] Create/update policies"
-  shell: |
-    kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy write {{ item.name }} - <<'EOF'
-    {% for p in item.paths %}
-    {% if '*' in p.path %}
-    path "{{ vault_kv_mount_path }}/data/{{ p.path }}" {
-      capabilities = {{ p.capabilities | to_json }}
-    }
-    path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}" {
-      capabilities = {{ p.capabilities | to_json }}
-    }
-    {% else %}
-    path "{{ vault_kv_mount_path }}/data/{{ p.path }}/*" {
-      capabilities = {{ p.capabilities | to_json }}
-    }
-    path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}/*" {
-      capabilities = {{ p.capabilities | to_json }}
-    }
-    {% endif %}
-    {% endfor %}
-    EOF
+- name: "[vault-sync] Ensure policies directory exists"
+  file:
+    path: "{{ remote_charts_dir }}/vault/config/policies"
+    state: directory
+    mode: "0755"
+
+- name: "[vault-sync] Create policy files on server"
+  copy:
+    dest: "{{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl"
+    mode: "0644"
+    content: |
+      {% for p in item.paths %}
+      {% if '*' in p.path %}
+      path "{{ vault_kv_mount_path }}/data/{{ p.path }}" {
+        capabilities = {{ p.capabilities | to_json }}
+      }
+      path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}" {
+        capabilities = {{ p.capabilities | to_json }}
+      }
+      {% else %}
+      path "{{ vault_kv_mount_path }}/data/{{ p.path }}/*" {
+        capabilities = {{ p.capabilities | to_json }}
+      }
+      path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}/*" {
+        capabilities = {{ p.capabilities | to_json }}
+      }
+      {% endif %}
+      {% endfor %}
+  loop: "{{ vault_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: "[vault-sync] Copy policy files to container"
+  command: >
+    kubectl cp {{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl
+    {{ vault_namespace }}/vault-0:/tmp/{{ item.name }}.hcl
+  loop: "{{ vault_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: "[vault-sync] Apply policies in Vault"
+  command: >
+    kubectl exec -n {{ vault_namespace }} vault-0 --
+    vault policy write {{ item.name }} /tmp/{{ item.name }}.hcl
   loop: "{{ vault_policies }}"
   loop_control:
     label: "{{ item.name }}"

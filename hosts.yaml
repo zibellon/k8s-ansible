@@ -215,13 +215,12 @@ all:
     # Vault (HashiCorp)
     # ------
     vault_namespace: "ns-vault"
-    vault_chart_version: "0.29.1"
-    vault_image_tag: "1.18.3"
-    vault_domain: "vault-k8s.domain.com"
+    vault_image_tag: "1.21.2"
+    vault_domain: "vault-k8s-v2.drawapp.ru"
     vault_https_secret_name: "cert-vault-domain-com"
     vault_vpn_only_enabled: false
-    vault_storage_class: "lh-major-worker-multi-best-effort"
-    vault_storage_size: "10Gi"
+    vault_storage_class: "lh-major-single-best-effort"
+    vault_storage_size: "1Gi"
     vault_replicas: 1
     # Vault unseal
     vault_key_shares: 3
@@ -231,11 +230,14 @@ all:
     # Vault KV mount path (DO NOT CHANGE - standard path for KV secrets engine)
     vault_kv_mount_path: "secret"
     # Vault self credentials path (where Vault stores its own credentials)
-    vault_self_creds_path: "vault"
+    vault_self_creds_path: "vault-self"
     # Vault ESO root integration (for storing vault credentials)
-    vault_root_eso_secret_store_name: "vault-root"
-    vault_root_eso_external_secret_name: "vault-credentials-sync"
-    vault_root_eso_secret_name: "vault-root-credentials"
+    vault_self_eso_policy_name: "eso-vault-self"
+    vault_self_eso_role_name: "eso-vault-self"
+    vault_self_eso_sa_name: "eso-vault-self"
+    vault_self_eso_secret_store_name: "vault-self"
+    vault_self_eso_external_secret_name: "vault-self-creds-sync"
+    vault_self_eso_secret_name: "vault-self-creds"
 
     # ---------
     # VAULT POLICIES (Single Source of Truth)
@@ -244,15 +246,15 @@ all:
       # ---------
       # Vault self credentials (for ESO to read vault root credentials)
       # ---------
-      - name: vault-eso-root-policy
+      - name: eso-vault-self
         paths:
-          - path: vault/*
+          - path: vault-self/*
             capabilities: [read, list]
 
       # ---------
       # Vault Admin (full access for vault-admin SA)
       # ---------
-      - name: vault-admin-policy
+      - name: eso-vault-admin
         paths:
           - path: "*"
             capabilities: [create, read, update, delete, list]
@@ -264,7 +266,7 @@ all:
       # ---------
       # GitLab (root password)
       # ---------
-      - name: gitlab-read-policy
+      - name: eso-gitlab-read
         paths:
           - path: gitlab/*
             capabilities: [read, list]
@@ -272,7 +274,7 @@ all:
       # ---------
       # GitLab MinIO (root credentials, registry keys, runner-cache keys)
       # ---------
-      - name: gitlab-minio-read-policy
+      - name: eso-gitlab-minio-read
         paths:
           - path: gitlab-minio/*
             capabilities: [read, list]
@@ -280,7 +282,7 @@ all:
       # ---------
       # ArgoCD (admin password)
       # ---------
-      - name: argocd-read-policy
+      - name: eso-argocd-read
         paths:
           - path: argocd/*
             capabilities: [read, list]
@@ -292,50 +294,49 @@ all:
       # ---------
       # Vault ESO root (for reading vault credentials)
       # ---------
-      - name: vault-eso-root-role
+      - name: eso-vault-self
         namespace: ns-vault
-        sa_name: vault-eso-root-auth
+        sa_name: eso-vault-self
         policies:
-          - vault-eso-root-policy
+          - eso-vault-self
 
       # ---------
       # Vault Admin (for writing secrets from Ansible)
       # ---------
-      - name: vault-admin-role
+      - name: eso-vault-admin
         namespace: ns-vault
-        sa_name: vault-admin
+        sa_name: eso-vault-admin
         policies:
-          - vault-admin-policy
+          - eso-vault-admin
 
       # ---------
       # GitLab
       # ---------
-      - name: gitlab-role
+      - name: eso-gitlab
         namespace: ns-gitlab
-        sa_name: gitlab-vault-auth
+        sa_name: eso-gitlab
         policies:
-          - gitlab-read-policy
+          - eso-gitlab-read
 
       # ---------
       # GitLab MinIO
       # ---------
-      - name: gitlab-minio-role
+      - name: eso-gitlab-minio
         namespace: ns-gitlab
-        sa_name: gitlab-minio-vault-auth
+        sa_name: eso-gitlab-minio
         policies:
-          - gitlab-minio-read-policy
+          - eso-gitlab-minio-read
 
     # ------
     # GitLab MinIO
     # ------
     gitlab_minio_image: "minio/minio:RELEASE.2025-04-22T22-12-26Z"
-    gitlab_minio_storage_size: "5Gi"
-    gitlab_minio_domain: "gitlab-minio-k8s.domain.com"
-    gitlab_minio_api_domain: "gitlab-minio-api-k8s.domain.com"
+    gitlab_minio_storage_size: "2Gi"
+    gitlab_minio_domain: "gitlab-minio-k8s-v2.drawapp.ru"
+    gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
     gitlab_minio_https_secret_name: "cert-gitlab-minio-domain-com"
     gitlab_minio_root_user: "admin"
-    gitlab_minio_root_password: "pass_123"
-    gitlab_minio_storage_class: "lh-major-worker-multi-best-effort"
+    gitlab_minio_storage_class: "lh-major-single-best-effort"
     gitlab_minio_registry_bucket_name: "registry"
     gitlab_minio_registry_keys_secret_name: "secret-gitlab-minio-registry-keys"
     gitlab_minio_registry_key_name: "gitlab-registry-key"
