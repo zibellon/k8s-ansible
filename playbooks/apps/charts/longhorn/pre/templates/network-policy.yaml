@@ -77,6 +77,39 @@ spec:
           port: 443
 
 # =============================================================================
+# CSI COMPONENTS EGRESS
+# =============================================================================
+
+---
+# Allow CSI components egress (csi-attacher, csi-provisioner, csi-resizer, csi-snapshotter, longhorn-csi-plugin)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-csi-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - csi-attacher
+          - csi-provisioner
+          - csi-resizer
+          - csi-snapshotter
+          - longhorn-csi-plugin
+  policyTypes:
+    - Egress
+  egress:
+    # Internal namespace communication (longhorn-backend:9500)
+    - to:
+        - podSelector: {}
+    # API server
+    - ports:
+        - protocol: TCP
+          port: 6443
+
+# =============================================================================
 # OFFICIAL LONGHORN INGRESS POLICIES (from Helm chart)
 # =============================================================================
 
