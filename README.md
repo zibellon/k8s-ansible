@@ -220,12 +220,26 @@
   - Много переменных в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/medik8s-install.yaml --limit k8s-manager-1`
 
+## ExternalSecret. Официальный helm
+##
+- установка
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+  - Ставится: cert-controller, secrets-webhook, core
+- обновление (версия, конфиг)
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+- Перезапуск
+  - Есть дополнительный playbook, для перезапуска
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-restart.yaml --limit k8s-manager-1`
+
 ## longhorn. Официальный helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Автоматически подхватывает конфиг. Обновили конфиг в ConfigMap -> сразу подхватил и начал использовать
 ## `namespace: longhorn-system`, МЕНЯТЬ НЕЛЬЗЯ. Так написано в документации
 ## Пример обновленного конфига - `docs/longhorn/other/...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/longhorn-install.yaml`
+## Есть создание секретов для БЭКАПА в S3 -> использует CRD от ESO (Но секреты сразу работать не будут, так как они появляются в VAULT, позже)
 ## 
 - установка
   - Параметры в `hosts.yaml`
@@ -242,20 +256,11 @@
 ## Теперь, можно запускать что-то, что требует volume (PVC)
 ## ---
 
-## ExternalSecret. Официальный helm
-##
-- установка
-  - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
-  - Ставится: cert-controller, secrets-webhook, core
-- обновление (версия, конфиг)
-  - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
-- Перезапуск
-  - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-restart.yaml --limit k8s-manager-1`
-
-## Vault. Официальный helm
+## Vault. Официальный helm. ЕСТЬ проблема: официальный helm не работает из РФ
+## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
+## Скачать ZIP архив последнего релиза, достать все templates, Chart.yaml и values.yaml
+## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть точка монтирования -> требуется Longhorn
 ##
 - установка
   - Параметры в `hosts.yaml`
@@ -263,14 +268,17 @@
   - Ставится: cert-controller, secrets-webhook, core
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
+  - Устанавливается через официальный HELM, но через исходники с Github
   - `ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit k8s-manager-1`
 - Перезапуск
   - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbooks/apps/vault-restart.yaml --limit k8s-manager-1`
+- Важный момент: в hosts.yaml есть полная структура ВСЕХ policy + role + sa + secret_path
+  - `ansible-playbook -i hosts.yaml playbooks/apps/tasks/tasks-vault-sync.yaml --limit k8s-manager-1`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
-## В файле hosts.yaml есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
+## В файле `hosts.yaml` есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
 ## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbooks/apps/vault-sync.yaml --limit k8s-manager-1`
 ## План, при добавлении чего-то в VAULT
 ## 1. добавить в hosts.yaml новые данные;

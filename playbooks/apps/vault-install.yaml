@@ -419,7 +419,7 @@
       include_tasks: tasks/tasks-vault-sync.yaml
 
     # =========================================================================
-    # STEP 12: INSTALL ESO ROOT INTEGRATION (if K8s Secret doesn't exist)
+    # STEP 12: INSTALL ESO ROOT INTEGRATION (always runs to apply config updates)
     # =========================================================================
 
     - name: "[vault-self-eso] Ensure charts directory exists"
@@ -427,20 +427,17 @@
         path: "{{ remote_charts_dir }}/vault/install-self-eso"
         state: directory
         mode: "0755"
-      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
     - name: "[vault-self-eso] Remove old chart from remote"
       file:
         path: "{{ remote_charts_dir }}/vault/install-self-eso"
         state: absent
-      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
     - name: "[vault-self-eso] Copy chart to remote"
       copy:
         src: "{{ playbook_dir }}/charts/vault/install-self-eso/"
         dest: "{{ remote_charts_dir }}/vault/install-self-eso/"
         mode: "0644"
-      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
     - name: "[vault-self-eso] Create values file"
       copy:
@@ -463,7 +460,6 @@
             name: {{ vault_self_eso_external_secret_name }}
           targetSecret:
             name: {{ vault_self_eso_secret_name }}
-      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
     - name: "[vault-self-eso] Install via Helm"
       command: >
@@ -474,7 +470,6 @@
         --atomic
         --wait
         --timeout {{ vault_config_helm_timeout }}
-      when: k8s_secret_data.rc | default(1) != 0 or k8s_secret_data.stdout | default('') == ''
 
     # =========================================================================
     # STEP 13: INSTALL POST (Ingress)

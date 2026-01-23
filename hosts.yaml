@@ -201,9 +201,14 @@ all:
     longhorn_ui_domain: "longhorn-ui-k8s-v2.drawapp.ru"
     longhorn_ui_vpn_only_enabled: false
     longhorn_ui_https_secret_name: "cert-longhorn-ui-domain-com"
-    longhorn_s3_access_key_id: "secret_123"
-    longhorn_s3_secret_access_key: "secret_456"
-    longhorn_s3_endpoint: "https://s3.your-provider.com"
+    # Longhorn ESO integration (S3 backup credentials from Vault)
+    longhorn_eso_vault_path: "longhorn"
+    longhorn_eso_s3_secret_name: "s3-backup"
+    longhorn_eso_sa_name: "eso-longhorn"
+    longhorn_eso_role_name: "eso-longhorn"
+    longhorn_eso_secret_store_name: "longhorn-vault"
+    longhorn_eso_external_secret_name: "longhorn-s3-backup-sync"
+    longhorn_eso_target_secret_name: "longhorn-s3-backup-creds"
 
     # ------
     # External Secrets
@@ -268,6 +273,14 @@ all:
       # ---------
       # GitLab (root password)
       # ---------
+      - name: eso-longhorn-read
+        paths:
+          - path: longhorn/*
+            capabilities: [read, list]
+
+      # ---------
+      # GitLab (root password)
+      # ---------
       - name: eso-gitlab-read
         paths:
           - path: gitlab/*
@@ -310,6 +323,15 @@ all:
         sa_name: eso-vault-admin
         policies:
           - eso-vault-admin
+
+      # ---------
+      # Longhorn
+      # ---------
+      - name: eso-longhorn
+        namespace: longhorn-system
+        sa_name: eso-longhorn
+        policies:
+          - eso-longhorn-read
 
       # ---------
       # GitLab
