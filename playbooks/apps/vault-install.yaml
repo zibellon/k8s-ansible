@@ -260,7 +260,7 @@
     # If authenticated, try to read ALL credentials from Vault
     - name: "[vault] Read credentials from Vault (fallback)"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/credentials
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/{{ vault_self_creds_secret_name }}
       register: vault_creds_read
       when:
         - vault_initialized.stdout == "true"
@@ -404,7 +404,7 @@
 
     - name: "[vault] Save credentials to Vault"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/credentials \
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/{{ vault_self_creds_secret_name }} \
           {% for idx in range(vault_unseal_keys | length) %}
           unseal_key_{{ idx + 1 }}="{{ vault_unseal_keys[idx] }}" \
           {% endfor %}
@@ -452,6 +452,7 @@
             namespace: {{ vault_namespace }}
             kvMountPath: {{ vault_kv_mount_path }}
             selfCredsPath: {{ vault_self_creds_path }}
+            selfCredsSecretName: {{ vault_self_creds_secret_name }}
           selfEso:
             policyName: {{ vault_self_eso_policy_name }}
             roleName: {{ vault_self_eso_role_name }}
@@ -562,7 +563,7 @@
           - "Root Token: {{ vault_root_token | default('(already initialized)') }}"
           - ""
           - "Credentials stored in Vault:"
-          - "  Path: {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/credentials"
+          - "  Path: {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/{{ vault_self_creds_secret_name }}"
           - ""
           - "Credentials synced to K8s Secret (via ESO):"
           - "  Secret: {{ vault_self_eso_secret_name }}"
