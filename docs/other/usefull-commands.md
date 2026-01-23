@@ -160,6 +160,7 @@ EOF
 `ctr -n k8s.io task ls`
 
 # как увидеть Endpoints, куда идет трафик реально
+`kubectl get endpointslice` - получение всех endpoint-slice
 `kubectl get EndpointSlice kubernetes -o yaml`
 
 # Как проверять watchdog | softdog
