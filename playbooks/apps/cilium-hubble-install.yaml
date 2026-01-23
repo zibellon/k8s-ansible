@@ -1,7 +1,7 @@
 # =============================================================================
 # Install Cilium Hubble UI Ingress
 # Steps:
-#   1. cilium-hubble/pre: No resources (README only)
+#   1. cilium-hubble/pre: NetworkPolicies for Hubble UI Ingress
 #   2. cilium-hubble/install: Certificate + Ingress for Hubble UI
 #   3. cilium-hubble/post: No resources (README only)
 # =============================================================================
@@ -17,12 +17,44 @@
       include_tasks: tasks/tasks-pre-check.yaml
 
     # =========================================================================
-    # STEP 1: CILIUM-HUBBLE/PRE (No resources)
+    # STEP 1: CILIUM-HUBBLE/PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[cilium-hubble-pre] Skip - no pre-install resources"
-      debug:
-        msg: "cilium-hubble/pre: No resources to install"
+    - name: "[cilium-hubble-pre] Ensure remote charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: "[cilium-hubble-pre] Remove old chart from remote server"
+      file:
+        path: "{{ remote_charts_dir }}/cilium-hubble/pre"
+        state: absent
+
+    - name: "[cilium-hubble-pre] Copy chart to server"
+      copy:
+        src: "{{ playbook_dir }}/charts/cilium-hubble/pre/"
+        dest: "{{ remote_charts_dir }}/cilium-hubble/pre/"
+        mode: "0644"
+
+    - name: "[cilium-hubble-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/cilium-hubble/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ cilium_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+
+    - name: "[cilium-hubble-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install cilium-hubble-pre {{ remote_charts_dir }}/cilium-hubble/pre
+        --namespace {{ cilium_namespace }}
+        --values {{ remote_charts_dir }}/cilium-hubble/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ cilium_hubble_helm_timeout | default('2m') }}
 
     # =========================================================================
     # STEP 2: CILIUM-HUBBLE/INSTALL (Certificate + Ingress)
