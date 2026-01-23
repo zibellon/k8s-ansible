@@ -145,6 +145,19 @@
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
 
+## ExternalSecret. Официальный helm
+##
+- установка
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+  - Ставится: cert-controller, secrets-webhook, core
+- обновление (версия, конфиг)
+  - Параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+- Перезапуск
+  - Есть дополнительный playbook, для перезапуска
+  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-restart.yaml --limit k8s-manager-1`
+
 ## traefik (ingress). yaml -> helm
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/traefik-install.yaml`
@@ -219,19 +232,6 @@
 - установка
   - Много переменных в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/medik8s-install.yaml --limit k8s-manager-1`
-
-## ExternalSecret. Официальный helm
-##
-- установка
-  - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
-  - Ставится: cert-controller, secrets-webhook, core
-- обновление (версия, конфиг)
-  - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
-- Перезапуск
-  - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-restart.yaml --limit k8s-manager-1`
 
 ## longhorn. Официальный helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)

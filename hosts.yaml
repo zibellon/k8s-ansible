@@ -151,6 +151,12 @@ all:
     cert_manager_cluster_issuer: "cluster-issuer-acme-prod"
 
     # ------
+    # External Secrets Operator
+    # ------
+    external_secrets_namespace: "ns-external-secrets"
+    external_secrets_version: "1.2.1"
+
+    # ------
     # Traefik
     # ------
     traefik_version: "3.6.2" # Used for CRD download
@@ -201,26 +207,21 @@ all:
     longhorn_ui_domain: "longhorn-ui-k8s-v2.drawapp.ru"
     longhorn_ui_vpn_only_enabled: false
     longhorn_ui_https_secret_name: "cert-longhorn-ui-domain-com"
-    # Longhorn ESO integration (S3 backup credentials from Vault)
-    longhorn_eso_vault_path: "longhorn"
-    longhorn_eso_s3_secret_name: "s3-backup"
-    longhorn_eso_sa_name: "eso-longhorn"
-    longhorn_eso_role_name: "eso-longhorn"
-    longhorn_eso_secret_store_name: "longhorn-vault"
-    longhorn_eso_external_secret_name: "longhorn-s3-backup-sync"
-    longhorn_eso_target_secret_name: "longhorn-s3-backup-creds"
     # Longhorn AZ list (Для каждой AZ создается свой набор StorageClass)
     # Эти az должны совпадать с az в разделе managers и workers (в нижней части файла hosts.yaml)
     # цель: все реплики одного volume должны быть в одной зоне (в рамках одного StorageClass)
     longhorn_az_list:
       - "fr-1"
       - "de-1"
-
-    # ------
-    # External Secrets
-    # ------
-    external_secrets_namespace: "ns-external-secrets"
-    external_secrets_version: "1.2.1"
+    # Longhorn ESO integration
+    longhorn_eso:
+      sa_name: "eso-longhorn" # Из списка ниже (vault_roles)
+      role_name: "eso-longhorn" # Из списка ниже (vault_roles)
+      secret_store_name: "eso-vault-longhorn"
+      secrets:
+        - name: "s3-backup" # Название ExternalSecret (который будет создан в этом namespace)
+          target_secret: "longhorn-s3-backup-creds" # Название секрета в Kubernetes (который будет создан в этом namespace)
+          vault_path: "longhorn-system/s3-backup" # Путь в Vault, где находятся секреты (извлекаться будет ВСЕ СОДЕРЖИМОЕ)
 
     # ------
     # Vault (HashiCorp)
@@ -240,17 +241,16 @@ all:
     vault_kubernetes_host: "https://kubernetes.default.svc:443"
     # Vault KV mount path (DO NOT CHANGE - standard path for KV secrets engine)
     vault_kv_mount_path: "secret"
-    # Vault self credentials path (where Vault stores its own credentials)
-    vault_self_creds_path: "vault-self"
-    # Vault self credentials secret name (the actual secret name in Vault)
-    vault_self_creds_secret_name: "credentials"
-    # Vault ESO root integration (for storing vault credentials)
-    vault_self_eso_policy_name: "eso-vault-self"
-    vault_self_eso_role_name: "eso-vault-self"
-    vault_self_eso_sa_name: "eso-vault-self"
-    vault_self_eso_secret_store_name: "vault-self"
-    vault_self_eso_external_secret_name: "vault-self-creds-sync"
-    vault_self_eso_secret_name: "vault-self-creds"
+    # Vault ESO integration (for storing vault credentials)
+    vault_eso:
+      sa_name: "eso-vault-self"
+      role_name: "eso-vault-self"
+      secret_store_name: "eso-vault-self"
+      secrets:
+        - name: "vault-self-creds-sync"
+          target_secret: "vault-self-creds"
+          vault_path: "vault-self/credentials"
+          is_master: true
 
     # ---------
     # VAULT POLICIES (Single Source of Truth)
@@ -375,11 +375,24 @@ all:
     gitlab_minio_runner_cache_key_name: "gitlab-runner-cache-key"
     gitlab_minio_vpn_only_enabled: false
     gitlab_minio_service_url: "http://svc-gitlab-minio.ns-gitlab.svc.cluster.local:9000"
-    # Vault integration for MinIO (references vault_roles array)
-    gitlab_minio_vault_sa_name: "gitlab-minio-vault-auth"
-    gitlab_minio_vault_role_name: "gitlab-minio-role"
-    gitlab_minio_secret_store_name: "vault-gitlab-minio"
-    gitlab_minio_root_secret_name: "secret-gitlab-minio"
+    # GitLab MinIO ESO integration
+    gitlab_minio_eso:
+      sa_name: "gitlab-minio-vault-auth"
+      role_name: "gitlab-minio-role"
+      secret_store_name: "vault-gitlab-minio"
+      secrets:
+        - name: "gitlab-minio-root-sync"
+          target_secret: "secret-gitlab-minio"
+          vault_path: "gitlab-minio/root"
+          is_master: true
+        - name: "gitlab-minio-registry-keys-sync"
+          target_secret: "secret-gitlab-minio-registry-keys"
+          vault_path: "gitlab-minio/registry-keys"
+          is_master: false
+        - name: "gitlab-minio-runner-cache-keys-sync"
+          target_secret: "secret-gitlab-minio-runner-cache-keys"
+          vault_path: "gitlab-minio/runner-cache-keys"
+          is_master: false
 
     # ------
     # GitLab
@@ -399,11 +412,16 @@ all:
     gitlab_storage_logs_size: "5Gi"
     gitlab_resources_requests_memory: "2G"
     gitlab_resources_limits_memory: "3G"
-    # Vault integration for GitLab (references vault_roles array)
-    gitlab_vault_sa_name: "gitlab-vault-auth"
-    gitlab_vault_role_name: "gitlab-role"
-    gitlab_secret_store_name: "vault-gitlab"
-    gitlab_root_secret_name: "secret-gitlab-root"
+    # GitLab ESO integration
+    gitlab_eso:
+      sa_name: "gitlab-vault-auth"
+      role_name: "gitlab-role"
+      secret_store_name: "vault-gitlab"
+      secrets:
+        - name: "gitlab-root-sync"
+          target_secret: "secret-gitlab-root"
+          vault_path: "gitlab/root"
+          is_master: true
 
     # ------
     # ArgoCD

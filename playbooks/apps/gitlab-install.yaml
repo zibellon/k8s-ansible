@@ -33,6 +33,28 @@
       include_tasks: tasks/tasks-pre-check.yaml
 
     # =========================================================================
+    # STEP 0: FIND MASTER SECRETS IN ESO CONFIGS
+    # =========================================================================
+
+    - name: "[gitlab] Find master secret in gitlab_eso.secrets"
+      set_fact:
+        gitlab_master_secret: "{{ gitlab_eso.secrets | selectattr('is_master', 'defined') | selectattr('is_master', 'equalto', true) | first }}"
+
+    - name: "[gitlab] Fail if no GitLab master secret found"
+      fail:
+        msg: "No master secret found in gitlab_eso.secrets (is_master: true required)"
+      when: gitlab_master_secret is not defined
+
+    - name: "[gitlab] Find master secret in gitlab_minio_eso.secrets"
+      set_fact:
+        gitlab_minio_master_secret: "{{ gitlab_minio_eso.secrets | selectattr('is_master', 'defined') | selectattr('is_master', 'equalto', true) | first }}"
+
+    - name: "[gitlab] Fail if no GitLab MinIO master secret found"
+      fail:
+        msg: "No master secret found in gitlab_minio_eso.secrets (is_master: true required)"
+      when: gitlab_minio_master_secret is not defined
+
+    # =========================================================================
     # STEP 1: CHECK VAULT IS READY
     # =========================================================================
 
@@ -103,6 +125,7 @@
         mode: "0644"
         content: |
           namespace: {{ gitlab_namespace }}
+          clusterDomain: {{ dns_domain }}
           gitlab:
             sshPortExternal: {{ gitlab_ssh_port_external }}
             vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
@@ -113,8 +136,19 @@
             namespace: {{ haproxy_namespace }}
           vault:
             namespace: {{ vault_namespace }}
+            kvMountPath: {{ vault_kv_mount_path }}
           externalSecrets:
             namespace: {{ external_secrets_namespace }}
+          gitlabEso:
+            saName: {{ gitlab_eso.sa_name }}
+            roleName: {{ gitlab_eso.role_name }}
+            secretStoreName: {{ gitlab_eso.secret_store_name }}
+            secrets: {{ gitlab_eso.secrets | to_json }}
+          gitlabMinioEso:
+            saName: {{ gitlab_minio_eso.sa_name }}
+            roleName: {{ gitlab_minio_eso.role_name }}
+            secretStoreName: {{ gitlab_minio_eso.secret_store_name }}
+            secrets: {{ gitlab_minio_eso.secrets | to_json }}
 
     - name: "[gitlab-pre] Install via Helm"
       command: >
@@ -128,64 +162,11 @@
         --timeout {{ gitlab_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 4: INSTALL GITLAB-ESO (ServiceAccounts, SecretStores, ExternalSecrets)
-    # =========================================================================
-
-    - name: "[gitlab-eso] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/gitlab/install-eso"
-        state: directory
-        mode: "0755"
-
-    - name: "[gitlab-eso] Remove old chart from remote"
-      file:
-        path: "{{ remote_charts_dir }}/gitlab/install-eso"
-        state: absent
-
-    - name: "[gitlab-eso] Copy chart to remote"
-      copy:
-        src: "{{ playbook_dir }}/charts/gitlab/install-eso/"
-        dest: "{{ remote_charts_dir }}/gitlab/install-eso/"
-        mode: "0644"
-
-    - name: "[gitlab-eso] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/gitlab/install-eso/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ gitlab_namespace }}
-          dnsDomain: {{ dns_domain }}
-          vault:
-            namespace: {{ vault_namespace }}
-            kvMountPath: {{ vault_kv_mount_path }}
-          gitlab:
-            saName: {{ gitlab_vault_sa_name }}
-            roleName: {{ gitlab_vault_role_name }}
-            secretStoreName: {{ gitlab_secret_store_name }}
-            rootSecretName: {{ gitlab_root_secret_name }}
-          gitlabMinio:
-            saName: {{ gitlab_minio_vault_sa_name }}
-            roleName: {{ gitlab_minio_vault_role_name }}
-            secretStoreName: {{ gitlab_minio_secret_store_name }}
-            rootSecretName: {{ gitlab_minio_root_secret_name }}
-            registrySecretName: {{ gitlab_minio_registry_keys_secret_name }}
-
-    - name: "[gitlab-eso] Install via Helm"
-      command: >
-        helm upgrade --install gitlab-eso {{ remote_charts_dir }}/gitlab/install-eso
-        --namespace {{ gitlab_namespace }}
-        --values {{ remote_charts_dir }}/gitlab/install-eso/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ gitlab_config_helm_timeout }}
-
-    # =========================================================================
-    # STEP 5: WAIT FOR MINIO ROOT SECRET TO BE SYNCED
+    # STEP 4: WAIT FOR MINIO ROOT SECRET TO BE SYNCED
     # =========================================================================
 
     - name: "[wait-eso] Wait for MinIO root secret to be created by ESO"
-      command: kubectl get secret {{ gitlab_minio_root_secret_name }} -n {{ gitlab_namespace }}
+      command: kubectl get secret {{ gitlab_minio_master_secret.target_secret }} -n {{ gitlab_namespace }}
       register: minio_root_secret_wait
       until: minio_root_secret_wait.rc == 0
       retries: 30
@@ -193,7 +174,7 @@
       changed_when: false
 
     # =========================================================================
-    # STEP 6: INSTALL GITLAB-MINIO
+    # STEP 5: INSTALL GITLAB-MINIO
     # =========================================================================
 
     - name: "[gitlab-minio] Ensure charts directory exists"
@@ -222,7 +203,7 @@
           image: {{ gitlab_minio_image }}
           storageClass: {{ gitlab_minio_storage_class }}
           storageSize: {{ gitlab_minio_storage_size }}
-          rootSecretName: {{ gitlab_minio_root_secret_name }}
+          rootSecretName: {{ gitlab_minio_master_secret.target_secret }}
 
     - name: "[gitlab-minio] Install via Helm"
       command: >
@@ -238,7 +219,7 @@
       command: kubectl rollout status deployment/gitlab-minio -n {{ gitlab_namespace }} --timeout={{ gitlab_minio_rollout_timeout }}
 
     # =========================================================================
-    # STEP 7: CREATE BUCKETS AND ACCESS KEYS
+    # STEP 6: CREATE BUCKETS AND ACCESS KEYS
     # =========================================================================
 
     - name: "[minio-setup] Check if registry keys exist in Vault"
@@ -254,13 +235,13 @@
 
     - name: "[minio-setup] Get MinIO root credentials from secret"
       shell: |
-        kubectl get secret {{ gitlab_minio_root_secret_name }} -n {{ gitlab_namespace }} -o jsonpath='{.data.root-user}' | base64 -d
+        kubectl get secret {{ gitlab_minio_master_secret.target_secret }} -n {{ gitlab_namespace }} -o jsonpath='{.data.root-user}' | base64 -d
       register: minio_root_user_from_secret
       changed_when: false
 
     - name: "[minio-setup] Get MinIO root password from secret"
       shell: |
-        kubectl get secret {{ gitlab_minio_root_secret_name }} -n {{ gitlab_namespace }} -o jsonpath='{.data.root-password}' | base64 -d
+        kubectl get secret {{ gitlab_minio_master_secret.target_secret }} -n {{ gitlab_namespace }} -o jsonpath='{.data.root-password}' | base64 -d
       register: minio_root_password_from_secret
       changed_when: false
 
@@ -307,7 +288,7 @@
       when: registry_keys_vault_check.rc == 0
 
     # =========================================================================
-    # STEP 8: WAIT FOR REGISTRY KEYS SECRET TO BE SYNCED
+    # STEP 7: WAIT FOR REGISTRY KEYS SECRET TO BE SYNCED
     # =========================================================================
 
     - name: "[wait-eso] Wait for registry keys secret to be created by ESO"
@@ -319,7 +300,7 @@
       changed_when: false
 
     # =========================================================================
-    # STEP 9: INSTALL GITLAB
+    # STEP 8: INSTALL GITLAB
     # =========================================================================
 
     - name: "[gitlab] Ensure charts directory exists"
@@ -382,7 +363,7 @@
       command: kubectl rollout status deployment/gitlab -n {{ gitlab_namespace }} --timeout={{ gitlab_rollout_timeout }}
 
     # =========================================================================
-    # STEP 10: SAVE GITLAB ROOT PASSWORD TO VAULT
+    # STEP 9: SAVE GITLAB ROOT PASSWORD TO VAULT
     # =========================================================================
 
     - name: "[gitlab-root] Check if root password exists in Vault"
@@ -429,7 +410,7 @@
       when: gitlab_root_vault_check.rc == 0
 
     # =========================================================================
-    # STEP 11: INSTALL GITLAB-POST (Ingresses)
+    # STEP 10: INSTALL GITLAB-POST (Ingresses)
     # =========================================================================
 
     - name: "[gitlab-post] Ensure charts directory exists"

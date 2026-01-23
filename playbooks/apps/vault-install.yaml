@@ -17,6 +17,19 @@
       include_tasks: tasks/tasks-pre-check.yaml
 
     # =========================================================================
+    # STEP 0: FIND MASTER SECRET IN vault_eso.secrets
+    # =========================================================================
+
+    - name: "[vault] Find master secret in vault_eso.secrets"
+      set_fact:
+        vault_master_secret: "{{ vault_eso.secrets | selectattr('is_master', 'defined') | selectattr('is_master', 'equalto', true) | first }}"
+
+    - name: "[vault] Fail if no master secret found"
+      fail:
+        msg: "No master secret found in vault_eso.secrets (is_master: true required)"
+      when: vault_master_secret is not defined
+
+    # =========================================================================
     # STEP 1: INSTALL PRE (NetworkPolicies)
     # =========================================================================
 
@@ -175,14 +188,14 @@
 
     - name: "[vault] Get credentials from K8s Secret"
       shell: |
-        kubectl get secret {{ vault_self_eso_secret_name }} -n {{ vault_namespace }} -o jsonpath='{.data}'
+        kubectl get secret {{ vault_master_secret.target_secret }} -n {{ vault_namespace }} -o jsonpath='{.data}'
       register: k8s_secret_data
       when: vault_sealed_check.stdout | default('false') == 'true'
       failed_when: false
 
     - name: "[vault] Fail if no credentials available for unseal"
       fail:
-        msg: "Vault is initialized and sealed, but no credentials found in K8s Secret '{{ vault_self_eso_secret_name }}'. Cannot unseal."
+        msg: "Vault is initialized and sealed, but no credentials found in K8s Secret '{{ vault_master_secret.target_secret }}'. Cannot unseal."
       when:
         - vault_sealed_check.stdout | default('false') == 'true'
         - k8s_secret_data.stdout | default('') == '' or k8s_secret_data.rc != 0
@@ -216,7 +229,7 @@
     # 1. First try K8s Secret (ESO synced) - get ALL data
     - name: "[vault] Get credentials from K8s Secret"
       shell: |
-        kubectl get secret {{ vault_self_eso_secret_name }} -n {{ vault_namespace }} -o jsonpath='{.data}'
+        kubectl get secret {{ vault_master_secret.target_secret }} -n {{ vault_namespace }} -o jsonpath='{.data}'
       register: k8s_secret_data
       when:
         - vault_initialized.stdout == "true"
@@ -260,7 +273,7 @@
     # If authenticated, try to read ALL credentials from Vault
     - name: "[vault] Read credentials from Vault (fallback)"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/{{ vault_self_creds_secret_name }}
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ vault_master_secret.vault_path }}
       register: vault_creds_read
       when:
         - vault_initialized.stdout == "true"
@@ -289,7 +302,7 @@
         msg: |
           Vault is initialized and unsealed, but no credentials found.
           Checked:
-            1. K8s Secret '{{ vault_self_eso_secret_name }}': {{ 'found' if k8s_secret_data.rc | default(1) == 0 and k8s_secret_data.stdout | default('') != '' else 'not found' }}
+            1. K8s Secret '{{ vault_master_secret.target_secret }}': {{ 'found' if k8s_secret_data.rc | default(1) == 0 and k8s_secret_data.stdout | default('') != '' else 'not found' }}
             2. Vault session: {{ 'authenticated' if vault_auth_check.rc | default(1) == 0 else 'not authenticated' }}
             3. Vault storage: {{ 'found' if vault_creds_read.rc | default(1) == 0 else 'not found or not checked' }}
 
@@ -404,7 +417,7 @@
 
     - name: "[vault] Save credentials to Vault"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/{{ vault_self_creds_secret_name }} \
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/{{ vault_master_secret.vault_path }} \
           {% for idx in range(vault_unseal_keys | length) %}
           unseal_key_{{ idx + 1 }}="{{ vault_unseal_keys[idx] }}" \
           {% endfor %}
@@ -419,60 +432,7 @@
       include_tasks: tasks/tasks-vault-sync.yaml
 
     # =========================================================================
-    # STEP 12: INSTALL ESO ROOT INTEGRATION (always runs to apply config updates)
-    # =========================================================================
-
-    - name: "[vault-self-eso] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/vault/install-self-eso"
-        state: directory
-        mode: "0755"
-
-    - name: "[vault-self-eso] Remove old chart from remote"
-      file:
-        path: "{{ remote_charts_dir }}/vault/install-self-eso"
-        state: absent
-
-    - name: "[vault-self-eso] Copy chart to remote"
-      copy:
-        src: "{{ playbook_dir }}/charts/vault/install-self-eso/"
-        dest: "{{ remote_charts_dir }}/vault/install-self-eso/"
-        mode: "0644"
-
-    - name: "[vault-self-eso] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/vault/install-self-eso/values-override.yaml"
-        mode: "0644"
-        content: |
-          clusterDomain: {{ dns_domain }}
-          vault:
-            namespace: {{ vault_namespace }}
-            kvMountPath: {{ vault_kv_mount_path }}
-            selfCredsPath: {{ vault_self_creds_path }}
-            selfCredsSecretName: {{ vault_self_creds_secret_name }}
-          selfEso:
-            policyName: {{ vault_self_eso_policy_name }}
-            roleName: {{ vault_self_eso_role_name }}
-            saName: {{ vault_self_eso_sa_name }}
-          secretStore:
-            name: {{ vault_self_eso_secret_store_name }}
-          externalSecret:
-            name: {{ vault_self_eso_external_secret_name }}
-          targetSecret:
-            name: {{ vault_self_eso_secret_name }}
-
-    - name: "[vault-self-eso] Install via Helm"
-      command: >
-        helm upgrade --install vault-self-eso {{ remote_charts_dir }}/vault/install-self-eso
-        --namespace {{ vault_namespace }}
-        --values {{ remote_charts_dir }}/vault/install-self-eso/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ vault_config_helm_timeout }}
-
-    # =========================================================================
-    # STEP 13: INSTALL POST (Ingress)
+    # STEP 12: INSTALL POST (Ingress + ESO)
     # =========================================================================
 
     - name: "[vault-post] Ensure charts directory exists"
@@ -498,6 +458,9 @@
         mode: "0644"
         content: |
           namespace: {{ vault_namespace }}
+          clusterDomain: {{ dns_domain }}
+          vault:
+            kvMountPath: {{ vault_kv_mount_path }}
           ingress:
             ingressClass: {{ traefik_ingress_class }}
             entrypoint: {{ traefik_websecure_entrypoint }}
@@ -507,6 +470,11 @@
             vpnOnlyEnabled: {{ vault_vpn_only_enabled }}
           traefik:
             namespace: {{ traefik_namespace }}
+          eso:
+            saName: {{ vault_eso.sa_name }}
+            roleName: {{ vault_eso.role_name }}
+            secretStoreName: {{ vault_eso.secret_store_name }}
+            secrets: {{ vault_eso.secrets | to_json }}
 
     - name: "[vault-post] Install via Helm"
       command: >
@@ -519,7 +487,7 @@
         --timeout {{ vault_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 14: VERIFY AND OUTPUT CREDENTIALS
+    # STEP 13: VERIFY AND OUTPUT CREDENTIALS
     # =========================================================================
 
     - name: "[verify] Check Helm releases"
@@ -558,10 +526,10 @@
           - "Root Token: {{ vault_root_token | default('(already initialized)') }}"
           - ""
           - "Credentials stored in Vault:"
-          - "  Path: {{ vault_kv_mount_path }}/{{ vault_self_creds_path }}/{{ vault_self_creds_secret_name }}"
+          - "  Path: {{ vault_kv_mount_path }}/{{ vault_master_secret.vault_path }}"
           - ""
           - "Credentials synced to K8s Secret (via ESO):"
-          - "  Secret: {{ vault_self_eso_secret_name }}"
+          - "  Secret: {{ vault_master_secret.target_secret }}"
           - "  Namespace: {{ vault_namespace }}"
           - ""
           - "Vault UI: https://{{ vault_domain }}"
