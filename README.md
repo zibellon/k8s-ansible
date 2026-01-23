@@ -192,11 +192,11 @@
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-hubble-install.yaml --limit k8s-manager-1`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
 - обновление (Версия + конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-post-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-hubble-install.yaml --limit k8s-manager-1`
 
 ## olm. yaml -> helm
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/olm-v0-install.yaml`
