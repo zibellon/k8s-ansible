@@ -1,0 +1,334 @@
+---
+# Source: traefik/templates/rbac/serviceaccount.yaml
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: traefik
+  namespace: kek-lol-123
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kek-lol-123
+    helm.sh/chart: traefik-38.0.1
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+automountServiceAccountToken: false
+---
+# Source: traefik/templates/rbac/clusterrole.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: traefik-kek-lol-123
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kek-lol-123
+    helm.sh/chart: traefik-38.0.1
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - nodes
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingressclasses
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - traefik.io
+    resources:
+      - ingressroutes
+      - ingressroutetcps
+      - ingressrouteudps
+      - middlewares
+      - middlewaretcps
+      - serverstransports
+      - serverstransporttcps
+      - tlsoptions
+      - tlsstores
+      - traefikservices
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Source: traefik/templates/rbac/clusterrolebinding.yaml
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: traefik-kek-lol-123
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kek-lol-123
+    helm.sh/chart: traefik-38.0.1
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik-kek-lol-123
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: kek-lol-123
+---
+# Source: traefik/templates/extra-objects.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/instance: 'traefik'
+    app.kubernetes.io/name: traefik
+  name: traefik-dashboard
+  namespace: 'kek-lol-123'
+spec:
+  ports:
+  - name: dashboard
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app.kubernetes.io/instance: 'traefik'
+    app.kubernetes.io/name: traefik
+  type: ClusterIP
+---
+# Source: traefik/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  namespace: kek-lol-123
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kek-lol-123
+    helm.sh/chart: traefik-38.0.1
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kek-lol-123
+  ports:
+  - port: 80
+    name: web
+    targetPort: web
+    protocol: TCP
+    nodePort: 80
+  - port: 443
+    name: websecure
+    targetPort: websecure
+    protocol: TCP
+    nodePort: 443
+---
+# Source: traefik/templates/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: traefik
+  namespace: kek-lol-123
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kek-lol-123
+    helm.sh/chart: traefik-38.0.1
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/instance: traefik-kek-lol-123
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 0
+  template: 
+    metadata:
+      annotations:
+      labels:
+        app.kubernetes.io/name: traefik
+        app.kubernetes.io/instance: traefik-kek-lol-123
+        helm.sh/chart: traefik-38.0.1
+        app.kubernetes.io/managed-by: Helm
+        app-env: prod
+        app-key: traefik
+    spec:
+      serviceAccountName: traefik
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 60
+      hostNetwork: false
+      containers:
+      - image: docker.io/traefik:v3.6.2
+        imagePullPolicy: IfNotPresent
+        name: traefik
+        resources:
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+            scheme: HTTP
+          failureThreshold: 1
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+            scheme: HTTP
+          failureThreshold: 3
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+        lifecycle:
+        ports:
+        - name: metrics
+          containerPort: 9100
+          protocol: TCP
+        - name: traefik
+          containerPort: 8080
+          protocol: TCP
+        - name: web
+          containerPort: 80
+          protocol: TCP
+        - name: websecure
+          containerPort: 443
+          protocol: TCP
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsGroup: 65532
+          runAsNonRoot: true
+          runAsUser: 65532
+        volumeMounts:
+          - name: data
+            mountPath: /data
+          - name: tmp
+            mountPath: /tmp
+
+        args:
+          - "--entryPoints.metrics.address=:9100/tcp"
+          - "--entryPoints.traefik.address=:8080/tcp"
+          - "--entryPoints.web.address=:80/tcp"
+          - "--entryPoints.web.asDefault=true"
+          - "--entryPoints.websecure.address=:443/tcp"
+          - "--entryPoints.websecure.asDefault=true"
+          - "--api.dashboard=true"
+          - "--ping=true"
+        
+        
+          - "--providers.kubernetescrd"
+          - "--providers.kubernetescrd.ingressClass=ing-class-123"
+          - "--providers.kubernetescrd.allowCrossNamespace=true"
+          - "--providers.kubernetescrd.allowEmptyServices=true"
+          - "--providers.kubernetesingress"
+          - "--providers.kubernetesingress.allowEmptyServices=true"
+          - "--providers.kubernetesingress.ingressClass=ing-class-123"
+          - "--entryPoints.web.forwardedHeaders.insecure"
+          - "--entryPoints.web.proxyProtocol.insecure"
+          - "--entryPoints.web.transport.respondingTimeouts.readTimeout=600"
+          - "--entryPoints.web.transport.respondingTimeouts.writeTimeout=600"
+          - "--entryPoints.web.transport.respondingTimeouts.idleTimeout=600"
+          - "--entryPoints.websecure.http.tls=true"
+          - "--entryPoints.websecure.forwardedHeaders.insecure"
+          - "--entryPoints.websecure.proxyProtocol.insecure"
+          - "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=600"
+          - "--entryPoints.websecure.transport.respondingTimeouts.writeTimeout=600"
+          - "--entryPoints.websecure.transport.respondingTimeouts.idleTimeout=600"
+          - "--log.format=json"
+          - "--log.level=DEBUG"
+        
+          - "--accesslog=true"
+          - "--accesslog.format=json"
+          - "--accesslog.fields.defaultmode=keep"
+          - "--accesslog.fields.headers.defaultmode=drop"
+        
+          - "--api.insecure=true"
+          - "--api.debug=true"
+        env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: USER
+            value: traefik
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      securityContext:
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+---
+# Source: traefik/templates/ingressclass.yaml
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "false"
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kek-lol-123
+    helm.sh/chart: traefik-38.0.1
+    app.kubernetes.io/managed-by: Helm
+  name: ing-class-123
+spec:
+  controller: traefik.io/ingress-controller

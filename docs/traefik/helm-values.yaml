@@ -1,0 +1,130 @@
+# Traefik Helm Chart Values
+# Chart version: 38.0.1
+# Traefik version: v3.6.2
+
+image:
+  tag: v3.6.2
+
+deployment:
+  kind: DaemonSet
+  podLabels:
+    app-key: traefik
+    app-env: prod
+
+ingressClass:
+  enabled: true
+  name: ing-class-123  # <-- замени на свой
+  isDefaultClass: false
+
+service:
+  type: NodePort
+  spec:
+    externalTrafficPolicy: Local
+
+ports:
+  traefik:
+    port: 8080
+    expose:
+      default: false
+  web:
+    asDefault: true
+    port: 80
+    nodePort: 80
+    expose:
+      default: true
+    exposedPort: 80
+    forwardedHeaders:
+      insecure: true
+    proxyProtocol:
+      insecure: true
+    transport:
+      respondingTimeouts:
+        idleTimeout: 600
+        writeTimeout: 600
+        readTimeout: 600
+  websecure:
+    asDefault: true
+    port: 443
+    nodePort: 443
+    expose:
+      default: true
+    exposedPort: 443
+    http:
+      tls:
+        enabled: true
+    forwardedHeaders:
+      insecure: true
+    proxyProtocol:
+      insecure: true
+    transport:
+      respondingTimeouts:
+        idleTimeout: 600
+        writeTimeout: 600
+        readTimeout: 600
+  metrics:
+    expose:
+      default: false
+
+providers:
+  kubernetesCRD:
+    enabled: true
+    ingressClass: ing-class-123  # <-- замени на свой
+    allowCrossNamespace: true
+  kubernetesIngress:
+    enabled: true
+    ingressClass: ing-class-123  # <-- замени на свой
+    publishedService:
+      enabled: false
+
+logs:
+  general:
+    level: DEBUG
+    format: json
+  access:
+    enabled: true
+    format: json
+
+api:
+  dashboard: true
+
+metrics:
+  prometheus: null
+
+additionalArguments:
+  - "--api.insecure=true"
+  - "--api.debug=true"
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+# Отдельный Service для dashboard (ClusterIP)
+extraObjects:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: traefik-dashboard
+      namespace: "{{ .Release.Namespace }}"
+      labels:
+        app.kubernetes.io/name: traefik
+        app.kubernetes.io/instance: "{{ .Release.Name }}"
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: traefik
+        app.kubernetes.io/instance: "{{ .Release.Name }}"
+      ports:
+        - name: dashboard
+          protocol: TCP
+          port: 8080
+          targetPort: 8080

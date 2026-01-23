@@ -44,6 +44,13 @@ helm template traefik traefik/traefik \
 --namespace kek-lol-123 \
 --create-namespace \
 --version 38.0.1 \
+-f traefik-1.yaml > traefik-kek.yaml
+
+## Helm example
+helm template traefik traefik/traefik \
+--namespace kek-lol-123 \
+--create-namespace \
+--version 38.0.1 \
 --set image.tag=v3.6.2 \
 --set deployment.kind=DaemonSet \
 --set ingressClass.enabled=true \
