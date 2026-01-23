@@ -247,9 +247,9 @@ all:
       role_name: "eso-vault-self"
       secret_store_name: "eso-vault-self"
       secrets:
-        - name: "vault-self-creds-sync"
-          target_secret: "vault-self-creds"
-          vault_path: "vault-self/credentials"
+        - name: "eso-vault-self-creds"
+          target_secret: "eso-vault-self-creds"
+          vault_path: "ns-vault/vault-self/creds"
           is_master: true
 
     # ---------
@@ -261,7 +261,7 @@ all:
       # ---------
       - name: eso-vault-self
         paths:
-          - path: vault-self/*
+          - path: ns-vault/*
             capabilities: [read, list]
 
       # ---------
@@ -281,7 +281,7 @@ all:
       # ---------
       - name: eso-longhorn-read
         paths:
-          - path: longhorn/*
+          - path: longhorn-system/*
             capabilities: [read, list]
 
       # ---------
@@ -289,7 +289,7 @@ all:
       # ---------
       - name: eso-gitlab-read
         paths:
-          - path: gitlab/*
+          - path: ns-gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -297,7 +297,7 @@ all:
       # ---------
       - name: eso-gitlab-minio-read
         paths:
-          - path: gitlab-minio/*
+          - path: ns-gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -367,32 +367,29 @@ all:
     gitlab_minio_https_secret_name: "cert-gitlab-minio-domain-com"
     gitlab_minio_root_user: "admin"
     gitlab_minio_storage_class: "lh-major-single-best-effort"
-    gitlab_minio_registry_bucket_name: "registry"
-    gitlab_minio_registry_keys_secret_name: "secret-gitlab-minio-registry-keys"
-    gitlab_minio_registry_key_name: "gitlab-registry-key"
-    gitlab_minio_runner_cache_bucket_name: "runner-cache"
-    gitlab_minio_runner_cache_keys_secret_name: "secret-gitlab-minio-runner-cache-keys"
-    gitlab_minio_runner_cache_key_name: "gitlab-runner-cache-key"
     gitlab_minio_vpn_only_enabled: false
     gitlab_minio_service_url: "http://svc-gitlab-minio.ns-gitlab.svc.cluster.local:9000"
     # GitLab MinIO ESO integration
+    # NOTE: Before running playbook, create secrets in Vault with bucket_name field:
+    #   - ns-gitlab/gitlab-minio/registry: bucket_name=registry
+    #   - ns-gitlab/gitlab-minio/runner-cache: bucket_name=runner-cache
     gitlab_minio_eso:
-      sa_name: "gitlab-minio-vault-auth"
-      role_name: "gitlab-minio-role"
-      secret_store_name: "vault-gitlab-minio"
+      sa_name: "eso-gitlab-minio" # From vault_roles list below
+      role_name: "eso-gitlab-minio" # From vault_roles list below
+      secret_store_name: "eso-vault-gitlab-minio"
       secrets:
-        - name: "gitlab-minio-root-sync"
-          target_secret: "secret-gitlab-minio"
-          vault_path: "gitlab-minio/root"
-          is_master: true
-        - name: "gitlab-minio-registry-keys-sync"
-          target_secret: "secret-gitlab-minio-registry-keys"
-          vault_path: "gitlab-minio/registry-keys"
-          is_master: false
-        - name: "gitlab-minio-runner-cache-keys-sync"
-          target_secret: "secret-gitlab-minio-runner-cache-keys"
-          vault_path: "gitlab-minio/runner-cache-keys"
-          is_master: false
+        - name: "eso-gitlab-minio-root-user"
+          target_secret: "eso-gitlab-minio-root-user"
+          vault_path: "ns-gitlab/gitlab-minio/root-user"
+          type: "MASTER"
+        - name: "eso-gitlab-minio-registry"
+          target_secret: "eso-gitlab-minio-registry"
+          vault_path: "ns-gitlab/gitlab-minio/registry"
+          type: "REGISTRY"
+        - name: "eso-gitlab-minio-runner-cache"
+          target_secret: "eso-gitlab-minio-runner-cache"
+          vault_path: "ns-gitlab/gitlab-minio/runner-cache"
+          type: "RUNNER_CACHE"
 
     # ------
     # GitLab
@@ -414,14 +411,14 @@ all:
     gitlab_resources_limits_memory: "3G"
     # GitLab ESO integration
     gitlab_eso:
-      sa_name: "gitlab-vault-auth"
-      role_name: "gitlab-role"
-      secret_store_name: "vault-gitlab"
+      sa_name: "eso-gitlab"
+      role_name: "eso-gitlab"
+      secret_store_name: "eso-vault-gitlab"
       secrets:
-        - name: "gitlab-root-sync"
-          target_secret: "secret-gitlab-root"
-          vault_path: "gitlab/root"
-          is_master: true
+        - name: "eso-gitlab-root-user"
+          target_secret: "eso-gitlab-root-user"
+          vault_path: "ns-gitlab/gitlab/root-user"
+          type: "MASTER"
 
     # ------
     # ArgoCD

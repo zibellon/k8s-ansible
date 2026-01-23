@@ -33,26 +33,31 @@
       include_tasks: tasks/tasks-pre-check.yaml
 
     # =========================================================================
-    # STEP 0: FIND MASTER SECRETS IN ESO CONFIGS
+    # STEP 0: FIND SECRETS BY TYPE IN ESO CONFIGS
     # =========================================================================
 
     - name: "[gitlab] Find master secret in gitlab_eso.secrets"
       set_fact:
-        gitlab_master_secret: "{{ gitlab_eso.secrets | selectattr('is_master', 'defined') | selectattr('is_master', 'equalto', true) | first }}"
+        gitlab_master_secret: "{{ gitlab_eso.secrets | selectattr('type', 'defined') | selectattr('type', 'equalto', 'MASTER') | first }}"
 
     - name: "[gitlab] Fail if no GitLab master secret found"
       fail:
-        msg: "No master secret found in gitlab_eso.secrets (is_master: true required)"
+        msg: "No master secret found in gitlab_eso.secrets (type: MASTER required)"
       when: gitlab_master_secret is not defined
 
-    - name: "[gitlab] Find master secret in gitlab_minio_eso.secrets"
+    - name: "[gitlab-minio] Find secrets by type in gitlab_minio_eso.secrets"
       set_fact:
-        gitlab_minio_master_secret: "{{ gitlab_minio_eso.secrets | selectattr('is_master', 'defined') | selectattr('is_master', 'equalto', true) | first }}"
+        gitlab_minio_master_secret: "{{ gitlab_minio_eso.secrets | selectattr('type', 'defined') | selectattr('type', 'equalto', 'MASTER') | first }}"
+        gitlab_minio_registry_secret: "{{ gitlab_minio_eso.secrets | selectattr('type', 'defined') | selectattr('type', 'equalto', 'REGISTRY') | first }}"
+        gitlab_minio_runner_cache_secret: "{{ gitlab_minio_eso.secrets | selectattr('type', 'defined') | selectattr('type', 'equalto', 'RUNNER_CACHE') | first }}"
 
-    - name: "[gitlab] Fail if no GitLab MinIO master secret found"
+    - name: "[gitlab-minio] Fail if required MinIO secrets not found"
       fail:
-        msg: "No master secret found in gitlab_minio_eso.secrets (is_master: true required)"
-      when: gitlab_minio_master_secret is not defined
+        msg: "Required secrets not found in gitlab_minio_eso.secrets. Need types: MASTER, REGISTRY, RUNNER_CACHE"
+      when: >
+        gitlab_minio_master_secret is not defined or
+        gitlab_minio_registry_secret is not defined or
+        gitlab_minio_runner_cache_secret is not defined
 
     # =========================================================================
     # STEP 1: CHECK VAULT IS READY
@@ -162,13 +167,31 @@
         --timeout {{ gitlab_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 4: WAIT FOR MINIO ROOT SECRET TO BE SYNCED
+    # STEP 4: WAIT FOR MINIO SECRETS TO BE SYNCED BY ESO
     # =========================================================================
+    # NOTE: registry and runner-cache secrets must contain bucket_name field
+    # These secrets should be pre-created in Vault before running this playbook
 
     - name: "[wait-eso] Wait for MinIO root secret to be created by ESO"
       command: kubectl get secret {{ gitlab_minio_master_secret.target_secret }} -n {{ gitlab_namespace }}
       register: minio_root_secret_wait
       until: minio_root_secret_wait.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: "[wait-eso] Wait for MinIO registry secret to be created by ESO"
+      command: kubectl get secret {{ gitlab_minio_registry_secret.target_secret }} -n {{ gitlab_namespace }}
+      register: minio_registry_secret_wait
+      until: minio_registry_secret_wait.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: "[wait-eso] Wait for MinIO runner-cache secret to be created by ESO"
+      command: kubectl get secret {{ gitlab_minio_runner_cache_secret.target_secret }} -n {{ gitlab_namespace }}
+      register: minio_runner_cache_secret_wait
+      until: minio_runner_cache_secret_wait.rc == 0
       retries: 30
       delay: 5
       changed_when: false
@@ -222,13 +245,6 @@
     # STEP 6: CREATE BUCKETS AND ACCESS KEYS
     # =========================================================================
 
-    - name: "[minio-setup] Check if registry keys exist in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/gitlab-minio/registry 2>/dev/null
-      register: registry_keys_vault_check
-      failed_when: false
-      changed_when: false
-
     - name: "[minio-setup] Get MinIO pod name"
       command: kubectl get pods -n {{ gitlab_namespace }} -l app-key=gitlab-minio -o jsonpath='{.items[0].metadata.name}'
       register: minio_pod_name
@@ -245,6 +261,24 @@
       register: minio_root_password_from_secret
       changed_when: false
 
+    # Read bucket names from K8s secrets (synced by ESO from Vault)
+    - name: "[minio-setup] Get registry bucket name from secret"
+      shell: |
+        kubectl get secret {{ gitlab_minio_registry_secret.target_secret }} -n {{ gitlab_namespace }} -o jsonpath='{.data.bucket_name}' | base64 -d
+      register: registry_bucket_name
+      changed_when: false
+
+    - name: "[minio-setup] Get runner-cache bucket name from secret"
+      shell: |
+        kubectl get secret {{ gitlab_minio_runner_cache_secret.target_secret }} -n {{ gitlab_namespace }} -o jsonpath='{.data.bucket_name}' | base64 -d
+      register: runner_cache_bucket_name
+      changed_when: false
+
+    - name: "[minio-setup] Fail if bucket names not found in secrets"
+      fail:
+        msg: "bucket_name not found in secrets. Make sure Vault secrets contain bucket_name field."
+      when: registry_bucket_name.stdout == "" or runner_cache_bucket_name.stdout == ""
+
     - name: "[minio-setup] Configure mc alias"
       command: >
         kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
@@ -253,48 +287,58 @@
     - name: "[minio-setup] Create registry bucket"
       command: >
         kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
-        mc mb init_alias/{{ gitlab_minio_registry_bucket_name }} --ignore-existing
+        mc mb init_alias/{{ registry_bucket_name.stdout }} --ignore-existing
 
     - name: "[minio-setup] Create runner-cache bucket"
       command: >
         kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
-        mc mb init_alias/{{ gitlab_minio_runner_cache_bucket_name }} --ignore-existing
+        mc mb init_alias/{{ runner_cache_bucket_name.stdout }} --ignore-existing
 
-    # Create registry access key (only if not exists in Vault)
+    # Check if registry access keys already exist in Vault
+    - name: "[minio-setup] Check if registry access_key exists in Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ gitlab_minio_registry_secret.vault_path }} 2>/dev/null | jq -r '.data.data.access_key // empty'
+      register: registry_access_key_check
+      failed_when: false
+      changed_when: false
+
+    # Create registry access key (only if access_key not exists in Vault)
+    # Key name = bucket_name + "-key"
     - name: "[minio-setup] Create access key for registry"
       command: >
         kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
-        mc admin accesskey create init_alias {{ minio_root_user_from_secret.stdout }} --name '{{ gitlab_minio_registry_key_name }}' --json
+        mc admin accesskey create init_alias {{ minio_root_user_from_secret.stdout }} --name '{{ registry_bucket_name.stdout }}-key' --json
       register: registry_accesskey_result
-      when: registry_keys_vault_check.rc != 0
+      when: registry_access_key_check.stdout == ""
 
     - name: "[minio-setup] Parse registry access key"
       set_fact:
         registry_access_key: "{{ (registry_accesskey_result.stdout | from_json).accessKey }}"
         registry_secret_key: "{{ (registry_accesskey_result.stdout | from_json).secretKey }}"
-      when: registry_keys_vault_check.rc != 0
+      when: registry_access_key_check.stdout == ""
 
-    - name: "[minio-setup] Store registry keys in Vault"
+    - name: "[minio-setup] Store registry keys in Vault (preserving bucket_name)"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/gitlab-minio/registry
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/{{ gitlab_minio_registry_secret.vault_path }}
+        bucket_name={{ registry_bucket_name.stdout }}
         access_key={{ registry_access_key }}
         secret_key={{ registry_secret_key }}
-        bucket_name={{ gitlab_minio_registry_bucket_name }}
-      when: registry_keys_vault_check.rc != 0
+      when: registry_access_key_check.stdout == ""
 
     - name: "[minio-setup] Registry keys already exist in Vault"
       debug:
-        msg: "Registry keys already exist in Vault"
-      when: registry_keys_vault_check.rc == 0
+        msg: "Registry access keys already exist in Vault"
+      when: registry_access_key_check.stdout != ""
 
     # =========================================================================
-    # STEP 7: WAIT FOR REGISTRY KEYS SECRET TO BE SYNCED
+    # STEP 7: WAIT FOR REGISTRY SECRET TO BE UPDATED WITH ACCESS KEYS
     # =========================================================================
 
-    - name: "[wait-eso] Wait for registry keys secret to be created by ESO"
-      command: kubectl get secret {{ gitlab_minio_registry_keys_secret_name }} -n {{ gitlab_namespace }}
-      register: registry_keys_secret_wait
-      until: registry_keys_secret_wait.rc == 0
+    - name: "[wait-eso] Wait for registry secret to be updated with access_key by ESO"
+      shell: |
+        kubectl get secret {{ gitlab_minio_registry_secret.target_secret }} -n {{ gitlab_namespace }} -o jsonpath='{.data.access_key}' | base64 -d
+      register: registry_access_key_sync_check
+      until: registry_access_key_sync_check.stdout != ""
       retries: 30
       delay: 5
       changed_when: false
@@ -334,8 +378,8 @@
           storageLogsSize: {{ gitlab_storage_logs_size }}
           sshPortExternal: {{ gitlab_ssh_port_external }}
           minioServiceUrl: {{ gitlab_minio_service_url }}
-          minioRegistryBucketName: {{ gitlab_minio_registry_bucket_name }}
-          minioRegistryKeysSecretName: {{ gitlab_minio_registry_keys_secret_name }}
+          minioRegistryBucketName: {{ registry_bucket_name.stdout }}
+          minioRegistryKeysSecretName: {{ gitlab_minio_registry_secret.target_secret }}
           ingress:
             domain: {{ gitlab_domain }}
             registryDomain: {{ gitlab_registry_domain }}

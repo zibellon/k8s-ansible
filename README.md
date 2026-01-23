@@ -287,27 +287,8 @@
 ## ВАЖНО: синхронизация только добавляет и обновляет структуру в VAULT. Удалять что-то - нужно руками
 ## ---
 
-## gitlab-config. yaml -> helm
-##
-- установка
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1`
-  - Ставится: network-policy
-- обновление (версия + конфиг)
-  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-config-install.yaml --limit k8s-manager-1`
-
-## gitlab-minio. yaml -> helm
-## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
-## 
-- установка
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
-  - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
-- обновление (версия + конфиг)
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
-
 ## gitlab. yaml -> helm
+## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Важный момент про config
 1. Для deployment используется `checksum/config: ...`
@@ -317,10 +298,11 @@
 - установка
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1`
+  - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
 - обновление (версия + конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
