@@ -114,38 +114,35 @@
 
 ## Cilium. Официальный helm
 ## Если изменились конфиги = ConfigMap, Cilium их не подцепит автоматически
-## Если посмотреть в то, что генерируется при `helm template` - то у Deployment/DaemonSet - нет checksum, на основе ConfigMap
+## Если посмотреть, что генерируется при `helm template ...` - у Deployment/DaemonSet нет checksum, на основе ConfigMap
 ## Можно сделать предположение, что для применения новых ConfigMap - надо сделать ручной restart
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/cilium-install.yaml`
 ##
 - установка
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
   - Что ставится: cilium, host-network-policy, kube-system-network-policy
-- обновление (версия)
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
-- обновление (конфиг)
+- обновление (версия, конфиг)
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
   - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
 
 ## cert-manager. Официальный helm
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/cert-manager-install.yaml`
 ## 
 - установка
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
   - Что ставится: cert-manager, network-policy
-- обновление (версия)
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
-- обновление (конфиг)
+- обновление (версия, конфиг)
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
 
 ## ExternalSecret. Официальный helm
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/external-secrets-install.yaml`
 ##
 - установка
   - Параметры в `hosts.yaml`
@@ -154,12 +151,13 @@
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
-- Перезапуск
-  - Есть дополнительный playbook, для перезапуска
+- Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-restart.yaml --limit k8s-manager-1`
 
 ## traefik (ingress). yaml -> helm
+## Параметры (конфиг) для работы - в cli (как аргументы при запуске)
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/traefik-install.yaml`
 ##
 - установка
@@ -172,16 +170,14 @@
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
 - обновление (конфиг)
-  - Параметры - в traefik-cli (как аргументы при запуске)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-restart.yaml --limit k8s-manager-1`
-- Дополнительно
-  - Есть команда для перезапуска DaemonSet
+- Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-restart.yaml`
 
 ## haproxy (ingress-2). Официальный helm
 ## Автоматически подхватывает конфиг, который генерируется через CRD
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/haproxy-install.yaml`
 ##
 - установка
@@ -202,6 +198,7 @@
 ## cilium-post (относится к cilium). yaml -> helm
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Это просто дополнительная конфигурация
+## Тут не запускается никаких контейнеров
 ##
 - установка
   - Только параметры в `hosts.yaml`
@@ -212,6 +209,7 @@
   - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-hubble-install.yaml --limit k8s-manager-1`
 
 ## olm. yaml -> helm
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/olm-v0-install.yaml`
 ##
 - установка
