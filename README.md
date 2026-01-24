@@ -191,8 +191,7 @@
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-restart.yaml --limit k8s-manager-1`
-- Дополнительно
-  - Есть команда для перезапуска DaemonSet
+- Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-restart.yaml`
 
 ## cilium-post (относится к cilium). yaml -> helm
@@ -236,6 +235,7 @@
 ## Автоматически подхватывает конфиг. Обновили конфиг в ConfigMap -> сразу подхватил и начал использовать
 ## `namespace: longhorn-system`, МЕНЯТЬ НЕЛЬЗЯ. Так написано в документации
 ## Пример обновленного конфига - `docs/longhorn/other/...`
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/longhorn-install.yaml`
 ## Есть создание секретов для БЭКАПА в S3 -> использует CRD от ESO (Но секреты сразу работать не будут, так как они появляются в VAULT, позже)
 ## 
@@ -243,10 +243,7 @@
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
   - Ставится: longhorn, network-policy, ingress (longhorn-ui)
-- обновление (версия)
-  - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
-- обновление (конфиг)
+- обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
 
@@ -254,11 +251,14 @@
 ## Теперь, можно запускать что-то, что требует volume (PVC)
 ## ---
 
-## Vault. Официальный helm. ЕСТЬ проблема: официальный helm не работает из РФ
+## Vault. Официальный helm
+## ЕСТЬ проблема: официальный helm не работает из РФ (Региональная блокировка)
 ## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
 ## Скачать ZIP архив последнего релиза, достать все templates, Chart.yaml и values.yaml
 ## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-## Есть точка монтирования -> требуется Longhorn
+## Есть volume -> требуется Longhorn
+## Ожидание готовности deployment/daemonset - `kubectl wait --for=jsonpath='{.status.phase}'=Running`
+## Потому что проверка внутри пода: смотрит на готовность самого VAULT (что он инициализирован), а не просто на работоспособность контейнера
 ##
 - установка
   - Параметры в `hosts.yaml`
@@ -268,10 +268,9 @@
   - Параметры в `hosts.yaml`
   - Устанавливается через официальный HELM, но через исходники с Github
   - `ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit k8s-manager-1`
-- Перезапуск
-  - Есть дополнительный playbook, для перезапуска
+- Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbooks/apps/vault-restart.yaml --limit k8s-manager-1`
-- Важный момент: в hosts.yaml есть полная структура ВСЕХ policy + role + sa + secret_path
+- Внутренняя структу VAULT
   - `ansible-playbook -i hosts.yaml playbooks/apps/tasks/tasks-vault-sync.yaml --limit k8s-manager-1`
 
 ## ---
@@ -279,8 +278,8 @@
 ## В файле `hosts.yaml` есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
 ## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbooks/apps/vault-sync.yaml --limit k8s-manager-1`
 ## План, при добавлении чего-то в VAULT
-## 1. добавить в hosts.yaml новые данные;
-## 2. Вызвать синхронизацию;
+## 1. добавить в hosts.yaml новые данные (policy + role + sa + namespoace + secret_path)
+## 2. Вызвать синхронизацию
 ## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
 ## ВАЖНО: синхронизация только добавляет и обновляет структуру в VAULT. Удалять что-то - нужно руками
 ## ---
@@ -288,10 +287,11 @@
 ## gitlab. yaml -> helm
 ## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Важный момент про config
-1. Для deployment используется `checksum/config: ...`
-2. При обновлении конфига `/gitlab/templates/configmap.yaml` POD c GitLab будет перезапущен
-3. checksum/config - вычисляется через HELM (include ...)
+## 1. Для deployment используется `checksum/config: ...`
+## 2. При обновлении конфига `/gitlab/templates/configmap.yaml` POD c GitLab будет перезапущен
+## 3. checksum/config - вычисляется через HELM (include ...)
 ## 
 - установка
   - Только параметры в `hosts.yaml`
@@ -306,6 +306,7 @@
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Нет автоматической обработки новых конфигов (Как у Cilium). То есть: После обновления конфигов - ручной restart
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/argocd-install.yaml`
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ##
 - установка
   - Только параметры в `hosts.yaml`
