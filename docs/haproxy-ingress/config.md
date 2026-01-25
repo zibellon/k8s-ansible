@@ -18,6 +18,11 @@ helm repo update
 ## Сгенерировать манифесты
 helm template haproxy-ingress haproxytech/kubernetes-ingress \
   --namespace ns-haproxy-master \
+  -f helm-values.yaml > install.yaml
+
+## Сгенерировать манифесты
+helm template haproxy-ingress haproxytech/kubernetes-ingress \
+  --namespace ns-haproxy-master \
   --set 'namespace.create=true' \
   --set 'controller.kind=DaemonSet' \
   --set 'controller.ingressClassResource.name=haproxy-master-lb' \
