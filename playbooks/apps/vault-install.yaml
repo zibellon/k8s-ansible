@@ -39,16 +39,12 @@
         state: directory
         mode: "0755"
 
-    - name: "[vault-pre] Remove old chart from remote"
-      file:
-        path: "{{ remote_charts_dir }}/vault/pre"
-        state: absent
-
     - name: "[vault-pre] Copy chart to remote"
-      copy:
-        src: "{{ playbook_dir }}/charts/vault/pre/"
-        dest: "{{ remote_charts_dir }}/vault/pre/"
-        mode: "0644"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        chart_name: "pre"
+        chart_local_src: "{{ playbook_dir }}/charts/vault/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/vault/pre"
 
     - name: "[vault-pre] Create values file"
       copy:
@@ -76,16 +72,12 @@
     # STEP 2: INSTALL VAULT (Local Helm Chart)
     # =========================================================================
 
-    - name: "[vault] Remove old chart from remote"
-      file:
-        path: "{{ remote_charts_dir }}/vault/install"
-        state: absent
-
     - name: "[vault] Copy chart to server"
-      copy:
-        src: "{{ playbook_dir }}/charts/vault/install/"
-        dest: "{{ remote_charts_dir }}/vault/install/"
-        mode: "0644"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        chart_name: "install"
+        chart_local_src: "{{ playbook_dir }}/charts/vault/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/vault/install"
 
     - name: "[vault] Create values file"
       copy:
@@ -155,16 +147,26 @@
     # STEP 5: CHECK IF VAULT IS INITIALIZED
     # =========================================================================
 
-    - name: "[vault] Check if Vault is initialized"
+    - name: "[vault] Get Vault status"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json 2>/dev/null | jq -r '.initialized'
-      register: vault_initialized
-      failed_when: false
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json 2>&1 || true
+      register: vault_status_raw
       changed_when: false
+
+    - name: "[vault] Parse initialization status"
+      set_fact:
+        vault_is_initialized: "{{ (vault_status_raw.stdout | from_json).initialized | default(false) | bool }}"
+      failed_when: false
+      ignore_errors: true
+
+    - name: "[vault] Set default if parse failed"
+      set_fact:
+        vault_is_initialized: false
+      when: vault_is_initialized is not defined
 
     - name: "[vault] Show initialization status"
       debug:
-        msg: "Vault initialized: {{ vault_initialized.stdout | default('unknown') }}"
+        msg: "Vault initialized: {{ vault_is_initialized }}"
 
     # =========================================================================
     # STEP 5.1: CHECK SEAL STATUS (if already initialized)
@@ -174,13 +176,13 @@
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
       register: vault_sealed_check
-      when: vault_initialized.stdout == "true"
+      when: vault_is_initialized | bool
       changed_when: false
 
     - name: "[vault] Show seal status (already initialized)"
       debug:
         msg: "Vault sealed: {{ vault_sealed_check.stdout | default('unknown') }}"
-      when: vault_initialized.stdout == "true"
+      when: vault_is_initialized | bool
 
     # =========================================================================
     # STEP 5.2: GET CREDENTIALS FROM K8S SECRET (if sealed)
@@ -232,7 +234,7 @@
         kubectl get secret {{ vault_master_secret.target_secret }} -n {{ vault_namespace }} -o jsonpath='{.data}'
       register: k8s_secret_data
       when:
-        - vault_initialized.stdout == "true"
+        - vault_is_initialized | bool
         - vault_sealed_check.stdout | default('true') == 'false'
       failed_when: false
 
@@ -255,7 +257,7 @@
     - name: "[vault] Login with K8s Secret token"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
       when:
-        - vault_initialized.stdout == "true"
+        - vault_is_initialized | bool
         - vault_sealed_check.stdout | default('true') == 'false'
         - vault_root_token is defined
 
@@ -264,7 +266,7 @@
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault token lookup
       register: vault_auth_check
       when:
-        - vault_initialized.stdout == "true"
+        - vault_is_initialized | bool
         - vault_sealed_check.stdout | default('true') == 'false'
         - vault_root_token is not defined
       failed_when: false
@@ -276,7 +278,7 @@
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ vault_master_secret.vault_path }}
       register: vault_creds_read
       when:
-        - vault_initialized.stdout == "true"
+        - vault_is_initialized | bool
         - vault_sealed_check.stdout | default('true') == 'false'
         - vault_root_token is not defined
         - vault_auth_check.rc | default(1) == 0
@@ -309,7 +311,7 @@
           BOTH root_token AND unseal_keys are REQUIRED.
           Without unseal_keys, Vault will be permanently locked after restart!
       when:
-        - vault_initialized.stdout == "true"
+        - vault_is_initialized | bool
         - vault_sealed_check.stdout | default('true') == 'false'
         - vault_root_token is not defined
 
@@ -324,7 +326,7 @@
           -key-threshold={{ vault_key_threshold }} \
           -format=json
       register: vault_init_result
-      when: vault_initialized.stdout == "false"
+      when: not (vault_is_initialized | bool)
 
     - name: "[vault] Parse init result"
       set_fact:
@@ -425,11 +427,12 @@
       when: vault_init_result is not skipped
 
     # =========================================================================
-    # STEP 11: SYNC VAULT POLICIES AND ROLES (ALWAYS)
+    # STEP 11: SYNC VAULT POLICIES AND ROLES (only when unsealed)
     # =========================================================================
 
     - name: "[vault-sync] Sync policies and roles from hosts.yaml"
       include_tasks: tasks/tasks-vault-sync.yaml
+      when: vault_sealed_status.stdout | default('true') == 'false'
 
     # =========================================================================
     # STEP 12: INSTALL POST (Ingress + ESO)
@@ -441,16 +444,12 @@
         state: directory
         mode: "0755"
 
-    - name: "[vault-post] Remove old chart from remote"
-      file:
-        path: "{{ remote_charts_dir }}/vault/post"
-        state: absent
-
     - name: "[vault-post] Copy chart to remote"
-      copy:
-        src: "{{ playbook_dir }}/charts/vault/post/"
-        dest: "{{ remote_charts_dir }}/vault/post/"
-        mode: "0644"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        chart_name: "post"
+        chart_local_src: "{{ playbook_dir }}/charts/vault/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/vault/post"
 
     - name: "[vault-post] Create values file"
       copy:
@@ -475,6 +474,10 @@
             roleName: {{ vault_eso.role_name }}
             secretStoreName: {{ vault_eso.secret_store_name }}
             secrets: {{ vault_eso.secrets | to_json }}
+          autoUnseal:
+            schedule: "{{ vault_auto_unseal_schedule }}"
+            keyThreshold: {{ vault_key_threshold }}
+            secretName: {{ vault_master_secret.target_secret }}
 
     - name: "[vault-post] Install via Helm"
       command: >

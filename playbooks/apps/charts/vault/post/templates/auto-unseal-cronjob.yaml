@@ -1,0 +1,88 @@
+# =============================================================================
+# CRONJOB FOR VAULT AUTO-UNSEAL
+# Periodically checks if Vault is sealed and unseals it using keys from K8s Secret
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-auto-unseal
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: {{ .Values.autoUnseal.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vault-auto-unseal
+            app.kubernetes.io/instance: vault-post
+            app.kubernetes.io/component: auto-unseal
+        spec:
+          serviceAccountName: vault-auto-unseal
+          restartPolicy: Never
+          containers:
+            - name: unseal
+              image: {{ .Values.autoUnseal.image }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  #!/bin/sh
+                  set -e
+
+                  VAULT_POD="vault-0"
+                  NAMESPACE="{{ .Values.namespace }}"
+                  THRESHOLD="{{ .Values.autoUnseal.keyThreshold }}"
+
+                  echo "Checking Vault seal status..."
+
+                  # Check if Vault pod is running
+                  if ! kubectl get pod $VAULT_POD -n $NAMESPACE >/dev/null 2>&1; then
+                    echo "Vault pod $VAULT_POD not found, skipping"
+                    exit 0
+                  fi
+
+                  # Get seal status
+                  SEALED=$(kubectl exec $VAULT_POD -n $NAMESPACE -- vault status -format=json 2>/dev/null | jq -r '.sealed' || echo "unknown")
+
+                  if [ "$SEALED" = "true" ]; then
+                    echo "Vault is SEALED, starting unseal process..."
+                    
+                    # Unseal with keys from mounted secret
+                    for i in $(seq 1 $THRESHOLD); do
+                      KEY_FILE="/vault-keys/unseal_key_$i"
+                      if [ -f "$KEY_FILE" ]; then
+                        KEY=$(cat "$KEY_FILE")
+                        echo "Applying unseal key $i..."
+                        kubectl exec $VAULT_POD -n $NAMESPACE -- vault operator unseal "$KEY"
+                      else
+                        echo "Warning: Key file $KEY_FILE not found"
+                      fi
+                    done
+                    
+                    # Verify unseal
+                    SEALED_AFTER=$(kubectl exec $VAULT_POD -n $NAMESPACE -- vault status -format=json 2>/dev/null | jq -r '.sealed' || echo "unknown")
+                    if [ "$SEALED_AFTER" = "false" ]; then
+                      echo "Vault successfully UNSEALED"
+                    else
+                      echo "Warning: Vault may still be sealed (status: $SEALED_AFTER)"
+                    fi
+                  elif [ "$SEALED" = "false" ]; then
+                    echo "Vault is already UNSEALED, nothing to do"
+                  else
+                    echo "Could not determine Vault seal status: $SEALED"
+                  fi
+              volumeMounts:
+                - name: vault-unseal-keys
+                  mountPath: /vault-keys
+                  readOnly: true
+          volumes:
+            - name: vault-unseal-keys
+              secret:
+                secretName: {{ .Values.autoUnseal.secretName }}

@@ -1,0 +1,40 @@
+# =============================================================================
+# RBAC FOR VAULT AUTO-UNSEAL CRONJOB
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-auto-unseal
+  namespace: {{ .Values.namespace }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-auto-unseal
+  namespace: {{ .Values.namespace }}
+rules:
+  # Required for kubectl exec into vault pod
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-auto-unseal
+  namespace: {{ .Values.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: vault-auto-unseal
+    namespace: {{ .Values.namespace }}
+roleRef:
+  kind: Role
+  name: vault-auto-unseal
+  apiGroup: rbac.authorization.k8s.io
