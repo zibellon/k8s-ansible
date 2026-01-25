@@ -5,19 +5,26 @@
 image:
   tag: v3.6.2
 
+# Имя ресурсов (DaemonSet, Service, ServiceAccount...)
+fullnameOverride: "traefik-master"
+
+serviceAccountAnnotations:
+  app.kubernetes.io/component: ingress-controller
+
 deployment:
   kind: DaemonSet
-  podLabels:
-    app-key: traefik
-    app-env: prod
+  annotations:
+    app.kubernetes.io/component: ingress-controller
 
 ingressClass:
   enabled: true
-  name: ing-class-123  # <-- замени на свой
+  name: "traefik-master-lb"
   isDefaultClass: false
 
 service:
   type: NodePort
+  annotations:
+    app.kubernetes.io/component: ingress-controller
   spec:
     externalTrafficPolicy: Local
 
@@ -68,11 +75,11 @@ ports:
 providers:
   kubernetesCRD:
     enabled: true
-    ingressClass: ing-class-123  # <-- замени на свой
+    ingressClass: "traefik-master-lb"
     allowCrossNamespace: true
   kubernetesIngress:
     enabled: true
-    ingressClass: ing-class-123  # <-- замени на свой
+    ingressClass: "traefik-master-lb"
     publishedService:
       enabled: false
 
@@ -88,11 +95,11 @@ api:
   dashboard: true
 
 metrics:
-  prometheus: null
+  prometheus:
+    entryPoint: metrics
 
 additionalArguments:
   - "--api.insecure=true"
-  - "--api.debug=true"
 
 securityContext:
   allowPrivilegeEscalation: false

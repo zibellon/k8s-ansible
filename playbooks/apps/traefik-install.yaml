@@ -1,13 +1,13 @@
 # =============================================================================
-# Install Traefik via local Helm chart
+# Install Traefik via official Helm chart (traefik/traefik)
 # Steps:
 #   1. traefik/pre: NetworkPolicies for traefik namespace
-#   2. CRDs (kubectl create -f) + traefik/install (DaemonSet, Services, RBAC)
+#   2. Official traefik/traefik chart (DaemonSet, Services, RBAC, CRDs)
 #   3. traefik/post: Middlewares + Dashboard Ingress
 # =============================================================================
 
 ---
-- name: Install Traefik via local Helm chart
+- name: Install Traefik via official Helm chart
   hosts: managers
   become: true
   gather_facts: false
@@ -57,24 +57,178 @@
         --timeout {{ traefik_helm_timeout }}
 
     # =========================================================================
-    # STEP 2: CRDs + TRAEFIK/INSTALL
+    # STEP 2: OFFICIAL TRAEFIK CHART
     # =========================================================================
 
-    - name: "[traefik-install] Remove old chart from remote server"
+    - name: "[traefik-install] Add Traefik Helm repository"
+      command: helm repo add traefik https://traefik.github.io/charts
+      register: helm_repo_add
+      changed_when: "'has been added' in helm_repo_add.stdout"
+      failed_when: false
+
+    - name: "[traefik-install] Update Helm repositories"
+      command: helm repo update traefik
+
+    - name: "[traefik-install] Create values directory"
       file:
         path: "{{ remote_charts_dir }}/traefik/install"
-        state: absent
+        state: directory
+        mode: "0755"
 
-    - name: "[traefik-install] Copy chart to server"
+    - name: "[traefik-install] Create values-override.yaml"
       copy:
-        src: "{{ playbook_dir }}/charts/traefik/install/"
-        dest: "{{ remote_charts_dir }}/traefik/install/"
+        dest: "{{ remote_charts_dir }}/traefik/install/values-override.yaml"
         mode: "0644"
+        content: |
+          # Traefik Helm Chart Values
+          # Generated from hosts.yaml variables
 
-    # Install CRDs separately via kubectl
-    - name: "[traefik-install] Install Traefik CRDs via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/traefik/install/crds/crds.yaml
-      failed_when: false
+          image:
+            tag: v{{ traefik_version }}
+
+          fullnameOverride: "{{ traefik_daemonset_name }}"
+
+          serviceAccountAnnotations:
+            app.kubernetes.io/component: ingress-controller
+
+          deployment:
+            kind: DaemonSet
+            annotations:
+              app.kubernetes.io/component: ingress-controller
+
+          ingressClass:
+            enabled: true
+            name: "{{ traefik_ingress_class }}"
+            isDefaultClass: false
+
+          service:
+            type: NodePort
+            annotations:
+              app.kubernetes.io/component: ingress-controller
+            spec:
+              externalTrafficPolicy: Local
+
+          ports:
+            traefik:
+              port: 8080
+              expose:
+                default: false
+            web:
+              asDefault: true
+              port: 80
+              nodePort: 80
+              expose:
+                default: true
+              exposedPort: 80
+              forwardedHeaders:
+                insecure: true
+              proxyProtocol:
+                insecure: true
+              transport:
+                respondingTimeouts:
+                  idleTimeout: 600
+                  writeTimeout: 600
+                  readTimeout: 600
+            websecure:
+              asDefault: true
+              port: 443
+              nodePort: 443
+              expose:
+                default: true
+              exposedPort: 443
+              http:
+                tls:
+                  enabled: true
+              forwardedHeaders:
+                insecure: true
+              proxyProtocol:
+                insecure: true
+              transport:
+                respondingTimeouts:
+                  idleTimeout: 600
+                  writeTimeout: 600
+                  readTimeout: 600
+            metrics:
+              expose:
+                default: false
+
+          providers:
+            kubernetesCRD:
+              enabled: true
+              ingressClass: "{{ traefik_ingress_class }}"
+              allowCrossNamespace: true
+            kubernetesIngress:
+              enabled: true
+              ingressClass: "{{ traefik_ingress_class }}"
+              publishedService:
+                enabled: false
+
+          logs:
+            general:
+              level: DEBUG
+              format: json
+            access:
+              enabled: true
+              format: json
+
+          api:
+            dashboard: true
+
+          metrics:
+            prometheus:
+              entryPoint: metrics
+
+          additionalArguments:
+            - "--api.insecure=true"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+
+          podSecurityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+
+          # Separate Service for dashboard (ClusterIP)
+          extraObjects:
+            - apiVersion: v1
+              kind: Service
+              metadata:
+                name: traefik-dashboard
+                labels:
+                  app.kubernetes.io/name: traefik
+                  app.kubernetes.io/instance: traefik-{{ traefik_namespace }}
+              spec:
+                type: ClusterIP
+                selector:
+                  app.kubernetes.io/name: traefik
+                  app.kubernetes.io/instance: traefik-{{ traefik_namespace }}
+                ports:
+                  - name: dashboard
+                    protocol: TCP
+                    port: 8080
+                    targetPort: 8080
+
+    - name: "[traefik-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install traefik traefik/traefik
+        --namespace {{ traefik_namespace }}
+        --values {{ remote_charts_dir }}/traefik/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ traefik_helm_timeout }}
+
+    # =========================================================================
+    # WAIT FOR TRAEFIK CRDs
+    # =========================================================================
 
     - name: "[traefik-install] Wait for CRDs to be established"
       command: >
@@ -95,31 +249,6 @@
       retries: 10
       delay: 5
       changed_when: false
-
-    - name: "[traefik-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/traefik/install/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ traefik_namespace }}
-          daemonsetName: {{ traefik_daemonset_name }}
-          image: "traefik:v{{ traefik_version }}"
-          ingressClass: {{ traefik_ingress_class }}
-          entryPoints:
-            web: {{ traefik_web_entrypoint }}
-            websecure: {{ traefik_websecure_entrypoint }}
-
-    - name: "[traefik-install] Install or upgrade via Helm (skip-crds)"
-      command: >
-        helm upgrade --install traefik {{ remote_charts_dir }}/traefik/install
-        --namespace {{ traefik_namespace }}
-        --values {{ remote_charts_dir }}/traefik/install/values-override.yaml
-        --skip-crds
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --wait-for-jobs
-        --timeout {{ traefik_helm_timeout }}
 
     # =========================================================================
     # WAIT FOR TRAEFIK TO BE READY
