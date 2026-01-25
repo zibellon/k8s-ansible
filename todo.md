@@ -28,3 +28,4 @@
 8.  gitlab-minio
     1.  Добавить node-selector. Что и где там запускается
 9.  Добавить установку k9s
+10. Ускорить работу copy через archive | unarchive
