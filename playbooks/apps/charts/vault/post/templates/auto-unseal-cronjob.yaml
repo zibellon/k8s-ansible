@@ -1,6 +1,7 @@
 # =============================================================================
 # CRONJOB FOR VAULT AUTO-UNSEAL
-# Periodically checks if Vault is sealed and unseals it using keys from K8s Secret
+# Periodically checks if Vault is sealed and unseals it using keys from host file
+# Runs ONLY on control-plane nodes where credentials file is stored
 # =============================================================================
 
 ---
@@ -26,6 +27,13 @@ spec:
         spec:
           serviceAccountName: vault-auto-unseal
           restartPolicy: Never
+          # Run ONLY on control-plane nodes
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
           containers:
             - name: unseal
               image: {{ .Values.autoUnseal.image }}
@@ -39,6 +47,7 @@ spec:
                   VAULT_POD="vault-0"
                   NAMESPACE="{{ .Values.namespace }}"
                   THRESHOLD="{{ .Values.autoUnseal.keyThreshold }}"
+                  CREDS_FILE="/vault-creds/{{ .Values.autoUnseal.credsHostPath | base }}"
 
                   echo "Checking Vault seal status..."
 
@@ -54,15 +63,20 @@ spec:
                   if [ "$SEALED" = "true" ]; then
                     echo "Vault is SEALED, starting unseal process..."
                     
-                    # Unseal with keys from mounted secret
-                    for i in $(seq 1 $THRESHOLD); do
-                      KEY_FILE="/vault-keys/unseal_key_$i"
-                      if [ -f "$KEY_FILE" ]; then
-                        KEY=$(cat "$KEY_FILE")
-                        echo "Applying unseal key $i..."
+                    # Check if credentials file exists
+                    if [ ! -f "$CREDS_FILE" ]; then
+                      echo "ERROR: Credentials file $CREDS_FILE not found!"
+                      exit 1
+                    fi
+
+                    # Read unseal keys from JSON file and unseal
+                    for i in $(seq 0 $((THRESHOLD - 1))); do
+                      KEY=$(jq -r ".unseal_keys[$i]" "$CREDS_FILE")
+                      if [ -n "$KEY" ] && [ "$KEY" != "null" ]; then
+                        echo "Applying unseal key $((i + 1))..."
                         kubectl exec $VAULT_POD -n $NAMESPACE -- vault operator unseal "$KEY"
                       else
-                        echo "Warning: Key file $KEY_FILE not found"
+                        echo "Warning: Unseal key $((i + 1)) not found in credentials file"
                       fi
                     done
                     
@@ -79,10 +93,11 @@ spec:
                     echo "Could not determine Vault seal status: $SEALED"
                   fi
               volumeMounts:
-                - name: vault-unseal-keys
-                  mountPath: /vault-keys
+                - name: vault-creds
+                  mountPath: /vault-creds
                   readOnly: true
           volumes:
-            - name: vault-unseal-keys
-              secret:
-                secretName: {{ .Values.autoUnseal.secretName }}
+            - name: vault-creds
+              hostPath:
+                path: {{ .Values.autoUnseal.credsHostPath | dir }}
+                type: Directory

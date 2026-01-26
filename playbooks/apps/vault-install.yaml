@@ -2,8 +2,7 @@
 # Install HashiCorp Vault
 # - pre: NetworkPolicies
 # - install: Official Helm chart (hashicorp/vault)
-# - post: Ingress
-# - install-self-eso: ESO integration for self credentials
+# - post: Ingress + CronJob for auto-unseal
 # =============================================================================
 
 ---
@@ -15,19 +14,6 @@
   tasks:
     - name: "[pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
-
-    # =========================================================================
-    # STEP 0: FIND MASTER SECRET IN vault_eso.secrets
-    # =========================================================================
-
-    - name: "[vault] Find master secret in vault_eso.secrets"
-      set_fact:
-        vault_master_secret: "{{ vault_eso.secrets | selectattr('is_master', 'defined') | selectattr('is_master', 'equalto', true) | first }}"
-
-    - name: "[vault] Fail if no master secret found"
-      fail:
-        msg: "No master secret found in vault_eso.secrets (is_master: true required)"
-      when: vault_master_secret is not defined
 
     # =========================================================================
     # STEP 1: INSTALL PRE (NetworkPolicies)
@@ -134,7 +120,7 @@
         --timeout {{ vault_helm_timeout }}
 
     # =========================================================================
-    # STEP 4: WAIT FOR VAULT POD
+    # STEP 3: WAIT FOR VAULT POD
     # =========================================================================
 
     - name: "[vault] Wait for pod to be Running"
@@ -144,7 +130,7 @@
         --timeout={{ vault_rollout_timeout }}
 
     # =========================================================================
-    # STEP 5: CHECK IF VAULT IS INITIALIZED
+    # STEP 4: CHECK IF VAULT IS INITIALIZED
     # =========================================================================
 
     - name: "[vault] Get Vault status"
@@ -169,7 +155,7 @@
         msg: "Vault initialized: {{ vault_is_initialized }}"
 
     # =========================================================================
-    # STEP 5.1: CHECK SEAL STATUS (if already initialized)
+    # STEP 5: CHECK SEAL STATUS (if already initialized)
     # =========================================================================
 
     - name: "[vault] Check seal status"
@@ -185,33 +171,38 @@
       when: vault_is_initialized | bool
 
     # =========================================================================
-    # STEP 5.2: GET CREDENTIALS FROM K8S SECRET (if sealed)
+    # STEP 6: GET CREDENTIALS FROM LOCAL FILE (if sealed)
     # =========================================================================
 
-    - name: "[vault] Get credentials from K8s Secret"
-      shell: |
-        kubectl get secret {{ vault_master_secret.target_secret }} -n {{ vault_namespace }} -o jsonpath='{.data}'
-      register: k8s_secret_data
+    - name: "[vault] Check if credentials file exists"
+      stat:
+        path: "{{ vault_creds_host_path }}"
+      register: vault_creds_file
       when: vault_sealed_check.stdout | default('false') == 'true'
-      failed_when: false
 
-    - name: "[vault] Fail if no credentials available for unseal"
+    - name: "[vault] Fail if no credentials file for unseal"
       fail:
-        msg: "Vault is initialized and sealed, but no credentials found in K8s Secret '{{ vault_master_secret.target_secret }}'. Cannot unseal."
+        msg: "Vault is initialized and sealed, but no credentials file found at '{{ vault_creds_host_path }}'. Cannot unseal."
       when:
         - vault_sealed_check.stdout | default('false') == 'true'
-        - k8s_secret_data.stdout | default('') == '' or k8s_secret_data.rc != 0
+        - not (vault_creds_file.stat.exists | default(false))
 
-    - name: "[vault] Parse credentials from K8s Secret"
-      set_fact:
-        vault_unseal_keys:
-          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_1 | b64decode }}"
-          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_2 | b64decode }}"
-          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_3 | b64decode }}"
-        vault_root_token: "{{ (k8s_secret_data.stdout | from_json).root_token | b64decode }}"
+    - name: "[vault] Read credentials from local file"
+      slurp:
+        src: "{{ vault_creds_host_path }}"
+      register: vault_creds_file_content
       when:
         - vault_sealed_check.stdout | default('false') == 'true'
-        - k8s_secret_data.rc == 0
+        - vault_creds_file.stat.exists | default(false)
+
+    - name: "[vault] Parse credentials from file"
+      set_fact:
+        vault_unseal_keys: "{{ (vault_creds_file_content.content | b64decode | from_json).unseal_keys }}"
+        vault_root_token: "{{ (vault_creds_file_content.content | b64decode | from_json).root_token }}"
+      when:
+        - vault_sealed_check.stdout | default('false') == 'true'
+        - vault_creds_file_content is defined
+        - vault_creds_file_content.content is defined
 
     - name: "[vault] Unseal Vault with recovered keys"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
@@ -225,98 +216,43 @@
         - vault_unseal_keys is defined
 
     # =========================================================================
-    # STEP 5.3: GET ALL CREDENTIALS (if unsealed and already initialized)
+    # STEP 7: GET CREDENTIALS FROM FILE (if already initialized and unsealed)
     # =========================================================================
 
-    # 1. First try K8s Secret (ESO synced) - get ALL data
-    - name: "[vault] Get credentials from K8s Secret"
-      shell: |
-        kubectl get secret {{ vault_master_secret.target_secret }} -n {{ vault_namespace }} -o jsonpath='{.data}'
-      register: k8s_secret_data
+    - name: "[vault] Check if credentials file exists (unsealed)"
+      stat:
+        path: "{{ vault_creds_host_path }}"
+      register: vault_creds_file_unsealed
       when:
         - vault_is_initialized | bool
         - vault_sealed_check.stdout | default('true') == 'false'
-      failed_when: false
 
-    # Set ALL credentials from K8s Secret if found
-    - name: "[vault] Set credentials from K8s Secret"
-      set_fact:
-        vault_root_token: "{{ (k8s_secret_data.stdout | from_json).root_token | b64decode }}"
-        vault_unseal_keys:
-          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_1 | b64decode }}"
-          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_2 | b64decode }}"
-          - "{{ (k8s_secret_data.stdout | from_json).unseal_key_3 | b64decode }}"
+    - name: "[vault] Read credentials from file (unsealed)"
+      slurp:
+        src: "{{ vault_creds_host_path }}"
+      register: vault_creds_unsealed_content
       when:
-        - k8s_secret_data is defined
-        - k8s_secret_data.rc | default(1) == 0
-        - k8s_secret_data.stdout | default('') != ''
-        - (k8s_secret_data.stdout | from_json).root_token is defined
-        - (k8s_secret_data.stdout | from_json).unseal_key_1 is defined
+        - vault_is_initialized | bool
+        - vault_sealed_check.stdout | default('true') == 'false'
+        - vault_creds_file_unsealed.stat.exists | default(false)
 
-    # Login with K8s Secret token
-    - name: "[vault] Login with K8s Secret token"
+    - name: "[vault] Parse credentials (unsealed)"
+      set_fact:
+        vault_unseal_keys: "{{ (vault_creds_unsealed_content.content | b64decode | from_json).unseal_keys }}"
+        vault_root_token: "{{ (vault_creds_unsealed_content.content | b64decode | from_json).root_token }}"
+      when:
+        - vault_creds_unsealed_content is defined
+        - vault_creds_unsealed_content.content is defined
+
+    - name: "[vault] Login with root token (already initialized)"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
       when:
         - vault_is_initialized | bool
         - vault_sealed_check.stdout | default('true') == 'false'
         - vault_root_token is defined
 
-    # 2. If K8s Secret failed, try Vault session
-    - name: "[vault] Check if authenticated (fallback)"
-      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault token lookup
-      register: vault_auth_check
-      when:
-        - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-        - vault_root_token is not defined
-      failed_when: false
-      changed_when: false
-
-    # If authenticated, try to read ALL credentials from Vault
-    - name: "[vault] Read credentials from Vault (fallback)"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ vault_kv_mount_path }}/{{ vault_master_secret.vault_path }}
-      register: vault_creds_read
-      when:
-        - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-        - vault_root_token is not defined
-        - vault_auth_check.rc | default(1) == 0
-      failed_when: false
-      changed_when: false
-
-    # Set ALL credentials from Vault if found
-    - name: "[vault] Set credentials from Vault"
-      set_fact:
-        vault_root_token: "{{ (vault_creds_read.stdout | from_json).data.data.root_token }}"
-        vault_unseal_keys:
-          - "{{ (vault_creds_read.stdout | from_json).data.data.unseal_key_1 }}"
-          - "{{ (vault_creds_read.stdout | from_json).data.data.unseal_key_2 }}"
-          - "{{ (vault_creds_read.stdout | from_json).data.data.unseal_key_3 }}"
-      when:
-        - vault_creds_read is defined
-        - vault_creds_read.rc | default(1) == 0
-        - vault_creds_read.stdout | default('') != ''
-
-    # FAIL if no credentials found anywhere
-    - name: "[vault] Fail if no credentials available"
-      fail:
-        msg: |
-          Vault is initialized and unsealed, but no credentials found.
-          Checked:
-            1. K8s Secret '{{ vault_master_secret.target_secret }}': {{ 'found' if k8s_secret_data.rc | default(1) == 0 and k8s_secret_data.stdout | default('') != '' else 'not found' }}
-            2. Vault session: {{ 'authenticated' if vault_auth_check.rc | default(1) == 0 else 'not authenticated' }}
-            3. Vault storage: {{ 'found' if vault_creds_read.rc | default(1) == 0 else 'not found or not checked' }}
-
-          BOTH root_token AND unseal_keys are REQUIRED.
-          Without unseal_keys, Vault will be permanently locked after restart!
-      when:
-        - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-        - vault_root_token is not defined
-
     # =========================================================================
-    # STEP 6: INITIALIZE VAULT (if not initialized)
+    # STEP 8: INITIALIZE VAULT (if not initialized)
     # =========================================================================
 
     - name: "[vault] Initialize Vault"
@@ -340,7 +276,7 @@
           - "=============================================="
           - "VAULT INITIALIZATION RESULT"
           - "=============================================="
-      when: vault_unseal_keys is defined
+      when: vault_init_result is not skipped
 
     - name: "[vault] Show unseal keys"
       debug:
@@ -349,19 +285,19 @@
       loop_control:
         index_var: idx
         loop_var: key
-      when: vault_unseal_keys is defined
+      when: vault_init_result is not skipped
 
     - name: "[vault] Show root token and footer"
       debug:
         msg:
           - "Root Token: {{ vault_root_token }}"
           - "=============================================="
-          - "IMPORTANT: Save these credentials securely!"
+          - "IMPORTANT: Credentials will be saved to {{ vault_creds_host_path }}"
           - "=============================================="
-      when: vault_root_token is defined
+      when: vault_init_result is not skipped
 
     # =========================================================================
-    # STEP 7: UNSEAL VAULT (if just initialized)
+    # STEP 9: UNSEAL VAULT (if just initialized)
     # =========================================================================
 
     - name: "[vault] Unseal Vault ({{ vault_key_threshold }} keys required)"
@@ -384,7 +320,7 @@
         msg: "Vault sealed: {{ vault_sealed_status.stdout }}"
 
     # =========================================================================
-    # STEP 8: CONFIGURE KUBERNETES AUTH (if just initialized)
+    # STEP 10: CONFIGURE KUBERNETES AUTH (if just initialized)
     # =========================================================================
 
     - name: "[vault] Login with root token"
@@ -404,30 +340,32 @@
       when: vault_init_result is not skipped
 
     # =========================================================================
-    # STEP 9: ENABLE KV SECRETS ENGINE (if just initialized)
+    # STEP 11: ENABLE KV SECRETS ENGINE (if just initialized)
     # =========================================================================
 
-    - name: "[vault] Enable KV secrets engine"
-      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault secrets enable -path={{ vault_kv_mount_path }} kv-v2
+    - name: "[vault] Enable KV secrets engines"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault secrets enable -path={{ item }} kv-v2
+      loop: "{{ vault_kv_engines }}"
       register: kv_enable_result
       failed_when: false
       when: vault_init_result is not skipped
 
     # =========================================================================
-    # STEP 10: SAVE VAULT CREDENTIALS TO VAULT (if just initialized)
+    # STEP 12: DISTRIBUTE CREDENTIALS TO ALL CONTROL-PLANE NODES
     # =========================================================================
 
-    - name: "[vault] Save credentials to Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ vault_kv_mount_path }}/{{ vault_master_secret.vault_path }} \
-          {% for idx in range(vault_unseal_keys | length) %}
-          unseal_key_{{ idx + 1 }}="{{ vault_unseal_keys[idx] }}" \
-          {% endfor %}
-          root_token="{{ vault_root_token }}"
-      when: vault_init_result is not skipped
+    - name: "[vault-creds] Distribute credentials to all managers"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token: "{{ vault_root_token }}"
+        vault_unseal_keys: "{{ vault_unseal_keys }}"
+        vault_creds_host_path: "{{ vault_creds_host_path }}"
+      when:
+        - vault_root_token is defined
+        - vault_unseal_keys is defined
 
     # =========================================================================
-    # STEP 11: SYNC VAULT POLICIES AND ROLES (only when unsealed)
+    # STEP 13: SYNC VAULT POLICIES AND ROLES (only when unsealed)
     # =========================================================================
 
     - name: "[vault-sync] Sync policies and roles from hosts.yaml"
@@ -435,7 +373,7 @@
       when: vault_sealed_status.stdout | default('true') == 'false'
 
     # =========================================================================
-    # STEP 12: INSTALL POST (Ingress + ESO)
+    # STEP 14: INSTALL POST (Ingress + CronJob)
     # =========================================================================
 
     - name: "[vault-post] Ensure charts directory exists"
@@ -458,8 +396,6 @@
         content: |
           namespace: {{ vault_namespace }}
           clusterDomain: {{ dns_domain }}
-          vault:
-            kvMountPath: {{ vault_kv_mount_path }}
           ingress:
             ingressClass: {{ traefik_ingress_class }}
             entrypoint: {{ traefik_websecure_entrypoint }}
@@ -473,11 +409,12 @@
             saName: {{ vault_eso.sa_name }}
             roleName: {{ vault_eso.role_name }}
             secretStoreName: {{ vault_eso.secret_store_name }}
+            kvEnginePath: {{ vault_eso.kv_engine_path }}
             secrets: {{ vault_eso.secrets | to_json }}
           autoUnseal:
             schedule: "{{ vault_auto_unseal_schedule }}"
             keyThreshold: {{ vault_key_threshold }}
-            secretName: {{ vault_master_secret.target_secret }}
+            credsHostPath: "{{ vault_creds_host_path }}"
 
     - name: "[vault-post] Install via Helm"
       command: >
@@ -490,7 +427,7 @@
         --timeout {{ vault_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 13: VERIFY AND OUTPUT CREDENTIALS
+    # STEP 15: VERIFY AND OUTPUT
     # =========================================================================
 
     - name: "[verify] Check Helm releases"
@@ -520,7 +457,7 @@
 
     - name: "[credentials] Show unseal keys (already initialized)"
       debug:
-        msg: "Unseal Keys: (already initialized - check Vault or K8s Secret)"
+        msg: "Unseal Keys: (already initialized - check {{ vault_creds_host_path }})"
       when: vault_unseal_keys is not defined
 
     - name: "[credentials] Show remaining info"
@@ -528,12 +465,9 @@
         msg:
           - "Root Token: {{ vault_root_token | default('(already initialized)') }}"
           - ""
-          - "Credentials stored in Vault:"
-          - "  Path: {{ vault_kv_mount_path }}/{{ vault_master_secret.vault_path }}"
-          - ""
-          - "Credentials synced to K8s Secret (via ESO):"
-          - "  Secret: {{ vault_master_secret.target_secret }}"
-          - "  Namespace: {{ vault_namespace }}"
+          - "Credentials saved to:"
+          - "  Path: {{ vault_creds_host_path }}"
+          - "  Distributed to: {{ groups['managers'] | join(', ') }}"
           - ""
           - "Vault UI: https://{{ vault_domain }}"
           - "VPN-only: {{ vault_vpn_only_enabled }}"

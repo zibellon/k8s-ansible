@@ -228,13 +228,26 @@ all:
       sa_name: "eso-longhorn" # Из списка ниже (vault_roles)
       role_name: "eso-longhorn" # Из списка ниже (vault_roles)
       secret_store_name: "eso-vault-longhorn"
+      kv_engine_path: "secret"
       secrets:
         - name: "s3-backup" # Название ExternalSecret (который будет создан в этом namespace)
           target_secret: "longhorn-s3-backup-creds" # Название секрета в Kubernetes (который будет создан в этом namespace)
-          vault_path: "longhorn-system/s3-backup" # Путь в Vault, где находятся секреты (извлекаться будет ВСЕ СОДЕРЖИМОЕ)
+          vault_path: "/longhorn-system/s3-backup" # Full path in Vault
+          refresh_interval: "1m"
 
     # ------
     # Vault (HashiCorp)
+    # 1 namespace = 1 SA + 1 SecretStore (для ESO)
+    # sa_name - это название ServiceAccount (который будет создан в этом namespace)
+    # role_name - это название Role (Внутри Vault - auth/kubernetes/role/role_name)
+    # secret_store_name - это название SecretStore (который будет создан в этом namespace)
+    # ---
+    # secrets - это массив ExternalSecret (который будет создан в этом namespace)
+    # name - это название ExternalSecret
+    # target_secret - это название секрета в Kubernetes (который будет создан в этом namespace)
+    # vault_path - это full path в Vault
+    # refresh_interval - это интервал обновления секрета
+    #
     # ------
     vault_namespace: "ns-vault"
     vault_image_tag: "1.21.2"
@@ -243,28 +256,34 @@ all:
     vault_vpn_only_enabled: false
     vault_storage_class: "lh-major-single-best-effort"
     vault_storage_size: "1Gi"
-    vault_replicas: 1
     # Vault unseal
     vault_key_shares: 3
     vault_key_threshold: 2
     vault_auto_unseal_schedule: "*/5 * * * *"  # CronJob schedule for auto-unseal
+    vault_creds_host_path: "/etc/kubernetes/vault-unseal.json"  # Path to credentials file on control-plane nodes
     # Vault Kubernetes Auth
     vault_kubernetes_host: "https://kubernetes.default.svc:443"
-    # Vault KV mount path (DO NOT CHANGE - standard path for KV secrets engine)
-    vault_kv_mount_path: "secret"
+    # Vault KV engines to create (array of mount paths)
+    vault_kv_engines:
+      - "secret"
     # Vault ESO integration (for storing vault credentials)
     vault_eso:
       sa_name: "eso-vault-self"
       role_name: "eso-vault-self"
       secret_store_name: "eso-vault-self"
+      kv_engine_path: "secret"
       secrets:
         - name: "eso-vault-self-creds"
           target_secret: "eso-vault-self-creds"
-          vault_path: "ns-vault/vault-self/creds"
+          vault_path: "/ns-vault/vault-self/creds"
+          refresh_interval: "1m"
           is_master: true
 
     # ---------
     # VAULT POLICIES (Single Source of Truth)
+    # secret = это secret_engine (из массива vault_kv_engines)
+    # data = это данные по секретам (path: secret/data/ns-vault/*)
+    # metadata = это metadata по секретам (path: secret/metadata/ns-vault/*)
     # ---------
     vault_policies:
       # ---------
@@ -272,7 +291,9 @@ all:
       # ---------
       - name: eso-vault-self
         paths:
-          - path: ns-vault/*
+          - path: secret/data/ns-vault/*
+            capabilities: [read, list]
+          - path: secret/metadata/ns-vault/*
             capabilities: [read, list]
 
       # ---------
@@ -280,7 +301,9 @@ all:
       # ---------
       - name: eso-vault-admin
         paths:
-          - path: "*"
+          - path: secret/data/*
+            capabilities: [create, read, update, delete, list]
+          - path: secret/metadata/*
             capabilities: [create, read, update, delete, list]
           - path: sys/policies/acl/*
             capabilities: [create, read, update, delete, list]
@@ -288,11 +311,13 @@ all:
             capabilities: [create, read, update, delete, list]
 
       # ---------
-      # GitLab (root password)
+      # Longhorn (S3 backup credentials)
       # ---------
       - name: eso-longhorn-read
         paths:
-          - path: longhorn-system/*
+          - path: secret/data/longhorn-system/*
+            capabilities: [read, list]
+          - path: secret/metadata/longhorn-system/*
             capabilities: [read, list]
 
       # ---------
@@ -300,7 +325,9 @@ all:
       # ---------
       - name: eso-gitlab-read
         paths:
-          - path: ns-gitlab/*
+          - path: secret/data/ns-gitlab/*
+            capabilities: [read, list]
+          - path: secret/metadata/ns-gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -308,7 +335,9 @@ all:
       # ---------
       - name: eso-gitlab-minio-read
         paths:
-          - path: ns-gitlab/*
+          - path: secret/data/ns-gitlab/*
+            capabilities: [read, list]
+          - path: secret/metadata/ns-gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -316,7 +345,9 @@ all:
       # ---------
       - name: eso-argocd-read
         paths:
-          - path: argocd/*
+          - path: secret/data/argocd/*
+            capabilities: [read, list]
+          - path: secret/metadata/argocd/*
             capabilities: [read, list]
 
     # ---------
@@ -388,18 +419,22 @@ all:
       sa_name: "eso-gitlab-minio" # From vault_roles list below
       role_name: "eso-gitlab-minio" # From vault_roles list below
       secret_store_name: "eso-vault-gitlab-minio"
+      kv_engine_path: "secret"
       secrets:
         - name: "eso-gitlab-minio-root-user"
           target_secret: "eso-gitlab-minio-root-user"
-          vault_path: "ns-gitlab/gitlab-minio/root-user"
+          vault_path: "/ns-gitlab/gitlab-minio/root-user"
+          refresh_interval: "1m"
           type: "MASTER"
         - name: "eso-gitlab-minio-registry"
           target_secret: "eso-gitlab-minio-registry"
-          vault_path: "ns-gitlab/gitlab-minio/registry"
+          vault_path: "/ns-gitlab/gitlab-minio/registry"
+          refresh_interval: "1m"
           type: "REGISTRY"
         - name: "eso-gitlab-minio-runner-cache"
           target_secret: "eso-gitlab-minio-runner-cache"
-          vault_path: "ns-gitlab/gitlab-minio/runner-cache"
+          vault_path: "/ns-gitlab/gitlab-minio/runner-cache"
+          refresh_interval: "1m"
           type: "RUNNER_CACHE"
 
     # ------
@@ -425,10 +460,12 @@ all:
       sa_name: "eso-gitlab"
       role_name: "eso-gitlab"
       secret_store_name: "eso-vault-gitlab"
+      kv_engine_path: "secret"
       secrets:
         - name: "eso-gitlab-root-user"
           target_secret: "eso-gitlab-root-user"
-          vault_path: "ns-gitlab/gitlab/root-user"
+          vault_path: "/ns-gitlab/gitlab/root-user"
+          refresh_interval: "1m"
           type: "MASTER"
 
     # ------

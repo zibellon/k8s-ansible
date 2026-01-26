@@ -1,0 +1,206 @@
+# =============================================================================
+# Rotate Vault Unseal Keys (Rekey)
+# =============================================================================
+# This playbook performs Vault rekey operation to generate new unseal keys
+# and distributes them to all control-plane nodes.
+#
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/apps/vault-rotate.yaml --limit <manager>
+#
+# Prerequisites:
+#   - Vault must be running
+#   - Credentials file must exist at vault_creds_host_path
+# =============================================================================
+
+---
+- name: Rotate Vault Unseal Keys
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+
+    # =========================================================================
+    # STEP 1: CHECK VAULT STATUS
+    # =========================================================================
+
+    - name: "[vault] Wait for pod to be Running"
+      command: >
+        kubectl wait --for=jsonpath='{.status.phase}'=Running
+        pod/vault-0 -n {{ vault_namespace }}
+        --timeout={{ vault_rollout_timeout }}
+
+    - name: "[vault] Get Vault status"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json
+      register: vault_status
+      changed_when: false
+
+    - name: "[vault] Parse status"
+      set_fact:
+        vault_is_sealed: "{{ (vault_status.stdout | from_json).sealed }}"
+        vault_is_initialized: "{{ (vault_status.stdout | from_json).initialized }}"
+
+    - name: "[vault] Fail if not initialized"
+      fail:
+        msg: "Vault is not initialized. Run vault-install.yaml first."
+      when: not (vault_is_initialized | bool)
+
+    - name: "[vault] Show current status"
+      debug:
+        msg: "Vault status: initialized={{ vault_is_initialized }}, sealed={{ vault_is_sealed }}"
+
+    # =========================================================================
+    # STEP 2: READ CURRENT CREDENTIALS
+    # =========================================================================
+
+    - name: "[vault] Check if credentials file exists"
+      stat:
+        path: "{{ vault_creds_host_path }}"
+      register: vault_creds_file
+
+    - name: "[vault] Fail if no credentials file"
+      fail:
+        msg: "Credentials file not found at {{ vault_creds_host_path }}. Cannot perform rekey."
+      when: not vault_creds_file.stat.exists
+
+    - name: "[vault] Read current credentials"
+      slurp:
+        src: "{{ vault_creds_host_path }}"
+      register: vault_creds_content
+
+    - name: "[vault] Parse current credentials"
+      set_fact:
+        current_unseal_keys: "{{ (vault_creds_content.content | b64decode | from_json).unseal_keys }}"
+        current_root_token: "{{ (vault_creds_content.content | b64decode | from_json).root_token }}"
+
+    - name: "[vault] Show current credentials loaded"
+      debug:
+        msg: "Loaded {{ current_unseal_keys | length }} unseal keys from {{ vault_creds_host_path }}"
+
+    # =========================================================================
+    # STEP 3: UNSEAL IF NEEDED
+    # =========================================================================
+
+    - name: "[vault] Unseal Vault (if sealed)"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
+      loop: "{{ current_unseal_keys[:vault_key_threshold | int] }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+        label: "Key {{ idx + 1 }}"
+      when: vault_is_sealed | bool
+
+    - name: "[vault] Verify unsealed"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
+      register: vault_sealed_after
+      changed_when: false
+
+    - name: "[vault] Fail if still sealed"
+      fail:
+        msg: "Failed to unseal Vault"
+      when: vault_sealed_after.stdout == 'true'
+
+    # =========================================================================
+    # STEP 4: PERFORM REKEY
+    # =========================================================================
+
+    - name: "[vault] Login with root token"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ current_root_token }}
+
+    - name: "[rekey] Initialize rekey operation"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator rekey \
+          -init \
+          -key-shares={{ vault_key_shares }} \
+          -key-threshold={{ vault_key_threshold }} \
+          -format=json
+      register: rekey_init
+
+    - name: "[rekey] Parse rekey nonce"
+      set_fact:
+        rekey_nonce: "{{ (rekey_init.stdout | from_json).nonce }}"
+
+    - name: "[rekey] Show rekey started"
+      debug:
+        msg: "Rekey initiated with nonce: {{ rekey_nonce }}"
+
+    - name: "[rekey] Submit unseal keys for rekey"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator rekey \
+          -nonce={{ rekey_nonce }} \
+          -format=json \
+          {{ key }}
+      loop: "{{ current_unseal_keys[:vault_key_threshold | int] }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+        label: "Key {{ idx + 1 }}"
+      register: rekey_results
+
+    - name: "[rekey] Parse new unseal keys"
+      set_fact:
+        new_unseal_keys: "{{ (rekey_results.results[-1].stdout | from_json).keys_base64 }}"
+      when: rekey_results.results[-1].stdout is defined
+
+    - name: "[rekey] Fail if no new keys"
+      fail:
+        msg: "Rekey failed - no new keys generated"
+      when: new_unseal_keys is not defined
+
+    - name: "[rekey] Show new keys generated"
+      debug:
+        msg:
+          - "=============================================="
+          - "NEW UNSEAL KEYS GENERATED"
+          - "=============================================="
+
+    - name: "[rekey] Show new unseal keys"
+      debug:
+        msg: "New Unseal Key {{ idx + 1 }}: {{ key }}"
+      loop: "{{ new_unseal_keys }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+
+    - name: "[rekey] Show footer"
+      debug:
+        msg:
+          - "=============================================="
+          - "Old keys are now INVALID"
+          - "=============================================="
+
+    # =========================================================================
+    # STEP 5: DISTRIBUTE NEW CREDENTIALS TO ALL MANAGERS
+    # =========================================================================
+
+    - name: "[vault-creds] Distribute new credentials to all managers"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token: "{{ current_root_token }}"
+        vault_unseal_keys: "{{ new_unseal_keys }}"
+        vault_creds_host_path: "{{ vault_creds_host_path }}"
+
+    # =========================================================================
+    # STEP 6: VERIFY
+    # =========================================================================
+
+    - name: "[verify] Check Vault status after rekey"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json
+      register: vault_final_status
+      changed_when: false
+
+    - name: "[verify] Show final status"
+      debug:
+        msg:
+          - "=============================================="
+          - "VAULT REKEY COMPLETED"
+          - "=============================================="
+          - "Vault sealed: {{ (vault_final_status.stdout | from_json).sealed }}"
+          - "New credentials distributed to: {{ groups['managers'] | join(', ') }}"
+          - "Credentials file: {{ vault_creds_host_path }}"
+          - "=============================================="

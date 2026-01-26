@@ -1,0 +1,56 @@
+# =============================================================================
+# Distribute Vault credentials to ALL control-plane nodes
+# =============================================================================
+# This task distributes vault credentials (root_token + unseal_keys) to all
+# manager nodes, ignoring --limit flag.
+#
+# Required vars:
+#   - vault_root_token: Vault root token
+#   - vault_unseal_keys: List of unseal keys
+#   - vault_creds_host_path: Path to save credentials file (e.g. /etc/kubernetes/vault-unseal.json)
+# =============================================================================
+
+---
+- name: "[vault-creds] Build credentials JSON"
+  set_fact:
+    vault_creds_json:
+      root_token: "{{ vault_root_token }}"
+      unseal_keys: "{{ vault_unseal_keys }}"
+      key_threshold: "{{ vault_key_threshold }}"
+
+- name: "[vault-creds] Ensure credentials directory exists on all managers"
+  file:
+    path: "{{ vault_creds_host_path | dirname }}"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['managers'] }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "[vault-creds] Distribute credentials to all managers"
+  copy:
+    content: "{{ vault_creds_json | to_nice_json }}"
+    dest: "{{ vault_creds_host_path }}"
+    mode: "0600"
+    owner: root
+    group: root
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['managers'] }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "[vault-creds] Verify credentials file on all managers"
+  stat:
+    path: "{{ vault_creds_host_path }}"
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['managers'] }}"
+  loop_control:
+    label: "{{ item }}"
+  register: creds_file_check
+
+- name: "[vault-creds] Show distribution result"
+  debug:
+    msg: "Credentials distributed to {{ groups['managers'] | length }} manager(s): {{ groups['managers'] | join(', ') }}"

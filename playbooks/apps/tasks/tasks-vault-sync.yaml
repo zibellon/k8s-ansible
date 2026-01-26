@@ -9,8 +9,7 @@
 #
 # Requires variables:
 #   - vault_namespace
-#   - vault_kv_mount_path
-#   - vault_policies (array)
+#   - vault_policies (array) - paths should be full paths (e.g. secret/data/ns-vault/*)
 #   - vault_roles (array)
 #   - remote_charts_dir
 # =============================================================================
@@ -34,21 +33,9 @@
     mode: "0644"
     content: |
       {% for p in item.paths %}
-      {% if '*' in p.path %}
-      path "{{ vault_kv_mount_path }}/data/{{ p.path }}" {
+      path "{{ p.path }}" {
         capabilities = {{ p.capabilities | to_json }}
       }
-      path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}" {
-        capabilities = {{ p.capabilities | to_json }}
-      }
-      {% else %}
-      path "{{ vault_kv_mount_path }}/data/{{ p.path }}/*" {
-        capabilities = {{ p.capabilities | to_json }}
-      }
-      path "{{ vault_kv_mount_path }}/metadata/{{ p.path }}/*" {
-        capabilities = {{ p.capabilities | to_json }}
-      }
-      {% endif %}
       {% endfor %}
   loop: "{{ vault_policies }}"
   loop_control:
