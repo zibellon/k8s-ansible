@@ -237,3 +237,7 @@ status:
 
 # Как получить значения секретов в DECODE
 kubectl get secret vault-self-creds -n ns-vault -o json | jq '.data | map_values(@base64d)'
+
+# Как посмотреть логи от CronJob
+kubectl get CronJob -n ns-vault
+kubectl logs -n ns-vault -l job-name --tail=100
