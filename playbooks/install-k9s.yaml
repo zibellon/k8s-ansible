@@ -1,0 +1,103 @@
+# =============================================================================
+# Install k9s on manager node
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbooks/install-k9s.yaml --limit k8s-manager-1
+# =============================================================================
+
+---
+# =============================================================================
+# Play 0: Pre-check - validate target is a manager
+# =============================================================================
+- name: Pre-check - validate target
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Fail if no limit specified
+      fail:
+        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/install-k9s.yaml --limit <manager_node>"
+      when: ansible_limit is not defined
+      run_once: true
+
+    - name: Skip worker nodes (k9s is only installed on managers)
+      debug:
+        msg: "Skipping {{ inventory_hostname }} - not a manager node"
+      when: inventory_hostname not in groups['managers']
+
+    - name: End play for worker nodes
+      meta: end_host
+      when: inventory_hostname not in groups['managers']
+
+    - name: Confirm target
+      debug:
+        msg: "Installing k9s on: {{ inventory_hostname }}"
+
+# =============================================================================
+# Play 1: Install k9s
+# =============================================================================
+- name: Install k9s
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # PRE-CHECK
+    # =========================================================================
+    - name: Check if k9s is installed
+      command: which k9s
+      register: k9s_pre_check
+      changed_when: false
+      failed_when: false
+
+    # =========================================================================
+    # INSTALL K9S
+    # =========================================================================
+    - name: Download k9s deb package
+      get_url:
+        url: "https://github.com/derailed/k9s/releases/download/v{{ k9s_version }}/k9s_linux_amd64.deb"
+        dest: /tmp/k9s_linux_amd64.deb
+      when: k9s_pre_check.rc != 0
+
+    - name: Install k9s from deb package
+      apt:
+        deb: /tmp/k9s_linux_amd64.deb
+      when: k9s_pre_check.rc != 0
+
+    - name: Cleanup temp files
+      file:
+        path: /tmp/k9s_linux_amd64.deb
+        state: absent
+      when: k9s_pre_check.rc != 0
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: Check k9s version
+      command: k9s version
+      register: k9s_version_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check k9s info
+      command: k9s info
+      register: k9s_info_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert k9s is installed
+      assert:
+        that:
+          - k9s_version_check.rc == 0
+          - k9s_info_check.rc == 0
+        fail_msg: "k9s is NOT installed!"
+        success_msg: "k9s: OK"
+
+    - name: Print k9s version
+      debug:
+        msg: "k9s version: {{ k9s_version_check.stdout }}"
+
+    - name: Print k9s info
+      debug:
+        msg: "k9s info: {{ k9s_info_check.stdout }}"
