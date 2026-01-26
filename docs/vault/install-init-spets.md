@@ -1,199 +1,228 @@
-# Vault Installation Logic
+# Vault Installation and Initialization Process
 
-## Структура Playbook
+## Overview
 
-```
-STEP 0:  Find master secret in vault_eso.secrets
-STEP 1:  Install PRE (NetworkPolicies)
-STEP 2:  Install Vault (Helm Chart)
-STEP 4:  Wait for pod Running
-STEP 5:  Check initialization status
-  5.1:   Check seal status (if initialized)
-  5.2:   Get credentials + Unseal (if SEALED)
-  5.3:   Get credentials (if UNSEALED)
-STEP 6:  Initialize Vault (if not initialized)
-STEP 7:  Unseal Vault (after init)
-STEP 8:  Configure Kubernetes auth (after init)
-STEP 9:  Enable KV secrets engine (after init)
-STEP 10: Save credentials to Vault (after init)
-STEP 11: Sync policies and roles (ALWAYS)
-STEP 12: Install POST (Ingress + ESO)
-STEP 13: Verify and output
-```
+Playbook: `playbooks/apps/vault-install.yaml`
 
-## Схема получения Credentials
+Процесс установки Vault состоит из 15 шагов и поддерживает 3 сценария:
+1. **Первая установка** - Vault не initialized
+2. **Повторный запуск (unsealed)** - Vault initialized и unsealed
+3. **Повторный запуск (sealed)** - Vault initialized но sealed (после рестарта)
+
+## Flow Diagram
 
 ```mermaid
-flowchart TD
-    Start[Start] --> CheckInit{INIT?}
+flowchart TB
+    Start([Start]) --> Step1[STEP 1: Install Pre]
+    Step1 --> Step2[STEP 2: Install Vault Helm]
+    Step2 --> Step3[STEP 3: Wait for Pod]
+    Step3 --> Step4[STEP 4: Check Initialized]
     
-    CheckInit -->|false| DoInit[Initialize Vault]
-    DoInit --> SetFromInit[Set vars from init result]
-    SetFromInit --> Continue[Continue playbook]
+    Step4 --> IsInit{Initialized?}
     
-    CheckInit -->|true| CheckSeal{SEALED?}
+    IsInit -->|No| Step8[STEP 8: Initialize Vault]
+    Step8 --> Step9[STEP 9: Unseal]
+    Step9 --> Step10[STEP 10: Configure K8s Auth]
+    Step10 --> Step11[STEP 11: Enable KV Engines]
+    Step11 --> Step12[STEP 12: Distribute Creds]
+    Step12 --> Step13
     
-    CheckSeal -->|true| GetK8sSecretSealed[Get from K8s Secret]
-    GetK8sSecretSealed --> HasK8sSealed{Has ALL creds?}
-    HasK8sSealed -->|yes| UnsealWithK8s[Unseal + set vars]
-    HasK8sSealed -->|no| FailSealed[FAIL: Cannot unseal]
-    UnsealWithK8s --> Continue
+    IsInit -->|Yes| Step5[STEP 5: Check Sealed]
+    Step5 --> IsSealed{Sealed?}
     
-    CheckSeal -->|false| GetK8sSecretUnsealed[1. Try K8s Secret]
-    GetK8sSecretUnsealed --> HasK8sUnsealed{Has ALL creds?}
-    HasK8sUnsealed -->|yes| SetFromK8s[Set vars + login]
-    HasK8sUnsealed -->|no| CheckVaultSession[2. Try Vault session]
-    SetFromK8s --> Continue
+    IsSealed -->|Yes| Step6[STEP 6: Read Creds from File]
+    Step6 --> HasCreds1{File exists?}
+    HasCreds1 -->|No| Fail1([FAIL: Cannot unseal])
+    HasCreds1 -->|Yes| Unseal6[Unseal with keys]
+    Unseal6 --> Step13
     
-    CheckVaultSession --> HasSession{Authenticated?}
-    HasSession -->|yes| ReadVault[Read from Vault]
-    HasSession -->|no| FailUnsealed[FAIL: No credentials]
+    IsSealed -->|No| Step7[STEP 7: Read Creds from File]
+    Step7 --> HasCreds2{File exists?}
+    HasCreds2 -->|No| Step71[STEP 7.1: Check token defined]
+    Step71 --> TokenDef{Token defined?}
+    TokenDef -->|No| Fail2([FAIL: Creds LOST])
+    TokenDef -->|Yes| Step13
+    HasCreds2 -->|Yes| Login7[Login with token]
+    Login7 --> Step13
     
-    ReadVault --> HasVaultCreds{Has ALL creds?}
-    HasVaultCreds -->|yes| SetFromVault[Set vars]
-    HasVaultCreds -->|no| FailUnsealed
-    SetFromVault --> Continue
+    Step13[STEP 13: Sync Policies] --> Step14[STEP 14: Install Post]
+    Step14 --> Step15[STEP 15: Verify]
+    Step15 --> End([End])
 ```
 
-## Таблица сценариев
+## Step-by-Step Description
 
-| Состояние | K8s Secret | Vault Session | Vault Storage | Результат |
-|-----------|------------|---------------|---------------|-----------|
-| INIT=false | - | - | - | Init, получаем ВСЕ из результата |
-| SEALED | есть (ALL) | - | - | Unseal + set vars |
-| SEALED | неполный/нет | - | - | **FAIL** |
-| UNSEALED | есть (ALL) | - | - | Set vars + login |
-| UNSEALED | неполный/нет | есть | есть (ALL) | Fallback на Vault |
-| UNSEALED | неполный/нет | есть | неполный/нет | **FAIL** |
-| UNSEALED | неполный/нет | нет | - | **FAIL** |
+### STEP 1: Install Pre (NetworkPolicies)
+- Устанавливает Helm chart `vault-pre` с NetworkPolicies
+- **Ошибка**: Helm timeout, namespace creation failed
 
-**ALL = root_token + unseal_key_1 + unseal_key_2 + unseal_key_3**
+### STEP 2: Install Vault (Helm)
+- Устанавливает официальный HashiCorp Vault Helm chart
+- Конфигурация: standalone mode, Raft storage, UI enabled
+- **Ошибка**: Helm timeout, PVC creation failed (storage class issues)
 
-## Приоритет источников credentials
+### STEP 3: Wait for Pod
+- Ожидает пока pod `vault-0` перейдёт в статус Running
+- **Ошибка**: Timeout если pod не стартует (image pull issues, resource limits)
 
-1. **K8s Secret (ESO synced)** - проверяется первым, имеет приоритет
-2. **Vault session** - fallback, только если K8s Secret не содержит credentials
+### STEP 4: Check Initialized
+- Проверяет статус инициализации через `vault status`
+- Определяет дальнейший сценарий работы
 
-## Детали по шагам
+### STEP 5: Check Seal Status (if initialized)
+- Проверяет sealed/unsealed статус
+- Определяет нужен ли unseal
 
-### STEP 0: Find Master Secret
+### STEP 6: Get Credentials (if sealed)
+- Читает credentials из файла `{{ vault_creds_host_path }}`
+- Выполняет unseal используя ключи из файла
+- **КРИТИЧЕСКАЯ ОШИБКА**: Если файл не найден - playbook падает с сообщением:
+  ```
+  Vault is initialized and sealed, but no credentials file found at '{{ vault_creds_host_path }}'. Cannot unseal.
+  ```
 
-```yaml
-- name: "[vault] Find master secret in vault_eso.secrets"
-  set_fact:
-    vault_master_secret: "{{ vault_eso.secrets | selectattr('is_master', 'defined') | selectattr('is_master', 'equalto', true) | first }}"
-```
+### STEP 7: Get Credentials (if unsealed)
+- Читает credentials из файла для login
+- Выполняет `vault login` с root token
 
-Playbook находит секрет с `is_master: true` в массиве `vault_eso.secrets` из `hosts.yaml`.
+### STEP 7.1: Fail if Credentials Lost
+- **КРИТИЧЕСКАЯ ОШИБКА**: Если Vault initialized, unsealed, но файл с credentials не найден:
+  ```
+  CRITICAL: Vault is initialized but credentials file not found!
+  File expected at: {{ vault_creds_host_path }}
+  This means unseal keys and root token are LOST.
+  ```
+- **Причина**: Первая установка упала ПОСЛЕ инициализации, но ДО сохранения credentials
+- **Решение**: Требуется ручное восстановление или переинициализация Vault
 
-### STEP 1-2: Install PRE и Vault
+### STEP 8: Initialize Vault (first time only)
+- Выполняет `vault operator init`
+- Параметры: `key-shares={{ vault_key_shares }}`, `key-threshold={{ vault_key_threshold }}`
+- Получает: unseal keys + root token
+- **Ошибка**: Уже initialized (не должно случиться из-за проверки в STEP 4)
 
-- **PRE**: NetworkPolicies для Vault namespace
-- **Vault**: Official HashiCorp Helm chart со standalone Raft storage
+### STEP 9: Unseal Vault (first time only)
+- Применяет unseal keys (количество = key_threshold)
+- **Ошибка**: Неверные ключи (не должно случиться при первой инициализации)
 
-### STEP 5: Check and Handle Vault State
+### STEP 10: Configure Kubernetes Auth
+- Включает auth method `kubernetes`
+- Конфигурирует kubernetes_host
+- **Ошибка**: Auth method уже включён (игнорируется, `failed_when: false`)
 
-#### 5.1: Check Seal Status
+### STEP 11: Enable KV Secrets Engines
+- Включает KV-v2 engines из списка `vault_kv_engines`
+- **Ошибка**: Engine уже существует (игнорируется, `failed_when: false`)
 
-```bash
-kubectl exec vault-0 -- vault status -format=json | jq -r '.sealed'
-```
+### STEP 12: Distribute Credentials
+- Сохраняет credentials в JSON файл
+- Распространяет на ВСЕ control-plane ноды (игнорирует `--limit`)
+- Путь: `{{ vault_creds_host_path }}` (default: `/etc/kubernetes/vault-unseal.json`)
+- **Условие**: Выполняется только если `vault_root_token` и `vault_unseal_keys` определены
 
-#### 5.2: Handle SEALED State
+### STEP 13: Sync Policies and Roles
+- Синхронизирует policies и roles из `hosts.yaml`
+- Выполняется только если Vault unsealed
 
-Если Vault sealed:
-1. Получаем credentials из K8s Secret (synced by ESO)
-2. Если нет credentials - **FAIL** (cannot unseal)
-3. Unseal с recovered keys
+### STEP 14: Install Post (Ingress + CronJob)
+- Устанавливает:
+  - Traefik IngressRoute для UI
+  - SecretStore для ESO
+  - CronJob для auto-unseal
+- **Ошибка**: Helm timeout
 
-#### 5.3: Handle UNSEALED State
+### STEP 15: Verify
+- Показывает Helm releases
+- Выводит credentials (или ссылку на файл)
 
-Если Vault unsealed:
-1. **Сначала**: Пробуем K8s Secret (ESO synced)
-2. **Fallback**: Пробуем existing Vault session + read from Vault storage
-3. Если ничего не работает - **FAIL**
+## Critical Failure Scenarios
 
-### STEP 6-10: First-time Initialization
-
-Запускается только если `vault_initialized.stdout == "false"`:
-
-1. **Initialize**: Generate unseal keys и root token
-2. **Unseal**: Use threshold keys to unseal
-3. **Configure Kubernetes auth**: Enable и configure auth method
-4. **Enable KV engine**: Create secret storage at `secret/` path
-5. **Save credentials**: Store root_token и unseal_keys в Vault
-
-### STEP 11: Sync Policies and Roles
-
-**Запускается ВСЕГДА** - синхронизирует policies и roles из `hosts.yaml`:
-- Creates/updates Vault policies
-- Creates/updates Kubernetes auth roles
-
-### STEP 12: Install POST
-
-Устанавливает через Helm:
-- Traefik Ingress для Vault UI
-- ESO resources (ServiceAccount, SecretStore, ExternalSecret)
-
-ESO синхронизирует credentials из Vault в K8s Secret.
-
-### STEP 13: Verify
-
-Показывает:
-- Helm releases status
-- Unseal keys (if available)
-- Root token (if available)
-- Vault UI URL
-
-## Важные замечания
-
-1. **unseal_keys ВСЕГДА обязательны** - без них Vault будет навсегда заблокирован после restart pod'а
-2. **K8s Secret имеет приоритет** - ESO-synced secret проверяется перед Vault session
-3. **Расположение credentials**:
-   - Vault storage: `secret/<vault_path>` (из `vault_master_secret.vault_path`)
-   - K8s Secret: `<target_secret>` в vault namespace (из `vault_master_secret.target_secret`)
-
-## Конфигурация в hosts.yaml
-
-```yaml
-vault_eso:
-  sa_name: "eso-vault-self"
-  role_name: "eso-vault-self"
-  secret_store_name: "eso-vault-self"
-  secrets:
-    - name: "eso-vault-self-creds"
-      target_secret: "eso-vault-self-creds"
-      vault_path: "ns-vault/vault-self/creds"
-      is_master: true
-```
-
-## Сценарии ошибок
-
-### Сценарий 1: Sealed Vault без K8s Secret
+### Scenario 1: First Install Fails After Init, Before Credential Save
 
 ```
-Vault is initialized and sealed, but no credentials found in K8s Secret.
-Cannot unseal.
+Timeline:
+1. STEP 8: Initialize → SUCCESS (keys generated)
+2. STEP 9-11: Configure → SUCCESS
+3. STEP 12: Distribute Credentials → FAIL (network issue, permission)
+4. Playbook exits
+
+Result:
+- Vault is initialized and unsealed
+- Credentials exist only in memory (lost after playbook exit)
+- File {{ vault_creds_host_path }} does NOT exist
+
+Next run:
+- STEP 4: initialized=true
+- STEP 5: sealed=false
+- STEP 7: File not found
+- STEP 7.1: FAIL - "Credentials LOST"
 ```
 
-**Решение**: Вручную unseal с сохранёнными unseal keys или восстановить K8s Secret.
+**Recovery**: Требуется переинициализация Vault (удалить PVC и переустановить)
 
-### Сценарий 2: Unsealed Vault без credentials
+### Scenario 2: Vault Restarted, No Credentials File
 
 ```
-Vault is initialized and unsealed, but no credentials found.
-Checked:
-  1. K8s Secret: not found
-  2. Vault session: not authenticated
-  3. Vault storage: not found or not checked
+Timeline:
+1. Vault pod restarts (node reboot, OOM, etc.)
+2. Vault becomes sealed
+3. Admin runs playbook
+
+Result:
+- STEP 6: File not found → FAIL "Cannot unseal"
 ```
 
-**Решение**: Вручную login с root token и сохранить credentials в Vault.
+**Recovery**: Восстановить файл credentials из backup или другой control-plane ноды
 
-## Связанные файлы
+### Scenario 3: Credentials File Corrupted
 
-- Playbook: `playbooks/apps/vault-install.yaml`
-- Policy Sync task: `playbooks/apps/tasks/tasks-vault-policy-sync.yaml`
-- Pre chart: `playbooks/apps/charts/vault/pre/`
-- Install chart: `playbooks/apps/charts/vault/install/`
-- Post chart: `playbooks/apps/charts/vault/post/`
+```
+Timeline:
+1. File exists but JSON invalid
+2. Parse fails
+
+Result:
+- Ansible error on JSON parsing
+```
+
+**Recovery**: Восстановить файл из backup
+
+## Credentials File Format
+
+Path: `{{ vault_creds_host_path }}` (default: `/etc/kubernetes/vault-unseal.json`)
+
+```json
+{
+  "root_token": "hvs.xxxxxxxxxxxxx",
+  "unseal_keys": [
+    "key1_base64",
+    "key2_base64",
+    "key3_base64",
+    "key4_base64",
+    "key5_base64"
+  ],
+  "key_threshold": 2
+}
+```
+
+**Permissions**: `0600` (root only)
+**Location**: All control-plane nodes
+
+## Auto-Unseal CronJob
+
+После установки работает CronJob:
+- Schedule: `{{ vault_auto_unseal_schedule }}` (default: `*/5 * * * *`)
+- Runs on: control-plane nodes only
+- Mounts: `{{ vault_creds_host_path }}` via hostPath
+- Action: Checks seal status, unseals if needed
+
+## Variables Reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `vault_namespace` | `ns-vault` | Kubernetes namespace |
+| `vault_key_shares` | `5` | Number of unseal key shares |
+| `vault_key_threshold` | `2` | Keys required to unseal |
+| `vault_creds_host_path` | `/etc/kubernetes/vault-unseal.json` | Credentials file path |
+| `vault_kv_engines` | `["secret"]` | KV-v2 engines to create |
+| `vault_auto_unseal_schedule` | `*/5 * * * *` | CronJob schedule |
