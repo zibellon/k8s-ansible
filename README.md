@@ -271,12 +271,12 @@
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbooks/apps/vault-restart.yaml --limit k8s-manager-1`
 - Внутренняя структу VAULT
-  - `ansible-playbook -i hosts.yaml playbooks/apps/tasks/tasks-vault-sync.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbooks/apps/tasks/tasks-vault-policy-sync.yaml --limit k8s-manager-1`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
 ## В файле `hosts.yaml` есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
-## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbooks/apps/vault-sync.yaml --limit k8s-manager-1`
+## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbooks/apps/vault-policy-sync.yaml --limit k8s-manager-1`
 ## План, при добавлении чего-то в VAULT
 ## 1. добавить в hosts.yaml новые данные (policy + role + sa + namespoace + secret_path)
 ## 2. Вызвать синхронизацию

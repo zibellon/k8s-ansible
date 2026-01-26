@@ -193,7 +193,7 @@ Checked:
 ## Связанные файлы
 
 - Playbook: `playbooks/apps/vault-install.yaml`
-- Sync task: `playbooks/apps/tasks/tasks-vault-sync.yaml`
+- Policy Sync task: `playbooks/apps/tasks/tasks-vault-policy-sync.yaml`
 - Pre chart: `playbooks/apps/charts/vault/pre/`
 - Install chart: `playbooks/apps/charts/vault/install/`
 - Post chart: `playbooks/apps/charts/vault/post/`

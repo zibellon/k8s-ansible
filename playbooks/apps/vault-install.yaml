@@ -252,6 +252,26 @@
         - vault_root_token is defined
 
     # =========================================================================
+    # STEP 7.1: FAIL IF CREDENTIALS NOT FOUND (already initialized)
+    # =========================================================================
+
+    - name: "[vault] FAIL if credentials not found"
+      fail:
+        msg: |
+          =====================================================
+          CRITICAL: Vault is initialized but credentials file not found!
+          
+          File expected at: {{ vault_creds_host_path }}
+          
+          This means unseal keys and root token are LOST.
+          You need to manually recover or reinitialize Vault.
+          =====================================================
+      when:
+        - vault_is_initialized | bool
+        - vault_sealed_check.stdout | default('true') == 'false'
+        - vault_root_token is not defined
+
+    # =========================================================================
     # STEP 8: INITIALIZE VAULT (if not initialized)
     # =========================================================================
 
@@ -357,9 +377,9 @@
     - name: "[vault-creds] Distribute credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        vault_root_token: "{{ vault_root_token }}"
-        vault_unseal_keys: "{{ vault_unseal_keys }}"
-        vault_creds_host_path: "{{ vault_creds_host_path }}"
+        vault_root_token_tmp: "{{ vault_root_token }}"
+        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
       when:
         - vault_root_token is defined
         - vault_unseal_keys is defined
@@ -368,8 +388,8 @@
     # STEP 13: SYNC VAULT POLICIES AND ROLES (only when unsealed)
     # =========================================================================
 
-    - name: "[vault-sync] Sync policies and roles from hosts.yaml"
-      include_tasks: tasks/tasks-vault-sync.yaml
+    - name: "[vault-policy-sync] Sync policies and roles from hosts.yaml"
+      include_tasks: tasks/tasks-vault-policy-sync.yaml
       when: vault_sealed_status.stdout | default('true') == 'false'
 
     # =========================================================================
