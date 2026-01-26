@@ -206,6 +206,18 @@
         - vault_creds_file_content is defined
         - vault_creds_file_content.content is defined
 
+    # Distribute credentials immediately after reading from file (sealed case)
+    - name: "[vault-creds] Distribute credentials to all managers (sealed case)"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token_tmp: "{{ vault_root_token }}"
+        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
+      when:
+        - vault_sealed_check.stdout | default('false') == 'true'
+        - vault_root_token is defined
+        - vault_unseal_keys is defined
+
     - name: "[vault] Unseal Vault with recovered keys"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
       loop: "{{ vault_unseal_keys[:vault_key_threshold | int] }}"
@@ -245,6 +257,19 @@
       when:
         - vault_creds_unsealed_content is defined
         - vault_creds_unsealed_content.content is defined
+
+    # Distribute credentials immediately after reading from file (unsealed case)
+    - name: "[vault-creds] Distribute credentials to all managers (unsealed case)"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token_tmp: "{{ vault_root_token }}"
+        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
+      when:
+        - vault_is_initialized | bool
+        - vault_sealed_check.stdout | default('true') == 'false'
+        - vault_root_token is defined
+        - vault_unseal_keys is defined
 
     - name: "[vault] Login with root token (already initialized)"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
@@ -319,6 +344,21 @@
       when: vault_init_result is not skipped
 
     # =========================================================================
+    # STEP 8.1: DISTRIBUTE CREDENTIALS (immediately after init)
+    # =========================================================================
+
+    - name: "[vault-creds] Distribute credentials to all managers (after init)"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token_tmp: "{{ vault_root_token }}"
+        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
+      when:
+        - vault_init_result is not skipped
+        - vault_root_token is defined
+        - vault_unseal_keys is defined
+
+    # =========================================================================
     # STEP 9: UNSEAL VAULT (if just initialized)
     # =========================================================================
 
@@ -373,21 +413,7 @@
       when: vault_init_result is not skipped
 
     # =========================================================================
-    # STEP 12: DISTRIBUTE CREDENTIALS TO ALL CONTROL-PLANE NODES
-    # =========================================================================
-
-    - name: "[vault-creds] Distribute credentials to all managers"
-      include_tasks: tasks/tasks-vault-distribute-creds.yaml
-      vars:
-        vault_root_token_tmp: "{{ vault_root_token }}"
-        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
-        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when:
-        - vault_root_token is defined
-        - vault_unseal_keys is defined
-
-    # =========================================================================
-    # STEP 13: SYNC VAULT POLICIES AND ROLES (only when unsealed)
+    # STEP 12: SYNC VAULT POLICIES AND ROLES (only when unsealed)
     # =========================================================================
 
     - name: "[vault-policy-sync] Sync policies and roles from hosts.yaml"
@@ -395,7 +421,7 @@
       when: vault_sealed_status.stdout | default('true') == 'false'
 
     # =========================================================================
-    # STEP 14: INSTALL POST (Ingress + CronJob)
+    # STEP 13: INSTALL POST (Ingress + CronJob)
     # =========================================================================
 
     - name: "[vault-post] Ensure charts directory exists"
@@ -450,7 +476,7 @@
         --timeout {{ vault_config_helm_timeout }}
 
     # =========================================================================
-    # STEP 15: VERIFY AND OUTPUT
+    # STEP 14: VERIFY AND OUTPUT
     # =========================================================================
 
     - name: "[verify] Check Helm releases"
