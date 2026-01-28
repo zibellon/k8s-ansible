@@ -6,42 +6,15 @@
 # =============================================================================
 
 ---
-# =============================================================================
-# Play 0: Pre-check - validate target is a manager
-# =============================================================================
-- name: Pre-check - validate target
-  hosts: all
-  gather_facts: false
-
-  tasks:
-    - name: Fail if no limit specified
-      fail:
-        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/install-k9s.yaml --limit <manager_node>"
-      when: ansible_limit is not defined
-      run_once: true
-
-    - name: Skip worker nodes (k9s is only installed on managers)
-      debug:
-        msg: "Skipping {{ inventory_hostname }} - not a manager node"
-      when: inventory_hostname not in groups['managers']
-
-    - name: End play for worker nodes
-      meta: end_host
-      when: inventory_hostname not in groups['managers']
-
-    - name: Confirm target
-      debug:
-        msg: "Installing k9s on: {{ inventory_hostname }}"
-
-# =============================================================================
-# Play 1: Install k9s
-# =============================================================================
 - name: Install k9s
   hosts: managers
   become: true
   gather_facts: false
 
   tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-manager.yaml
+
     # =========================================================================
     # PRE-CHECK
     # =========================================================================

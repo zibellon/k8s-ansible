@@ -9,32 +9,14 @@
 # Can be used standalone or imported from other playbooks
 # =============================================================================
 
-# =============================================================================
-# Play 0: Pre-check - validate limit specified
-# =============================================================================
-- name: Pre-check - validate limit specified
-  hosts: all
-  gather_facts: false
-
-  tasks:
-    - name: Fail if no limit specified
-      fail:
-        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/server-clean.yaml --limit <node>"
-      when: ansible_limit is not defined
-      run_once: true
-
-    - name: Confirm target
-      debug:
-        msg: "Cleaning server: {{ inventory_hostname }}"
-
-# =============================================================================
-# Play 1: Clean server from Kubernetes
-# =============================================================================
 - name: Clean server from Kubernetes
   hosts: all
   become: true
 
   tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
     - name: Reset kubeadm
       command: kubeadm reset --force
       register: reset_result

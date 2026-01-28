@@ -8,38 +8,18 @@
 # Only works with nodes from 'workers' group
 # =============================================================================
 
-# =============================================================================
-# Play 0: Pre-check - validate target is a worker node
-# =============================================================================
-- name: Pre-check - validate target
-  hosts: all
-  gather_facts: false
-
-  tasks:
-    - name: Fail if no limit specified
-      fail:
-        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/node-remove.yaml --limit <worker_node>"
-      when: ansible_limit is not defined
-      run_once: true
-
-    - name: Fail if not a worker node
-      fail:
-        msg: "ERROR: {{ inventory_hostname }} is not in 'workers' group"
-      when: inventory_hostname not in groups['workers']
-
-    - name: Confirm target
-      debug:
-        msg: "Removing worker node: {{ inventory_hostname }} ({{ new_hostname }})"
-
-# =============================================================================
-# Play 1: Delete node from cluster
-# =============================================================================
-- name: Delete node from cluster
+- name: Remove worker node from cluster
   hosts: all
   become: true
   gather_facts: false
 
   tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-worker.yaml
+
+    # =========================================================================
+    # FIND MASTER MANAGER
+    # =========================================================================
     - name: Find master manager
       set_fact:
         master_manager_fact: "{{ item }}"
@@ -53,7 +33,9 @@
       when: master_manager_fact is not defined
       run_once: true
 
-    # Check if node exists in cluster
+    # =========================================================================
+    # CHECK IF NODE EXISTS
+    # =========================================================================
     - name: Get cluster nodes
       command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
       delegate_to: "{{ master_manager_fact }}"
@@ -70,7 +52,9 @@
         msg: "{{ new_hostname }} is NOT in cluster - skipping delete"
       when: not is_node_exists
 
-    # Delete node
+    # =========================================================================
+    # DELETE NODE
+    # =========================================================================
     - name: Delete node from cluster
       command: kubectl delete node {{ new_hostname }}
       delegate_to: "{{ master_manager_fact }}"
@@ -84,22 +68,9 @@
       when: is_node_exists and delete_result.stdout is defined
       run_once: true
 
-# =============================================================================
-# Play 2: Verify node removed
-# =============================================================================
-- name: Verify node removed
-  hosts: all
-  become: true
-  gather_facts: false
-
-  tasks:
-    - name: Find master manager
-      set_fact:
-        master_manager_fact: "{{ item }}"
-      loop: "{{ groups['managers'] }}"
-      when: hostvars[item].is_master | default(false)
-      run_once: true
-
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
     - name: Get final cluster nodes
       command: kubectl get nodes -o wide
       delegate_to: "{{ master_manager_fact }}"
@@ -113,4 +84,3 @@
           - "=== Node {{ new_hostname }} Removed ==="
           - "{{ final_nodes.stdout_lines }}"
       run_once: true
-

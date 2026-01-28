@@ -6,37 +6,18 @@
 #   ansible-playbook -i hosts.yaml playbooks/worker-join.yaml --limit k8s-worker-2
 # =============================================================================
 
-# =============================================================================
-# Play 0: Pre-check - validate target is a worker node
-# =============================================================================
-- name: Pre-check - validate target
-  hosts: all
+- name: Join worker to cluster
+  hosts: workers
+  become: true
   gather_facts: false
 
   tasks:
-    - name: Fail if no limit specified
-      fail:
-        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/worker-join.yaml --limit <worker_node>"
-      when: ansible_limit is not defined
-      run_once: true
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-worker.yaml
 
-    - name: Fail if not a worker node
-      fail:
-        msg: "ERROR: {{ inventory_hostname }} is not in 'workers' group"
-      when: inventory_hostname not in groups['workers']
-
-    - name: Confirm target
-      debug:
-        msg: "Adding worker node: {{ inventory_hostname }}"
-
-# =============================================================================
-# Play 1: Determine master manager
-# =============================================================================
-- name: Determine master manager
-  hosts: all
-  gather_facts: false
-
-  tasks:
+    # =========================================================================
+    # FIND MASTER MANAGER
+    # =========================================================================
     - name: Find master manager
       set_fact:
         master_manager_fact: "{{ item }}"
@@ -55,16 +36,9 @@
         msg: "Master manager: {{ master_manager_fact }}"
       run_once: true
 
-# =============================================================================
-# Play 2: Get join command and check existing nodes
-# =============================================================================
-- name: Get cluster info
-  hosts: all
-  become: true
-  gather_facts: false
-
-  tasks:
-    # Get existing nodes from manager
+    # =========================================================================
+    # GET CLUSTER INFO
+    # =========================================================================
     - name: Get cluster nodes
       command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
       delegate_to: "{{ master_manager_fact }}"
@@ -81,7 +55,6 @@
         msg: "Nodes in cluster: {{ existing_nodes_fact }}"
       run_once: true
 
-    # Get join command from manager
     - name: Generate join command
       command: kubeadm token create --print-join-command
       delegate_to: "{{ master_manager_fact }}"
@@ -98,15 +71,9 @@
         msg: "{{ kubeadm_join_command_fact }}"
       run_once: true
 
-# =============================================================================
-# Play 3: Join worker to cluster
-# =============================================================================
-- name: Join worker to cluster
-  hosts: workers
-  become: true
-  gather_facts: false
-
-  tasks:
+    # =========================================================================
+    # JOIN WORKER
+    # =========================================================================
     - name: Check if already joined
       set_fact:
         is_already_joined_fact: "{{ new_hostname in existing_nodes_fact }}"
@@ -126,7 +93,9 @@
         msg: "{{ join_result.stdout_lines }}"
       when: not is_already_joined_fact and join_result.stdout_lines is defined
 
-    # Verify kubelet
+    # =========================================================================
+    # VERIFY KUBELET
+    # =========================================================================
     - name: Wait for kubelet
       pause:
         seconds: 10
@@ -145,7 +114,9 @@
         fail_msg: "kubelet is NOT running!"
         success_msg: "{{ new_hostname }}: kubelet running"
 
-    # Apply node labels
+    # =========================================================================
+    # APPLY NODE LABELS
+    # =========================================================================
     - name: Apply node labels
       command: "kubectl label nodes {{ new_hostname }} {{ item }} --overwrite"
       delegate_to: "{{ master_manager_fact }}"
@@ -159,7 +130,9 @@
         msg: "Applied labels to {{ new_hostname }}: {{ node_labels }}"
       when: node_labels is defined and node_labels | length > 0
 
-    # Apply Longhorn default node tags
+    # =========================================================================
+    # APPLY LONGHORN DEFAULT NODE TAGS
+    # =========================================================================
     - name: Apply Longhorn default node tags annotation
       command: >-
         kubectl annotate nodes {{ new_hostname }}
@@ -175,16 +148,9 @@
         msg: "Applied Longhorn tags to {{ new_hostname }}: {{ longhorn_default_tags }}"
       when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
 
-
-# =============================================================================
-# Play 4: Verify on manager
-# =============================================================================
-- name: Verify cluster nodes
-  hosts: all
-  become: true
-  gather_facts: false
-
-  tasks:
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
     - name: Wait for node registration
       pause:
         seconds: 5

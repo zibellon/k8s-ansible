@@ -14,33 +14,15 @@
 # =============================================================================
 
 ---
-# =============================================================================
-# Play 0: Pre-check - validate limit specified
-# =============================================================================
-- name: Pre-check - validate limit specified
-  hosts: all
-  gather_facts: false
-
-  tasks:
-    - name: Fail if no limit specified
-      fail:
-        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/haproxy-apiserver-lb.yaml --limit <node>"
-      when: ansible_limit is not defined
-      run_once: true
-
-    - name: Confirm target
-      debug:
-        msg: "Deploying HAProxy API Server LB on: {{ inventory_hostname }}"
-
-# =============================================================================
-# Play 1: Deploy HAProxy API Server LB
-# =============================================================================
 - name: Deploy HAProxy API Server LB
   hosts: all
   become: true
   gather_facts: false
 
   tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
     # =========================================================================
     # BUILD MANAGER IPS LIST
     # On managers: 127.0.0.1 first (local API server), then other managers

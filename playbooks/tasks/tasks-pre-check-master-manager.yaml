@@ -1,0 +1,32 @@
+# =============================================================================
+# Pre-check: validate target is the master manager
+# =============================================================================
+# Shared tasks for validating playbook target
+#
+# Used by playbooks that require the master manager node
+#
+# Requires:
+#   - Run with --limit <master_manager>
+#   - Target must be in 'managers' group
+#   - Target must have is_master: true
+# =============================================================================
+
+- name: Fail if no limit specified
+  fail:
+    msg: "ERROR: --limit required. Use: ansible-playbook -i hosts.yaml <playbook> --limit <master_manager>"
+  when: ansible_limit is not defined
+  run_once: true
+
+- name: Fail if not a manager node
+  fail:
+    msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
+  when: inventory_hostname not in groups['managers']
+
+- name: Fail if not the master manager
+  fail:
+    msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
+  when: not (is_master | default(false))
+
+- name: Confirm target
+  debug:
+    msg: "Target: {{ inventory_hostname }} (master manager)"

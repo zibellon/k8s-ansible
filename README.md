@@ -74,7 +74,7 @@
 # Присоединение manager-node
 1. Добавить в hosts.yaml нового manager
 2. `ansible-playbook -i hosts.yaml playbooks/haproxy-apiserver-lb.yaml --limit k8s-manager-1`
-   1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (mamnegr + worker)
+   1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
    2. По одному за раз
    3. Через `--limit ....` указать название Node
 3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`

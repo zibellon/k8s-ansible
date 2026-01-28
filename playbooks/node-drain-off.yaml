@@ -10,32 +10,22 @@
 #   2. Uncordons the node (enables scheduling)
 # =============================================================================
 
-# =============================================================================
-# Play 0: Pre-check - validate limit specified
-# =============================================================================
-- name: Pre-check - validate limit specified
+- name: Return node to cluster
   hosts: all
+  become: true
   gather_facts: false
 
-  tasks:
-    - name: Fail if no limit specified
-      fail:
-        msg: "Usage: ansible-playbook -i hosts.yaml playbooks/node-drain-off.yaml --limit <node>"
-      when: ansible_limit is not defined
-      run_once: true
-
-    - name: Confirm target
-      debug:
-        msg: "Uncordoning node: {{ inventory_hostname }} ({{ new_hostname }})"
-
-# =============================================================================
-# Play 1: Determine master manager
-# =============================================================================
-- name: Determine master manager
-  hosts: all
-  gather_facts: false
+  vars:
+    wait_timeout: 300  # 5 minutes
+    wait_interval: 10  # check every 10 seconds
 
   tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
+    # =========================================================================
+    # FIND MASTER MANAGER
+    # =========================================================================
     - name: Find master manager
       set_fact:
         master_manager_fact: "{{ item }}"
@@ -54,19 +44,6 @@
         msg: "Master manager: {{ master_manager_fact }}"
       run_once: true
 
-# =============================================================================
-# Play 2: Wait for node to be Ready and Uncordon
-# =============================================================================
-- name: Return node to cluster
-  hosts: all
-  become: true
-  gather_facts: false
-
-  vars:
-    wait_timeout: 300  # 5 minutes
-    wait_interval: 10  # check every 10 seconds
-
-  tasks:
     # =========================================================================
     # WAIT FOR NODE READY
     # =========================================================================

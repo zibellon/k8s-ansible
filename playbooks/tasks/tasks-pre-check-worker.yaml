@@ -1,0 +1,26 @@
+# =============================================================================
+# Pre-check: validate target is a worker node
+# =============================================================================
+# Shared tasks for validating playbook target
+#
+# Used by playbooks that require a worker node
+#
+# Requires:
+#   - Run with --limit <worker_node>
+#   - Target must be in 'workers' group
+# =============================================================================
+
+- name: Fail if no limit specified
+  fail:
+    msg: "ERROR: --limit required. Use: ansible-playbook -i hosts.yaml <playbook> --limit <worker_node>"
+  when: ansible_limit is not defined
+  run_once: true
+
+- name: Fail if not a worker node
+  fail:
+    msg: "ERROR: {{ inventory_hostname }} is not in 'workers' group"
+  when: inventory_hostname not in groups['workers']
+
+- name: Confirm target
+  debug:
+    msg: "Target: {{ inventory_hostname }} (worker)"
