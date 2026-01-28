@@ -130,6 +130,31 @@
           containerLogMaxFiles: {{ kubelet_container_log_max_files }}
           crashLoopBackOff:
             maxContainerRestartPeriod: {{ kubelet_crashloop_max_backoff }}
+          imageGCHighThresholdPercent: {{ kubelet_image_gc_high_threshold }}
+          imageGCLowThresholdPercent: {{ kubelet_image_gc_low_threshold }}
+          imageMinimumGCAge: {{ kubelet_image_minimum_gc_age }}
+          {% if kubelet_eviction_soft_enabled | default(false) %}
+          evictionSoft:
+            memory.available: "{{ kubelet_eviction_soft_memory_available }}"
+            nodefs.available: "{{ kubelet_eviction_soft_nodefs_available }}"
+            imagefs.available: "{{ kubelet_eviction_soft_imagefs_available }}"
+          evictionSoftGracePeriod:
+            memory.available: "{{ kubelet_eviction_soft_grace_period_memory }}"
+            nodefs.available: "{{ kubelet_eviction_soft_grace_period_nodefs }}"
+            imagefs.available: "{{ kubelet_eviction_soft_grace_period_imagefs }}"
+          {% else %}
+          evictionSoft: {}
+          {% endif %}
+          {% if kubelet_eviction_hard_enabled | default(true) %}
+          evictionHard:
+            memory.available: "{{ kubelet_eviction_hard_memory_available }}"
+            nodefs.available: "{{ kubelet_eviction_hard_nodefs_available }}"
+            nodefs.inodesFree: "{{ kubelet_eviction_hard_nodefs_inodes_free }}"
+            imagefs.available: "{{ kubelet_eviction_hard_imagefs_available }}"
+            pid.available: "{{ kubelet_eviction_hard_pid_available }}"
+          {% else %}
+          evictionHard: {}
+          {% endif %}
           ---
           apiVersion: kubeproxy.config.k8s.io/v1alpha1
           kind: KubeProxyConfiguration

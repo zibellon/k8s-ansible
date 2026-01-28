@@ -143,6 +143,91 @@ all:
     # CrashLoopBackOff max backoff (1s - 300s) (default 300s = 5min)
     kubelet_crashloop_max_backoff: "2m"
 
+    # ------
+    # Kubelet Image Garbage Collection
+    # Очистка неиспользуемых Docker/containerd images
+    # Docs: https://kubernetes.io/docs/concepts/cluster-administration/kubelet-garbage-collection/
+    # ------
+    # Процент использования диска, при котором НАЧИНАЕТСЯ очистка images (default: 85)
+    kubelet_image_gc_high_threshold: 85
+    # Процент использования диска, до которого очищать images (default: 80)
+    kubelet_image_gc_low_threshold: 75
+    # Минимальное время с последнего использования image перед удалением (default: 2m)
+    kubelet_image_minimum_gc_age: "5m"
+
+    # ------
+    # Kubelet Eviction — Soft Thresholds
+    # Отложенное удаление pods с grace period (SIGTERM)
+    # Срабатывает раньше hard, даёт время на graceful shutdown
+    # ------
+    # Включить soft eviction (default: false в kubernetes)
+    kubelet_eviction_soft_enabled: true
+    # Минимум свободной RAM для soft eviction (default: не установлен)
+    kubelet_eviction_soft_memory_available: "1Gi"
+    # Минимум свободного места на root filesystem (default: не установлен)
+    kubelet_eviction_soft_nodefs_available: "15%"
+    # Минимум свободного места для images (default: не установлен)
+    kubelet_eviction_soft_imagefs_available: "15%"
+
+    # ------
+    # Kubelet Eviction — Soft Grace Periods
+    # Время ожидания перед началом eviction (если ресурс не восстановился)
+    # 11:00:00 — memory.available = 900Mi (< 1Gi soft threshold)
+    #  ├─ Kubelet обнаруживает нарушение soft threshold
+    #  ├─ Нода получает condition: MemoryPressure=True
+    #  ├─ Scheduler ПЕРЕСТАЁТ планировать новые pods на эту ноду
+    #  └─ Запускается ТАЙМЕР на 2 минуты (grace period)
+    # 
+    # 11:00:00 - 11:02:00 — ПЕРИОД ОЖИДАНИЯ
+    #  ├─ Kubelet продолжает мониторить memory каждые 10 сек
+    #  ├─ Pods продолжают работать
+    #  └─ Приложения имеют шанс освободить память
+    #
+    # 11:02:00 — Таймер истёк, проверяем memory
+    #  └─ ВАРИАНТ A: memory.available >= 1Gi
+    #     ├─ Soft eviction ОТМЕНЯЕТСЯ
+    #     ├─ MemoryPressure=False
+    #     └─ Scheduler снова планирует pods на эту ноду
+    #
+    #  └─ ВАРИАНТ B: memory.available всё ещё < 1Gi
+    #     ├─ Начинается EVICTION
+    #     ├─ Kubelet выбирает pods для удаления (по QoS + usage)
+    #     ├─ Pods получают SIGTERM (graceful shutdown)
+    #     ├─ Ждёт terminationGracePeriodSeconds (из pod spec)
+    #     └─ После graceful shutdown — pod удалён
+    # ------
+    # Grace period для memory.available
+    kubelet_eviction_soft_grace_period_memory: "2m"
+    # Grace period для nodefs.available
+    kubelet_eviction_soft_grace_period_nodefs: "2m"
+    # Grace period для imagefs.available
+    kubelet_eviction_soft_grace_period_imagefs: "2m"
+
+    # ------
+    # Kubelet Eviction — Hard Thresholds
+    # Немедленное удаление pods при критической нехватке ресурсов (SIGKILL)
+    # Docs: https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/
+    # ------
+    # 11:00:00 — memory = 900Mi → Soft eviction таймер запущен
+    # 11:00:30 — memory = 400Mi (< 500Mi HARD threshold!)
+    #  ├─ HARD eviction срабатывает НЕМЕДЛЕННО
+    #  ├─ Soft eviction таймер игнорируется
+    #  ├─ Pods получают SIGKILL (без grace period)
+    #  └─ Принудительное удаление
+    # ------
+    # Включить hard eviction (default: true в kubernetes)
+    kubelet_eviction_hard_enabled: true
+    # Минимум свободной RAM, иначе eviction pods (default: 100Mi)
+    kubelet_eviction_hard_memory_available: "500Mi"
+    # Минимум свободного места на root filesystem (default: 10%)
+    kubelet_eviction_hard_nodefs_available: "10%"
+    # Минимум свободных inodes на root filesystem (default: 5%)
+    kubelet_eviction_hard_nodefs_inodes_free: "5%"
+    # Минимум свободного места для images (default: 15%)
+    kubelet_eviction_hard_imagefs_available: "10%"
+    # Минимум свободных PID, защита от fork bomb (default: не установлен)
+    kubelet_eviction_hard_pid_available: "1000"
+
     # VPN IPs for vpn-only middleware
     vpn_ips:
       - "1.2.3.4/32"
