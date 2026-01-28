@@ -27,8 +27,3 @@
 7.  kubelet. Настроить очистку старых контейнеров. Которые unused. Там есть несколько параметров, которые за это отвечают.Нужно их сконфигурировать через kubeadm (В момент установки)
 8.  gitlab-minio
     1.  Добавить node-selector. Что и где там запускается
-9.  Добавить шифрование ETCD, (kind: EncryptionConfiguration), aescbc (AES-256 CBC). 
-    1.  Нужен будет отдельный playbook - для ротации ключей шифрования
-    2.  Перешифровать все секреты: kubectl get secrets -A -o json | kubectl replace -f -
-    3. kubectl get configmaps -A -o json | kubectl replace -f -
-10. 

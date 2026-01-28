@@ -1,0 +1,36 @@
+# =============================================================================
+# Restart kube-apiserver on specified host
+# =============================================================================
+# Required variables:
+#   - target_host: hostname to restart apiserver on
+# =============================================================================
+
+---
+# Move manifest out - apiserver will stop
+- name: Move kube-apiserver manifest to /tmp on {{ target_host }}
+  command: mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
+  delegate_to: "{{ target_host }}"
+
+# Wait for apiserver to stop (expect error)
+- name: Wait for kube-apiserver to stop on {{ target_host }}
+  command: curl -sk --max-time 5 https://localhost:6443/healthz
+  register: stop_check
+  until: stop_check.rc != 0
+  retries: 12
+  delay: 5
+  failed_when: false
+  delegate_to: "{{ target_host }}"
+
+# Move manifest back - apiserver will start
+- name: Move kube-apiserver manifest back on {{ target_host }}
+  command: mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+  delegate_to: "{{ target_host }}"
+
+# Wait for apiserver to be healthy
+- name: Wait for kube-apiserver to be healthy on {{ target_host }}
+  command: curl -sk --max-time 5 https://localhost:6443/healthz
+  register: health_check
+  until: health_check.rc == 0 and health_check.stdout == "ok"
+  retries: 30
+  delay: 10
+  delegate_to: "{{ target_host }}"

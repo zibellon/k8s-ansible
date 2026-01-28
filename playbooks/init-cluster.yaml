@@ -58,6 +58,47 @@
         msg: "{{ 'Cluster already init, skip' if kubeadm_already_init_pre_check.stat.exists else 'Cluster not init, proceeding...' }}"
 
     # =========================================================================
+    # ETCD ENCRYPTION
+    # =========================================================================
+    - name: Ensure PKI directory exists
+      file:
+        path: /etc/kubernetes/pki
+        state: directory
+        mode: '0755'
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    - name: Generate ETCD encryption key
+      shell: head -c 32 /dev/urandom | base64
+      register: etcd_encryption_key_result
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    - name: Create ETCD encryption config
+      copy:
+        dest: "{{ etcd_encryption_config_path }}"
+        mode: '0600'
+        content: |
+          apiVersion: apiserver.config.k8s.io/v1
+          kind: EncryptionConfiguration
+          resources:
+            - resources: {{ etcd_encryption_resources | to_json }}
+              providers:
+                - aescbc:
+                    keys:
+                      - name: key{{ ansible_facts.date_time.epoch }}
+                        secret: {{ etcd_encryption_key_result.stdout }}
+                - identity: {}
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    - name: Print encryption key (SAVE THIS!)
+      debug:
+        msg:
+          - "=== ETCD ENCRYPTION KEY ==="
+          - "CRITICAL: Save this key securely! Without it, etcd backup is useless."
+          - "Key: {{ etcd_encryption_key_result.stdout }}"
+          - "Config path: {{ etcd_encryption_config_path }}"
+      when: not kubeadm_already_init_pre_check.stat.exists
+
+    # =========================================================================
     # KUBEADM CONFIG
     # =========================================================================
     - name: Build certSANs list
@@ -90,6 +131,14 @@
             extraArgs:
               - name: service-node-port-range
                 value: "{{ node_port_start }}-{{ node_port_end }}"
+              - name: encryption-provider-config
+                value: "{{ etcd_encryption_config_path }}"
+            extraVolumes:
+              - name: encryption-config
+                hostPath: "{{ etcd_encryption_config_path }}"
+                mountPath: "{{ etcd_encryption_config_path }}"
+                readOnly: true
+                pathType: File
             certSANs: {{ cert_sans | to_json }}
           networking:
             serviceSubnet: "{{ service_subnet }}"
@@ -105,8 +154,10 @@
           apiVersion: kubelet.config.k8s.io/v1beta1
           kind: KubeletConfiguration
           cgroupDriver: systemd
-          containerLogMaxSize: 100Mi
-          containerLogMaxFiles: 5
+          containerLogMaxSize: {{ kubelet_container_log_max_size }}
+          containerLogMaxFiles: {{ kubelet_container_log_max_files }}
+          crashLoopBackOff:
+            maxContainerRestartPeriod: {{ kubelet_crashloop_max_backoff }}
           ---
           apiVersion: kubeproxy.config.k8s.io/v1alpha1
           kind: KubeProxyConfiguration

@@ -119,6 +119,63 @@
         msg: "{{ kubeadm_join_command_fact }}"
       run_once: true
 
+    # =========================================================================
+    # COPY ENCRYPTION CONFIG
+    # =========================================================================
+    - name: Fetch encryption config from master manager
+      slurp:
+        src: "{{ etcd_encryption_config_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      register: encryption_config_content
+      run_once: true
+
+    - name: Ensure PKI directory exists
+      file:
+        path: /etc/kubernetes/pki
+        state: directory
+        mode: '0755'
+
+    - name: Copy encryption config to joining manager
+      copy:
+        dest: "{{ etcd_encryption_config_path }}"
+        content: "{{ encryption_config_content.content | b64decode }}"
+        mode: '0600'
+
+    - name: Print encryption config status
+      debug:
+        msg: "Encryption config copied to {{ etcd_encryption_config_path }}"
+
+    # =========================================================================
+    # COPY VAULT CREDENTIALS (if exists)
+    # =========================================================================
+    - name: Check if Vault credentials exist on master manager
+      stat:
+        path: "{{ vault_creds_host_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      register: vault_creds_check
+      run_once: true
+
+    - name: Fetch Vault credentials from master manager
+      slurp:
+        src: "{{ vault_creds_host_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      register: vault_creds_content
+      run_once: true
+      when: vault_creds_check.stat.exists
+
+    - name: Copy Vault credentials to joining manager
+      copy:
+        dest: "{{ vault_creds_host_path }}"
+        content: "{{ vault_creds_content.content | b64decode }}"
+        mode: '0600'
+        owner: root
+        group: root
+      when: vault_creds_check.stat.exists
+
+    - name: Print Vault credentials status
+      debug:
+        msg: "{{ 'Vault credentials copied to ' + vault_creds_host_path if vault_creds_check.stat.exists else 'Vault credentials not found on master - skipping' }}"
+
 # =============================================================================
 # Play 2: Join manager to cluster
 # =============================================================================

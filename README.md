@@ -80,7 +80,16 @@
 3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
    1. Инициализация ноды
 4. `ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit k8s-manager-2`
-   1. Загрузка сертификатов в k8s.secrets, получение токена и вызов команды `kubeadm join ...`
+   1. Загрузка сертификатов в k8s.secrets
+   2. получение токена
+   3. вызов команды `kubeadm join ...`
+
+# Шифрование ETCD. Ротация ключей
+1. `ansible-playbook -i hosts.yaml playbooks/etcd-key-rotate.yaml`
+   1. api-server, на каждой control-plane будет перезапущен 3 раза (так сказано в официальной документации)
+   2. Это не самый быстрый процесс
+   3. Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
+   4. Этот процесс спровоцирует полную остановку api-server
 
 # Обслуживание сервера (cordon + drain) и возврат в работу
 1. `ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit k8s-worker-3`
