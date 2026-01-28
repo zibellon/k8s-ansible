@@ -4,6 +4,10 @@
 # - install: Official Helm chart (hashicorp/vault)
 # - post: Ingress + CronJob for auto-unseal
 # =============================================================================
+# Fault tolerance: uses temp file to resume from interrupted init
+# - If init temp file exists: resume from interrupted init
+# - If no temp file and initialized: use main credentials file
+# =============================================================================
 
 ---
 - name: Install Vault via Helm
@@ -157,68 +161,51 @@
         msg: "Vault initialized: {{ vault_is_initialized }}"
 
     # =========================================================================
-    # STEP 5: CHECK SEAL STATUS (if already initialized)
+    # STEP 5: CHECK FOR INTERRUPTED INIT (temp file exists)
     # =========================================================================
 
-    - name: "[vault] Check seal status"
+    - name: "[vault] Check if init temp file exists"
+      stat:
+        path: "{{ vault_creds_init_tmp_path }}"
+      register: vault_init_tmp_file
+
+    - name: "[vault] Show temp file status"
+      debug:
+        msg: "Init temp file exists: {{ vault_init_tmp_file.stat.exists }}"
+
+    # =========================================================================
+    # STEP 6: RESUME FROM INTERRUPTED INIT (temp file exists)
+    # =========================================================================
+
+    - name: "[vault-resume] Read credentials from temp file"
+      slurp:
+        src: "{{ vault_creds_init_tmp_path }}"
+      register: vault_tmp_content
+      when: vault_init_tmp_file.stat.exists
+
+    - name: "[vault-resume] Parse credentials from temp file"
+      set_fact:
+        vault_unseal_keys: "{{ (vault_tmp_content.content | b64decode | from_json).unseal_keys }}"
+        vault_root_token: "{{ (vault_tmp_content.content | b64decode | from_json).root_token }}"
+      when: vault_init_tmp_file.stat.exists
+
+    - name: "[vault-resume] Show resume info"
+      debug:
+        msg:
+          - "=============================================="
+          - "RESUMING from interrupted init"
+          - "Using credentials from temp file"
+          - "=============================================="
+      when: vault_init_tmp_file.stat.exists
+
+    - name: "[vault-resume] Check seal status"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
-      register: vault_sealed_check
-      when: vault_is_initialized | bool
+      register: vault_resume_sealed_check
+      when: vault_init_tmp_file.stat.exists
       changed_when: false
 
-    - name: "[vault] Show seal status (already initialized)"
-      debug:
-        msg: "Vault sealed: {{ vault_sealed_check.stdout | default('unknown') }}"
-      when: vault_is_initialized | bool
-
-    # =========================================================================
-    # STEP 6: GET CREDENTIALS FROM LOCAL FILE (if sealed)
-    # =========================================================================
-
-    - name: "[vault] Check if credentials file exists"
-      stat:
-        path: "{{ vault_creds_host_path }}"
-      register: vault_creds_file
-      when: vault_sealed_check.stdout | default('false') == 'true'
-
-    - name: "[vault] Fail if no credentials file for unseal"
-      fail:
-        msg: "Vault is initialized and sealed, but no credentials file found at '{{ vault_creds_host_path }}'. Cannot unseal."
-      when:
-        - vault_sealed_check.stdout | default('false') == 'true'
-        - not (vault_creds_file.stat.exists | default(false))
-
-    - name: "[vault] Read credentials from local file"
-      slurp:
-        src: "{{ vault_creds_host_path }}"
-      register: vault_creds_file_content
-      when:
-        - vault_sealed_check.stdout | default('false') == 'true'
-        - vault_creds_file.stat.exists | default(false)
-
-    - name: "[vault] Parse credentials from file"
-      set_fact:
-        vault_unseal_keys: "{{ (vault_creds_file_content.content | b64decode | from_json).unseal_keys }}"
-        vault_root_token: "{{ (vault_creds_file_content.content | b64decode | from_json).root_token }}"
-      when:
-        - vault_sealed_check.stdout | default('false') == 'true'
-        - vault_creds_file_content is defined
-        - vault_creds_file_content.content is defined
-
-    # Distribute credentials immediately after reading from file (sealed case)
-    - name: "[vault-creds] Distribute credentials to all managers (sealed case)"
-      include_tasks: tasks/tasks-vault-distribute-creds.yaml
-      vars:
-        vault_root_token_tmp: "{{ vault_root_token }}"
-        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
-        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when:
-        - vault_sealed_check.stdout | default('false') == 'true'
-        - vault_root_token is defined
-        - vault_unseal_keys is defined
-
-    - name: "[vault] Unseal Vault with recovered keys"
+    - name: "[vault-resume] Unseal Vault"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
       loop: "{{ vault_unseal_keys[:vault_key_threshold | int] }}"
       loop_control:
@@ -226,77 +213,119 @@
         loop_var: key
         label: "Key {{ idx + 1 }}"
       when:
-        - vault_sealed_check.stdout | default('false') == 'true'
-        - vault_unseal_keys is defined
+        - vault_init_tmp_file.stat.exists
+        - vault_resume_sealed_check.stdout | default('true') == 'true'
 
-    # =========================================================================
-    # STEP 7: GET CREDENTIALS FROM FILE (if already initialized and unsealed)
-    # =========================================================================
-
-    - name: "[vault] Check if credentials file exists (unsealed)"
-      stat:
-        path: "{{ vault_creds_host_path }}"
-      register: vault_creds_file_unsealed
-      when:
-        - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-
-    - name: "[vault] Read credentials from file (unsealed)"
-      slurp:
-        src: "{{ vault_creds_host_path }}"
-      register: vault_creds_unsealed_content
-      when:
-        - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-        - vault_creds_file_unsealed.stat.exists | default(false)
-
-    - name: "[vault] Parse credentials (unsealed)"
-      set_fact:
-        vault_unseal_keys: "{{ (vault_creds_unsealed_content.content | b64decode | from_json).unseal_keys }}"
-        vault_root_token: "{{ (vault_creds_unsealed_content.content | b64decode | from_json).root_token }}"
-      when:
-        - vault_creds_unsealed_content is defined
-        - vault_creds_unsealed_content.content is defined
-
-    # Distribute credentials immediately after reading from file (unsealed case)
-    - name: "[vault-creds] Distribute credentials to all managers (unsealed case)"
+    - name: "[vault-resume] Distribute credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
         vault_root_token_tmp: "{{ vault_root_token }}"
         vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when:
-        - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-        - vault_root_token is defined
-        - vault_unseal_keys is defined
+      when: vault_init_tmp_file.stat.exists
 
-    - name: "[vault] Login with root token (already initialized)"
-      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
-      when:
-        - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-        - vault_root_token is defined
+    - name: "[vault-resume] Delete temp file"
+      file:
+        path: "{{ vault_creds_init_tmp_path }}"
+        state: absent
+      when: vault_init_tmp_file.stat.exists
+
+    - name: "[vault-resume] Show resume complete"
+      debug:
+        msg: "Resume complete - temp file deleted"
+      when: vault_init_tmp_file.stat.exists
 
     # =========================================================================
-    # STEP 7.1: FAIL IF CREDENTIALS NOT FOUND (already initialized)
+    # STEP 7: ALREADY INITIALIZED + NO TEMP FILE (normal case)
     # =========================================================================
 
-    - name: "[vault] FAIL if credentials not found"
+    - name: "[vault] Check seal status (initialized, no temp)"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
+      register: vault_sealed_check
+      when:
+        - vault_is_initialized | bool
+        - not vault_init_tmp_file.stat.exists
+      changed_when: false
+
+    - name: "[vault] Show seal status (initialized, no temp)"
+      debug:
+        msg: "Vault sealed: {{ vault_sealed_check.stdout | default('unknown') }}"
+      when:
+        - vault_is_initialized | bool
+        - not vault_init_tmp_file.stat.exists
+
+    # =========================================================================
+    # STEP 7.1: READ CREDENTIALS FROM MAIN FILE (if needed)
+    # =========================================================================
+
+    - name: "[vault] Check if main credentials file exists"
+      stat:
+        path: "{{ vault_creds_host_path }}"
+      register: vault_creds_file
+      when:
+        - vault_is_initialized | bool
+        - not vault_init_tmp_file.stat.exists
+
+    - name: "[vault] FAIL if no credentials file found"
       fail:
         msg: |
           =====================================================
           CRITICAL: Vault is initialized but credentials file not found!
           
-          File expected at: {{ vault_creds_host_path }}
+          Main file: {{ vault_creds_host_path }} - NOT FOUND
+          Temp file: {{ vault_creds_init_tmp_path }} - NOT FOUND
           
           This means unseal keys and root token are LOST.
           You need to manually recover or reinitialize Vault.
           =====================================================
       when:
         - vault_is_initialized | bool
-        - vault_sealed_check.stdout | default('true') == 'false'
-        - vault_root_token is not defined
+        - not vault_init_tmp_file.stat.exists
+        - not (vault_creds_file.stat.exists | default(false))
+
+    - name: "[vault] Read credentials from main file"
+      slurp:
+        src: "{{ vault_creds_host_path }}"
+      register: vault_main_creds_content
+      when:
+        - vault_is_initialized | bool
+        - not vault_init_tmp_file.stat.exists
+        - vault_creds_file.stat.exists | default(false)
+
+    - name: "[vault] Parse credentials from main file"
+      set_fact:
+        vault_unseal_keys: "{{ (vault_main_creds_content.content | b64decode | from_json).unseal_keys }}"
+        vault_root_token: "{{ (vault_main_creds_content.content | b64decode | from_json).root_token }}"
+      when:
+        - vault_is_initialized | bool
+        - not vault_init_tmp_file.stat.exists
+        - vault_main_creds_content is defined
+        - vault_main_creds_content.content is defined
+
+    # =========================================================================
+    # STEP 7.2: UNSEAL IF SEALED (initialized, no temp)
+    # =========================================================================
+
+    - name: "[vault] Unseal Vault with keys from main file"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
+      loop: "{{ vault_unseal_keys[:vault_key_threshold | int] }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+        label: "Key {{ idx + 1 }}"
+      when:
+        - vault_is_initialized | bool
+        - not vault_init_tmp_file.stat.exists
+        - vault_sealed_check.stdout | default('false') == 'true'
+        - vault_unseal_keys is defined
+
+    - name: "[vault] Login with root token (initialized, no temp)"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
+      when:
+        - vault_is_initialized | bool
+        - not vault_init_tmp_file.stat.exists
+        - vault_root_token is defined
 
     # =========================================================================
     # STEP 8: INITIALIZE VAULT (if not initialized)
@@ -339,24 +368,35 @@
         msg:
           - "Root Token: {{ vault_root_token }}"
           - "=============================================="
-          - "IMPORTANT: Credentials will be saved to {{ vault_creds_host_path }}"
+          - "IMPORTANT: Saving to temp file first for fault tolerance"
           - "=============================================="
       when: vault_init_result is not skipped
 
     # =========================================================================
-    # STEP 8.1: DISTRIBUTE CREDENTIALS (immediately after init)
+    # STEP 8.1: SAVE TO TEMP FILE FIRST (fault tolerance)
     # =========================================================================
 
-    - name: "[vault-creds] Distribute credentials to all managers (after init)"
-      include_tasks: tasks/tasks-vault-distribute-creds.yaml
-      vars:
-        vault_root_token_tmp: "{{ vault_root_token }}"
-        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
-        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when:
-        - vault_init_result is not skipped
-        - vault_root_token is defined
-        - vault_unseal_keys is defined
+    - name: "[vault-init] Build credentials JSON"
+      set_fact:
+        vault_init_creds_json:
+          root_token: "{{ vault_root_token }}"
+          unseal_keys: "{{ vault_unseal_keys }}"
+          key_threshold: "{{ vault_key_threshold }}"
+      when: vault_init_result is not skipped
+
+    - name: "[vault-init] Save credentials to temp file"
+      copy:
+        content: "{{ vault_init_creds_json | to_nice_json }}"
+        dest: "{{ vault_creds_init_tmp_path }}"
+        mode: "0600"
+        owner: root
+        group: root
+      when: vault_init_result is not skipped
+
+    - name: "[vault-init] Show temp file saved"
+      debug:
+        msg: "Credentials saved to temp file: {{ vault_creds_init_tmp_path }}"
+      when: vault_init_result is not skipped
 
     # =========================================================================
     # STEP 9: UNSEAL VAULT (if just initialized)
@@ -380,6 +420,33 @@
     - name: "[vault] Show seal status"
       debug:
         msg: "Vault sealed: {{ vault_sealed_status.stdout }}"
+
+    # =========================================================================
+    # STEP 9.1: DISTRIBUTE CREDENTIALS TO ALL MANAGERS (after init)
+    # =========================================================================
+
+    - name: "[vault-creds] Distribute credentials to all managers (after init)"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token_tmp: "{{ vault_root_token }}"
+        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
+      when: vault_init_result is not skipped
+
+    # =========================================================================
+    # STEP 9.2: DELETE TEMP FILE (after successful distribution)
+    # =========================================================================
+
+    - name: "[vault-init] Delete temp file after successful distribution"
+      file:
+        path: "{{ vault_creds_init_tmp_path }}"
+        state: absent
+      when: vault_init_result is not skipped
+
+    - name: "[vault-init] Show temp file deleted"
+      debug:
+        msg: "Temp file deleted: {{ vault_creds_init_tmp_path }}"
+      when: vault_init_result is not skipped
 
     # =========================================================================
     # STEP 10: CONFIGURE KUBERNETES AUTH (if just initialized)

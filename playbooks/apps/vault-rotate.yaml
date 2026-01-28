@@ -11,6 +11,10 @@
 #   - Vault must be running
 #   - Credentials file must exist at vault_creds_host_path
 # =============================================================================
+# Fault tolerance: uses temp file to resume from interrupted rotate
+# - If rotate temp file exists: resume from interrupted rotate
+# - If no temp file: perform fresh rekey
+# =============================================================================
 
 ---
 - name: Rotate Vault Unseal Keys
@@ -53,7 +57,85 @@
         msg: "Vault status: initialized={{ vault_is_initialized }}, sealed={{ vault_is_sealed }}"
 
     # =========================================================================
-    # STEP 2: READ CURRENT CREDENTIALS
+    # STEP 2: CHECK FOR INTERRUPTED ROTATE (temp file exists)
+    # =========================================================================
+
+    - name: "[vault] Check if rotate temp file exists"
+      stat:
+        path: "{{ vault_creds_rotate_tmp_path }}"
+      register: vault_rotate_tmp_file
+
+    - name: "[vault] Show temp file status"
+      debug:
+        msg: "Rotate temp file exists: {{ vault_rotate_tmp_file.stat.exists }}"
+
+    # =========================================================================
+    # STEP 3: RESUME FROM INTERRUPTED ROTATE (temp file exists)
+    # =========================================================================
+
+    - name: "[vault-resume] Read credentials from rotate temp file"
+      slurp:
+        src: "{{ vault_creds_rotate_tmp_path }}"
+      register: vault_rotate_tmp_content
+      when: vault_rotate_tmp_file.stat.exists
+
+    - name: "[vault-resume] Parse credentials from temp file"
+      set_fact:
+        new_unseal_keys: "{{ (vault_rotate_tmp_content.content | b64decode | from_json).unseal_keys }}"
+        current_root_token: "{{ (vault_rotate_tmp_content.content | b64decode | from_json).root_token }}"
+      when: vault_rotate_tmp_file.stat.exists
+
+    - name: "[vault-resume] Show resume info"
+      debug:
+        msg:
+          - "=============================================="
+          - "RESUMING from interrupted rotate"
+          - "Using new keys from temp file"
+          - "=============================================="
+      when: vault_rotate_tmp_file.stat.exists
+
+    - name: "[vault-resume] Unseal Vault with new keys"
+      command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
+      loop: "{{ new_unseal_keys[:vault_key_threshold | int] }}"
+      loop_control:
+        index_var: idx
+        loop_var: key
+        label: "Key {{ idx + 1 }}"
+      when:
+        - vault_rotate_tmp_file.stat.exists
+        - vault_is_sealed | bool
+
+    - name: "[vault-resume] Distribute new credentials to all managers"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token_tmp: "{{ current_root_token }}"
+        vault_unseal_keys_tmp: "{{ new_unseal_keys }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
+      when: vault_rotate_tmp_file.stat.exists
+
+    - name: "[vault-resume] Delete rotate temp file"
+      file:
+        path: "{{ vault_creds_rotate_tmp_path }}"
+        state: absent
+      when: vault_rotate_tmp_file.stat.exists
+
+    - name: "[vault-resume] Show resume complete"
+      debug:
+        msg:
+          - "=============================================="
+          - "VAULT REKEY RESUMED SUCCESSFULLY"
+          - "=============================================="
+          - "New credentials distributed to: {{ groups['managers'] | join(', ') }}"
+          - "Credentials file: {{ vault_creds_host_path }}"
+          - "=============================================="
+      when: vault_rotate_tmp_file.stat.exists
+
+    - name: "[vault-resume] End play if resumed"
+      meta: end_play
+      when: vault_rotate_tmp_file.stat.exists
+
+    # =========================================================================
+    # STEP 4: READ CURRENT CREDENTIALS (fresh rotate)
     # =========================================================================
 
     - name: "[vault] Check if credentials file exists"
@@ -81,7 +163,7 @@
         msg: "Loaded {{ current_unseal_keys | length }} unseal keys from {{ vault_creds_host_path }}"
 
     # =========================================================================
-    # STEP 3: UNSEAL IF NEEDED
+    # STEP 5: UNSEAL IF NEEDED (with current keys)
     # =========================================================================
 
     - name: "[vault] Unseal Vault (if sealed)"
@@ -105,7 +187,7 @@
       when: vault_sealed_after.stdout == 'true'
 
     # =========================================================================
-    # STEP 4: PERFORM REKEY
+    # STEP 6: PERFORM REKEY
     # =========================================================================
 
     - name: "[vault] Login with root token"
@@ -171,21 +253,58 @@
         msg:
           - "=============================================="
           - "Old keys are now INVALID"
+          - "Saving to temp file for fault tolerance"
           - "=============================================="
 
     # =========================================================================
-    # STEP 5: DISTRIBUTE NEW CREDENTIALS TO ALL MANAGERS
+    # STEP 7: SAVE TO TEMP FILE FIRST (fault tolerance)
+    # =========================================================================
+
+    - name: "[rekey] Build credentials JSON"
+      set_fact:
+        vault_rotate_creds_json:
+          root_token: "{{ current_root_token }}"
+          unseal_keys: "{{ new_unseal_keys }}"
+          key_threshold: "{{ vault_key_threshold }}"
+
+    - name: "[rekey] Save credentials to rotate temp file"
+      copy:
+        content: "{{ vault_rotate_creds_json | to_nice_json }}"
+        dest: "{{ vault_creds_rotate_tmp_path }}"
+        mode: "0600"
+        owner: root
+        group: root
+
+    - name: "[rekey] Show temp file saved"
+      debug:
+        msg: "New credentials saved to temp file: {{ vault_creds_rotate_tmp_path }}"
+
+    # =========================================================================
+    # STEP 8: DISTRIBUTE NEW CREDENTIALS TO ALL MANAGERS
     # =========================================================================
 
     - name: "[vault-creds] Distribute new credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        vault_root_token: "{{ current_root_token }}"
-        vault_unseal_keys: "{{ new_unseal_keys }}"
-        vault_creds_host_path: "{{ vault_creds_host_path }}"
+        vault_root_token_tmp: "{{ current_root_token }}"
+        vault_unseal_keys_tmp: "{{ new_unseal_keys }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
 
     # =========================================================================
-    # STEP 6: VERIFY
+    # STEP 9: DELETE TEMP FILE (after successful distribution)
+    # =========================================================================
+
+    - name: "[rekey] Delete rotate temp file after successful distribution"
+      file:
+        path: "{{ vault_creds_rotate_tmp_path }}"
+        state: absent
+
+    - name: "[rekey] Show temp file deleted"
+      debug:
+        msg: "Temp file deleted: {{ vault_creds_rotate_tmp_path }}"
+
+    # =========================================================================
+    # STEP 10: VERIFY
     # =========================================================================
 
     - name: "[verify] Check Vault status after rekey"
