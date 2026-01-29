@@ -1,0 +1,325 @@
+# =============================================================================
+# HAProxy API Server Load Balancer (static pod)
+# Deploys HAProxy as static pod on nodes for kube-apiserver HA
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-system/haproxy-apiserver-lb.yaml --limit k8s-worker-1
+#
+# This playbook:
+#   1. Creates /etc/kubernetes/haproxy-apiserver-lb.cfg with all manager IPs
+#   2. Creates /etc/kubernetes/manifests/haproxy-apiserver-lb.yaml (static pod)
+#   3. For nodes NOT YET joined: creates standalone kubelet drop-in + minimal config
+#      Kubelet runs in standalone mode (no kubeconfig required) and starts static pods
+#   4. After kubeadm init/join, the standalone drop-in is removed
+# =============================================================================
+
+---
+- name: Deploy HAProxy API Server LB
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
+    # =========================================================================
+    # BUILD MANAGER IPS LIST
+    # On managers: 127.0.0.1 first (local API server), then other managers
+    # On workers: only remote manager IPs
+    # =========================================================================
+    - name: Build list of manager IPs for HAProxy backend
+      set_fact:
+        manager_ips: >-
+          {{
+            (['127.0.0.1'] if inventory_hostname in groups['managers'] else [])
+            +
+            (groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list)
+          }}
+      run_once: true
+
+    - name: Print manager IPs
+      debug:
+        msg: "Manager IPs for HAProxy backend: {{ manager_ips }}"
+      run_once: true
+
+    # =========================================================================
+    # DETERMINE NODE STATE
+    # =========================================================================
+    - name: Check if kubelet config exists
+      stat:
+        path: /var/lib/kubelet/config.yaml
+      register: kubelet_config_stat
+
+    - name: Check if standalone drop-in exists
+      stat:
+        path: /etc/systemd/system/kubelet.service.d/20-standalone.conf
+      register: standalone_dropin_stat
+
+    - name: Set node facts
+      set_fact:
+        is_joined: "{{ kubelet_config_stat.stat.exists and not standalone_dropin_stat.stat.exists }}"
+
+    - name: Print node state
+      debug:
+        msg: "Node {{ inventory_hostname }}: joined={{ is_joined }}"
+
+    # =========================================================================
+    # HAPROXY CONFIG
+    # =========================================================================
+    - name: Create HAProxy config directory
+      file:
+        path: /etc/kubernetes
+        state: directory
+        mode: "0755"
+
+    # Build config content as variable for checksum calculation
+    - name: Build HAProxy config content
+      set_fact:
+        haproxy_config_content: |
+          global
+              log stdout format raw local0
+              maxconn 2100
+
+          defaults
+              log     global
+              mode    tcp
+              option  tcplog
+              option  dontlognull
+              timeout connect 5s
+              timeout client  30s
+              timeout server  30s
+              retries 3
+
+          # Health check endpoint for liveness probe
+          frontend healthz
+              bind *:{{ haproxy_apiserver_lb_healthz_port }}
+              mode http
+              monitor-uri /healthz
+
+          # Kubernetes API frontend
+          frontend kubernetes-api
+              bind {{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}
+              default_backend kubernetes-masters
+
+          # Backend with control-plane nodes
+          backend kubernetes-masters
+              option tcp-check
+              balance roundrobin
+              default-server inter 5s fall 3 rise 2
+              {% for ip in manager_ips %}
+              server manager-{{ loop.index }} {{ ip }}:6443 check
+              {% endfor %}
+
+    - name: Create HAProxy config file
+      copy:
+        dest: /etc/kubernetes/haproxy-apiserver-lb.cfg
+        mode: "0644"
+        content: "{{ haproxy_config_content }}"
+      register: haproxy_config_result
+
+    # =========================================================================
+    # STATIC POD MANIFEST
+    # =========================================================================
+    - name: Create Kubernetes manifests directory
+      file:
+        path: /etc/kubernetes/manifests
+        state: directory
+        mode: "0755"
+
+    - name: Create HAProxy static pod manifest
+      copy:
+        dest: /etc/kubernetes/manifests/haproxy-apiserver-lb.yaml
+        mode: "0644"
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: haproxy-apiserver-lb
+            namespace: kube-system
+            annotations:
+              # Triggers pod restart when haproxy.cfg changes
+              checksum/config: "{{ haproxy_config_content | hash('sha256') }}"
+            labels:
+              component: haproxy-apiserver-lb
+              tier: control-plane
+          spec:
+            hostNetwork: true
+            priorityClassName: system-node-critical
+            containers:
+              - name: haproxy
+                image: {{ haproxy_apiserver_lb_image }}
+                imagePullPolicy: IfNotPresent
+                resources:
+                  requests:
+                    cpu: 25m
+                    memory: 32Mi
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: {{ haproxy_apiserver_lb_healthz_port }}
+                    scheme: HTTP
+                  initialDelaySeconds: 10
+                  periodSeconds: 5
+                  timeoutSeconds: 3
+                  failureThreshold: 3
+                readinessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: {{ haproxy_apiserver_lb_healthz_port }}
+                    scheme: HTTP
+                  initialDelaySeconds: 5
+                  periodSeconds: 3
+                volumeMounts:
+                  - name: haproxy-config
+                    mountPath: /usr/local/etc/haproxy/haproxy.cfg
+                    readOnly: true
+            volumes:
+              - name: haproxy-config
+                hostPath:
+                  path: /etc/kubernetes/haproxy-apiserver-lb.cfg
+                  type: File
+      register: haproxy_manifest_result
+
+    # =========================================================================
+    # BOOTSTRAP KUBELET STANDALONE MODE (for nodes before kubeadm init/join)
+    # Kubelet systemd drop-in normally requires --kubeconfig which doesn't exist yet.
+    # We create a standalone drop-in that runs kubelet with only --config flag.
+    # This allows kubelet to run static pods without API server connection.
+    # =========================================================================
+    - name: Create kubelet directory
+      file:
+        path: /var/lib/kubelet
+        state: directory
+        mode: "0755"
+      when: not is_joined
+
+    - name: Create minimal kubelet config for standalone mode
+      copy:
+        dest: /var/lib/kubelet/config.yaml
+        mode: "0644"
+        content: |
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          kind: KubeletConfiguration
+          # Standalone mode config - no API server connection
+          cgroupDriver: systemd
+          staticPodPath: /etc/kubernetes/manifests
+          containerRuntimeEndpoint: unix:///var/run/containerd/containerd.sock
+          # Disable auth - kubelet works standalone
+          authentication:
+            anonymous:
+              enabled: true
+            webhook:
+              enabled: false
+          authorization:
+            mode: AlwaysAllow
+          # Health check binding
+          healthzBindAddress: 127.0.0.1
+          healthzPort: 10248
+      when: not is_joined
+      register: kubelet_standalone_config
+
+    # Create systemd drop-in that overrides ExecStart
+    # This removes --kubeconfig and --bootstrap-kubeconfig flags
+    - name: Create kubelet drop-in directory
+      file:
+        path: /etc/systemd/system/kubelet.service.d
+        state: directory
+        mode: "0755"
+      when: not is_joined
+
+    - name: Create kubelet standalone drop-in
+      copy:
+        dest: /etc/systemd/system/kubelet.service.d/20-standalone.conf
+        mode: "0644"
+        content: |
+          # Standalone mode for static pods before kubeadm init/join
+          # This drop-in is removed after kubeadm init/join
+          [Service]
+          ExecStart=
+          ExecStart=/usr/bin/kubelet --config=/var/lib/kubelet/config.yaml
+      when: not is_joined
+      register: kubelet_standalone_dropin
+
+    - name: Reload systemd and restart kubelet
+      systemd:
+        daemon_reload: true
+        name: kubelet
+        state: restarted
+      when:
+        - not is_joined
+        - kubelet_standalone_dropin.changed or kubelet_standalone_config.changed
+
+    - name: Wait for kubelet to start
+      pause:
+        seconds: 5
+      when:
+        - not is_joined
+        - kubelet_standalone_dropin.changed or kubelet_standalone_config.changed
+
+    # =========================================================================
+    # WAIT FOR HAPROXY
+    # =========================================================================
+    - name: Set haproxy_needs_wait fact
+      set_fact:
+        haproxy_needs_wait: >-
+          {{
+            haproxy_config_result.changed or
+            haproxy_manifest_result.changed or
+            (kubelet_standalone_dropin.changed | default(false)) or
+            (kubelet_standalone_config.changed | default(false))
+          }}
+
+    - name: Wait for HAProxy static pod to be ready
+      uri:
+        url: "http://127.0.0.1:{{ haproxy_apiserver_lb_healthz_port }}/healthz"
+        status_code: 200
+      register: haproxy_health
+      until: haproxy_health.status == 200
+      retries: 30
+      delay: 2
+      when: haproxy_needs_wait
+
+    - name: Print HAProxy status
+      debug:
+        msg: "HAProxy static pod ready on 127.0.0.1:{{ haproxy_apiserver_lb_port }}"
+      when: haproxy_needs_wait
+
+    # =========================================================================
+    # CLEANUP STANDALONE MODE (for nodes before kubeadm init/join)
+    # HAProxy is running via containerd, kubelet no longer needed in standalone mode.
+    # Stop kubelet and remove drop-in so kubeadm init/join can start fresh.
+    # HAProxy container will continue running (containerd manages it).
+    # =========================================================================
+    - name: Remove standalone kubelet drop-in
+      file:
+        path: /etc/systemd/system/kubelet.service.d/20-standalone.conf
+        state: absent
+      when:
+        - not is_joined
+        - kubelet_standalone_dropin.changed | default(false)
+
+    - name: Remove standalone kubelet config
+      file:
+        path: /var/lib/kubelet/config.yaml
+        state: absent
+      when:
+        - not is_joined
+        - kubelet_standalone_config.changed | default(false)
+
+    - name: Reload systemd and restart kubelet
+      systemd:
+        daemon_reload: true
+        name: kubelet
+        state: restarted
+      when:
+        - not is_joined
+        - kubelet_standalone_dropin.changed | default(false)
+      failed_when: false
+
+    - name: Print cleanup status
+      debug:
+        msg: "Kubelet stopped, standalone drop-in removed. Ready for kubeadm init/join."
+      when:
+        - not is_joined
+        - kubelet_standalone_dropin.changed | default(false)

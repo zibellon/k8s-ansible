@@ -39,7 +39,7 @@
    5. при выполнении команды JOIN - timeout. Так как Node не может подключиться к кластеру
    6. Как решать
    7. Добавить новый сервер в hosts.yaml
-   8. Обновить cilium-host-firewall. Вызвать `hosts.yaml playbooks/apps/cilium-install.yaml`
+   8. Обновить cilium-host-firewall. Вызвать `hosts.yaml playbook-app/cilium-install.yaml`
    9. Это автоматически добавит в cilium-host-firewall новые ip адреса и обновит политику на сервере
    10. После этого сделать: `... join ...`
 
@@ -61,49 +61,49 @@
 # Первичная инициализация кластера
 1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
    1. Инициализация ноды
-2. `ansible-playbook -i hosts.yaml playbooks/init-cluster.yaml --limit k8s-manager-1`
+2. `ansible-playbook -i hosts.yaml playbook-system/init-cluster.yaml --limit k8s-manager-1`
    1. Инициализация кластера. Именно команда: `kubeadm init ...`
 
 # Присоединение worker-node
 1. Добавить в hosts.yaml нового worker
 2. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
    1. Инициализация ноды
-3. `ansible-playbook -i hosts.yaml playbooks/worker-join.yaml --limit k8s-worker-1`
+3. `ansible-playbook -i hosts.yaml playbook-system/worker-join.yaml --limit k8s-worker-1`
    1. Получение токена и вызов команды `kubeadm join ...`
 
 # Присоединение manager-node
 1. Добавить в hosts.yaml нового manager
-2. `ansible-playbook -i hosts.yaml playbooks/haproxy-apiserver-lb.yaml --limit k8s-manager-1`
+2. `ansible-playbook -i hosts.yaml playbook-system/haproxy-apiserver-lb.yaml --limit k8s-manager-1`
    1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
    2. По одному за раз
    3. Через `--limit ....` указать название Node
 3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
    1. Инициализация ноды
-4. `ansible-playbook -i hosts.yaml playbooks/manager-join.yaml --limit k8s-manager-2`
+4. `ansible-playbook -i hosts.yaml playbook-system/manager-join.yaml --limit k8s-manager-2`
    1. Загрузка сертификатов в k8s.secrets
    2. получение токена
    3. вызов команды `kubeadm join ...`
 
 # Шифрование ETCD. Ротация ключей
-1. `ansible-playbook -i hosts.yaml playbooks/etcd-key-rotate.yaml`
+1. `ansible-playbook -i hosts.yaml playbook-system/etcd-key-rotate.yaml`
    1. api-server, на каждой control-plane будет перезапущен 3 раза (так сказано в официальной документации)
    2. Это не самый быстрый процесс
    3. Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
    4. Этот процесс спровоцирует полную остановку api-server
 
 # Обслуживание сервера (cordon + drain) и возврат в работу
-1. `ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit k8s-worker-3`
+1. `ansible-playbook -i hosts.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
    1. Вывод ноды на обслуживание
-2. `ansible-playbook -i hosts.yaml playbooks/node-drain-off.yaml --limit k8s-worker-3`
+2. `ansible-playbook -i hosts.yaml playbook-system/node-drain-off.yaml --limit k8s-worker-3`
    1. Вернуть ноду в работу
 
 # Удаление node
-1. `ansible-playbook -i hosts.yaml playbooks/node-remove.yaml --limit k8s-worker-4`
+1. `ansible-playbook -i hosts.yaml playbook-system/node-remove.yaml --limit k8s-worker-4`
    1. Отключение node от кластера
-   2. Перед этим - надо выполнить `ansible-playbook -i hosts.yaml playbooks/node-drain-on.yaml --limit k8s-worker-3`
+   2. Перед этим - надо выполнить `ansible-playbook -i hosts.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
 
 # Очистка сервера, от всех компонентов k8s
-1. `ansible-playbook -i hosts.yaml playbooks/server-clean.yaml --limit k8s-worker-4`
+1. `ansible-playbook -i hosts.yaml playbook-system/server-clean.yaml --limit k8s-worker-4`
    1. Выполнение команды  `kubeadm reset --force`
    2. Удаление директорий для k8s
 
@@ -126,82 +126,82 @@
 ## Если посмотреть, что генерируется при `helm template ...` - у Deployment/DaemonSet нет checksum, на основе ConfigMap
 ## Можно сделать предположение, что для применения новых ConfigMap - надо сделать ручной restart
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/cilium-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/cilium-install.yaml`
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
   - Что ставится: cilium, host-network-policy, kube-system-network-policy
 - обновление (версия, конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-restart.yaml --limit k8s-manager-1`
 
 ## cert-manager. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/cert-manager-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/cert-manager-install.yaml`
 ## 
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cert-manager-install.yaml --limit k8s-manager-1`
   - Что ставится: cert-manager, network-policy
 - обновление (версия, конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cert-manager-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cert-manager-install.yaml --limit k8s-manager-1`
 
 ## ExternalSecret. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/external-secrets-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/external-secrets-install.yaml`
 ##
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-install.yaml --limit k8s-manager-1`
   - Ставится: cert-controller, secrets-webhook, core
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-install.yaml --limit k8s-manager-1`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbooks/apps/external-secrets-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-restart.yaml --limit k8s-manager-1`
 
 ## traefik (ingress). yaml -> helm
 ## Параметры (конфиг) для работы - в cli (как аргументы при запуске)
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/traefik-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/traefik-install.yaml`
 ##
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
   - Ставится: traefik, network-policy, ingress (dashboard)
 - обновление (версия)
   - Руками обновить CRDs. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
   - Руками обновить RBAC. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
 - обновление (конфиг)
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbooks/apps/traefik-restart.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/traefik-restart.yaml`
 
 ## haproxy (ingress-2). Официальный helm
 ## Автоматически подхватывает конфиг, который генерируется через CRD
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/haproxy-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/haproxy-install.yaml`
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml --limit k8s-manager-1`
   - Ставится: haproxy-ingress, network-policy
 - обновление (версия)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml --limit k8s-manager-1`
 - обновление (конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml --limit k8s-manager-1`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbooks/apps/haproxy-restart.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml`
 
 ## cilium-post (относится к cilium). yaml -> helm
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -210,34 +210,34 @@
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-hubble-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-hubble-install.yaml --limit k8s-manager-1`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
 - обновление (Версия + конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/cilium-hubble-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-hubble-install.yaml --limit k8s-manager-1`
 
 ## olm. yaml -> helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/olm-v0-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/olm-v0-install.yaml`
 ##
 - установка
   - Никаких переменных в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/olm-v0-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/olm-v0-install.yaml --limit k8s-manager-1`
   - Ставится: немного компонентов
 - обновление (версия + конфиг)
   - Никаких переменных в `hosts.yaml`
   - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/crds.yaml
-  - Положить сожержимое в `playbooks/apps/charts/olm-v0/crds/crds.yaml`
+  - Положить сожержимое в `playbook-app/charts/olm-v0/crds/crds.yaml`
   - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml
-  - Положить сожержимое в `playbooks/apps/charts/olm-v0/templates/olm-v0-install.yaml`
-  - Перенести содержимое namespace в `playbooks/apps/charts/olm-v0/namespaces.yaml` и удалить из оригинала
-  - `ansible-playbook -i hosts.yaml playbooks/apps/olm-v0-install.yaml --limit k8s-manager-1`
+  - Положить сожержимое в `playbook-app/charts/olm-v0/templates/olm-v0-install.yaml`
+  - Перенести содержимое namespace в `playbook-app/charts/olm-v0/namespaces.yaml` и удалить из оригинала
+  - `ansible-playbook -i hosts.yaml playbook-app/olm-v0-install.yaml --limit k8s-manager-1`
 
 ## medik8s. Установка идет через kubectl apply -f ...
 ##
 - установка
   - Много переменных в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/medik8s-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/medik8s-install.yaml --limit k8s-manager-1`
 
 ## longhorn. Официальный helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -245,16 +245,16 @@
 ## `namespace: longhorn-system`, МЕНЯТЬ НЕЛЬЗЯ. Так написано в документации
 ## Пример обновленного конфига - `docs/longhorn/other/...`
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/longhorn-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/longhorn-install.yaml`
 ## Есть создание секретов для БЭКАПА в S3 -> использует CRD от ESO (Но секреты сразу работать не будут, так как они появляются в VAULT, позже)
 ## 
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/longhorn-install.yaml --limit k8s-manager-1`
   - Ставится: longhorn, network-policy, ingress (longhorn-ui)
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/longhorn-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/longhorn-install.yaml --limit k8s-manager-1`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует volume (PVC)
@@ -271,21 +271,21 @@
 ##
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml --limit k8s-manager-1`
   - Ставится: cert-controller, secrets-webhook, core
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
   - Устанавливается через официальный HELM, но через исходники с Github
-  - `ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml --limit k8s-manager-1`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbooks/apps/vault-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/vault-restart.yaml --limit k8s-manager-1`
 - Внутренняя структу VAULT
-  - `ansible-playbook -i hosts.yaml playbooks/apps/tasks/tasks-vault-policy-sync.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/tasks/tasks-vault-policy-sync.yaml --limit k8s-manager-1`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
 ## В файле `hosts.yaml` есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
-## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbooks/apps/vault-policy-sync.yaml --limit k8s-manager-1`
+## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml --limit k8s-manager-1`
 ## План, при добавлении чего-то в VAULT
 ## 1. добавить в hosts.yaml новые данные (policy + role + sa + namespoace + secret_path)
 ## 2. Вызвать синхронизацию
@@ -304,35 +304,35 @@
 ## 
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-install.yaml --limit k8s-manager-1`
   - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
 - обновление (версия + конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/gitlab-minio-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-minio-install.yaml --limit k8s-manager-1`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Нет автоматической обработки новых конфигов (Как у Cilium). То есть: После обновления конфигов - ручной restart
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbooks/apps/argocd-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/argocd-install.yaml`
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml --limit k8s-manager-1`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), git-ops
 - обновление (версия)
   - Только параметры в `hosts.yaml`
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на два файла
-    - `playbooks/apps/charts/argocd/templates/argocd.yaml` - все, кроме CRD
-    - `playbooks/apps/charts/argocd/crds/crds.yaml` - только CRD (там примерно 24к строк)
+    - `playbook-app/charts/argocd/templates/argocd.yaml` - все, кроме CRD
+    - `playbook-app/charts/argocd/crds/crds.yaml` - только CRD (там примерно 24к строк)
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
   - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/arocd/...`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml --limit k8s-manager-1`
 - обновление (конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbooks/apps/argocd-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml --limit k8s-manager-1`

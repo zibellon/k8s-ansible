@@ -1,0 +1,193 @@
+# =============================================================================
+# GitLab Helm Chart - values.yaml (Production for 30 users)
+# =============================================================================
+# External dependencies: PostgreSQL, Redis, MinIO (deployed separately)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Global Settings
+# -----------------------------------------------------------------------------
+global:
+  edition: ce
+
+  hosts:
+    domain: ""  # Set via Ansible
+    https: true
+    gitlab:
+      name: ""  # Set via Ansible
+      https: true
+    registry:
+      name: ""  # Set via Ansible
+      https: true
+    pages:
+      name: ""  # Set via Ansible
+      https: true
+
+  # Ingress (using existing Traefik)
+  ingress:
+    configureCertmanager: false
+    class: traefik
+    enabled: true
+    tls:
+      enabled: true
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+
+  # SSH port
+  shell:
+    port: 3714  # Set via Ansible
+
+  time_zone: UTC
+
+  # ----- External PostgreSQL -----
+  psql:
+    host: svc-gitlab-postgresql
+    port: 5432
+    database: gitlabhq_production
+    username: gitlab
+    password:
+      useSecret: true
+      secret: ""  # Set via Ansible (ESO secret name)
+      key: password
+
+  # ----- External Redis -----
+  redis:
+    host: svc-gitlab-redis
+    port: 6379
+    auth:
+      enabled: true
+      secret: ""  # Set via Ansible (ESO secret name)
+      key: password
+
+  # ----- Disable built-in MinIO (using external) -----
+  minio:
+    enabled: false
+
+  # ----- Registry bucket -----
+  registry:
+    bucket: registry
+
+  # ----- KAS disabled -----
+  kas:
+    enabled: false
+
+  # ----- Pages enabled -----
+  pages:
+    enabled: true
+
+  # ----- Application config -----
+  appConfig:
+    # LFS disabled
+    lfs:
+      enabled: false
+
+    # Object storage (external MinIO)
+    object_store:
+      enabled: true
+      proxy_download: true
+      connection:
+        secret: ""  # Set via Ansible (ESO secret for MinIO connection)
+        key: connection
+
+    artifacts:
+      enabled: true
+      bucket: gitlab-artifacts
+
+    uploads:
+      enabled: true
+      bucket: gitlab-uploads
+
+    packages:
+      enabled: true
+      bucket: gitlab-packages
+
+    backups:
+      bucket: gitlab-backups
+
+  # SMTP disabled
+  smtp:
+    enabled: false
+
+# -----------------------------------------------------------------------------
+# Disable built-in components
+# -----------------------------------------------------------------------------
+
+nginx-ingress:
+  enabled: false
+
+certmanager:
+  install: false
+
+prometheus:
+  install: false
+
+# Disable built-in PostgreSQL
+postgresql:
+  install: false
+
+# Disable built-in Redis
+redis:
+  install: false
+
+# -----------------------------------------------------------------------------
+# GitLab Registry
+# -----------------------------------------------------------------------------
+registry:
+  enabled: true
+  hpa:
+    minReplicas: 2
+    maxReplicas: 2
+
+  storage:
+    secret: ""  # Set via Ansible (ESO secret for registry S3)
+    key: config
+    redirect:
+      disable: true
+
+# -----------------------------------------------------------------------------
+# GitLab Components
+# -----------------------------------------------------------------------------
+gitlab:
+  webservice:
+    minReplicas: 2
+    maxReplicas: 2
+    workerProcesses: 2
+    workerTimeout: 180
+    resources:
+      requests:
+        memory: 2.5Gi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+
+  sidekiq:
+    minReplicas: 2
+    maxReplicas: 2
+    concurrency: 10
+    resources:
+      requests:
+        memory: 1.5Gi
+        cpu: 250m
+      limits:
+        memory: 3Gi
+
+  gitlab-shell:
+    minReplicas: 1
+    maxReplicas: 2
+
+  gitaly:
+    persistence:
+      size: 50Gi
+      storageClass: ""  # Set via Ansible
+
+  toolbox:
+    enabled: true
+
+  migrations:
+    enabled: true
+
+# -----------------------------------------------------------------------------
+# GitLab Runner (separate install, not part of this chart)
+# -----------------------------------------------------------------------------
+gitlab-runner:
+  install: false

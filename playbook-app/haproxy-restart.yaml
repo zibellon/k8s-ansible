@@ -1,0 +1,71 @@
+# =============================================================================
+# HAPROXY RESTART
+# Restarts HAProxy DaemonSet to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml
+# =============================================================================
+
+- name: Restart HAProxy
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify HAProxy is installed
+    # -------------------------------------------------------------------------
+
+    - name: Check if HAProxy namespace exists
+      command: kubectl get namespace {{ haproxy_namespace }}
+      register: namespace_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if HAProxy namespace not found
+      fail:
+        msg: "HAProxy namespace '{{ haproxy_namespace }}' not found. Install HAProxy first."
+      when: namespace_check.rc != 0
+
+    - name: Show current HAProxy pods
+      command: kubectl get pods -n {{ haproxy_namespace }} -o wide
+      register: pods_before
+      changed_when: false
+
+    - name: Display pods before restart
+      debug:
+        var: pods_before.stdout_lines
+
+    # -------------------------------------------------------------------------
+    # RESTART DAEMONSET
+    # -------------------------------------------------------------------------
+
+    - name: Restart HAProxy DaemonSet
+      command: kubectl rollout restart daemonset/{{ haproxy_daemonset_name }} -n {{ haproxy_namespace }}
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUT TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: Wait for DaemonSet rollout to complete
+      command: kubectl rollout status daemonset/{{ haproxy_daemonset_name }} -n {{ haproxy_namespace }} --timeout={{ haproxy_rollout_timeout }}
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: Show HAProxy pods after restart
+      command: kubectl get pods -n {{ haproxy_namespace }} -o wide
+      register: pods_after
+      changed_when: false
+
+    - name: Display pods after restart
+      debug:
+        var: pods_after.stdout_lines
+
+    - name: Restart completed
+      debug:
+        msg: "HAProxy DaemonSet restart complete"

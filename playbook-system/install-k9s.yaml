@@ -1,0 +1,76 @@
+# =============================================================================
+# Install k9s on manager node
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-system/install-k9s.yaml --limit k8s-manager-1
+# =============================================================================
+
+---
+- name: Install k9s
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-manager.yaml
+
+    # =========================================================================
+    # PRE-CHECK
+    # =========================================================================
+    - name: Check if k9s is installed
+      command: which k9s
+      register: k9s_pre_check
+      changed_when: false
+      failed_when: false
+
+    # =========================================================================
+    # INSTALL K9S
+    # =========================================================================
+    - name: Download k9s deb package
+      get_url:
+        url: "https://github.com/derailed/k9s/releases/download/v{{ k9s_version }}/k9s_linux_amd64.deb"
+        dest: /tmp/k9s_linux_amd64.deb
+      when: k9s_pre_check.rc != 0
+
+    - name: Install k9s from deb package
+      apt:
+        deb: /tmp/k9s_linux_amd64.deb
+      when: k9s_pre_check.rc != 0
+
+    - name: Cleanup temp files
+      file:
+        path: /tmp/k9s_linux_amd64.deb
+        state: absent
+      when: k9s_pre_check.rc != 0
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: Check k9s version
+      command: k9s version
+      register: k9s_version_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check k9s info
+      command: k9s info
+      register: k9s_info_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert k9s is installed
+      assert:
+        that:
+          - k9s_version_check.rc == 0
+          - k9s_info_check.rc == 0
+        fail_msg: "k9s is NOT installed!"
+        success_msg: "k9s: OK"
+
+    - name: Print k9s version
+      debug:
+        msg: "k9s version: {{ k9s_version_check.stdout }}"
+
+    - name: Print k9s info
+      debug:
+        msg: "k9s info: {{ k9s_info_check.stdout }}"

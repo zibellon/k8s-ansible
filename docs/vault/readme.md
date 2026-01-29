@@ -105,7 +105,7 @@ path "secret/metadata/myapp/*" {
 Vault устанавливается через Ansible playbook в 4 этапа:
 
 ```bash
-ansible-playbook -i hosts.yaml playbooks/apps/vault-install.yaml --limit <master_manager>
+ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml --limit <master_manager>
 ```
 
 - `vault-pre`: NetworkPolicies
@@ -521,7 +521,7 @@ kubectl exec -n ns-vault vault-0 -- vault read auth/kubernetes/role/myapp-role
 ### Перезапуск Vault
 
 ```bash
-ansible-playbook -i hosts.yaml playbooks/apps/vault-restart.yaml
+ansible-playbook -i hosts.yaml playbook-app/vault-restart.yaml
 ```
 
 **Важно:** После перезапуска Vault будет в состоянии **sealed**. Необходимо выполнить unseal:

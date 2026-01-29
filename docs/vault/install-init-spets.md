@@ -2,7 +2,7 @@
 
 ## Overview
 
-Playbook: `playbooks/apps/vault-install.yaml`
+Playbook: `playbook-app/vault-install.yaml`
 
 Процесс установки Vault состоит из 15 шагов и поддерживает 3 сценария:
 1. **Первая установка** - Vault не initialized

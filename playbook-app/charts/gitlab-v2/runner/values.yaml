@@ -1,0 +1,73 @@
+# =============================================================================
+# GitLab Runner Helm Chart - values.yaml
+# =============================================================================
+# Runner installed without registration - register manually later
+# =============================================================================
+
+# GitLab URL (set via Ansible)
+gitlabUrl: ""
+
+# Runner token - leave empty, register manually
+# runnerToken: ""
+
+# Number of concurrent jobs
+concurrent: 10
+
+# Check interval for new jobs (seconds)
+checkInterval: 30
+
+# RBAC settings
+rbac:
+  create: true
+  clusterWideAccess: false
+
+# Runner configuration
+runners:
+  # Executor
+  executor: kubernetes
+
+  # Privileged mode for Docker-in-Docker
+  privileged: false
+
+  # Namespace for job pods
+  namespace: ns-gitlab
+
+  # Default image
+  image: alpine:latest
+
+  # Tags (optional)
+  tags: ""
+
+  # Run untagged jobs
+  runUntagged: true
+
+  # Protected branches only
+  protected: false
+
+  # Cache configuration (MinIO)
+  cache:
+    cacheType: s3
+    cachePath: gitlab-runner
+    cacheShared: true
+    s3ServerAddress: ""  # Set via Ansible (svc-gitlab-minio:9000)
+    s3BucketName: runner-cache
+    s3BucketLocation: us-east-1
+    s3CacheInsecure: true
+    secretName: ""  # Set via Ansible (ESO secret for MinIO)
+
+  # Kubernetes executor config
+  config: |
+    [[runners]]
+      [runners.kubernetes]
+        namespace = "ns-gitlab"
+        image = "alpine:latest"
+        privileged = false
+        poll_timeout = 180
+
+# Resources
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi

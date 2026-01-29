@@ -1,0 +1,224 @@
+# =============================================================================
+# Prepare servers for Longhorn storage
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-system/longhorn-prepare.yaml --limit k8s-worker-1
+# =============================================================================
+# - Kernel modules: iscsi_tcp, dm_crypt
+# - Packages: open-iscsi, nfs-common, cryptsetup, dmsetup
+# - Mount Propagation check and fix
+# - Multipath blacklist fix
+# =============================================================================
+
+---
+- name: Prepare servers for Longhorn
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
+    # =========================================================================
+    # KERNEL MODULES
+    # =========================================================================
+    - name: Create /etc/modules-load.d/k8s-longhorn.conf
+      copy:
+        dest: /etc/modules-load.d/k8s-longhorn.conf
+        content: |
+          {% for module in longhorn_modules %}
+          {{ module }}
+          {% endfor %}
+        mode: '0644'
+      register: longhorn_modules_conf_create_result
+
+    # =========================================================================
+    # PACKAGES
+    # =========================================================================
+    - name: Install Longhorn required packages
+      apt:
+        name: "{{ longhorn_packages }}"
+        state: present
+        update_cache: yes
+
+    # =========================================================================
+    # MOUNT PROPAGATION
+    # =========================================================================
+
+    - name: Pre-Check mount propagation for root
+      shell: cat /proc/1/mountinfo | grep "/ / " | grep -o 'shared:[0-9]*' || echo "not_ready"
+      register: mount_propagation_pre_check
+      changed_when: false
+
+    # Create shared-root.service only if root is NOT shared
+    - name: Create shared-root.service
+      copy:
+        dest: /etc/systemd/system/shared-root.service
+        content: |
+          [Unit]
+          Description=Make root filesystem a shared mount
+          DefaultDependencies=no
+          Before=kubelet.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/mount --make-shared /
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+      register: shared_root_service_create_result
+      when: "'shared:' not in mount_propagation_pre_check.stdout"
+
+    - name: Enable shared-root.service
+      systemd:
+        name: shared-root.service
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      when: >-
+        shared_root_service_create_result is defined
+        and shared_root_service_create_result.changed
+
+    - name: Mount propagation status
+      debug:
+        msg: "shared-root.service created and enabled"
+      when: >-
+        shared_root_service_create_result is defined
+        and shared_root_service_create_result.changed
+
+    # =========================================================================
+    # MULTIPATH FIX
+    # =========================================================================
+
+    - name: Pre-Check multipathd status
+      command: systemctl is-active multipathd.service
+      register: multipathd_status_pre_check
+      changed_when: false
+      failed_when: false
+
+    # Apply multipath fix only if multipathd is active
+    - name: Add Longhorn blacklist to /etc/multipath.conf
+      blockinfile:
+        path: /etc/multipath.conf
+        create: yes
+        mode: '0644'
+        backup: yes
+        marker: "# {mark} LONGHORN BLACKLIST"
+        block: |
+          # Longhorn fix: blacklist sd devices to prevent multipath issues
+          # https://longhorn.io/kb/troubleshooting-volume-with-multipath
+          blacklist {
+              devnode "^sd[a-z0-9]+"
+          }
+      register: multipath_conf_create_result
+      when: multipathd_status_pre_check.stdout == 'active'
+
+    - name: Restart multipathd service
+      systemd:
+        name: multipathd.service
+        state: restarted
+      when: >-
+        multipath_conf_create_result is defined
+        and multipath_conf_create_result.changed
+
+    # =========================================================================
+    # REBOOT
+    # =========================================================================
+
+    - name: Reboot
+      reboot:
+        reboot_timeout: 300
+        msg: "Rebooting"
+      when: >-
+        longhorn_modules_conf_create_result.changed
+        or (shared_root_service_create_result is defined and shared_root_service_create_result.changed)
+        or (multipath_conf_create_result is defined and multipath_conf_create_result.changed)
+
+    # =========================================================================
+    # FINAL VERIFICATION
+    # =========================================================================
+
+    # ======
+    # MODULES
+    # ======
+    - name: Check loaded modules
+      command: lsmod
+      register: lsmod_check
+      changed_when: false
+
+    - name: Assert Longhorn modules are loaded
+      assert:
+        that:
+          - "item in lsmod_check.stdout"
+        fail_msg: "{{ item }} module is NOT loaded!"
+        success_msg: "{{ item }}: OK"
+      loop: "{{ longhorn_modules }}"
+
+    # ======
+    # PACKAGES
+    # ======
+    - name: Check Longhorn packages are installed
+      command: dpkg -l {{ item }}
+      register: pkg_check
+      changed_when: false
+      failed_when: false
+      loop: "{{ longhorn_packages }}"
+
+    - name: Assert Longhorn packages are installed
+      assert:
+        that:
+          - item.rc == 0
+        fail_msg: "{{ item.item }} is NOT installed!"
+        quiet: true
+      loop: "{{ pkg_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ======
+    # MOUNT PROPAGATION
+    # ======
+    - name: Check mount propagation for root
+      shell: cat /proc/1/mountinfo | grep "/ / " | grep -o 'shared:[0-9]*' || echo "NOT_SHARED"
+      register: mount_propagation_check
+      changed_when: false
+
+    - name: Assert mount propagation is OK
+      assert:
+        that:
+          - "'shared:' in mount_propagation_check.stdout"
+        fail_msg: "mount propagation is NOT ready"
+        success_msg: "mount propagation: OK"
+
+    # ======
+    # MULTIPATH BLACKLIST
+    # ======
+    - name: Check multipathd status
+      command: systemctl is-active multipathd.service
+      register: multipathd_status_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check multipath blacklist
+      command: multipath -t
+      register: multipath_blacklist_check
+      changed_when: false
+      failed_when: false
+      when: multipathd_status_check.stdout == 'active'
+
+    - name: Assert multipath is OK
+      assert:
+        that:
+          - multipathd_status_check.stdout != 'active' or 'sd[a-z0-9]' in multipath_blacklist_check.stdout
+        fail_msg: "multipathd is active OR blacklist is NOT configured!"
+        success_msg: "multipath: disable or blacklist is OK"
+
+    - name: Print final status
+      debug:
+        msg:
+          - "=== Longhorn Preparation Complete ==="
+          - "modules: OK"
+          - "packages: OK"
+          - "mount_propagation: OK"
+          - "multipath: Ok"

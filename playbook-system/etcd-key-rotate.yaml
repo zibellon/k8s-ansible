@@ -1,0 +1,443 @@
+# =============================================================================
+# Rotate ETCD encryption key on all control-plane nodes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-system/etcd-key-rotate.yaml
+# =============================================================================
+# Official Kubernetes key rotation procedure:
+# 1. Add new key as SECOND → restart all apiservers
+# 2. Make new key FIRST → restart all apiservers
+# 3. Re-encrypt secrets and configmaps
+# 4. Remove old key → restart all apiservers
+# =============================================================================
+# Fault tolerance: uses state files to resume from failures
+# - state-step1: before Step 1 (new key generated)
+# - state-step2: before Step 2 (Step 1 completed)
+# - state-step4: before Step 4 (Step 2-3 completed)
+# =============================================================================
+
+---
+- name: Rotate ETCD encryption key
+  hosts: managers
+  become: true
+  gather_facts: true
+
+  vars:
+    state_dir: "/etc/kubernetes/pki"
+    state_step1: "{{ state_dir }}/rotation-state-step1.yaml"
+    state_step2: "{{ state_dir }}/rotation-state-step2.yaml"
+    state_step4: "{{ state_dir }}/rotation-state-step4.yaml"
+
+  tasks:
+    # =========================================================================
+    # PRE-CHECK: Find master manager
+    # =========================================================================
+    - name: Find master manager
+      set_fact:
+        master_manager_fact: "{{ item }}"
+      loop: "{{ groups['managers'] }}"
+      when: hostvars[item].is_master | default(false)
+      run_once: true
+
+    - name: Fail if no master manager found
+      fail:
+        msg: "ERROR: No manager with is_master: true found in hosts.yaml"
+      when: master_manager_fact is not defined
+      run_once: true
+
+    # =========================================================================
+    # STATE DETECTION: Determine current step from state files
+    # =========================================================================
+    - name: Check state files existence
+      stat:
+        path: "{{ item }}"
+      delegate_to: "{{ master_manager_fact }}"
+      register: state_files
+      loop:
+        - "{{ state_step1 }}"
+        - "{{ state_step2 }}"
+        - "{{ state_step4 }}"
+      run_once: true
+
+    - name: Determine current step
+      set_fact:
+        current_step: >-
+          {% if state_files.results[2].stat.exists %}4
+          {% elif state_files.results[1].stat.exists %}2
+          {% elif state_files.results[0].stat.exists %}1
+          {% else %}0
+          {% endif %}
+      run_once: true
+
+    - name: Print current step
+      debug:
+        msg:
+          - "Current step: {{ current_step }}"
+          - "0=fresh start, 1=resume step1, 2=resume step2, 4=resume step4"
+      run_once: true
+
+    # =========================================================================
+    # LOAD STATE: If resuming, load keys from state file
+    # =========================================================================
+    - name: Determine state file to read
+      set_fact:
+        state_file_to_read: >-
+          {% if current_step | int == 1 %}{{ state_step1 }}
+          {% elif current_step | int == 2 %}{{ state_step2 }}
+          {% else %}{{ state_step4 }}
+          {% endif %}
+      when: current_step | int > 0
+      run_once: true
+
+    - name: Read existing state file
+      slurp:
+        src: "{{ state_file_to_read }}"
+      delegate_to: "{{ master_manager_fact }}"
+      register: existing_state
+      when: current_step | int > 0
+      run_once: true
+
+    - name: Load keys from state file
+      set_fact:
+        new_key_name: "{{ (existing_state.content | b64decode | from_yaml).new_key_name }}"
+        new_key_secret: "{{ (existing_state.content | b64decode | from_yaml).new_key_secret }}"
+        current_key:
+          name: "{{ (existing_state.content | b64decode | from_yaml).current_key_name }}"
+          secret: "{{ (existing_state.content | b64decode | from_yaml).current_key_secret }}"
+      when: current_step | int > 0
+      run_once: true
+
+    - name: Print resume info
+      debug:
+        msg:
+          - "=========================================="
+          - "RESUMING from step {{ current_step }}"
+          - "Using existing key: {{ new_key_name }}"
+          - "=========================================="
+      when: current_step | int > 0
+      run_once: true
+
+    # =========================================================================
+    # FRESH START: Read current config and generate new key
+    # =========================================================================
+    - name: Read current encryption config (fresh start)
+      slurp:
+        src: "{{ etcd_encryption_config_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      register: current_config
+      when: current_step | int == 0
+      run_once: true
+
+    - name: Parse current config and extract key (fresh start)
+      set_fact:
+        current_key: "{{ (current_config.content | b64decode | from_yaml).resources[0].providers[0].aescbc['keys'][0] }}"
+      when: current_step | int == 0
+      run_once: true
+
+    - name: Generate new encryption key (fresh start)
+      shell: head -c 32 /dev/urandom | base64
+      register: new_key_result
+      when: current_step | int == 0
+      run_once: true
+
+    - name: Set new key variables (fresh start)
+      set_fact:
+        new_key_name: "key{{ ansible_facts.date_time.epoch }}"
+        new_key_secret: "{{ new_key_result.stdout }}"
+      when: current_step | int == 0
+      run_once: true
+
+    - name: Print new key info (fresh start)
+      debug:
+        msg:
+          - "=========================================="
+          - "NEW ENCRYPTION KEY - SAVE THIS SECURELY!"
+          - "=========================================="
+          - "Key name: {{ new_key_name }}"
+          - "Key: {{ new_key_secret }}"
+          - "=========================================="
+      when: current_step | int == 0
+      run_once: true
+
+    - name: Create state-step1 file (fresh start)
+      copy:
+        dest: "{{ state_step1 }}"
+        mode: '0600'
+        content: |
+          new_key_name: {{ new_key_name }}
+          new_key_secret: {{ new_key_secret }}
+          current_key_name: {{ current_key.name }}
+          current_key_secret: {{ current_key.secret }}
+      delegate_to: "{{ master_manager_fact }}"
+      when: current_step | int == 0
+      run_once: true
+
+    - name: Print state file created
+      debug:
+        msg: "State file created: {{ state_step1 }}"
+      when: current_step | int == 0
+      run_once: true
+
+    # =========================================================================
+    # STEP 1: ADD NEW KEY AS SECOND (if current_step < 2)
+    # =========================================================================
+    - name: "STEP 1: Deploy config with new key as SECOND"
+      copy:
+        dest: "{{ etcd_encryption_config_path }}"
+        mode: '0600'
+        content: |
+          apiVersion: apiserver.config.k8s.io/v1
+          kind: EncryptionConfiguration
+          resources:
+            - resources: {{ etcd_encryption_resources | to_json }}
+              providers:
+                - aescbc:
+                    keys:
+                      - name: {{ current_key.name }}
+                        secret: {{ current_key.secret }}
+                      - name: {{ new_key_name }}
+                        secret: {{ new_key_secret }}
+                - identity: {}
+      when: current_step | int < 2
+
+    - name: "STEP 1: Print status"
+      debug:
+        msg: "Config deployed on {{ inventory_hostname }}: [{{ current_key.name }}, {{ new_key_name }}]"
+      when: current_step | int < 2
+
+    # =========================================================================
+    # RESTART 1: All apiservers now know about new key
+    # =========================================================================
+    - name: "RESTART 1: Restart apiservers sequentially"
+      include_tasks: tasks/restart-apiserver.yaml
+      loop: "{{ groups['managers'] }}"
+      loop_control:
+        loop_var: target_host
+      when: current_step | int < 2
+      run_once: true
+
+    - name: "RESTART 1: Complete"
+      debug:
+        msg: "All apiservers restarted - they can now decrypt data encrypted with new key"
+      when: current_step | int < 2
+      run_once: true
+
+    # =========================================================================
+    # TRANSITION: Step 1 → Step 2 (create state-step2, delete state-step1)
+    # =========================================================================
+    - name: "TRANSITION 1→2: Create state-step2"
+      copy:
+        dest: "{{ state_step2 }}"
+        mode: '0600'
+        content: |
+          new_key_name: {{ new_key_name }}
+          new_key_secret: {{ new_key_secret }}
+          current_key_name: {{ current_key.name }}
+          current_key_secret: {{ current_key.secret }}
+      delegate_to: "{{ master_manager_fact }}"
+      when: current_step | int < 2
+      run_once: true
+
+    - name: "TRANSITION 1→2: Delete state-step1"
+      file:
+        path: "{{ state_step1 }}"
+        state: absent
+      delegate_to: "{{ master_manager_fact }}"
+      when: current_step | int < 2
+      run_once: true
+
+    - name: "TRANSITION 1→2: Complete"
+      debug:
+        msg: "Transitioned to step 2"
+      when: current_step | int < 2
+      run_once: true
+
+    # =========================================================================
+    # STEP 2: MAKE NEW KEY FIRST (if current_step < 4)
+    # =========================================================================
+    - name: "STEP 2: Deploy config with new key as FIRST"
+      copy:
+        dest: "{{ etcd_encryption_config_path }}"
+        mode: '0600'
+        content: |
+          apiVersion: apiserver.config.k8s.io/v1
+          kind: EncryptionConfiguration
+          resources:
+            - resources: {{ etcd_encryption_resources | to_json }}
+              providers:
+                - aescbc:
+                    keys:
+                      - name: {{ new_key_name }}
+                        secret: {{ new_key_secret }}
+                      - name: {{ current_key.name }}
+                        secret: {{ current_key.secret }}
+                - identity: {}
+      when: current_step | int < 4
+
+    - name: "STEP 2: Print status"
+      debug:
+        msg: "Config deployed on {{ inventory_hostname }}: [{{ new_key_name }}, {{ current_key.name }}]"
+      when: current_step | int < 4
+
+    # =========================================================================
+    # RESTART 2: All apiservers now encrypt with new key
+    # =========================================================================
+    - name: "RESTART 2: Restart apiservers sequentially"
+      include_tasks: tasks/restart-apiserver.yaml
+      loop: "{{ groups['managers'] }}"
+      loop_control:
+        loop_var: target_host
+      when: current_step | int < 4
+      run_once: true
+
+    - name: "RESTART 2: Complete"
+      debug:
+        msg: "All apiservers restarted - they now encrypt new data with new key"
+      when: current_step | int < 4
+      run_once: true
+
+    # =========================================================================
+    # STEP 3: RE-ENCRYPT ALL SECRETS AND CONFIGMAPS (if current_step < 4)
+    # No state file needed - idempotent operations
+    # =========================================================================
+    - name: "STEP 3: Re-encrypt all secrets"
+      shell: kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+      register: secrets_reencrypt
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      when: current_step | int < 4
+      run_once: true
+
+    - name: "STEP 3: Print secrets re-encrypt result"
+      debug:
+        msg: "Secrets re-encrypted: {{ secrets_reencrypt.stdout_lines | length | default(0) }} items"
+      when: current_step | int < 4
+      run_once: true
+
+    - name: "STEP 3: Re-encrypt all configmaps"
+      shell: kubectl get configmaps --all-namespaces -o json | kubectl replace -f -
+      register: configmaps_reencrypt
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      when: current_step | int < 4
+      run_once: true
+
+    - name: "STEP 3: Print configmaps re-encrypt result"
+      debug:
+        msg: "ConfigMaps re-encrypted: {{ configmaps_reencrypt.stdout_lines | length | default(0) }} items"
+      when: current_step | int < 4
+      run_once: true
+
+    # =========================================================================
+    # TRANSITION: Step 3 → Step 4 (create state-step4, delete state-step2)
+    # =========================================================================
+    - name: "TRANSITION 3→4: Create state-step4"
+      copy:
+        dest: "{{ state_step4 }}"
+        mode: '0600'
+        content: |
+          new_key_name: {{ new_key_name }}
+          new_key_secret: {{ new_key_secret }}
+          current_key_name: {{ current_key.name }}
+          current_key_secret: {{ current_key.secret }}
+      delegate_to: "{{ master_manager_fact }}"
+      when: current_step | int < 4
+      run_once: true
+
+    - name: "TRANSITION 3→4: Delete state-step2"
+      file:
+        path: "{{ state_step2 }}"
+        state: absent
+      delegate_to: "{{ master_manager_fact }}"
+      when: current_step | int < 4
+      run_once: true
+
+    - name: "TRANSITION 3→4: Complete"
+      debug:
+        msg: "Transitioned to step 4"
+      when: current_step | int < 4
+      run_once: true
+
+    # =========================================================================
+    # STEP 4: REMOVE OLD KEY
+    # =========================================================================
+    - name: "STEP 4: Deploy config with only new key"
+      copy:
+        dest: "{{ etcd_encryption_config_path }}"
+        mode: '0600'
+        content: |
+          apiVersion: apiserver.config.k8s.io/v1
+          kind: EncryptionConfiguration
+          resources:
+            - resources: {{ etcd_encryption_resources | to_json }}
+              providers:
+                - aescbc:
+                    keys:
+                      - name: {{ new_key_name }}
+                        secret: {{ new_key_secret }}
+                - identity: {}
+
+    - name: "STEP 4: Print status"
+      debug:
+        msg: "Config deployed on {{ inventory_hostname }}: [{{ new_key_name }}] - old key removed"
+
+    # =========================================================================
+    # RESTART 3: Finalize
+    # =========================================================================
+    - name: "RESTART 3: Restart apiservers sequentially"
+      include_tasks: tasks/restart-apiserver.yaml
+      loop: "{{ groups['managers'] }}"
+      loop_control:
+        loop_var: target_host
+      run_once: true
+
+    - name: "RESTART 3: Complete"
+      debug:
+        msg: "All apiservers restarted - key rotation finalized"
+      run_once: true
+
+    # =========================================================================
+    # CLEANUP: Delete state-step4
+    # =========================================================================
+    - name: "CLEANUP: Delete state-step4"
+      file:
+        path: "{{ state_step4 }}"
+        state: absent
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "CLEANUP: Complete"
+      debug:
+        msg: "State file removed - rotation complete"
+      run_once: true
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: "VERIFY: Test reading secrets"
+      shell: kubectl get secrets -A --no-headers | head -5
+      register: secrets_test
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "VERIFY: Test reading configmaps"
+      shell: kubectl get configmaps -A --no-headers | head -5
+      register: configmaps_test
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "VERIFY: Print final result"
+      debug:
+        msg:
+          - "=========================================="
+          - "KEY ROTATION COMPLETE"
+          - "=========================================="
+          - "Secrets accessible: {{ 'YES' if secrets_test.rc == 0 else 'NO' }}"
+          - "ConfigMaps accessible: {{ 'YES' if configmaps_test.rc == 0 else 'NO' }}"
+          - ""
+          - "New key: {{ new_key_name }}"
+          - "Old key: {{ current_key.name }} (REMOVED)"
+          - "=========================================="
+      run_once: true

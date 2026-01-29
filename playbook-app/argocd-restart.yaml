@@ -1,0 +1,103 @@
+# =============================================================================
+# ARGOCD RESTART
+# Restarts all ArgoCD components to apply ConfigMap changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml
+#
+# ArgoCD does not automatically reload ConfigMaps.
+# This playbook performs graceful rolling restart of all components.
+# =============================================================================
+
+- name: Restart ArgoCD components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify ArgoCD is installed
+    # -------------------------------------------------------------------------
+
+    - name: Check if ArgoCD namespace exists
+      command: kubectl get namespace {{ argocd_namespace }}
+      register: namespace_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if ArgoCD is not installed
+      fail:
+        msg: "ArgoCD namespace '{{ argocd_namespace }}' not found. Install ArgoCD first."
+      when: namespace_check.rc != 0
+
+    - name: Show current ArgoCD pods
+      command: kubectl get pods -n {{ argocd_namespace }}
+      register: pods_before
+      changed_when: false
+
+    - name: Display pods before restart
+      debug:
+        var: pods_before.stdout_lines
+
+    # -------------------------------------------------------------------------
+    # RESTART STATEFULSET
+    # -------------------------------------------------------------------------
+
+    - name: Restart ArgoCD StatefulSet (application-controller)
+      command: kubectl rollout restart statefulset/argocd-application-controller -n {{ argocd_namespace }}
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: Restart ArgoCD Deployments
+      command: kubectl rollout restart deployment/{{ item }} -n {{ argocd_namespace }}
+      loop:
+        - argocd-applicationset-controller
+        - argocd-dex-server
+        - argocd-notifications-controller
+        - argocd-redis
+        - argocd-repo-server
+        - argocd-server
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: Wait for StatefulSet rollout to complete
+      command: kubectl rollout status statefulset/argocd-application-controller -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
+
+    - name: Wait for Deployments rollout to complete
+      command: kubectl rollout status deployment/{{ item }} -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
+      loop:
+        - argocd-applicationset-controller
+        - argocd-dex-server
+        - argocd-notifications-controller
+        - argocd-redis
+        - argocd-repo-server
+        - argocd-server
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: Show ArgoCD pods after restart
+      command: kubectl get pods -n {{ argocd_namespace }}
+      register: pods_after
+      changed_when: false
+
+    - name: Display pods after restart
+      debug:
+        var: pods_after.stdout_lines
+
+    - name: Restart completed
+      debug:
+        msg:
+          - "=== ArgoCD Restart Complete ==="
+          - "All components have been restarted and are ready."
+          - "ConfigMap changes are now applied."
+
+

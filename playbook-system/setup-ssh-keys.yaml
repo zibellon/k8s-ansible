@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# Setup SSH key authentication
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-system/setup-ssh-keys.yaml --limit k8s-worker-1
+# =============================================================================
+
+- name: Setup SSH key authentication
+  hosts: all
+  become: true
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
+    - name: Copy SSH public key to servers
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', ssh_public_key_path) }}"
+
+    - name: Verify SSH key was added
+      command: cat ~/.ssh/authorized_keys
+      register: authorized_keys_result
+      changed_when: false
+
+    - name: Print result
+      debug:
+        msg: "SSH key added for {{ ansible_user }}@{{ inventory_hostname }}: {{ authorized_keys_result.stdout }}"
