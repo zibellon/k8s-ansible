@@ -27,38 +27,42 @@
   become: true
   gather_facts: false
 
-  vars:
-    gitlab_v2_namespace: "ns-gitlab"
-    gitlab_v2_helm_timeout: "15m"
-    gitlab_v2_rollout_timeout: "600s"
-
   tasks:
     - name: "[pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
 
     # =========================================================================
-    # STEP 1: CHECK VAULT IS READY
+    # INIT: Find secret names and vault paths by type from gitlab_v2_eso.secrets
     # =========================================================================
-
-    - name: "[vault-check] Verify Vault is unsealed"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
-      register: vault_sealed_check
-      changed_when: false
-
-    - name: "[vault-check] Fail if Vault is sealed"
-      fail:
-        msg: "Vault is sealed. Please unseal Vault first."
-      when: vault_sealed_check.stdout == "true"
+    - name: "[init] Find secret names and vault paths by type"
+      set_fact:
+        # Secret names
+        secret_postgresql: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'postgresql') | first).target_secret_name }}"
+        secret_redis: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'redis') | first).target_secret_name }}"
+        secret_minio_root: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'minio_root') | first).target_secret_name }}"
+        secret_minio_registry: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'minio_registry') | first).target_secret_name }}"
+        secret_gitlab_registry_minio_connection: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'gitlab_registry_minio_connection') | first).target_secret_name }}"
+        secret_gitlab_minio_connection: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'gitlab_minio_connection') | first).target_secret_name }}"
+        secret_minio_runner_cache: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).target_secret_name }}"
+        secret_gitlab_root: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).target_secret_name }}"
+        # Vault paths
+        vault_path_postgresql: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'postgresql') | first).vault_path }}"
+        vault_path_redis: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'redis') | first).vault_path }}"
+        vault_path_minio_root: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'minio_root') | first).vault_path }}"
+        vault_path_minio_registry: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'minio_registry') | first).vault_path }}"
+        vault_path_minio_runner_cache: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).vault_path }}"
+        vault_path_gitlab_root: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
 
     # =========================================================================
-    # STEP 2: GENERATE AND STORE INITIAL SECRETS IN VAULT
+    # STEP 1: GENERATE AND STORE INITIAL SECRETS IN VAULT
     # =========================================================================
 
     # ----- PostgreSQL credentials -----
     - name: "[vault-secrets] Check if PostgreSQL secret exists"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/postgresql/credentials 2>/dev/null
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_postgresql }} 2>/dev/null
       register: postgresql_secret_check
       failed_when: false
       changed_when: false
@@ -70,7 +74,8 @@
 
     - name: "[vault-secrets] Store PostgreSQL credentials in Vault"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/postgresql/credentials
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_postgresql }}
         username=gitlab
         password={{ generated_postgresql_password }}
       when: postgresql_secret_check.rc != 0
@@ -78,7 +83,9 @@
     # ----- Redis credentials -----
     - name: "[vault-secrets] Check if Redis secret exists"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/redis/credentials 2>/dev/null
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_redis }} 2>/dev/null
       register: redis_secret_check
       failed_when: false
       changed_when: false
@@ -90,14 +97,18 @@
 
     - name: "[vault-secrets] Store Redis credentials in Vault"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/redis/credentials
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_redis }}
         password={{ generated_redis_password }}
+        redis_args="--save 1 1 --notify-keyspace-events KEA --requirepass {{ generated_redis_password }}"
       when: redis_secret_check.rc != 0
 
     # ----- MinIO root credentials -----
     - name: "[vault-secrets] Check if MinIO root secret exists"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/root 2>/dev/null
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_root }} 2>/dev/null
       register: minio_root_secret_check
       failed_when: false
       changed_when: false
@@ -109,7 +120,8 @@
 
     - name: "[vault-secrets] Store MinIO root credentials in Vault"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/root
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_root }}
         username={{ gitlab_v2_minio_root_user }}
         password={{ generated_minio_password }}
       when: minio_root_secret_check.rc != 0
@@ -153,6 +165,10 @@
             secretStoreName: {{ gitlab_v2_eso.secret_store_name }}
             kvEnginePath: {{ gitlab_v2_eso.kv_engine_path }}
             secrets: {{ gitlab_v2_eso.secrets | to_json }}
+          minio:
+            s3Endpoint: {{ gitlab_v2_minio_s3_endpoint }}
+            s3Region: {{ gitlab_v2_minio_s3_region }}
+            s3PathStyle: {{ gitlab_v2_minio_s3_path_style }}
 
     - name: "[pre] Install via Helm"
       command: >
@@ -170,7 +186,7 @@
     # =========================================================================
 
     - name: "[wait-eso] Wait for PostgreSQL secret"
-      command: kubectl get secret {{ gitlab_v2_postgresql_secret_name }} -n {{ gitlab_v2_namespace }}
+      command: kubectl get secret {{ secret_postgresql }} -n {{ gitlab_v2_namespace }}
       register: postgresql_secret_wait
       until: postgresql_secret_wait.rc == 0
       retries: 30
@@ -178,7 +194,7 @@
       changed_when: false
 
     - name: "[wait-eso] Wait for Redis secret"
-      command: kubectl get secret {{ gitlab_v2_redis_secret_name }} -n {{ gitlab_v2_namespace }}
+      command: kubectl get secret {{ secret_redis }} -n {{ gitlab_v2_namespace }}
       register: redis_secret_wait
       until: redis_secret_wait.rc == 0
       retries: 30
@@ -186,7 +202,7 @@
       changed_when: false
 
     - name: "[wait-eso] Wait for MinIO root secret"
-      command: kubectl get secret {{ gitlab_v2_minio_root_secret_name }} -n {{ gitlab_v2_namespace }}
+      command: kubectl get secret {{ secret_minio_root }} -n {{ gitlab_v2_namespace }}
       register: minio_root_secret_wait
       until: minio_root_secret_wait.rc == 0
       retries: 30
@@ -220,13 +236,7 @@
           image: {{ gitlab_v2_postgresql_image }}
           storageClass: {{ gitlab_v2_postgresql_storage_class }}
           storageSize: {{ gitlab_v2_postgresql_storage_size }}
-          credentialsSecretName: {{ gitlab_v2_postgresql_secret_name }}
-          resources:
-            requests:
-              memory: {{ gitlab_v2_postgresql_memory_request }}
-              cpu: {{ gitlab_v2_postgresql_cpu_request }}
-            limits:
-              memory: {{ gitlab_v2_postgresql_memory_limit }}
+          credentialsSecretName: {{ secret_postgresql }}
 
     - name: "[postgresql] Install via Helm"
       command: >
@@ -266,13 +276,7 @@
         content: |
           namespace: {{ gitlab_v2_namespace }}
           image: {{ gitlab_v2_redis_image }}
-          credentialsSecretName: {{ gitlab_v2_redis_secret_name }}
-          resources:
-            requests:
-              memory: {{ gitlab_v2_redis_memory_request }}
-              cpu: {{ gitlab_v2_redis_cpu_request }}
-            limits:
-              memory: {{ gitlab_v2_redis_memory_limit }}
+          credentialsSecretName: {{ secret_redis }}
 
     - name: "[redis] Install via Helm"
       command: >
@@ -314,13 +318,7 @@
           image: {{ gitlab_v2_minio_image }}
           storageClass: {{ gitlab_v2_minio_storage_class }}
           storageSize: {{ gitlab_v2_minio_storage_size }}
-          rootSecretName: {{ gitlab_v2_minio_root_secret_name }}
-          resources:
-            requests:
-              memory: {{ gitlab_v2_minio_memory_request }}
-              cpu: {{ gitlab_v2_minio_cpu_request }}
-            limits:
-              memory: {{ gitlab_v2_minio_memory_limit }}
+          rootSecretName: {{ secret_minio_root }}
 
     - name: "[minio] Install via Helm"
       command: >
@@ -340,25 +338,32 @@
     # =========================================================================
 
     - name: "[minio-setup] Get MinIO pod name"
-      command: kubectl get pods -n {{ gitlab_v2_namespace }} -l app.kubernetes.io/name=gitlab-minio -o jsonpath='{.items[0].metadata.name}'
+      command: >
+        kubectl get pods -n {{ gitlab_v2_namespace }}
+        -l app.kubernetes.io/name=gitlab-minio
+        -o jsonpath='{.items[0].metadata.name}'
       register: minio_pod_name
 
     - name: "[minio-setup] Get MinIO root credentials from secret"
       shell: |
-        kubectl get secret {{ gitlab_v2_minio_root_secret_name }} -n {{ gitlab_v2_namespace }} -o jsonpath='{.data.username}' | base64 -d
+        kubectl get secret {{ secret_minio_root }} -n {{ gitlab_v2_namespace }} \
+          -o jsonpath='{.data.username}' | base64 -d
       register: minio_root_user_from_secret
       changed_when: false
 
     - name: "[minio-setup] Get MinIO root password from secret"
       shell: |
-        kubectl get secret {{ gitlab_v2_minio_root_secret_name }} -n {{ gitlab_v2_namespace }} -o jsonpath='{.data.password}' | base64 -d
+        kubectl get secret {{ secret_minio_root }} -n {{ gitlab_v2_namespace }} \
+          -o jsonpath='{.data.password}' | base64 -d
       register: minio_root_password_from_secret
       changed_when: false
 
     - name: "[minio-setup] Configure mc alias"
       command: >
         kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
-        mc alias set myminio http://localhost:9000 '{{ minio_root_user_from_secret.stdout }}' '{{ minio_root_password_from_secret.stdout }}'
+        mc alias set myminio http://localhost:9000
+        '{{ minio_root_user_from_secret.stdout }}'
+        '{{ minio_root_password_from_secret.stdout }}'
 
     # Create buckets
     - name: "[minio-setup] Create buckets"
@@ -376,7 +381,10 @@
     # Create access keys for registry
     - name: "[minio-setup] Check if registry access_key exists in Vault"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/registry 2>/dev/null | jq -r '.data.data.access_key // empty'
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_registry }} 2>/dev/null \
+          | jq -r '.data.data.access_key // empty'
       register: registry_access_key_check
       failed_when: false
       changed_when: false
@@ -384,44 +392,27 @@
     - name: "[minio-setup] Create access key for registry"
       command: >
         kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }} --name 'registry-key' --json
+        mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }}
+        --name 'registry-key' --json
       register: registry_accesskey_result
       when: registry_access_key_check.stdout == ""
 
-    - name: "[minio-setup] Parse and store registry access key in Vault"
+    - name: "[minio-setup] Store registry access key in Vault"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/registry
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_registry }}
         access_key={{ (registry_accesskey_result.stdout | from_json).accessKey }}
         secret_key={{ (registry_accesskey_result.stdout | from_json).secretKey }}
         bucket_name=registry
       when: registry_access_key_check.stdout == ""
 
-    # Create access keys for gitlab-storage (artifacts, uploads, packages)
-    - name: "[minio-setup] Check if gitlab-storage access_key exists in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/gitlab-storage 2>/dev/null | jq -r '.data.data.access_key // empty'
-      register: gitlab_storage_access_key_check
-      failed_when: false
-      changed_when: false
-
-    - name: "[minio-setup] Create access key for gitlab-storage"
-      command: >
-        kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }} --name 'gitlab-storage-key' --json
-      register: gitlab_storage_accesskey_result
-      when: gitlab_storage_access_key_check.stdout == ""
-
-    - name: "[minio-setup] Parse and store gitlab-storage access key in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/gitlab-storage
-        access_key={{ (gitlab_storage_accesskey_result.stdout | from_json).accessKey }}
-        secret_key={{ (gitlab_storage_accesskey_result.stdout | from_json).secretKey }}
-      when: gitlab_storage_access_key_check.stdout == ""
-
     # Create access keys for runner-cache
     - name: "[minio-setup] Check if runner-cache access_key exists in Vault"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/runner-cache 2>/dev/null | jq -r '.data.data.access_key // empty'
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_runner_cache }} 2>/dev/null \
+          | jq -r '.data.data.access_key // empty'
       register: runner_cache_access_key_check
       failed_when: false
       changed_when: false
@@ -429,13 +420,15 @@
     - name: "[minio-setup] Create access key for runner-cache"
       command: >
         kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }} --name 'runner-cache-key' --json
+        mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }}
+        --name 'runner-cache-key' --json
       register: runner_cache_accesskey_result
       when: runner_cache_access_key_check.stdout == ""
 
     - name: "[minio-setup] Parse and store runner-cache access key in Vault"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/runner-cache
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_runner_cache }}
         access_key={{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}
         secret_key={{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}
         bucket_name=runner-cache
@@ -447,18 +440,10 @@
 
     - name: "[wait-eso] Wait for registry secret with access_key"
       shell: |
-        kubectl get secret {{ gitlab_v2_minio_registry_secret_name }} -n {{ gitlab_v2_namespace }} -o jsonpath='{.data.access_key}' | base64 -d
+        kubectl get secret {{ secret_minio_registry }} -n {{ gitlab_v2_namespace }} \
+          -o jsonpath='{.data.access_key}' | base64 -d
       register: registry_access_key_sync_check
       until: registry_access_key_sync_check.stdout != ""
-      retries: 30
-      delay: 5
-      changed_when: false
-
-    - name: "[wait-eso] Wait for gitlab-storage secret with access_key"
-      shell: |
-        kubectl get secret {{ gitlab_v2_minio_storage_secret_name }} -n {{ gitlab_v2_namespace }} -o jsonpath='{.data.access_key}' | base64 -d
-      register: gitlab_storage_access_key_sync_check
-      until: gitlab_storage_access_key_sync_check.stdout != ""
       retries: 30
       delay: 5
       changed_when: false
@@ -487,13 +472,8 @@
                 name: {{ gitlab_v2_pages_domain }}
                 https: true
             ingress:
+              enabled: false
               configureCertmanager: false
-              class: {{ traefik_ingress_class }}
-              enabled: true
-              tls:
-                enabled: true
-              annotations:
-                traefik.ingress.kubernetes.io/router.entrypoints: {{ traefik_websecure_entrypoint }}
             shell:
               port: {{ gitlab_v2_ssh_port_external }}
             psql:
@@ -503,14 +483,14 @@
               username: gitlab
               password:
                 useSecret: true
-                secret: {{ gitlab_v2_postgresql_secret_name }}
+                secret: {{ secret_postgresql }}
                 key: password
             redis:
               host: svc-gitlab-redis
               port: 6379
               auth:
                 enabled: true
-                secret: {{ gitlab_v2_redis_secret_name }}
+                secret: {{ secret_redis }}
                 key: password
             minio:
               enabled: false
@@ -527,7 +507,7 @@
                 enabled: true
                 proxy_download: true
                 connection:
-                  secret: {{ gitlab_v2_minio_connection_secret_name }}
+                  secret: {{ secret_gitlab_minio_connection }}
                   key: connection
               artifacts:
                 enabled: true
@@ -558,7 +538,7 @@
               minReplicas: 2
               maxReplicas: 2
             storage:
-              secret: {{ gitlab_v2_minio_registry_secret_name }}
+              secret: {{ secret_gitlab_registry_minio_connection }}
               key: config
               redirect:
                 disable: true
@@ -609,7 +589,10 @@
         --timeout {{ gitlab_v2_helm_timeout }}
 
     - name: "[gitlab] Wait for webservice deployment to be ready"
-      command: kubectl rollout status deployment -l app=webservice -n {{ gitlab_v2_namespace }} --timeout={{ gitlab_v2_rollout_timeout }}
+      command: >
+        kubectl rollout status deployment -l app=webservice
+        -n {{ gitlab_v2_namespace }}
+        --timeout={{ gitlab_v2_rollout_timeout }}
 
     # =========================================================================
     # STEP 11: SAVE GITLAB ROOT PASSWORD TO VAULT
@@ -617,13 +600,18 @@
 
     - name: "[gitlab-root] Check if root password exists in Vault"
       shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv get -format=json {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/gitlab/root 2>/dev/null
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null
       register: gitlab_root_vault_check
       failed_when: false
       changed_when: false
 
     - name: "[gitlab-root] Get GitLab toolbox pod name"
-      shell: kubectl get pod -n {{ gitlab_v2_namespace }} -l app=toolbox -o jsonpath='{.items[0].metadata.name}'
+      shell: |
+        kubectl get pod -n {{ gitlab_v2_namespace }} \
+          -l app=toolbox \
+          -o jsonpath='{.items[0].metadata.name}'
       register: gitlab_toolbox_pod_name
       when: gitlab_root_vault_check.rc != 0
 
@@ -646,7 +634,8 @@
 
     - name: "[gitlab-root] Store root password in Vault"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault kv put {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/gitlab/root
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
         username=root
         password={{ gitlab_root_password }}
       when:
@@ -654,7 +643,57 @@
         - gitlab_root_password is defined
 
     # =========================================================================
-    # STEP 12: INSTALL GITLAB RUNNER (without registration)
+    # STEP 12: INSTALL POST CHART (Ingress, HAProxy SSH)
+    # =========================================================================
+
+    - name: "[post] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/gitlab-v2/post"
+        state: directory
+        mode: "0755"
+
+    - name: "[post] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "gitlab-v2-post"
+        chart_name: "post"
+        chart_local_src: "{{ playbook_dir }}/charts/gitlab-v2/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/gitlab-v2/post"
+
+    - name: "[post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/gitlab-v2/post/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ gitlab_v2_namespace }}
+          sshPortExternal: {{ gitlab_v2_ssh_port_external }}
+          gitlab:
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            domain: {{ gitlab_v2_domain }}
+            registryDomain: {{ gitlab_v2_registry_domain }}
+            pagesDomain: {{ gitlab_v2_pages_domain }}
+            clusterIssuer: {{ gitlab_v2_cluster_issuer }}
+            secretName: {{ gitlab_v2_https_secret_name }}
+            vpnOnlyEnabled: {{ gitlab_v2_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+          haproxy:
+            namespace: {{ haproxy_namespace }}
+            ingressClass: {{ haproxy_ingress_class }}
+
+    - name: "[post] Install via Helm"
+      command: >
+        helm upgrade --install gitlab-v2-post {{ remote_charts_dir }}/gitlab-v2/post
+        --namespace {{ gitlab_v2_namespace }}
+        --values {{ remote_charts_dir }}/gitlab-v2/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ gitlab_v2_helm_timeout }}
+
+    # =========================================================================
+    # STEP 13: INSTALL GITLAB RUNNER (without registration)
     # =========================================================================
 
     - name: "[runner] Install via Helm (without registration)"
@@ -671,7 +710,7 @@
         --timeout 5m
 
     # =========================================================================
-    # VERIFICATION
+    # STEP 14: VERIFICATION
     # =========================================================================
 
     - name: "[verify] Check Helm releases"
@@ -695,13 +734,12 @@
           - "GitLab SSH: {{ gitlab_v2_domain }}:{{ gitlab_v2_ssh_port_external }}"
           - ""
           - "Credentials stored in Vault:"
-          - "  GitLab root: {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/gitlab/root"
-          - "  PostgreSQL: {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/postgresql/credentials"
-          - "  Redis: {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/redis/credentials"
-          - "  MinIO root: {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/root"
-          - "  MinIO registry: {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/registry"
-          - "  MinIO gitlab-storage: {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/gitlab-storage"
-          - "  MinIO runner-cache: {{ gitlab_v2_eso.kv_engine_path }}/ns-gitlab/minio/runner-cache"
+          - "  GitLab root: {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_gitlab_root }}"
+          - "  PostgreSQL: {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_postgresql }}"
+          - "  Redis: {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_redis }}"
+          - "  MinIO root: {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_root }}"
+          - "  MinIO registry: {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_registry }}"
+          - "  MinIO runner-cache: {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_runner_cache }}"
           - ""
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."

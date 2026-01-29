@@ -1,0 +1,76 @@
+# =============================================================================
+# CERTIFICATE FOR GITLAB V2 (cert-manager)
+# =============================================================================
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.gitlab.secretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.gitlab.secretName }}
+  dnsNames:
+    - {{ .Values.gitlab.domain }}
+    - {{ .Values.gitlab.registryDomain }}
+    - {{ .Values.gitlab.pagesDomain }}
+  issuerRef:
+    name: {{ .Values.gitlab.clusterIssuer }}
+    kind: ClusterIssuer
+---
+# =============================================================================
+# INGRESS FOR GITLAB V2 (Traefik)
+# Routes: gitlab, registry, pages -> official GitLab Helm chart services
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-gitlab-v2-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.gitlab.entrypoint }}"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.gitlab.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.gitlab.ingressClass }}
+  tls:
+    - hosts:
+        - {{ .Values.gitlab.domain }}
+        - {{ .Values.gitlab.registryDomain }}
+        - {{ .Values.gitlab.pagesDomain }}
+      secretName: {{ .Values.gitlab.secretName }}
+  rules:
+    # GitLab main UI and API
+    - host: {{ .Values.gitlab.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitlab-webservice-default
+                port:
+                  number: 8181
+    # Container Registry
+    - host: {{ .Values.gitlab.registryDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitlab-registry
+                port:
+                  number: 5000
+    # GitLab Pages
+    - host: {{ .Values.gitlab.pagesDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitlab-gitlab-pages
+                port:
+                  number: 8090

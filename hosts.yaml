@@ -575,6 +575,106 @@ all:
           type: "MASTER"
 
     # ------
+    # GitLab V2 (Production Helm)
+    # ------
+    gitlab_v2_namespace: "ns-gitlab"
+    # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
+    # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
+    gitlab_v2_base_domain: "domain.com"
+    gitlab_v2_domain: "gitlab-k8s-v2.domain.com"
+    gitlab_v2_registry_domain: "gitlab-registry-k8s-v2.domain.com"
+    gitlab_v2_pages_domain: "gitlab-pages-k8s-v2.domain.com"
+    gitlab_v2_ssh_port_external: 3714
+
+    # GitLab V2 Ingress settings (custom ingress via post chart)
+    gitlab_v2_https_secret_name: "cert-gitlab-v2-domain-com"
+    gitlab_v2_cluster_issuer: "letsencrypt-prod"
+    gitlab_v2_vpn_only_enabled: false
+
+    # GitLab V2 PostgreSQL
+    gitlab_v2_postgresql_image: "postgres:16-alpine"
+    gitlab_v2_postgresql_storage_class: "lh-major-multi-best-effort"
+    gitlab_v2_postgresql_storage_size: "20Gi"
+
+    # GitLab V2 Redis
+    gitlab_v2_redis_image: "redis/redis-stack-server:latest"
+
+    # GitLab V2 MinIO
+    gitlab_v2_minio_image: "minio/minio:latest"
+    gitlab_v2_minio_root_user: "admin"
+    gitlab_v2_minio_storage_class: "lh-major-single-best-effort"
+    gitlab_v2_minio_storage_size: "50Gi"
+
+    # GitLab V2 MinIO S3 connection settings (used by ESO template for gitlab_minio_connection secret)
+    gitlab_v2_minio_s3_endpoint: "http://svc-gitlab-minio:9000"
+    gitlab_v2_minio_s3_region: "us-east-1"
+    gitlab_v2_minio_s3_path_style: true
+
+    # GitLab V2 Webservice
+    gitlab_v2_webservice_memory_request: "2.5Gi"
+    gitlab_v2_webservice_cpu_request: "500m"
+    gitlab_v2_webservice_memory_limit: "4Gi"
+
+    # GitLab V2 Sidekiq
+    gitlab_v2_sidekiq_memory_request: "1.5Gi"
+    gitlab_v2_sidekiq_cpu_request: "250m"
+    gitlab_v2_sidekiq_memory_limit: "3Gi"
+
+    # GitLab V2 Gitaly
+    gitlab_v2_gitaly_storage_size: "50Gi"
+    gitlab_v2_gitaly_storage_class: "lh-major-multi-best-effort"
+
+    # GitLab V2 ESO integration
+    gitlab_v2_eso:
+      sa_name: "eso-gitlab-v2"
+      role_name: "eso-gitlab-v2"
+      secret_store_name: "eso-vault-gitlab-v2"
+      kv_engine_path: "secret"
+      secrets:
+        - external_secret_name: "eso-gitlab-postgresql"
+          target_secret_name: "secret-gitlab-postgresql"
+          vault_path: "/ns-gitlab/postgresql/creds"
+          refresh_interval: "1m"
+          type: "postgresql"
+        - external_secret_name: "eso-gitlab-redis"
+          target_secret_name: "secret-gitlab-redis"
+          vault_path: "/ns-gitlab/redis/creds"
+          refresh_interval: "1m"
+          type: "redis"
+        - external_secret_name: "eso-gitlab-minio-root"
+          target_secret_name: "secret-gitlab-minio-root"
+          vault_path: "/ns-gitlab/minio/root"
+          refresh_interval: "1m"
+          type: "minio_root"
+        - external_secret_name: "eso-gitlab-minio-registry"
+          target_secret_name: "secret-gitlab-minio-registry"
+          vault_path: "/ns-gitlab/minio/registry"
+          refresh_interval: "1m"
+          type: "minio_registry"
+        # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
+        - external_secret_name: "eso-gitlab-registry-minio-connection"
+          target_secret_name: "secret-gitlab-registry-minio-connection"
+          vault_path: "/ns-gitlab/minio/registry"
+          refresh_interval: "1m"
+          type: "gitlab_registry_minio_connection"
+        # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
+        - external_secret_name: "eso-gitlab-minio-connection"
+          target_secret_name: "secret-gitlab-minio-connection"
+          vault_path: "/ns-gitlab/minio/registry"
+          refresh_interval: "1m"
+          type: "gitlab_minio_connection"
+        - external_secret_name: "eso-gitlab-minio-runner-cache"
+          target_secret_name: "secret-gitlab-minio-runner-cache"
+          vault_path: "/ns-gitlab/minio/runner-cache"
+          refresh_interval: "1m"
+          type: "minio_runner_cache"
+        - external_secret_name: "eso-gitlab-root"
+          target_secret_name: "secret-gitlab-root"
+          vault_path: "/ns-gitlab/gitlab/root"
+          refresh_interval: "1m"
+          type: "gitlab_root"
+
+    # ------
     # ArgoCD
     # ------
     argocd_namespace: "argocd" # DO NOT CHANGE - hardcoded in ClusterRoleBindings
@@ -623,6 +723,10 @@ all:
     # GitLab
     gitlab_helm_timeout: "10m"
     gitlab_config_helm_timeout: "2m"
+    # GitLab V2
+    gitlab_v2_helm_timeout: "15m"
+    gitlab_v2_pre_helm_timeout: "5m"
+    gitlab_v2_storage_helm_timeout: "5m"
     # ArgoCD
     argocd_helm_timeout: "5m"
 
@@ -651,6 +755,9 @@ all:
     gitlab_minio_rollout_timeout: "300s"
     # GitLab
     gitlab_rollout_timeout: "600s"
+    # GitLab V2
+    gitlab_v2_rollout_timeout: "600s"
+    gitlab_v2_storage_rollout_timeout: "300s"
     # ArgoCD
     argocd_components_rollout_timeout: "120s"
 
@@ -658,17 +765,17 @@ all:
     managers:
       hosts:
         k8s-manager-1:
-          ansible_host: 89.169.186.208
+          ansible_host: 158.160.107.53
           ansible_user: ubuntu
           ansible_password: "some-password-123"
           new_hostname: k8s-manager-1
           is_master: true
           # internal_ip - internal network interface IP (same as api_server_advertise_address for managers)
-          internal_ip: "10.129.0.3"
+          internal_ip: "10.128.0.31"
           # api_server_advertise_address - IP for kube-apiserver to listen on and advertise to cluster
           # BareMetal: usually same as ansible_host (public IP)
           # Cloud (AWS/Yandex): usually private VPC IP (check with: ip route get 1)
-          api_server_advertise_address: "10.129.0.3"
+          api_server_advertise_address: "10.128.0.31"
           api_server_bind_port: 6443
           longhorn_default_tags:
             - "lh-az-fra-1"
@@ -691,11 +798,11 @@ all:
     workers:
       hosts:
         k8s-worker-1:
-          ansible_host: 158.160.10.53
+          ansible_host: 158.160.127.26
           ansible_user: ubuntu
           ansible_password: "some-password-789"
           new_hostname: k8s-worker-1
-          internal_ip: "10.129.0.23"
+          internal_ip: "10.128.0.35"
           node_labels:
             - "node-role.kubernetes.io/worker="
           longhorn_default_tags:

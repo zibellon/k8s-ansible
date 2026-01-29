@@ -1,0 +1,41 @@
+# =============================================================================
+# HAPROXY TCP INGRESS FOR GITLAB SSH
+# Routes SSH traffic to gitlab-gitlab-shell service
+# =============================================================================
+apiVersion: ingress.v1.haproxy.org/v1
+kind: TCP
+metadata:
+  name: ingress-gitlab-v2-ssh-tcp
+  namespace: {{ .Values.namespace }}
+  annotations:
+    ingress.class: "{{ .Values.haproxy.ingressClass }}"
+spec:
+  - name: tcp-gitlab-v2-ssh
+    frontend:
+      name: fe-tcp-gitlab-v2-ssh
+      binds:
+        - port: {{ .Values.sshPortExternal }}
+    service:
+      name: gitlab-gitlab-shell
+      port: 22
+---
+# =============================================================================
+# NODEPORT SERVICE FOR SSH IN HAPROXY NAMESPACE
+# Exposes SSH port on all nodes via HAProxy
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-tcp-gitlab-v2-ssh
+  namespace: {{ .Values.haproxy.namespace }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: kubernetes-ingress
+    app.kubernetes.io/instance: haproxy-ingress
+  ports:
+    - name: tcp
+      port: {{ .Values.sshPortExternal }}
+      targetPort: {{ .Values.sshPortExternal }}
+      nodePort: {{ .Values.sshPortExternal }}
