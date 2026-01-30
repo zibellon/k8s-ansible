@@ -174,8 +174,6 @@
   - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
   - Ставится: traefik, network-policy, ingress (dashboard)
 - обновление (версия)
-  - Руками обновить CRDs. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
-  - Руками обновить RBAC. https://raw.githubusercontent.com/traefik/traefik/v3.6/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
 - обновление (конфиг)

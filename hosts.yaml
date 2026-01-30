@@ -447,6 +447,16 @@ all:
             capabilities: [read, list]
 
       # ---------
+      # GitLab V2 (all secrets: postgresql, redis, minio, gitlab root)
+      # ---------
+      - name: eso-gitlab-v2-read
+        paths:
+          - path: secret/data/ns-gitlab/*
+            capabilities: [read, list]
+          - path: secret/metadata/ns-gitlab/*
+            capabilities: [read, list]
+
+      # ---------
       # ArgoCD (admin password)
       # ---------
       - name: eso-argocd-read
@@ -504,6 +514,15 @@ all:
         sa_name: eso-gitlab-minio
         policies:
           - eso-gitlab-minio-read
+
+      # ---------
+      # GitLab V2
+      # ---------
+      - name: eso-gitlab-v2
+        namespace: ns-gitlab
+        sa_name: eso-gitlab-v2
+        policies:
+          - eso-gitlab-v2-read
 
     # ------
     # GitLab MinIO
@@ -578,32 +597,37 @@ all:
     # GitLab V2 (Production Helm)
     # ------
     gitlab_v2_namespace: "ns-gitlab"
+    gitlab_v2_chart_version: "8.11.8"  # GitLab 17.11
     # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
     # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
-    gitlab_v2_base_domain: "domain.com"
-    gitlab_v2_domain: "gitlab-k8s-v2.domain.com"
-    gitlab_v2_registry_domain: "gitlab-registry-k8s-v2.domain.com"
-    gitlab_v2_pages_domain: "gitlab-pages-k8s-v2.domain.com"
+    gitlab_v2_base_domain: "gitlab-k8s-v2.drawapp.ru"
+    gitlab_v2_domain: "gitlab-k8s-v2.drawapp.ru"
+    gitlab_v2_registry_domain: "gitlab-registry-k8s-v2.drawapp.ru"
+    gitlab_v2_pages_domain: "gitlab-pages-k8s-v2.drawapp.ru"
+    gitlab_v2_minio_console_domain: "gitlab-minio-k8s-v2.drawapp.ru"
+    gitlab_v2_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
+    gitlab_v2_minio_secret_name: "cert-gitlab-minio-domain-com"
     gitlab_v2_ssh_port_external: 3714
 
     # GitLab V2 Ingress settings (custom ingress via post chart)
     gitlab_v2_https_secret_name: "cert-gitlab-v2-domain-com"
-    gitlab_v2_cluster_issuer: "letsencrypt-prod"
     gitlab_v2_vpn_only_enabled: false
 
     # GitLab V2 PostgreSQL
     gitlab_v2_postgresql_image: "postgres:16-alpine"
     gitlab_v2_postgresql_storage_class: "lh-major-multi-best-effort"
-    gitlab_v2_postgresql_storage_size: "20Gi"
+    gitlab_v2_postgresql_storage_size: "4Gi"
 
     # GitLab V2 Redis
     gitlab_v2_redis_image: "redis/redis-stack-server:latest"
+    gitlab_v2_redis_storage_class: "lh-major-single-best-effort"
+    gitlab_v2_redis_storage_size: "1Gi"
 
     # GitLab V2 MinIO
     gitlab_v2_minio_image: "minio/minio:latest"
     gitlab_v2_minio_root_user: "admin"
     gitlab_v2_minio_storage_class: "lh-major-single-best-effort"
-    gitlab_v2_minio_storage_size: "50Gi"
+    gitlab_v2_minio_storage_size: "2Gi"
 
     # GitLab V2 MinIO S3 connection settings (used by ESO template for gitlab_minio_connection secret)
     gitlab_v2_minio_s3_endpoint: "http://svc-gitlab-minio:9000"
@@ -611,18 +635,18 @@ all:
     gitlab_v2_minio_s3_path_style: true
 
     # GitLab V2 Webservice
-    gitlab_v2_webservice_memory_request: "2.5Gi"
-    gitlab_v2_webservice_cpu_request: "500m"
+    gitlab_v2_webservice_memory_request: "2Gi"
+    gitlab_v2_webservice_cpu_request: "250m"
     gitlab_v2_webservice_memory_limit: "4Gi"
 
     # GitLab V2 Sidekiq
-    gitlab_v2_sidekiq_memory_request: "1.5Gi"
+    gitlab_v2_sidekiq_memory_request: "1Gi"
     gitlab_v2_sidekiq_cpu_request: "250m"
     gitlab_v2_sidekiq_memory_limit: "3Gi"
 
     # GitLab V2 Gitaly
-    gitlab_v2_gitaly_storage_size: "50Gi"
-    gitlab_v2_gitaly_storage_class: "lh-major-multi-best-effort"
+    gitlab_v2_gitaly_storage_size: "4Gi"
+    gitlab_v2_gitaly_storage_class: "lh-major-single-best-effort"
 
     # GitLab V2 ESO integration
     gitlab_v2_eso:
@@ -727,7 +751,6 @@ all:
     gitlab_v2_helm_timeout: "15m"
     gitlab_v2_pre_helm_timeout: "5m"
     gitlab_v2_storage_helm_timeout: "5m"
-    gitlab_v2_runner_helm_timeout: "5m"
     # ArgoCD
     argocd_helm_timeout: "5m"
 

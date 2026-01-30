@@ -157,8 +157,12 @@
             namespace: {{ external_secrets_namespace }}
           traefik:
             namespace: {{ traefik_namespace }}
+            instanceName: traefik-{{ traefik_namespace }}
           haproxy:
             namespace: {{ haproxy_namespace }}
+            ingressClass: {{ haproxy_ingress_class }}
+          gitlab:
+            releaseName: gitlab
           gitlabV2Eso:
             saName: {{ gitlab_v2_eso.sa_name }}
             roleName: {{ gitlab_v2_eso.role_name }}
@@ -277,6 +281,8 @@
           namespace: {{ gitlab_v2_namespace }}
           image: {{ gitlab_v2_redis_image }}
           credentialsSecretName: {{ secret_redis }}
+          storageClass: {{ gitlab_v2_redis_storage_class }}
+          storageSize: {{ gitlab_v2_redis_storage_size }}
 
     - name: "[redis] Install via Helm"
       command: >
@@ -535,7 +541,7 @@
           registry:
             enabled: true
             hpa:
-              minReplicas: 2
+              minReplicas: 1
               maxReplicas: 2
             storage:
               secret: {{ secret_gitlab_registry_minio_connection }}
@@ -544,7 +550,7 @@
                 disable: true
           gitlab:
             webservice:
-              minReplicas: 2
+              minReplicas: 1
               maxReplicas: 2
               workerProcesses: 2
               workerTimeout: 180
@@ -555,7 +561,7 @@
                 limits:
                   memory: {{ gitlab_v2_webservice_memory_limit }}
             sidekiq:
-              minReplicas: 2
+              minReplicas: 1
               maxReplicas: 2
               concurrency: 10
               resources:
@@ -578,11 +584,18 @@
           gitlab-runner:
             install: false
 
+    - name: "[gitlab] Add GitLab Helm repository"
+      command: helm repo add gitlab https://charts.gitlab.io --force-update
+
+    - name: "[gitlab] Update Helm repositories"
+      command: helm repo update
+
     - name: "[gitlab] Install via Helm"
       command: >
         helm upgrade --install gitlab gitlab/gitlab
         --namespace {{ gitlab_v2_namespace }}
         --values {{ remote_charts_dir }}/gitlab-v2/gitlab-values-override.yaml
+        --version {{ gitlab_v2_chart_version }}
         --cleanup-on-fail
         --atomic
         --wait
@@ -607,40 +620,24 @@
       failed_when: false
       changed_when: false
 
-    - name: "[gitlab-root] Get GitLab toolbox pod name"
+    - name: "[gitlab-root] Get root password from Kubernetes secret"
       shell: |
-        kubectl get pod -n {{ gitlab_v2_namespace }} \
-          -l app=toolbox \
-          -o jsonpath='{.items[0].metadata.name}'
-      register: gitlab_toolbox_pod_name
+        kubectl get secret gitlab-gitlab-initial-root-password \
+          -n {{ gitlab_v2_namespace }} \
+          -o jsonpath='{.data.password}' | base64 -d
+      register: gitlab_root_password_result
       when: gitlab_root_vault_check.rc != 0
-
-    - name: "[gitlab-root] Get initial root password"
-      shell: >
-        kubectl exec {{ gitlab_toolbox_pod_name.stdout }} -n {{ gitlab_v2_namespace }} --
-        cat /etc/gitlab/initial_root_password 2>/dev/null || echo ""
-      register: gitlab_root_password_file
-      until: gitlab_root_password_file.stdout | regex_search('Password:')
-      retries: 60
-      delay: 10
-      when: gitlab_root_vault_check.rc != 0
-
-    - name: "[gitlab-root] Extract password from file"
-      set_fact:
-        gitlab_root_password: "{{ gitlab_root_password_file.stdout | regex_search('Password: (.+)', '\\1') | first }}"
-      when:
-        - gitlab_root_vault_check.rc != 0
-        - gitlab_root_password_file.stdout | regex_search('Password:')
 
     - name: "[gitlab-root] Store root password in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
         username=root
-        password={{ gitlab_root_password }}
+        password={{ gitlab_root_password_result.stdout }}
       when:
         - gitlab_root_vault_check.rc != 0
-        - gitlab_root_password is defined
+        - gitlab_root_password_result.stdout is defined
+        - gitlab_root_password_result.stdout | length > 0
 
     # =========================================================================
     # STEP 12: INSTALL POST CHART (Ingress, HAProxy SSH)
@@ -673,11 +670,19 @@
             domain: {{ gitlab_v2_domain }}
             registryDomain: {{ gitlab_v2_registry_domain }}
             pagesDomain: {{ gitlab_v2_pages_domain }}
-            clusterIssuer: {{ gitlab_v2_cluster_issuer }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
             secretName: {{ gitlab_v2_https_secret_name }}
             vpnOnlyEnabled: {{ gitlab_v2_vpn_only_enabled }}
           traefik:
             namespace: {{ traefik_namespace }}
+          minio:
+            ingressClass: {{ traefik_ingress_class }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            consoleDomain: {{ gitlab_v2_minio_console_domain }}
+            apiDomain: {{ gitlab_v2_minio_api_domain }}
+            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            secretName: {{ gitlab_v2_minio_secret_name }}
+            vpnOnlyEnabled: {{ gitlab_v2_vpn_only_enabled }}
           haproxy:
             namespace: {{ haproxy_namespace }}
             ingressClass: {{ haproxy_ingress_class }}
@@ -693,24 +698,7 @@
         --timeout {{ gitlab_v2_helm_timeout }}
 
     # =========================================================================
-    # STEP 13: INSTALL GITLAB RUNNER (without registration)
-    # =========================================================================
-
-    - name: "[runner] Install via Helm (without registration)"
-      command: >
-        helm upgrade --install gitlab-runner gitlab/gitlab-runner
-        --namespace {{ gitlab_v2_namespace }}
-        --set gitlabUrl=https://{{ gitlab_v2_domain }}
-        --set rbac.create=true
-        --set runners.executor=kubernetes
-        --set runners.namespace={{ gitlab_v2_namespace }}
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ gitlab_v2_runner_helm_timeout }}
-
-    # =========================================================================
-    # STEP 14: VERIFICATION
+    # STEP 13: VERIFICATION
     # =========================================================================
 
     - name: "[verify] Check Helm releases"

@@ -1,0 +1,62 @@
+# =============================================================================
+# CERTIFICATE FOR MINIO (cert-manager)
+# =============================================================================
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.minio.secretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.minio.secretName }}
+  dnsNames:
+    - {{ .Values.minio.consoleDomain }}
+    - {{ .Values.minio.apiDomain }}
+  issuerRef:
+    name: {{ .Values.minio.clusterIssuer }}
+    kind: ClusterIssuer
+---
+# =============================================================================
+# INGRESS FOR MINIO (Console + API)
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-gitlab-minio
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.minio.entrypoint }}"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.minio.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.minio.ingressClass }}
+  tls:
+    - hosts:
+        - {{ .Values.minio.consoleDomain }}
+        - {{ .Values.minio.apiDomain }}
+      secretName: {{ .Values.minio.secretName }}
+  rules:
+    # MinIO Console (UI)
+    - host: {{ .Values.minio.consoleDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab-minio
+                port:
+                  number: 9001
+    # MinIO API (S3)
+    - host: {{ .Values.minio.apiDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: svc-gitlab-minio
+                port:
+                  number: 9000

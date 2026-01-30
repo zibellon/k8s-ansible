@@ -5,7 +5,10 @@ metadata:
   namespace: {{ .Values.namespace }}
   labels:
     app.kubernetes.io/name: gitlab-redis
+    app.kubernetes.io/instance: gitlab-redis-{{ .Values.namespace }}
     app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: gitlab
+    app.kubernetes.io/managed-by: Helm
 spec:
   replicas: 1
   strategy:
@@ -13,44 +16,34 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: gitlab-redis
+      app.kubernetes.io/instance: gitlab-redis-{{ .Values.namespace }}
   template:
     metadata:
       labels:
         app.kubernetes.io/name: gitlab-redis
+        app.kubernetes.io/instance: gitlab-redis-{{ .Values.namespace }}
         app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: gitlab
+        app.kubernetes.io/managed-by: Helm
     spec:
       automountServiceAccountToken: false
       containers:
         - name: redis
           image: {{ .Values.image }}
-          args:
-            - --requirepass
-            - $(REDIS_PASSWORD)
           env:
-            - name: REDIS_PASSWORD
+            - name: REDIS_ARGS
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.credentialsSecretName }}
-                  key: password
+                  key: redis_args
           ports:
             - name: redis
               containerPort: 6379
               protocol: TCP
-          livenessProbe:
-            exec:
-              command:
-                - redis-cli
-                - -a
-                - $(REDIS_PASSWORD)
-                - ping
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          readinessProbe:
-            exec:
-              command:
-                - redis-cli
-                - -a
-                - $(REDIS_PASSWORD)
-                - ping
-            initialDelaySeconds: 5
-            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pvc-gitlab-redis

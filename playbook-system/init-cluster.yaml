@@ -18,16 +18,21 @@
       include_tasks: tasks/tasks-pre-check-master-manager.yaml
 
     # =========================================================================
-    # PRE-CHECK
+    # PRE-CHECK (verify API server is responding, not just file exists)
     # =========================================================================
-    - name: Check if cluster is already initialized
-      stat:
-        path: /etc/kubernetes/admin.conf
+    - name: Check if cluster is already initialized and healthy
+      command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes
       register: kubeadm_already_init_pre_check
+      failed_when: false
+      changed_when: false
+
+    - name: Set cluster init status
+      set_fact:
+        cluster_already_initialized: "{{ kubeadm_already_init_pre_check.rc == 0 }}"
 
     - name: Print cluster status
       debug:
-        msg: "{{ 'Cluster already init, skip' if kubeadm_already_init_pre_check.stat.exists else 'Cluster not init, proceeding...' }}"
+        msg: "{{ 'Cluster already init and healthy, skip' if cluster_already_initialized else 'Cluster not init or unhealthy, proceeding...' }}"
 
     # =========================================================================
     # ETCD ENCRYPTION
@@ -37,12 +42,12 @@
         path: /etc/kubernetes/pki
         state: directory
         mode: '0755'
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     - name: Generate ETCD encryption key
       shell: head -c 32 /dev/urandom | base64
       register: etcd_encryption_key_result
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     - name: Create ETCD encryption config
       copy:
@@ -59,7 +64,7 @@
                       - name: key{{ ansible_facts.date_time.epoch }}
                         secret: {{ etcd_encryption_key_result.stdout }}
                 - identity: {}
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     - name: Print encryption key (SAVE THIS!)
       debug:
@@ -68,7 +73,7 @@
           - "CRITICAL: Save this key securely! Without it, etcd backup is useless."
           - "Key: {{ etcd_encryption_key_result.stdout }}"
           - "Config path: {{ etcd_encryption_config_path }}"
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     # =========================================================================
     # KUBEADM CONFIG
@@ -81,7 +86,7 @@
             groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list +
             groups['managers'] | map('extract', hostvars, 'ansible_host') | list
           }}
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     - name: Create kubeadm config
       copy:
@@ -128,6 +133,8 @@
           cgroupDriver: systemd
           containerLogMaxSize: {{ kubelet_container_log_max_size }}
           containerLogMaxFiles: {{ kubelet_container_log_max_files }}
+          featureGates:
+            KubeletCrashLoopBackOffMax: true
           crashLoopBackOff:
             maxContainerRestartPeriod: {{ kubelet_crashloop_max_backoff }}
           imageGCHighThresholdPercent: {{ kubelet_image_gc_high_threshold }}
@@ -160,7 +167,7 @@
           kind: KubeProxyConfiguration
           mode: ipvs
         mode: '0644'
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     # =========================================================================
     # KUBEADM INIT
@@ -171,12 +178,12 @@
         --skip-phases=addon/kube-proxy
         --config /root/kubeadm-config.yaml
       register: kubeadm_init_result
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     - name: Print kubeadm init output
       debug:
         msg: "{{ kubeadm_init_result.stdout_lines }}"
-      when: not kubeadm_already_init_pre_check.stat.exists
+      when: not cluster_already_initialized
 
     # =========================================================================
     # CONFIGURE KUBECTL (for ansible_user)

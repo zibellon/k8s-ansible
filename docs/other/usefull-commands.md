@@ -241,3 +241,7 @@ kubectl get secret vault-self-creds -n ns-vault -o json | jq '.data | map_values
 # Как посмотреть логи от CronJob
 kubectl get CronJob -n ns-vault
 kubectl logs -n ns-vault -l job-name --tail=100
+
+# HELM, commands
+helm history <release-name> -n ns-gitlab
+helm rollback <release-name> 2 -n ns-gitlab
