@@ -1,0 +1,58 @@
+# =============================================================================
+# Update HAProxy config on all joined hosts
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-system/haproxy-apiserver-lb-update.yaml
+#
+# This playbook:
+#   1. Checks which nodes are joined to cluster via kubectl on master_manager
+#   2. Updates HAProxy config only on joined nodes
+#   3. Skips nodes not yet joined (e.g., new node being added)
+#
+# Use case: Before adding a new manager, update HAProxy config on all existing
+# hosts so they know about the new manager IP.
+# =============================================================================
+
+---
+- name: Update HAProxy config on all joined hosts
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # CHECK WHICH NODES ARE JOINED
+    # =========================================================================
+    - name: Check which nodes are joined to cluster
+      include_tasks: tasks/tasks-check-node-joined.yaml
+
+    # =========================================================================
+    # UPDATE HAPROXY ON JOINED NODES ONLY
+    # =========================================================================
+    - name: Update HAProxy config on joined nodes
+      when: is_node_joined
+      throttle: 1
+      block:
+        - name: Generate HAProxy config and static pod manifest
+          include_tasks: tasks/tasks-generate-haproxy-config.yaml
+
+        - name: Wait for HAProxy to reload
+          uri:
+            url: "http://127.0.0.1:{{ haproxy_apiserver_lb_healthz_port }}/healthz"
+            status_code: 200
+          register: haproxy_health
+          until: haproxy_health.status == 200
+          retries: 30
+          delay: 2
+
+        - name: Print HAProxy update status
+          debug:
+            msg: "HAProxy config updated on {{ inventory_hostname }}"
+
+    # =========================================================================
+    # SKIP MESSAGE FOR NOT JOINED NODES
+    # =========================================================================
+    - name: Print skip message for not joined nodes
+      debug:
+        msg: "SKIP: {{ inventory_hostname }} ({{ internal_ip }}) - not joined to cluster"
+      when: not is_node_joined

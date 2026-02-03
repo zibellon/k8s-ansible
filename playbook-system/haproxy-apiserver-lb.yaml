@@ -24,26 +24,6 @@
       include_tasks: tasks/tasks-pre-check-limit.yaml
 
     # =========================================================================
-    # BUILD MANAGER IPS LIST
-    # On managers: 127.0.0.1 first (local API server), then other managers
-    # On workers: only remote manager IPs
-    # =========================================================================
-    - name: Build list of manager IPs for HAProxy backend
-      set_fact:
-        manager_ips: >-
-          {{
-            (['127.0.0.1'] if inventory_hostname in groups['managers'] else [])
-            +
-            (groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list)
-          }}
-      run_once: true
-
-    - name: Print manager IPs
-      debug:
-        msg: "Manager IPs for HAProxy backend: {{ manager_ips }}"
-      run_once: true
-
-    # =========================================================================
     # DETERMINE NODE STATE
     # =========================================================================
     - name: Check if kubelet config exists
@@ -65,121 +45,10 @@
         msg: "Node {{ inventory_hostname }}: joined={{ is_joined }}"
 
     # =========================================================================
-    # HAPROXY CONFIG
+    # HAPROXY CONFIG + STATIC POD MANIFEST
     # =========================================================================
-    - name: Create HAProxy config directory
-      file:
-        path: /etc/kubernetes
-        state: directory
-        mode: "0755"
-
-    # Build config content as variable for checksum calculation
-    - name: Build HAProxy config content
-      set_fact:
-        haproxy_config_content: |
-          global
-              log stdout format raw local0
-              maxconn 2100
-
-          defaults
-              log     global
-              mode    tcp
-              option  tcplog
-              option  dontlognull
-              timeout connect 5s
-              timeout client  30s
-              timeout server  30s
-              retries 3
-
-          # Health check endpoint for liveness probe
-          frontend healthz
-              bind *:{{ haproxy_apiserver_lb_healthz_port }}
-              mode http
-              monitor-uri /healthz
-
-          # Kubernetes API frontend
-          frontend kubernetes-api
-              bind {{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}
-              default_backend kubernetes-masters
-
-          # Backend with control-plane nodes
-          backend kubernetes-masters
-              option tcp-check
-              balance roundrobin
-              default-server inter 5s fall 3 rise 2
-              {% for ip in manager_ips %}
-              server manager-{{ loop.index }} {{ ip }}:6443 check
-              {% endfor %}
-
-    - name: Create HAProxy config file
-      copy:
-        dest: /etc/kubernetes/haproxy-apiserver-lb.cfg
-        mode: "0644"
-        content: "{{ haproxy_config_content }}"
-      register: haproxy_config_result
-
-    # =========================================================================
-    # STATIC POD MANIFEST
-    # =========================================================================
-    - name: Create Kubernetes manifests directory
-      file:
-        path: /etc/kubernetes/manifests
-        state: directory
-        mode: "0755"
-
-    - name: Create HAProxy static pod manifest
-      copy:
-        dest: /etc/kubernetes/manifests/haproxy-apiserver-lb.yaml
-        mode: "0644"
-        content: |
-          apiVersion: v1
-          kind: Pod
-          metadata:
-            name: haproxy-apiserver-lb
-            namespace: kube-system
-            annotations:
-              # Triggers pod restart when haproxy.cfg changes
-              checksum/config: "{{ haproxy_config_content | hash('sha256') }}"
-            labels:
-              component: haproxy-apiserver-lb
-              tier: control-plane
-          spec:
-            hostNetwork: true
-            priorityClassName: system-node-critical
-            containers:
-              - name: haproxy
-                image: {{ haproxy_apiserver_lb_image }}
-                imagePullPolicy: IfNotPresent
-                resources:
-                  requests:
-                    cpu: 25m
-                    memory: 32Mi
-                livenessProbe:
-                  httpGet:
-                    path: /healthz
-                    port: {{ haproxy_apiserver_lb_healthz_port }}
-                    scheme: HTTP
-                  initialDelaySeconds: 10
-                  periodSeconds: 5
-                  timeoutSeconds: 3
-                  failureThreshold: 3
-                readinessProbe:
-                  httpGet:
-                    path: /healthz
-                    port: {{ haproxy_apiserver_lb_healthz_port }}
-                    scheme: HTTP
-                  initialDelaySeconds: 5
-                  periodSeconds: 3
-                volumeMounts:
-                  - name: haproxy-config
-                    mountPath: /usr/local/etc/haproxy/haproxy.cfg
-                    readOnly: true
-            volumes:
-              - name: haproxy-config
-                hostPath:
-                  path: /etc/kubernetes/haproxy-apiserver-lb.cfg
-                  type: File
-      register: haproxy_manifest_result
+    - name: Generate HAProxy config and static pod manifest
+      include_tasks: tasks/tasks-generate-haproxy-config.yaml
 
     # =========================================================================
     # BOOTSTRAP KUBELET STANDALONE MODE (for nodes before kubeadm init/join)

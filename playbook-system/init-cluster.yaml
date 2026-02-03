@@ -78,95 +78,8 @@
     # =========================================================================
     # KUBEADM CONFIG
     # =========================================================================
-    - name: Build certSANs list
-      set_fact:
-        cert_sans: >-
-          {{
-            [haproxy_apiserver_lb_host, 'localhost', api_server_advertise_address] +
-            groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list +
-            groups['managers'] | map('extract', hostvars, 'ansible_host') | list
-          }}
-      when: not cluster_already_initialized
-
-    - name: Create kubeadm config
-      copy:
-        dest: /root/kubeadm-config.yaml
-        content: |
-          apiVersion: kubeadm.k8s.io/v1beta4
-          kind: InitConfiguration
-          localAPIEndpoint:
-            advertiseAddress: "{{ api_server_advertise_address }}"
-            bindPort: {{ api_server_bind_port }}
-          nodeRegistration:
-            criSocket: "unix:///var/run/containerd/containerd.sock"
-          ---
-          apiVersion: kubeadm.k8s.io/v1beta4
-          kind: ClusterConfiguration
-          kubernetesVersion: "{{ k8s_full_version }}"
-          controlPlaneEndpoint: "{{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}"
-          apiServer:
-            extraArgs:
-              - name: service-node-port-range
-                value: "{{ node_port_start }}-{{ node_port_end }}"
-              - name: encryption-provider-config
-                value: "{{ etcd_encryption_config_path }}"
-            extraVolumes:
-              - name: encryption-config
-                hostPath: "{{ etcd_encryption_config_path }}"
-                mountPath: "{{ etcd_encryption_config_path }}"
-                readOnly: true
-                pathType: File
-            certSANs: {{ cert_sans | to_json }}
-          networking:
-            serviceSubnet: "{{ service_subnet }}"
-            podSubnet: "{{ pod_subnet }}"
-            dnsDomain: "{{ dns_domain }}"
-          controllerManager:
-            extraArgs:
-              - name: allocate-node-cidrs
-                value: "false"
-              - name: node-monitor-grace-period
-                value: "{{ node_monitor_grace_period }}"
-          ---
-          apiVersion: kubelet.config.k8s.io/v1beta1
-          kind: KubeletConfiguration
-          cgroupDriver: systemd
-          containerLogMaxSize: {{ kubelet_container_log_max_size }}
-          containerLogMaxFiles: {{ kubelet_container_log_max_files }}
-          featureGates:
-            KubeletCrashLoopBackOffMax: true
-          crashLoopBackOff:
-            maxContainerRestartPeriod: {{ kubelet_crashloop_max_backoff }}
-          imageGCHighThresholdPercent: {{ kubelet_image_gc_high_threshold }}
-          imageGCLowThresholdPercent: {{ kubelet_image_gc_low_threshold }}
-          imageMinimumGCAge: {{ kubelet_image_minimum_gc_age }}
-          {% if kubelet_eviction_soft_enabled | default(false) %}
-          evictionSoft:
-            memory.available: "{{ kubelet_eviction_soft_memory_available }}"
-            nodefs.available: "{{ kubelet_eviction_soft_nodefs_available }}"
-            imagefs.available: "{{ kubelet_eviction_soft_imagefs_available }}"
-          evictionSoftGracePeriod:
-            memory.available: "{{ kubelet_eviction_soft_grace_period_memory }}"
-            nodefs.available: "{{ kubelet_eviction_soft_grace_period_nodefs }}"
-            imagefs.available: "{{ kubelet_eviction_soft_grace_period_imagefs }}"
-          {% else %}
-          evictionSoft: {}
-          {% endif %}
-          {% if kubelet_eviction_hard_enabled | default(true) %}
-          evictionHard:
-            memory.available: "{{ kubelet_eviction_hard_memory_available }}"
-            nodefs.available: "{{ kubelet_eviction_hard_nodefs_available }}"
-            nodefs.inodesFree: "{{ kubelet_eviction_hard_nodefs_inodes_free }}"
-            imagefs.available: "{{ kubelet_eviction_hard_imagefs_available }}"
-            pid.available: "{{ kubelet_eviction_hard_pid_available }}"
-          {% else %}
-          evictionHard: {}
-          {% endif %}
-          ---
-          apiVersion: kubeproxy.config.k8s.io/v1alpha1
-          kind: KubeProxyConfiguration
-          mode: ipvs
-        mode: '0644'
+    - name: Generate kubeadm config
+      include_tasks: tasks/tasks-generate-kubeadm-config.yaml
       when: not cluster_already_initialized
 
     # =========================================================================
@@ -176,7 +89,7 @@
       command: >-
         kubeadm init
         --skip-phases=addon/kube-proxy
-        --config /root/kubeadm-config.yaml
+        --config {{ kubeadm_config_path }}
       register: kubeadm_init_result
       when: not cluster_already_initialized
 

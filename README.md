@@ -23,7 +23,7 @@
 
 # Подготовка_2
 ## занести внутренний `ip` в `hosts.yaml`
-## его надо будет разрешить в cilium-host-firewall, чтобы можно было делать join
+## его надо будет разрешить в `cilium-host-firewall`, чтобы можно было делать join
 ## есть два варианта
 1. сначала ВСЕ join -> потом install cilium
    1. При таком сценарии проблем нет
@@ -66,20 +66,28 @@
 
 # Присоединение worker-node
 1. Добавить в hosts.yaml нового worker
-2. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
+2. Если уже был установлен Cilium - то был включен Firewall, и просто так добавить новую Node нельзя
+   1. Сначала нужно обновить правила Firewall
+   2. `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
+   3. Это обновит правила firewall (CiliumClusterwideNetworkPolicy)
+3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
    1. Инициализация ноды
-3. `ansible-playbook -i hosts.yaml playbook-system/worker-join.yaml --limit k8s-worker-1`
+4. `ansible-playbook -i hosts.yaml playbook-system/worker-join.yaml --limit k8s-worker-1`
    1. Получение токена и вызов команды `kubeadm join ...`
 
 # Присоединение manager-node
 1. Добавить в hosts.yaml нового manager
-2. `ansible-playbook -i hosts.yaml playbook-system/haproxy-apiserver-lb.yaml --limit k8s-manager-1`
+2. Если уже был установлен Cilium - то был включен Firewall, и просто так добавить новую Node нельзя
+   1. Сначала нужно обновить правила Firewall
+   2. `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
+   3. Это обновит правила firewall (CiliumClusterwideNetworkPolicy)
+3. `ansible-playbook -i hosts.yaml playbook-system/update-apiserver-sans.yaml`
+   1. Эта процедура - обновит CANS в сертификатах для api-server (добавит туда нового manager-ip)
+4. `ansible-playbook -i hosts.yaml playbook-system/haproxy-apiserver-lb-update.yaml`
    1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
-   2. По одному за раз
-   3. Через `--limit ....` указать название Node
-3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
+5. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
    1. Инициализация ноды
-4. `ansible-playbook -i hosts.yaml playbook-system/manager-join.yaml --limit k8s-manager-2`
+6. `ansible-playbook -i hosts.yaml playbook-system/manager-join.yaml --limit k8s-manager-2`
    1. Загрузка сертификатов в k8s.secrets
    2. получение токена
    3. вызов команды `kubeadm join ...`
