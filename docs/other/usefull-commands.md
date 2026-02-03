@@ -245,3 +245,20 @@ kubectl logs -n ns-vault -l job-name --tail=100
 # HELM, commands
 helm history <release-name> -n ns-gitlab
 helm rollback <release-name> 2 -n ns-gitlab
+
+# ETCD commands
+## Получить список members
+kubectl exec -it etcd-k8s-manager-1 -n kube-system -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  member list
+
+## Удалить member
+kubectl exec -it etcd-k8s-manager-1 -n kube-system -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  member remove <MEMBER_ID>
