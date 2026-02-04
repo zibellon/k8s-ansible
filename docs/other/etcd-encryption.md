@@ -135,16 +135,37 @@ kubectl get configmaps --all-namespaces -o json | kubectl replace -f -
 
 # Проверить
 
+## Где находится конфиг
+1. /etc/kubernetes/pki/encryption-config.yaml - сам конфиг
+2. /etc/kubernetes/manifests/kube-apiserver.yaml - подключение к api-server
+
 ## Создать тестовый секрет
 kubectl create secret generic encryption-test --from-literal=secret=verysecret
 
 ## Посмотреть, как он выглядит в ETCD
+## Вариант_1. Но он НЕТОЧНЫЙ. Так как могут быть преколы с байтами и так далее
 kubectl exec -it etcd-k8s-manager-1 -n kube-system -- etcdctl \
   --endpoints=https://127.0.0.1:2379 \
   --cacert=/etc/kubernetes/pki/etcd/ca.crt \
   --cert=/etc/kubernetes/pki/etcd/server.crt \
   --key=/etc/kubernetes/pki/etcd/server.key \
   get /registry/secrets/default/encryption-test
+
+## Вариант_2. Он точный
+kubectl exec -it etcd-k8s-manager-1 -n kube-system -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  get /registry/secrets/default/encryption-test | hexdump -C | head -5
+
+## Вариаент_3. Он точный
+kubectl exec -it etcd-k8s-manager-1 -n kube-system -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  get /registry/secrets/default/encryption-test --print-value-only | strings | head -1
 
 ## Если он зашифрован - в выводе что-то непонятное
 `k8s:enc:aescbc:v1:key1769554315:.........`

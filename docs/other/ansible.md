@@ -136,3 +136,12 @@ daemon_reload: yes -> systemctl daemon-reload
 - ansible_selinux — статус SELinux
 - ansible_pkg_mgr — пакетный менеджер (apt, yum, dnf)
 - ansible_service_mgr — менеджер служб (systemd)
+
+
+Текущее поведение (block + throttle: 1):
+  task1: host1 → host2 → host3
+  task2: host1 → host2 → host3
+
+Нужное поведение (loop + include_single_task_file):
+  host1: task1 → task2 → task3
+  host2: task1 → task2 → task3

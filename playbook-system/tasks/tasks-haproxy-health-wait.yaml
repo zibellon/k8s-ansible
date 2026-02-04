@@ -1,0 +1,25 @@
+# =============================================================================
+# Wait for HAProxy to be healthy
+# =============================================================================
+# Required variables:
+#   - target_host: hostname to check HAProxy health on
+#
+# Used by:
+#   - haproxy-apiserver-lb.yaml (initial deployment)
+#   - tasks-haproxy-config-update-and-wait.yaml (update config)
+# =============================================================================
+
+---
+- name: "[{{ target_host }}] Wait for HAProxy to be healthy"
+  uri:
+    url: "http://127.0.0.1:{{ haproxy_apiserver_lb_healthz_port }}/healthz"
+    status_code: 200
+  register: _haproxy_health
+  until: _haproxy_health.status == 200
+  retries: 30
+  delay: 2
+  delegate_to: "{{ target_host }}"
+
+- name: "[{{ target_host }}] HAProxy is ready"
+  debug:
+    msg: "HAProxy ready on {{ target_host }} at 127.0.0.1:{{ haproxy_apiserver_lb_port }}"

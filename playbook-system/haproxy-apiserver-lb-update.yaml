@@ -27,30 +27,20 @@
       include_tasks: tasks/tasks-check-node-joined.yaml
 
     # =========================================================================
-    # UPDATE HAPROXY ON JOINED NODES ONLY
+    # UPDATE HAPROXY SEQUENTIALLY ON JOINED NODES
     # =========================================================================
-    - name: Update HAProxy config on joined nodes
-      when: is_node_joined
-      throttle: 1
-      block:
-        - name: Generate HAProxy config and static pod manifest
-          include_tasks: tasks/tasks-generate-haproxy-config.yaml
-
-        - name: Wait for HAProxy to reload
-          uri:
-            url: "http://127.0.0.1:{{ haproxy_apiserver_lb_healthz_port }}/healthz"
-            status_code: 200
-          register: haproxy_health
-          until: haproxy_health.status == 200
-          retries: 30
-          delay: 2
-
-        - name: Print HAProxy update status
-          debug:
-            msg: "HAProxy config updated on {{ inventory_hostname }}"
+    # Uses loop + run_once to ensure sequential execution per host:
+    #   host1: all tasks → host2: all tasks → host3: all tasks
+    - name: Update HAProxy config sequentially on joined nodes
+      include_tasks: tasks/tasks-haproxy-config-update-and-wait.yaml
+      loop: "{{ groups['all'] }}"
+      loop_control:
+        loop_var: target_host
+      when: hostvars[target_host].is_node_joined | default(false)
+      run_once: true
 
     # =========================================================================
-    # SKIP MESSAGE FOR NOT JOINED NODES
+    # PRINT SUMMARY
     # =========================================================================
     - name: Print skip message for not joined nodes
       debug:
