@@ -7,12 +7,12 @@
 
 ---
 # Move manifest out - apiserver will stop
-- name: Move kube-apiserver manifest to /tmp on {{ target_host }}
+- name: "[{{ target_host }}] Move kube-apiserver manifest to /tmp"
   command: mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
   delegate_to: "{{ target_host }}"
 
 # Wait for apiserver to stop (expect error)
-- name: Wait for kube-apiserver to stop on {{ target_host }}
+- name: "[{{ target_host }}] Wait for kube-apiserver to stop"
   command: curl -sk --max-time 5 https://localhost:6443/healthz
   register: stop_check
   until: stop_check.rc != 0
@@ -22,12 +22,12 @@
   delegate_to: "{{ target_host }}"
 
 # Move manifest back - apiserver will start
-- name: Move kube-apiserver manifest back on {{ target_host }}
+- name: "[{{ target_host }}] Move kube-apiserver manifest back"
   command: mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
   delegate_to: "{{ target_host }}"
 
 # Wait for apiserver to be healthy
-- name: Wait for kube-apiserver to be healthy on {{ target_host }}
+- name: "[{{ target_host }}] Wait for kube-apiserver to be healthy"
   command: curl -sk --max-time 5 https://localhost:6443/healthz
   register: health_check
   until: health_check.rc == 0 and health_check.stdout == "ok"
