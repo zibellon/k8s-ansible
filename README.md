@@ -81,7 +81,7 @@
    1. Сначала нужно обновить правила Firewall
    2. `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
    3. Это обновит правила firewall (CiliumClusterwideNetworkPolicy)
-3. `ansible-playbook -i hosts.yaml playbook-system/update-apiserver-sans.yaml`
+3. `ansible-playbook -i hosts.yaml playbook-system/apiserver-sans-update.yaml`
    1. Эта процедура - обновит CANS в сертификатах для api-server (добавит туда нового manager-ip)
 4. `ansible-playbook -i hosts.yaml playbook-system/haproxy-apiserver-lb-update.yaml`
    1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
