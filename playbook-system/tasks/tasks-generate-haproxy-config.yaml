@@ -5,17 +5,14 @@
 #   - /etc/kubernetes/haproxy-apiserver-lb.cfg
 #   - /etc/kubernetes/manifests/haproxy-apiserver-lb.yaml
 #
-# Used by:
-#   - haproxy-apiserver-lb.yaml (initial deployment)
-#   - haproxy-apiserver-lb-update.yaml (update config on all hosts)
+# Used with serial: 1 play for sequential execution across hosts
 #
-# Required variables:
-#   - target_host: hostname to deploy HAProxy config on
-#   - haproxy_apiserver_lb_image (from hosts.yaml)
-#   - haproxy_apiserver_lb_host (from hosts.yaml)
-#   - haproxy_apiserver_lb_port (from hosts.yaml)
-#   - haproxy_apiserver_lb_healthz_port (from hosts.yaml)
-#   - api_server_advertise_address (per-host from hosts.yaml)
+# Required variables (from hosts.yaml):
+#   - haproxy_apiserver_lb_image
+#   - haproxy_apiserver_lb_host
+#   - haproxy_apiserver_lb_port
+#   - haproxy_apiserver_lb_healthz_port
+#   - api_server_advertise_address (per-host)
 #
 # Sets facts:
 #   - manager_ips (list of IPs for HAProxy backend)
@@ -28,33 +25,31 @@
 # BUILD MANAGER IPS LIST
 # On managers: 127.0.0.1 first (local API server), then other managers
 # On workers: only remote manager IPs
-# NO run_once - each host builds its own list
 # =========================================================================
-- name: "[{{ target_host }}] Build list of manager IPs for HAProxy backend"
+- name: Build list of manager IPs for HAProxy backend
   set_fact:
     manager_ips: >-
       {{
-        (['127.0.0.1'] if target_host in groups['managers'] else [])
+        (['127.0.0.1'] if inventory_hostname in groups['managers'] else [])
         +
         (groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list)
       }}
 
-- name: "[{{ target_host }}] Print manager IPs"
+- name: Print manager IPs
   debug:
     msg: "Manager IPs for HAProxy backend: {{ manager_ips }}"
 
 # =========================================================================
 # HAPROXY CONFIG
 # =========================================================================
-- name: "[{{ target_host }}] Create HAProxy config directory"
+- name: Create HAProxy config directory
   file:
     path: /etc/kubernetes
     state: directory
     mode: "0755"
-  delegate_to: "{{ target_host }}"
 
 # Build config content as variable for checksum calculation
-- name: "[{{ target_host }}] Build HAProxy config content"
+- name: Build HAProxy config content
   set_fact:
     haproxy_config_content: |
       global
@@ -91,25 +86,23 @@
           server manager-{{ loop.index }} {{ ip }}:6443 check
           {% endfor %}
 
-- name: "[{{ target_host }}] Create HAProxy config file"
+- name: Create HAProxy config file
   copy:
     dest: /etc/kubernetes/haproxy-apiserver-lb.cfg
     mode: "0644"
     content: "{{ haproxy_config_content }}"
-  delegate_to: "{{ target_host }}"
   register: haproxy_config_result
 
 # =========================================================================
 # STATIC POD MANIFEST
 # =========================================================================
-- name: "[{{ target_host }}] Create Kubernetes manifests directory"
+- name: Create Kubernetes manifests directory
   file:
     path: /etc/kubernetes/manifests
     state: directory
     mode: "0755"
-  delegate_to: "{{ target_host }}"
 
-- name: "[{{ target_host }}] Create HAProxy static pod manifest"
+- name: Create HAProxy static pod manifest
   copy:
     dest: /etc/kubernetes/manifests/haproxy-apiserver-lb.yaml
     mode: "0644"
@@ -161,5 +154,4 @@
             hostPath:
               path: /etc/kubernetes/haproxy-apiserver-lb.cfg
               type: File
-  delegate_to: "{{ target_host }}"
   register: haproxy_manifest_result

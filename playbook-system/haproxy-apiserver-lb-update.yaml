@@ -6,42 +6,40 @@
 #
 # This playbook:
 #   1. Checks which nodes are joined to cluster via kubectl on master_manager
-#   2. Updates HAProxy config only on joined nodes
+#   2. Updates HAProxy config only on joined nodes (sequentially via serial: 1)
 #   3. Skips nodes not yet joined (e.g., new node being added)
 #
 # Use case: Before adding a new manager, update HAProxy config on all existing
 # hosts so they know about the new manager IP.
 # =============================================================================
 
+# =============================================================================
+# PLAY 1: Check which nodes are joined (parallel)
+# =============================================================================
 ---
-- name: Update HAProxy config on all joined hosts
+- name: "HAProxy Update - Play 1: Check joined nodes"
   hosts: all
   become: true
   gather_facts: false
 
   tasks:
-    # =========================================================================
-    # CHECK WHICH NODES ARE JOINED
-    # =========================================================================
     - name: Check which nodes are joined to cluster
       include_tasks: tasks/tasks-check-node-joined.yaml
 
-    # =========================================================================
-    # UPDATE HAPROXY SEQUENTIALLY ON JOINED NODES
-    # =========================================================================
-    # Uses loop + run_once to ensure sequential execution per host:
-    #   host1: all tasks → host2: all tasks → host3: all tasks
-    - name: Update HAProxy config sequentially on joined nodes
-      include_tasks: tasks/tasks-haproxy-config-update-and-wait.yaml
-      loop: "{{ groups['all'] }}"
-      loop_control:
-        loop_var: target_host
-      when: hostvars[target_host].is_node_joined | default(false)
-      run_once: true
+# =============================================================================
+# PLAY 2: Update HAProxy config (serial: 1)
+# =============================================================================
+- name: "HAProxy Update - Play 2: Update config"
+  hosts: all
+  become: true
+  gather_facts: false
+  serial: 1
 
-    # =========================================================================
-    # PRINT SUMMARY
-    # =========================================================================
+  tasks:
+    - name: Update HAProxy config and wait
+      include_tasks: tasks/tasks-haproxy-config-update-and-wait.yaml
+      when: is_node_joined
+
     - name: Print skip message for not joined nodes
       debug:
         msg: "SKIP: {{ inventory_hostname }} ({{ internal_ip }}) - not joined to cluster"

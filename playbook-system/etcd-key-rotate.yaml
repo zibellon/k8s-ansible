@@ -15,35 +15,24 @@
 # - state-step2: before Step 2 (Step 1 completed)
 # - state-step4: before Step 4 (Step 2-3 completed)
 # =============================================================================
+# Structure: multiple plays for sequential restarts via serial: 1
+# =============================================================================
 
+# =============================================================================
+# PLAY 1: Prepare + Step 1 config
+# =============================================================================
 ---
-- name: Rotate ETCD encryption key
+- name: "ETCD Key Rotation - Play 1: Prepare + Step 1"
   hosts: managers
   become: true
   gather_facts: true
-
-  vars:
-    state_dir: "/etc/kubernetes/pki"
-    state_step1: "{{ state_dir }}/rotation-state-step1.yaml"
-    state_step2: "{{ state_dir }}/rotation-state-step2.yaml"
-    state_step4: "{{ state_dir }}/rotation-state-step4.yaml"
 
   tasks:
     # =========================================================================
     # PRE-CHECK: Find master manager
     # =========================================================================
     - name: Find master manager
-      set_fact:
-        master_manager_fact: "{{ item }}"
-      loop: "{{ groups['managers'] }}"
-      when: hostvars[item].is_master | default(false)
-      run_once: true
-
-    - name: Fail if no master manager found
-      fail:
-        msg: "ERROR: No manager with is_master: true found in hosts.yaml"
-      when: master_manager_fact is not defined
-      run_once: true
+      include_tasks: tasks/tasks-find-master-manager.yaml
 
     # =========================================================================
     # STATE DETECTION: Determine current step from state files
@@ -54,9 +43,9 @@
       delegate_to: "{{ master_manager_fact }}"
       register: state_files
       loop:
-        - "{{ state_step1 }}"
-        - "{{ state_step2 }}"
-        - "{{ state_step4 }}"
+        - "{{ etcd_rotation_state_step1 }}"
+        - "{{ etcd_rotation_state_step2 }}"
+        - "{{ etcd_rotation_state_step4 }}"
       run_once: true
 
     - name: Determine current step
@@ -67,7 +56,6 @@
           {% elif state_files.results[0].stat.exists %}1
           {% else %}0
           {% endif %}
-      run_once: true
 
     - name: Print current step
       debug:
@@ -82,12 +70,11 @@
     - name: Determine state file to read
       set_fact:
         state_file_to_read: >-
-          {% if current_step | int == 1 %}{{ state_step1 }}
-          {% elif current_step | int == 2 %}{{ state_step2 }}
-          {% else %}{{ state_step4 }}
+          {% if current_step | int == 1 %}{{ etcd_rotation_state_step1 }}
+          {% elif current_step | int == 2 %}{{ etcd_rotation_state_step2 }}
+          {% else %}{{ etcd_rotation_state_step4 }}
           {% endif %}
       when: current_step | int > 0
-      run_once: true
 
     - name: Read existing state file
       slurp:
@@ -105,7 +92,6 @@
           name: "{{ (existing_state.content | b64decode | from_yaml).current_key_name }}"
           secret: "{{ (existing_state.content | b64decode | from_yaml).current_key_secret }}"
       when: current_step | int > 0
-      run_once: true
 
     - name: Print resume info
       debug:
@@ -132,7 +118,6 @@
       set_fact:
         current_key: "{{ (current_config.content | b64decode | from_yaml).resources[0].providers[0].aescbc['keys'][0] }}"
       when: current_step | int == 0
-      run_once: true
 
     - name: Generate new encryption key (fresh start)
       shell: head -c 32 /dev/urandom | base64
@@ -145,7 +130,6 @@
         new_key_name: "key{{ ansible_facts.date_time.epoch }}"
         new_key_secret: "{{ new_key_result.stdout }}"
       when: current_step | int == 0
-      run_once: true
 
     - name: Print new key info (fresh start)
       debug:
@@ -161,7 +145,7 @@
 
     - name: Create state-step1 file (fresh start)
       copy:
-        dest: "{{ state_step1 }}"
+        dest: "{{ etcd_rotation_state_step1 }}"
         mode: '0600'
         content: |
           new_key_name: {{ new_key_name }}
@@ -174,7 +158,7 @@
 
     - name: Print state file created
       debug:
-        msg: "State file created: {{ state_step1 }}"
+        msg: "State file created: {{ etcd_rotation_state_step1 }}"
       when: current_step | int == 0
       run_once: true
 
@@ -205,17 +189,29 @@
         msg: "Config deployed on {{ inventory_hostname }}: [{{ current_key.name }}, {{ new_key_name }}]"
       when: current_step | int < 2
 
-    # =========================================================================
-    # RESTART 1: All apiservers now know about new key
-    # =========================================================================
-    - name: "RESTART 1: Restart apiservers sequentially"
-      include_tasks: tasks/task-restart-apiserver.yaml
-      loop: "{{ groups['managers'] }}"
-      loop_control:
-        loop_var: target_host
-      when: current_step | int < 2
-      run_once: true
+# =============================================================================
+# PLAY 2: Restart 1 (serial: 1)
+# =============================================================================
+- name: "ETCD Key Rotation - Play 2: Restart apiservers (Step 1)"
+  hosts: managers
+  become: true
+  serial: 1
+  gather_facts: false
 
+  tasks:
+    - name: "RESTART 1: Restart apiserver"
+      include_tasks: tasks/task-restart-apiserver.yaml
+      when: current_step | int < 2
+
+# =============================================================================
+# PLAY 3: Transition 1→2 + Step 2 config
+# =============================================================================
+- name: "ETCD Key Rotation - Play 3: Step 2 config"
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
     - name: "RESTART 1: Complete"
       debug:
         msg: "All apiservers restarted - they can now decrypt data encrypted with new key"
@@ -227,7 +223,7 @@
     # =========================================================================
     - name: "TRANSITION 1→2: Create state-step2"
       copy:
-        dest: "{{ state_step2 }}"
+        dest: "{{ etcd_rotation_state_step2 }}"
         mode: '0600'
         content: |
           new_key_name: {{ new_key_name }}
@@ -240,7 +236,7 @@
 
     - name: "TRANSITION 1→2: Delete state-step1"
       file:
-        path: "{{ state_step1 }}"
+        path: "{{ etcd_rotation_state_step1 }}"
         state: absent
       delegate_to: "{{ master_manager_fact }}"
       when: current_step | int < 2
@@ -279,17 +275,29 @@
         msg: "Config deployed on {{ inventory_hostname }}: [{{ new_key_name }}, {{ current_key.name }}]"
       when: current_step | int < 4
 
-    # =========================================================================
-    # RESTART 2: All apiservers now encrypt with new key
-    # =========================================================================
-    - name: "RESTART 2: Restart apiservers sequentially"
-      include_tasks: tasks/task-restart-apiserver.yaml
-      loop: "{{ groups['managers'] }}"
-      loop_control:
-        loop_var: target_host
-      when: current_step | int < 4
-      run_once: true
+# =============================================================================
+# PLAY 4: Restart 2 (serial: 1)
+# =============================================================================
+- name: "ETCD Key Rotation - Play 4: Restart apiservers (Step 2)"
+  hosts: managers
+  become: true
+  serial: 1
+  gather_facts: false
 
+  tasks:
+    - name: "RESTART 2: Restart apiserver"
+      include_tasks: tasks/task-restart-apiserver.yaml
+      when: current_step | int < 4
+
+# =============================================================================
+# PLAY 5: Step 3 re-encrypt + Transition 3→4 + Step 4 config
+# =============================================================================
+- name: "ETCD Key Rotation - Play 5: Re-encrypt + Step 4 config"
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
     - name: "RESTART 2: Complete"
       debug:
         msg: "All apiservers restarted - they now encrypt new data with new key"
@@ -333,7 +341,7 @@
     # =========================================================================
     - name: "TRANSITION 3→4: Create state-step4"
       copy:
-        dest: "{{ state_step4 }}"
+        dest: "{{ etcd_rotation_state_step4 }}"
         mode: '0600'
         content: |
           new_key_name: {{ new_key_name }}
@@ -346,7 +354,7 @@
 
     - name: "TRANSITION 3→4: Delete state-step2"
       file:
-        path: "{{ state_step2 }}"
+        path: "{{ etcd_rotation_state_step2 }}"
         state: absent
       delegate_to: "{{ master_manager_fact }}"
       when: current_step | int < 4
@@ -381,16 +389,28 @@
       debug:
         msg: "Config deployed on {{ inventory_hostname }}: [{{ new_key_name }}] - old key removed"
 
-    # =========================================================================
-    # RESTART 3: Finalize
-    # =========================================================================
-    - name: "RESTART 3: Restart apiservers sequentially"
-      include_tasks: tasks/task-restart-apiserver.yaml
-      loop: "{{ groups['managers'] }}"
-      loop_control:
-        loop_var: target_host
-      run_once: true
+# =============================================================================
+# PLAY 6: Restart 3 (serial: 1)
+# =============================================================================
+- name: "ETCD Key Rotation - Play 6: Restart apiservers (Final)"
+  hosts: managers
+  become: true
+  serial: 1
+  gather_facts: false
 
+  tasks:
+    - name: "RESTART 3: Restart apiserver"
+      include_tasks: tasks/task-restart-apiserver.yaml
+
+# =============================================================================
+# PLAY 7: Cleanup + Verify
+# =============================================================================
+- name: "ETCD Key Rotation - Play 7: Cleanup + Verify"
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
     - name: "RESTART 3: Complete"
       debug:
         msg: "All apiservers restarted - key rotation finalized"
@@ -401,7 +421,7 @@
     # =========================================================================
     - name: "CLEANUP: Delete state-step4"
       file:
-        path: "{{ state_step4 }}"
+        path: "{{ etcd_rotation_state_step4 }}"
         state: absent
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
