@@ -17,112 +17,135 @@
 #
 # Nodes not yet joined to cluster are automatically skipped.
 # =============================================================================
+# Structure: multiple plays for sequential restarts via serial: 1
+# =============================================================================
 
+# =============================================================================
+# PLAY 1: Check which managers are joined
+# =============================================================================
 ---
-- name: Update API Server certSANs
+- name: "API Server SANS Update - Play 1: Check joined"
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check which nodes are joined to cluster
+      include_tasks: tasks/tasks-check-node-joined.yaml
+
+# =============================================================================
+# PLAY 2: Update certificates (parallel on joined managers)
+# =============================================================================
+- name: "API Server SANS Update - Play 2: Update certs"
   hosts: managers
   become: true
   gather_facts: false
 
   tasks:
     # =========================================================================
-    # CHECK WHICH MANAGERS ARE JOINED
+    # STEP 1: Generate kubeadm-config on joined managers
     # =========================================================================
-    - name: Check which nodes are joined to cluster
-      include_tasks: tasks/tasks-check-node-joined.yaml
-
-    # =========================================================================
-    # UPDATE CERTSANS ON JOINED MANAGERS ONLY
-    # =========================================================================
-    - name: Update certSANs on joined managers
+    - name: Generate kubeadm config
+      include_tasks: tasks/tasks-generate-kubeadm-config.yaml
       when: is_node_joined
-      block:
-        # =====================================================================
-        # STEP 1: Generate kubeadm-config on joined managers (parallel)
-        # =====================================================================
-        - name: Generate kubeadm config
-          include_tasks: tasks/tasks-generate-kubeadm-config.yaml
-
-        # =====================================================================
-        # STEP 2: Upload config to cluster ConfigMap (master only)
-        # =====================================================================
-        - name: Upload kubeadm config to cluster ConfigMap
-          command: >-
-            kubeadm init phase upload-config kubeadm
-            --config {{ kubeadm_config_path }}
-          delegate_to: "{{ master_manager_fact }}"
-          run_once: true
-
-        - name: Print upload config status
-          debug:
-            msg: "kubeadm config uploaded to cluster ConfigMap (kube-system/kubeadm-config)"
-          run_once: true
-
-        # =====================================================================
-        # STEP 3: Remove old apiserver certificates (joined managers, parallel)
-        # =====================================================================
-        - name: Remove old apiserver certificate
-          file:
-            path: /etc/kubernetes/pki/apiserver.crt
-            state: absent
-
-        - name: Remove old apiserver key
-          file:
-            path: /etc/kubernetes/pki/apiserver.key
-            state: absent
-
-        - name: Print certificate removal status
-          debug:
-            msg: "Old apiserver.crt and apiserver.key removed on {{ inventory_hostname }}"
-
-        # =====================================================================
-        # STEP 4: Generate new apiserver certificates (joined managers, parallel)
-        # =====================================================================
-        - name: Generate new apiserver certificate
-          command: >-
-            kubeadm init phase certs apiserver
-            --config {{ kubeadm_config_path }}
-          register: cert_gen_result
-
-        - name: Print certificate generation status
-          debug:
-            msg: "New apiserver certificate generated on {{ inventory_hostname }}"
-
-        # =====================================================================
-        # VERIFICATION
-        # =====================================================================
-        - name: Get current certSANs from apiserver certificate
-          shell: >-
-            openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout |
-            grep -A1 "Subject Alternative Name" |
-            tail -1 |
-            tr ',' '\n' |
-            sed 's/^ *//'
-          register: current_sans_result
-          changed_when: false
-
-        - name: Print verification
-          debug:
-            msg:
-              - "=== API Server certSANs updated on {{ inventory_hostname }} ==="
-              - "Current SANs:"
-              - "{{ current_sans_result.stdout_lines }}"
-
-        # =====================================================================
-        # STEP 5: Restart apiservers sequentially (for HA)
-        # =====================================================================
-        - name: Restart apiserver sequentially
-          throttle: 1
-          block:
-            - name: Restart apiserver
-              include_tasks: tasks/task-restart-apiserver.yaml
-              vars:
-                target_host: "{{ inventory_hostname }}"
 
     # =========================================================================
-    # SKIP MESSAGE FOR NOT JOINED MANAGERS
+    # STEP 2: Upload config to cluster ConfigMap (master only)
+    # =========================================================================
+    - name: Upload kubeadm config to cluster ConfigMap
+      command: >-
+        kubeadm init phase upload-config kubeadm
+        --config {{ kubeadm_config_path }}
+      delegate_to: "{{ master_manager_fact }}"
+      when: is_node_joined
+      run_once: true
+
+    - name: Print upload config status
+      debug:
+        msg: "kubeadm config uploaded to cluster ConfigMap (kube-system/kubeadm-config)"
+      when: is_node_joined
+      run_once: true
+
+    # =========================================================================
+    # STEP 3: Remove old apiserver certificates
+    # =========================================================================
+    - name: Remove old apiserver certificate
+      file:
+        path: /etc/kubernetes/pki/apiserver.crt
+        state: absent
+      when: is_node_joined
+
+    - name: Remove old apiserver key
+      file:
+        path: /etc/kubernetes/pki/apiserver.key
+        state: absent
+      when: is_node_joined
+
+    - name: Print certificate removal status
+      debug:
+        msg: "Old apiserver.crt and apiserver.key removed on {{ inventory_hostname }}"
+      when: is_node_joined
+
+    # =========================================================================
+    # STEP 4: Generate new apiserver certificates
+    # =========================================================================
+    - name: Generate new apiserver certificate
+      command: >-
+        kubeadm init phase certs apiserver
+        --config {{ kubeadm_config_path }}
+      register: cert_gen_result
+      when: is_node_joined
+
+    - name: Print certificate generation status
+      debug:
+        msg: "New apiserver certificate generated on {{ inventory_hostname }}"
+      when: is_node_joined
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: Get current certSANs from apiserver certificate
+      shell: >-
+        openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout |
+        grep -A1 "Subject Alternative Name" |
+        tail -1 |
+        tr ',' '\n' |
+        sed 's/^ *//'
+      register: current_sans_result
+      changed_when: false
+      when: is_node_joined
+
+    - name: Print verification
+      debug:
+        msg:
+          - "=== API Server certSANs updated on ==="
+          - "Current SANs:"
+          - "{{ current_sans_result.stdout_lines }}"
+      when: is_node_joined
+
+    # =========================================================================
+    # SKIP MESSAGE
     # =========================================================================
     - name: Print skip message for not joined managers
       debug:
-        msg: "SKIP: {{ inventory_hostname }} ({{ api_server_advertise_address }}) - not joined to cluster yet"
+        msg: "SKIP: ({{ api_server_advertise_address }}) - not joined to cluster yet"
+      when: not is_node_joined
+
+# =============================================================================
+# PLAY 3: Restart apiservers (serial: 1)
+# =============================================================================
+- name: "API Server SANS Update - Play 3: Restart"
+  hosts: managers
+  become: true
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Restart apiserver
+      include_tasks: tasks/task-restart-apiserver.yaml
+      when: is_node_joined
+
+    - name: Print skip message
+      debug:
+        msg: "SKIP: not joined"
       when: not is_node_joined

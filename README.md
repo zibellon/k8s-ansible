@@ -61,7 +61,7 @@
 # Первичная инициализация кластера
 1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
    1. Инициализация ноды
-2. `ansible-playbook -i hosts.yaml playbook-system/init-cluster.yaml --limit k8s-manager-1`
+2. `ansible-playbook -i hosts.yaml playbook-system/cluster-init.yaml --limit k8s-manager-1`
    1. Инициализация кластера. Именно команда: `kubeadm init ...`
 
 # Присоединение worker-node
