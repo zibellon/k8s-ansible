@@ -1,0 +1,61 @@
+# =============================================================================
+# Check if Kubernetes cluster is initialized
+# =============================================================================
+# Sets fact: is_cluster_init (true/false on ALL hosts)
+#
+# Detection:
+#   1. Check /etc/kubernetes/admin.conf and /etc/kubernetes/pki/ca.crt on master_manager
+#   2. If files exist - verify cluster health via kubectl get nodes
+#   3. Set result on ALL hosts
+# =============================================================================
+
+# Find master_manager
+- name: Find master manager
+  include_tasks: tasks/tasks-find-master-manager.yaml
+
+# Check key files on master_manager
+- name: Check if admin.conf exists on master manager
+  stat:
+    path: /etc/kubernetes/admin.conf
+  delegate_to: "{{ master_manager_fact }}"
+  register: admin_conf_check
+  run_once: true
+
+- name: Check if cluster CA exists on master manager
+  stat:
+    path: /etc/kubernetes/pki/ca.crt
+  delegate_to: "{{ master_manager_fact }}"
+  register: ca_crt_check
+  run_once: true
+
+# If files missing - cluster not initialized (early return)
+- name: Set is_cluster_init=false (files missing)
+  set_fact:
+    is_cluster_init: false
+  when: not admin_conf_check.stat.exists or not ca_crt_check.stat.exists
+
+# Verify cluster health via kubectl (only when files exist)
+- name: Verify cluster health via kubectl
+  command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes
+  delegate_to: "{{ master_manager_fact }}"
+  register: kubectl_check
+  run_once: true
+  failed_when: false
+  changed_when: false
+  when: is_cluster_init is not defined
+
+# Set final fact on all hosts
+- name: Set is_cluster_init fact (cluster healthy)
+  set_fact:
+    is_cluster_init: true
+  when: is_cluster_init is not defined and kubectl_check.rc == 0
+
+- name: Set is_cluster_init fact (cluster unhealthy)
+  set_fact:
+    is_cluster_init: false
+  when: is_cluster_init is not defined
+
+- name: Print cluster initialization status
+  debug:
+    msg: "Cluster initialized: {{ is_cluster_init }}"
+  run_once: true

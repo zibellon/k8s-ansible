@@ -19,20 +19,27 @@
 # =============================================================================
 
 # =============================================================================
-# PLAY 1: Prepare + Step 1 config
+# PLAY 0: Check which managers are joined
 # =============================================================================
 ---
+- name: "ETCD Key Rotation - Play 0: Check joined"
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check which nodes are joined to cluster
+      include_tasks: tasks/tasks-check-node-joined.yaml
+
+# =============================================================================
+# PLAY 1: Prepare + Step 1 config
+# =============================================================================
 - name: "ETCD Key Rotation - Play 1: Prepare + Step 1"
   hosts: managers
   become: true
   gather_facts: true
 
   tasks:
-    # =========================================================================
-    # PRE-CHECK: Find master manager
-    # =========================================================================
-    - name: Find master manager
-      include_tasks: tasks/tasks-find-master-manager.yaml
 
     # =========================================================================
     # STATE DETECTION: Determine current step from state files
@@ -182,12 +189,12 @@
                       - name: {{ new_key_name }}
                         secret: {{ new_key_secret }}
                 - identity: {}
-      when: current_step | int < 2
+      when: current_step | int < 2 and is_node_joined
 
     - name: "STEP 1: Print status"
       debug:
         msg: "Config deployed on {{ inventory_hostname }}: [{{ current_key.name }}, {{ new_key_name }}]"
-      when: current_step | int < 2
+      when: current_step | int < 2 and is_node_joined
 
 # =============================================================================
 # PLAY 2: Restart 1 (serial: 1)
@@ -201,7 +208,7 @@
   tasks:
     - name: "RESTART 1: Restart apiserver"
       include_tasks: tasks/task-apiserver-restart.yaml
-      when: current_step | int < 2
+      when: current_step | int < 2 and is_node_joined
 
 # =============================================================================
 # PLAY 3: Transition 1→2 + Step 2 config
@@ -268,12 +275,12 @@
                       - name: {{ current_key.name }}
                         secret: {{ current_key.secret }}
                 - identity: {}
-      when: current_step | int < 4
+      when: current_step | int < 4 and is_node_joined
 
     - name: "STEP 2: Print status"
       debug:
         msg: "Config deployed on {{ inventory_hostname }}: [{{ new_key_name }}, {{ current_key.name }}]"
-      when: current_step | int < 4
+      when: current_step | int < 4 and is_node_joined
 
 # =============================================================================
 # PLAY 4: Restart 2 (serial: 1)
@@ -287,7 +294,7 @@
   tasks:
     - name: "RESTART 2: Restart apiserver"
       include_tasks: tasks/task-apiserver-restart.yaml
-      when: current_step | int < 4
+      when: current_step | int < 4 and is_node_joined
 
 # =============================================================================
 # PLAY 5: Step 3 re-encrypt + Transition 3→4 + Step 4 config
@@ -384,10 +391,12 @@
                       - name: {{ new_key_name }}
                         secret: {{ new_key_secret }}
                 - identity: {}
+      when: is_node_joined
 
     - name: "STEP 4: Print status"
       debug:
         msg: "Config deployed on {{ inventory_hostname }}: [{{ new_key_name }}] - old key removed"
+      when: is_node_joined
 
 # =============================================================================
 # PLAY 6: Restart 3 (serial: 1)
@@ -401,6 +410,7 @@
   tasks:
     - name: "RESTART 3: Restart apiserver"
       include_tasks: tasks/task-apiserver-restart.yaml
+      when: is_node_joined
 
 # =============================================================================
 # PLAY 7: Cleanup + Verify

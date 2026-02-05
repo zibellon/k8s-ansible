@@ -2,176 +2,174 @@
 # Initialize Kubernetes cluster on master manager node
 # =============================================================================
 # Usage:
-#   ansible-playbook -i hosts.yaml playbook-system/cluster-init.yaml --limit k8s-manager-1
-# =============================================================================
-# NOTE: Run ONLY on the master manager (is_master: true)
+#   ansible-playbook -i hosts.yaml playbook-system/cluster-init.yaml
 # =============================================================================
 
+# =============================================================================
+# PLAY 0: Pre-checks
+# =============================================================================
 ---
-- name: Initialize Kubernetes cluster
+- name: "Cluster Init - Play 0: Pre-checks"
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check if cluster is already initialized
+      include_tasks: tasks/tasks-check-cluster-init.yaml
+
+# =============================================================================
+# PLAY 1: Initialize cluster
+# =============================================================================
+- name: "Cluster Init - Play 1: Initialize"
   hosts: managers
   become: true
   gather_facts: true
 
   tasks:
-    - name: "[pre-check] Validate target"
-      include_tasks: tasks/tasks-pre-check-master-manager.yaml
+    # =========================================================================
+    # BLOCK 1: Init tasks (only when cluster is NOT initialized)
+    # =========================================================================
+    - block:
+        # =====================================================================
+        # ETCD ENCRYPTION
+        # =====================================================================
+        - name: Ensure PKI directory exists
+          file:
+            path: /etc/kubernetes/pki
+            state: directory
+            mode: '0755'
+
+        - name: Generate ETCD encryption key
+          shell: head -c 32 /dev/urandom | base64
+          register: etcd_encryption_key_result
+
+        - name: Create ETCD encryption config
+          copy:
+            dest: "{{ etcd_encryption_config_path }}"
+            mode: '0600'
+            content: |
+              apiVersion: apiserver.config.k8s.io/v1
+              kind: EncryptionConfiguration
+              resources:
+                - resources: {{ etcd_encryption_resources | to_json }}
+                  providers:
+                    - aescbc:
+                        keys:
+                          - name: key{{ ansible_facts.date_time.epoch }}
+                            secret: {{ etcd_encryption_key_result.stdout }}
+                    - identity: {}
+
+        - name: Print encryption key (SAVE THIS!)
+          debug:
+            msg:
+              - "=== ETCD ENCRYPTION KEY ==="
+              - "CRITICAL: Save this key securely! Without it, etcd backup is useless."
+              - "Key: {{ etcd_encryption_key_result.stdout }}"
+              - "Config path: {{ etcd_encryption_config_path }}"
+
+        # =====================================================================
+        # KUBEADM CONFIG
+        # =====================================================================
+        - name: Generate kubeadm config
+          include_tasks: tasks/tasks-generate-kubeadm-config.yaml
+
+        # =====================================================================
+        # KUBEADM INIT
+        # =====================================================================
+        - name: Init cluster with kubeadm
+          command: >-
+            kubeadm init
+            --skip-phases=addon/kube-proxy
+            --config {{ kubeadm_config_path }}
+          register: kubeadm_init_result
+
+        - name: Print kubeadm init output
+          debug:
+            msg: "{{ kubeadm_init_result.stdout_lines }}"
+
+      when: inventory_hostname == master_manager_fact and not is_cluster_init
 
     # =========================================================================
-    # PRE-CHECK (verify API server is responding, not just file exists)
+    # BLOCK 2: Post-init tasks (always on master manager)
     # =========================================================================
-    - name: Check if cluster is already initialized and healthy
-      command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes
-      register: kubeadm_already_init_pre_check
-      failed_when: false
-      changed_when: false
+    - block:
+        # =====================================================================
+        # CONFIGURE KUBECTL
+        # =====================================================================
+        - name: Configure kubectl
+          include_tasks: tasks/tasks-kubectl-configure.yaml
 
-    - name: Set cluster init status
-      set_fact:
-        cluster_already_initialized: "{{ kubeadm_already_init_pre_check.rc == 0 }}"
+        # =====================================================================
+        # REMOVE CONTROL-PLANE TAINT (optional)
+        # =====================================================================
+        - name: Remove NoSchedule taint from control-plane
+          command: >-
+            kubectl taint nodes {{ new_hostname }}
+            node-role.kubernetes.io/control-plane:NoSchedule-
+          register: untaint_result
+          failed_when: false
 
-    - name: Print cluster status
-      debug:
-        msg: "{{ 'Cluster already init and healthy, skip' if cluster_already_initialized else 'Cluster not init or unhealthy, proceeding...' }}"
+        - name: Assert taint removal result
+          assert:
+            that:
+              - untaint_result.rc == 0 or 'not found' in untaint_result.stderr
+            fail_msg: "Failed to remove taint: {{ untaint_result.stderr }}"
+            success_msg: >-
+              {{ new_hostname }}: {{ 'Taint removed' if untaint_result.rc == 0 else 'Taint not exist' }}
 
-    # =========================================================================
-    # ETCD ENCRYPTION
-    # =========================================================================
-    - name: Ensure PKI directory exists
-      file:
-        path: /etc/kubernetes/pki
-        state: directory
-        mode: '0755'
-      when: not cluster_already_initialized
+        # =====================================================================
+        # APPLY NODE LABELS
+        # =====================================================================
+        - name: Apply node labels
+          command: "kubectl label nodes {{ new_hostname }} {{ item }} --overwrite"
+          loop: "{{ node_labels | default([]) }}"
+          when: node_labels is defined and node_labels | length > 0
+          register: label_result
+          failed_when: false
 
-    - name: Generate ETCD encryption key
-      shell: head -c 32 /dev/urandom | base64
-      register: etcd_encryption_key_result
-      when: not cluster_already_initialized
+        - name: Print applied labels
+          debug:
+            msg: "Applied labels to {{ new_hostname }}: {{ node_labels }}"
+          when: node_labels is defined and node_labels | length > 0
 
-    - name: Create ETCD encryption config
-      copy:
-        dest: "{{ etcd_encryption_config_path }}"
-        mode: '0600'
-        content: |
-          apiVersion: apiserver.config.k8s.io/v1
-          kind: EncryptionConfiguration
-          resources:
-            - resources: {{ etcd_encryption_resources | to_json }}
-              providers:
-                - aescbc:
-                    keys:
-                      - name: key{{ ansible_facts.date_time.epoch }}
-                        secret: {{ etcd_encryption_key_result.stdout }}
-                - identity: {}
-      when: not cluster_already_initialized
+        # =====================================================================
+        # APPLY LONGHORN DEFAULT NODE TAGS
+        # =====================================================================
+        - name: Apply Longhorn default node tags annotation
+          command: >-
+            kubectl annotate nodes {{ new_hostname }}
+            node.longhorn.io/default-node-tags='{{ longhorn_default_tags | to_json }}'
+            --overwrite
+          when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
+          register: longhorn_tags_result
+          failed_when: false
 
-    - name: Print encryption key (SAVE THIS!)
-      debug:
-        msg:
-          - "=== ETCD ENCRYPTION KEY ==="
-          - "CRITICAL: Save this key securely! Without it, etcd backup is useless."
-          - "Key: {{ etcd_encryption_key_result.stdout }}"
-          - "Config path: {{ etcd_encryption_config_path }}"
-      when: not cluster_already_initialized
+        - name: Print applied Longhorn tags
+          debug:
+            msg: "Applied Longhorn tags to {{ new_hostname }}: {{ longhorn_default_tags }}"
+          when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
 
-    # =========================================================================
-    # KUBEADM CONFIG
-    # =========================================================================
-    - name: Generate kubeadm config
-      include_tasks: tasks/tasks-generate-kubeadm-config.yaml
-      when: not cluster_already_initialized
+        # =====================================================================
+        # VERIFICATION
+        # =====================================================================
+        - name: Check cluster nodes
+          command: kubectl get nodes -o wide
+          register: nodes_check
+          changed_when: false
 
-    # =========================================================================
-    # KUBEADM INIT
-    # =========================================================================
-    - name: Init cluster with kubeadm
-      command: >-
-        kubeadm init
-        --skip-phases=addon/kube-proxy
-        --config {{ kubeadm_config_path }}
-      register: kubeadm_init_result
-      when: not cluster_already_initialized
+        - name: Check cluster pods
+          command: kubectl get pods -A
+          register: pods_check
+          changed_when: false
 
-    - name: Print kubeadm init output
-      debug:
-        msg: "{{ kubeadm_init_result.stdout_lines }}"
-      when: not cluster_already_initialized
+        - name: Print final status
+          debug:
+            msg:
+              - "=== Cluster Initialized ==="
+              - "Nodes:"
+              - "{{ nodes_check.stdout_lines }}"
+              - "Pods:"
+              - "{{ pods_check.stdout_lines }}"
 
-    # =========================================================================
-    # CONFIGURE KUBECTL
-    # =========================================================================
-    - name: Configure kubectl
-      include_tasks: tasks/tasks-configure-kubectl.yaml
-
-    # =========================================================================
-    # REMOVE CONTROL-PLANE TAINT (optional)
-    # =========================================================================
-    - name: Remove NoSchedule taint from control-plane
-      command: >-
-        kubectl taint nodes {{ new_hostname }}
-        node-role.kubernetes.io/control-plane:NoSchedule-
-      register: untaint_result
-      failed_when: false
-
-    - name: Assert taint removal result
-      assert:
-        that:
-          - untaint_result.rc == 0 or 'not found' in untaint_result.stderr
-        fail_msg: "Failed to remove taint: {{ untaint_result.stderr }}"
-        success_msg: >-
-          {{ new_hostname }}: {{ 'Taint removed' if untaint_result.rc == 0 else 'Taint not exist' }}
-
-    # =========================================================================
-    # APPLY NODE LABELS
-    # =========================================================================
-    - name: Apply node labels
-      command: "kubectl label nodes {{ new_hostname }} {{ item }} --overwrite"
-      loop: "{{ node_labels | default([]) }}"
-      when: node_labels is defined and node_labels | length > 0
-      register: label_result
-      failed_when: false
-
-    - name: Print applied labels
-      debug:
-        msg: "Applied labels to {{ new_hostname }}: {{ node_labels }}"
-      when: node_labels is defined and node_labels | length > 0
-
-    # =========================================================================
-    # APPLY LONGHORN DEFAULT NODE TAGS
-    # =========================================================================
-    - name: Apply Longhorn default node tags annotation
-      command: >-
-        kubectl annotate nodes {{ new_hostname }}
-        node.longhorn.io/default-node-tags='{{ longhorn_default_tags | to_json }}'
-        --overwrite
-      when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
-      register: longhorn_tags_result
-      failed_when: false
-
-    - name: Print applied Longhorn tags
-      debug:
-        msg: "Applied Longhorn tags to {{ new_hostname }}: {{ longhorn_default_tags }}"
-      when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
-
-    # =========================================================================
-    # VERIFICATION
-    # =========================================================================
-    - name: Check cluster nodes
-      command: kubectl get nodes -o wide
-      register: nodes_check
-      changed_when: false
-
-    - name: Check cluster pods
-      command: kubectl get pods -A
-      register: pods_check
-      changed_when: false
-
-    - name: Print final status
-      debug:
-        msg:
-          - "=== Cluster Initialized ==="
-          - "Nodes:"
-          - "{{ nodes_check.stdout_lines }}"
-          - "Pods:"
-          - "{{ pods_check.stdout_lines }}"
+      when: inventory_hostname == master_manager_fact
