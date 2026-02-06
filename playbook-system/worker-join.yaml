@@ -13,32 +13,16 @@
 
   tasks:
     - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
+    - name: "[pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check-worker.yaml
 
     # =========================================================================
-    # FIND MASTER MANAGER
+    # GATHER CLUSTER FACTS
     # =========================================================================
-    - name: Find master manager
-      include_tasks: tasks/tasks-find-master-manager.yaml
-
-    # =========================================================================
-    # GET CLUSTER INFO
-    # =========================================================================
-    - name: Get cluster nodes
-      command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
-      delegate_to: "{{ master_manager_fact }}"
-      register: cluster_nodes_result
-      changed_when: false
-      run_once: true
-
-    - name: Set existing nodes as fact
-      set_fact:
-        existing_nodes_fact: "{{ cluster_nodes_result.stdout.split() }}"
-
-    - name: Print existing nodes
-      debug:
-        msg: "Nodes in cluster: {{ existing_nodes_fact }}"
-      run_once: true
+    - name: Gather cluster facts
+      include_tasks: tasks/tasks-gather-cluster-facts.yaml
 
     - name: Generate join command
       command: kubeadm token create --print-join-command
@@ -59,24 +43,15 @@
     # =========================================================================
     # JOIN WORKER
     # =========================================================================
-    - name: Check if already joined
-      set_fact:
-        is_already_joined_fact: "{{ new_hostname in existing_nodes_fact }}"
-
-    - name: Skip if already joined
-      debug:
-        msg: "{{ new_hostname }} is already in cluster - skipping"
-      when: is_already_joined_fact
-
     - name: Join cluster
       command: "{{ kubeadm_join_command_fact }}"
       register: join_result
-      when: not is_already_joined_fact
+      when: not is_node_joined
 
     - name: Print join result
       debug:
         msg: "{{ join_result.stdout_lines }}"
-      when: not is_already_joined_fact and join_result.stdout_lines is defined
+      when: not is_node_joined and join_result.stdout_lines is defined
 
     # =========================================================================
     # VERIFY KUBELET
@@ -84,7 +59,7 @@
     - name: Wait for kubelet
       pause:
         seconds: 10
-      when: not is_already_joined_fact
+      when: not is_node_joined
 
     - name: Check kubelet status
       command: systemctl is-active kubelet
@@ -138,7 +113,7 @@
     # =========================================================================
     - name: Wait for node registration
       pause:
-        seconds: 5
+        seconds: 10
       run_once: true
 
     - name: Get cluster nodes

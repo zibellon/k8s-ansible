@@ -15,35 +15,23 @@
   become: true
   gather_facts: false
 
-  vars:
-    wait_timeout: 300  # 5 minutes
-    wait_interval: 10  # check every 10 seconds
-
   tasks:
     - name: "[pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check-limit.yaml
 
     # =========================================================================
-    # FIND MASTER MANAGER
+    # GATHER CLUSTER FACTS
     # =========================================================================
-    - name: Find master manager
-      include_tasks: tasks/tasks-find-master-manager.yaml
+    - name: Gather cluster facts
+      include_tasks: tasks/tasks-gather-cluster-facts.yaml
 
     # =========================================================================
-    # WAIT FOR NODE READY
+    # PRE-CHECK: Verify node is joined
     # =========================================================================
-    - name: Wait for node to be Ready
-      command: kubectl get node {{ new_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-      delegate_to: "{{ master_manager_fact }}"
-      register: node_ready_check
-      until: node_ready_check.stdout == 'True'
-      retries: "{{ (wait_timeout / wait_interval) | int }}"
-      delay: "{{ wait_interval }}"
-      changed_when: false
-
-    - name: Show node Ready status
-      debug:
-        msg: "Node {{ new_hostname }} is Ready"
+    - name: Fail if node not in cluster
+      fail:
+        msg: "Node {{ new_hostname }} not found in cluster"
+      when: not is_node_joined
 
     # =========================================================================
     # UNCORDON: Enable scheduling on node

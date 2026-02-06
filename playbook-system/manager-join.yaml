@@ -15,26 +15,16 @@
 
   tasks:
     - name: "[pre-check] Validate target"
-      include_tasks: tasks/tasks-pre-check-secondary-manager.yaml
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-manager.yaml
 
     # =========================================================================
-    # GET CLUSTER INFO
+    # GATHER CLUSTER FACTS
     # =========================================================================
-    - name: Get cluster nodes
-      command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
-      delegate_to: "{{ master_manager_fact }}"
-      register: cluster_nodes_result
-      changed_when: false
-      run_once: true
-
-    - name: Set existing nodes as fact
-      set_fact:
-        existing_nodes_fact: "{{ cluster_nodes_result.stdout.split() }}"
-
-    - name: Print existing nodes
-      debug:
-        msg: "Nodes in cluster: {{ existing_nodes_fact }}"
-      run_once: true
+    - name: Gather cluster facts
+      include_tasks: tasks/tasks-gather-cluster-facts.yaml
 
     # =========================================================================
     # GENERATE CERTIFICATE KEY AND JOIN COMMAND
@@ -95,13 +85,13 @@
       file:
         path: /etc/kubernetes/pki
         state: directory
-        mode: '0755'
+        mode: "0755"
 
     - name: Copy encryption config to joining manager
       copy:
         dest: "{{ etcd_encryption_config_path }}"
         content: "{{ encryption_config_content.content | b64decode }}"
-        mode: '0600'
+        mode: "0600"
 
     - name: Print encryption config status
       debug:
@@ -129,7 +119,7 @@
       copy:
         dest: "{{ vault_creds_host_path }}"
         content: "{{ vault_creds_content.content | b64decode }}"
-        mode: '0600'
+        mode: "0600"
         owner: root
         group: root
       when: vault_creds_check.stat.exists
@@ -141,14 +131,10 @@
     # =========================================================================
     # JOIN MANAGER
     # =========================================================================
-    - name: Check if already joined
-      set_fact:
-        is_already_joined_fact: "{{ new_hostname in existing_nodes_fact }}"
-
     - name: Skip if already joined
       debug:
         msg: "{{ new_hostname }} is already in cluster - skipping"
-      when: is_already_joined_fact
+      when: is_node_joined
 
     - name: Join cluster as control-plane
       command: >-
@@ -156,20 +142,20 @@
         --apiserver-advertise-address {{ api_server_advertise_address }}
         --apiserver-bind-port {{ api_server_bind_port }}
       register: join_result
-      when: not is_already_joined_fact
+      when: not is_node_joined
 
     - name: Print join result
       debug:
         msg: "{{ join_result.stdout_lines }}"
-      when: not is_already_joined_fact and join_result.stdout_lines is defined
+      when: not is_node_joined and join_result.stdout_lines is defined
 
     # =========================================================================
     # VERIFY KUBELET
     # =========================================================================
     - name: Wait for kubelet
       pause:
-        seconds: 15
-      when: not is_already_joined_fact
+        seconds: 10
+      when: not is_node_joined
 
     - name: Check kubelet status
       command: systemctl is-active kubelet
@@ -245,7 +231,7 @@
     # =========================================================================
     - name: Wait for node registration
       pause:
-        seconds: 5
+        seconds: 10
       run_once: true
 
     - name: Get cluster nodes

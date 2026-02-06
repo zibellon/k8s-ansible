@@ -27,29 +27,18 @@
       include_tasks: tasks/tasks-pre-check-limit.yaml
 
     # =========================================================================
-    # FIND MASTER MANAGER
+    # GATHER CLUSTER FACTS
     # =========================================================================
-    - name: Find master manager
-      include_tasks: tasks/tasks-find-master-manager.yaml
+    - name: Gather cluster facts
+      include_tasks: tasks/tasks-gather-cluster-facts.yaml
 
     # =========================================================================
-    # PRE-CHECK: Verify node exists and is Ready
+    # PRE-CHECK: Verify node is joined
     # =========================================================================
-    - name: Check node status
-      command: kubectl get node {{ new_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-      delegate_to: "{{ master_manager_fact }}"
-      register: node_status
-      changed_when: false
-      failed_when: false
-
-    - name: Fail if node not found
+    - name: Fail if node not in cluster
       fail:
-        msg: "Node {{ new_hostname }} not found in cluster!"
-      when: node_status.rc != 0
-
-    - name: Show node status
-      debug:
-        msg: "Node {{ new_hostname }} Ready: {{ node_status.stdout }}"
+        msg: "Node {{ new_hostname }} not found in cluster"
+      when: not is_node_joined
 
     # =========================================================================
     # CORDON: Disable scheduling on node

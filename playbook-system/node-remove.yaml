@@ -15,32 +15,16 @@
 
   tasks:
     - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check-limit.yaml
+
+    - name: "[pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check-worker.yaml
 
     # =========================================================================
-    # FIND MASTER MANAGER
+    # GATHER CLUSTER FACTS
     # =========================================================================
-    - name: Find master manager
-      include_tasks: tasks/tasks-find-master-manager.yaml
-
-    # =========================================================================
-    # CHECK IF NODE EXISTS
-    # =========================================================================
-    - name: Get cluster nodes
-      command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
-      delegate_to: "{{ master_manager_fact }}"
-      register: cluster_nodes_result
-      changed_when: false
-      run_once: true
-
-    - name: Set is_node_exists fact
-      set_fact:
-        is_node_exists: "{{ new_hostname in cluster_nodes_result.stdout.split() }}"
-
-    - name: Skip if node not in cluster
-      debug:
-        msg: "{{ new_hostname }} is NOT in cluster - skipping delete"
-      when: not is_node_exists
+    - name: Gather cluster facts
+      include_tasks: tasks/tasks-gather-cluster-facts.yaml
 
     # =========================================================================
     # DELETE NODE
@@ -49,13 +33,13 @@
       command: kubectl delete node {{ new_hostname }}
       delegate_to: "{{ master_manager_fact }}"
       register: delete_result
-      when: is_node_exists
+      when: is_node_joined
       run_once: true
 
     - name: Print delete result
       debug:
         msg: "{{ delete_result.stdout }}"
-      when: is_node_exists and delete_result.stdout is defined
+      when: is_node_joined and delete_result.stdout is defined
       run_once: true
 
     # =========================================================================

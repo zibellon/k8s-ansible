@@ -2,43 +2,70 @@
 # Check if nodes are joined to Kubernetes cluster
 # =============================================================================
 # Sets fact: joined_node_ips (list of IPs of joined nodes)
+# Sets fact: joined_node_hostnames (list of hostnames of joined nodes)
 # Sets fact: is_node_joined (true/false for current host)
 #
-# Used by:
-#   - haproxy-apiserver-lb-update.yaml (update config on joined nodes only)
-#   - apiserver-sans-update.yaml (update SANS on joined managers only)
+# Requires: master_manager_fact, is_cluster_init (from previous tasks)
 #
 # Detection: kubectl get nodes on master_manager
 # Compares internal_ip with INTERNAL-IP from cluster
 # =============================================================================
 
-# Find master_manager
-- name: Find master manager
-  include_tasks: tasks/tasks-find-master-manager.yaml
+# Early return: cluster not initialized = no nodes joined
+- name: Set is_node_joined=false (cluster not initialized)
+  set_fact:
+    joined_node_ips: []
+    joined_node_hostnames: []
+    is_node_joined: false
+  when: not is_cluster_init
 
-# Get nodes from cluster (delegate_to master_manager)
+# Get node IPs from cluster (delegate_to master_manager)
 - name: Get cluster nodes with IPs
   command: >-
     kubectl get nodes
     -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
   delegate_to: "{{ master_manager_fact }}"
-  register: cluster_nodes_result
+  register: cluster_nodes_ips_result
   changed_when: false
+  when: is_cluster_init
+
+# Get node hostnames from cluster
+- name: Get cluster nodes with hostnames
+  command: >-
+    kubectl get nodes
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+  delegate_to: "{{ master_manager_fact }}"
+  register: cluster_nodes_hostnames_result
+  changed_when: false
+  when: is_cluster_init
 
 # Build list of joined IPs
 - name: Set joined_node_ips fact
   set_fact:
-    joined_node_ips: "{{ cluster_nodes_result.stdout_lines | select | list }}"
+    joined_node_ips: "{{ cluster_nodes_ips_result.stdout_lines | select | list }}"
+  when: is_cluster_init
+
+# Build list of joined hostnames
+- name: Set joined_node_hostnames fact
+  set_fact:
+    joined_node_hostnames: "{{ cluster_nodes_hostnames_result.stdout_lines | select | list }}"
+  when: is_cluster_init
 
 - name: Print joined node IPs
   debug:
     msg: "Joined node IPs: {{ joined_node_ips }}"
   run_once: true
 
+- name: Print joined node hostnames
+  debug:
+    msg: "Joined node hostnames: {{ joined_node_hostnames }}"
+  run_once: true
+
 # Each host checks itself (NO run_once - runs on each host)
 - name: Set is_node_joined fact for each host
   set_fact:
     is_node_joined: "{{ internal_ip in joined_node_ips }}"
+  when: is_cluster_init
 
 - name: Print node join status
   debug:
