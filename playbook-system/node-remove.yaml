@@ -15,16 +15,25 @@
 
   tasks:
     - name: "[pre-check] Validate target"
-      include_tasks: tasks/tasks-pre-check-limit.yaml
+      include_tasks: tasks/tasks-require-limit.yaml
 
     - name: "[pre-check] Validate target"
-      include_tasks: tasks/tasks-pre-check-worker.yaml
+      include_tasks: tasks/tasks-require-worker.yaml
 
     # =========================================================================
     # GATHER CLUSTER FACTS
     # =========================================================================
     - name: Gather cluster facts
       include_tasks: tasks/tasks-gather-cluster-facts.yaml
+
+    # =========================================================================
+    # PRE-CHECK: Prevent removing master manager
+    # =========================================================================
+    - name: Fail if trying to remove master manager node
+      fail:
+        msg: "ERROR: Cannot remove master manager node ({{ master_manager_fact }}). This node manages the cluster."
+      when: new_hostname == master_manager_fact
+      run_once: true
 
     # =========================================================================
     # DELETE NODE
