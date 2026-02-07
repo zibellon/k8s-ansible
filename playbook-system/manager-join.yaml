@@ -34,7 +34,6 @@
       delegate_to: "{{ master_manager_fact }}"
       register: cert_key_result
       changed_when: false
-      run_once: true
 
     - name: Set certificate-key as fact
       set_fact:
@@ -46,12 +45,10 @@
         --certificate-key {{ certificate_key_fact }}
       delegate_to: "{{ master_manager_fact }}"
       changed_when: false
-      run_once: true
 
     - name: Print certificate-key
       debug:
         msg: "Certificate key: {{ certificate_key_fact }}"
-      run_once: true
 
     - name: Generate join command
       command: >-
@@ -60,7 +57,6 @@
       delegate_to: "{{ master_manager_fact }}"
       register: join_command_result
       changed_when: false
-      run_once: true
 
     - name: Set join command as fact
       set_fact:
@@ -69,7 +65,6 @@
     - name: Print join command
       debug:
         msg: "{{ kubeadm_join_command_fact }}"
-      run_once: true
 
     # =========================================================================
     # COPY ENCRYPTION CONFIG
@@ -79,7 +74,6 @@
         src: "{{ etcd_encryption_config_path }}"
       delegate_to: "{{ master_manager_fact }}"
       register: encryption_config_content
-      run_once: true
 
     - name: Ensure PKI directory exists
       file:
@@ -105,14 +99,12 @@
         path: "{{ vault_creds_host_path }}"
       delegate_to: "{{ master_manager_fact }}"
       register: vault_creds_check
-      run_once: true
 
     - name: Fetch Vault credentials from master manager
       slurp:
         src: "{{ vault_creds_host_path }}"
       delegate_to: "{{ master_manager_fact }}"
       register: vault_creds_content
-      run_once: true
       when: vault_creds_check.stat.exists
 
     - name: Copy Vault credentials to joining manager
@@ -131,11 +123,6 @@
     # =========================================================================
     # JOIN MANAGER
     # =========================================================================
-    - name: Skip if already joined
-      debug:
-        msg: "{{ new_hostname }} is already in cluster - skipping"
-      when: is_node_joined
-
     - name: Join cluster as control-plane
       command: >-
         {{ kubeadm_join_command_fact }}
@@ -232,18 +219,15 @@
     - name: Wait for node registration
       pause:
         seconds: 10
-      run_once: true
 
     - name: Get cluster nodes
       command: kubectl get nodes -o wide
       delegate_to: "{{ master_manager_fact }}"
       register: final_nodes_result
       changed_when: false
-      run_once: true
 
     - name: Print cluster status
       debug:
         msg:
           - "=== Cluster Nodes ==="
           - "{{ final_nodes_result.stdout_lines }}"
-      run_once: true

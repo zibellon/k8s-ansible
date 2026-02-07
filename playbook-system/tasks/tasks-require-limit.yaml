@@ -1,18 +1,24 @@
 # =============================================================================
-# Pre-check: validate --limit is specified
+# Pre-check: validate --limit is specified and targets exactly ONE host
 # =============================================================================
 # Shared tasks for validating playbook target
 #
-# Used by playbooks that can run on any node
+# Used by playbooks that must run on a single node
 #
 # Requires:
-#   - Run with --limit <node>
+#   - Run with --limit <node> (exactly one host)
 # =============================================================================
 
 - name: Fail if no limit specified
   fail:
     msg: "ERROR: --limit required. Use: ansible-playbook -i hosts.yaml <playbook> --limit <node>"
   when: ansible_limit is not defined
+  run_once: true
+
+- name: Fail if more than one host targeted
+  fail:
+    msg: "ERROR: --limit must target exactly ONE host. Current targets: {{ ansible_play_hosts | join(', ') }}"
+  when: ansible_play_hosts | length > 1
   run_once: true
 
 - name: Confirm target
