@@ -1,0 +1,58 @@
+# =============================================================================
+# Install/Update Cilium POST configuration (CiliumClusterwideNetworkPolicy)
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-app/cilium-post-install.yaml
+#
+# This playbook only installs the post chart (charts/cilium/post):
+#   - CiliumClusterwideNetworkPolicy for host protection
+#
+# Use this when you need to update network policies without
+# reinstalling Cilium itself (e.g. after adding/removing nodes).
+#
+# For full Cilium installation use: cilium-install.yaml
+# =============================================================================
+
+---
+- name: Install/Update Cilium POST configuration
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+
+    # =========================================================================
+    # CILIUM-POST (CiliumClusterwideNetworkPolicy)
+    # =========================================================================
+
+    - name: Install cilium-post
+      include_tasks: tasks/tasks-cilium-post-install.yaml
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: Get Cilium Helm releases
+      command: helm list -n {{ cilium_namespace }}
+      register: helm_list
+      changed_when: false
+
+    - name: Print Helm releases
+      debug:
+        msg: "{{ helm_list.stdout_lines }}"
+
+    - name: Get CiliumClusterwideNetworkPolicy status
+      command: kubectl get ciliumclusterwidenetworkpolicies -n {{ cilium_namespace }}
+      register: ccnp_status
+      changed_when: false
+      failed_when: false
+
+    - name: Print CiliumClusterwideNetworkPolicy status
+      debug:
+        msg: "{{ ccnp_status.stdout_lines }}"
+
+    - name: Installation complete
+      debug:
+        msg: "cilium-post: OK"

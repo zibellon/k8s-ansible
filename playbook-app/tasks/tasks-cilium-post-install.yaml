@@ -1,0 +1,47 @@
+# =============================================================================
+# Cilium POST: CiliumClusterwideNetworkPolicy
+# =============================================================================
+# Copies post chart, generates values with all node IPs, installs via Helm.
+#
+# Requires (from hosts.yaml):
+#   - remote_charts_dir
+#   - cilium_namespace
+#   - cilium_post_config_helm_timeout
+# =============================================================================
+
+- name: "[cilium-post] Copy chart to server"
+  include_tasks: tasks/tasks-copy-chart.yaml
+  vars:
+    label_name: "cilium-post"
+    chart_name: "post"
+    chart_local_src: "{{ playbook_dir }}/charts/cilium/post/"
+    chart_remote_dest: "{{ remote_charts_dir }}/cilium/post"
+
+- name: "[cilium-post] Create values file"
+  copy:
+    dest: "{{ remote_charts_dir }}/cilium/post/values-override.yaml"
+    mode: "0644"
+    content: |
+      nodeIps: {{
+        (
+          (groups['managers'] + groups['workers'])
+          | map('extract', hostvars, 'ansible_host')
+          | map('regex_replace', '$', '/32')
+          | list
+          +
+          (groups['managers'] + groups['workers'])
+          | map('extract', hostvars, 'internal_ip')
+          | map('regex_replace', '$', '/32')
+          | list
+        ) | to_json }}
+
+- name: "[cilium-post] Install or upgrade via Helm"
+  command: >
+    helm upgrade --install cilium-post {{ remote_charts_dir }}/cilium/post
+    --namespace {{ cilium_namespace }}
+    --values {{ remote_charts_dir }}/cilium/post/values-override.yaml
+    --cleanup-on-fail
+    --atomic
+    --wait
+    --wait-for-jobs
+    --timeout {{ cilium_post_config_helm_timeout }}
