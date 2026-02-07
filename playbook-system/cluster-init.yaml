@@ -15,6 +15,12 @@
   gather_facts: false
 
   tasks:
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-require-limit.yaml
+
+    - name: "[pre-check] Validate target"
+      include_tasks: tasks/tasks-require-manager.yaml
+
     - name: Gather cluster facts
       include_tasks: tasks/tasks-gather-cluster-facts.yaml
 
@@ -103,52 +109,20 @@
         # =====================================================================
         # REMOVE CONTROL-PLANE TAINT (optional)
         # =====================================================================
-        - name: Remove NoSchedule taint from control-plane
-          command: >-
-            kubectl taint nodes {{ new_hostname }}
-            node-role.kubernetes.io/control-plane:NoSchedule-
-          register: untaint_result
-          failed_when: false
-
-        - name: Assert taint removal result
-          assert:
-            that:
-              - untaint_result.rc == 0 or 'not found' in untaint_result.stderr
-            fail_msg: "Failed to remove taint: {{ untaint_result.stderr }}"
-            success_msg: >-
-              {{ new_hostname }}: {{ 'Taint removed' if untaint_result.rc == 0 else 'Taint not exist' }}
+        - name: Remove control-plane taint
+          include_tasks: tasks/tasks-untaint-control-plane.yaml
 
         # =====================================================================
         # APPLY NODE LABELS
         # =====================================================================
         - name: Apply node labels
-          command: "kubectl label nodes {{ new_hostname }} {{ item }} --overwrite"
-          loop: "{{ node_labels | default([]) }}"
-          when: node_labels is defined and node_labels | length > 0
-          register: label_result
-          failed_when: false
-
-        - name: Print applied labels
-          debug:
-            msg: "Applied labels to {{ new_hostname }}: {{ node_labels }}"
-          when: node_labels is defined and node_labels | length > 0
+          include_tasks: tasks/tasks-apply-node-labels.yaml
 
         # =====================================================================
         # APPLY LONGHORN DEFAULT NODE TAGS
         # =====================================================================
-        - name: Apply Longhorn default node tags annotation
-          command: >-
-            kubectl annotate nodes {{ new_hostname }}
-            node.longhorn.io/default-node-tags='{{ longhorn_default_tags | to_json }}'
-            --overwrite
-          when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
-          register: longhorn_tags_result
-          failed_when: false
-
-        - name: Print applied Longhorn tags
-          debug:
-            msg: "Applied Longhorn tags to {{ new_hostname }}: {{ longhorn_default_tags }}"
-          when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
+        - name: Apply Longhorn default node tags
+          include_tasks: tasks/tasks-apply-longhorn-tags.yaml
 
         # =====================================================================
         # VERIFICATION

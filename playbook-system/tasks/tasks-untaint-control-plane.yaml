@@ -1,0 +1,24 @@
+# =============================================================================
+# Remove NoSchedule taint from control-plane node
+# =============================================================================
+# Requires:
+#   - new_hostname
+# Optional:
+#   - kubectl_delegate_host (if kubectl runs on another host)
+# =============================================================================
+
+- name: Remove NoSchedule taint from control-plane
+  command: >-
+    kubectl taint nodes {{ new_hostname }}
+    node-role.kubernetes.io/control-plane:NoSchedule-
+  delegate_to: "{{ kubectl_delegate_host | default(omit) }}"
+  register: untaint_result
+  failed_when: false
+
+- name: Assert taint removal result
+  assert:
+    that:
+      - untaint_result.rc == 0 or 'not found' in untaint_result.stderr
+    fail_msg: "Failed to remove taint: {{ untaint_result.stderr }}"
+    success_msg: >-
+      {{ new_hostname }}: {{ 'Taint removed' if untaint_result.rc == 0 else 'Taint not exist' }}

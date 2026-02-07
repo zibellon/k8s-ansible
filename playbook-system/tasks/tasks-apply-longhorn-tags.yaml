@@ -1,0 +1,24 @@
+# =============================================================================
+# Apply Longhorn default node tags annotation
+# =============================================================================
+# Requires:
+#   - new_hostname
+#   - longhorn_default_tags (optional, list of tags)
+# Optional:
+#   - kubectl_delegate_host (if kubectl runs on another host)
+# =============================================================================
+
+- name: Apply Longhorn default node tags annotation
+  command: >-
+    kubectl annotate nodes {{ new_hostname }}
+    node.longhorn.io/default-node-tags='{{ longhorn_default_tags | to_json }}'
+    --overwrite
+  delegate_to: "{{ kubectl_delegate_host | default(omit) }}"
+  when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
+  register: longhorn_tags_result
+  failed_when: false
+
+- name: Print applied Longhorn tags
+  debug:
+    msg: "Applied Longhorn tags to {{ new_hostname }}: {{ longhorn_default_tags }}"
+  when: longhorn_default_tags is defined and longhorn_default_tags | length > 0
