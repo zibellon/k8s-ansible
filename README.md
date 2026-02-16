@@ -1,8 +1,16 @@
+# Что тут есть
+1. Есть playbooks которые запускаются ДО ИНИЦИАЛИЗАЦИИ кластера, а есть  которые СТРОГО_ПОСЛЕ инициализации
+   1. Пример до: cluster-init.yaml
+   2. Пример после: manager-join.yaml, worker-join.yaml, etcd-key-rotate.yaml
+
+
+
+
 # Подготовка к конфигураци
 ## Выполнить команду: `ansible-playbook -i hosts.yaml node-info.yaml`
 
 # Подготовка_1
-## Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx)
+## Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx | eth_xxx)
 1. ip addr show
 2. Пример вывода - ниже
 3. Надо достать ip адрес. В данном случае: `10.129.0.27`
@@ -26,12 +34,12 @@
 ## его надо будет разрешить в `cilium-host-firewall`, чтобы можно было делать join
 ## есть два варианта
 1. сначала ВСЕ join -> потом install cilium
-   1. При таком сценарии проблем нет
+   1. При таком сценарии - проблем нет
    2. cluster-init
    3. worker/manager join
    4. install cilium + cilium-host-firewall
    5. Все node уже внутри кластера и Cilium про них знает
-2. install cilium -> потом join
+2. cluster-init -> install cilium -> потом join
    1. install cilium + cilium-host-firewall
    2. Входящий трафик разрешается только от известных источников (внутри кластера, cilium.entities)
    3. Пока Node не добавлена в кластер = cilium видит ее как world (внешний мир)
@@ -39,8 +47,8 @@
    5. при выполнении команды JOIN - timeout. Так как Node не может подключиться к кластеру
    6. Как решать
    7. Добавить новый сервер в hosts.yaml
-   8. Обновить cilium-host-firewall. Вызвать `hosts.yaml playbook-app/cilium-install.yaml`
-   9. Это автоматически добавит в cilium-host-firewall новые ip адреса и обновит политику на сервере
+   8. Обновить cilium-host-firewall. Вызвать `ansible-playbook -i hosts.yaml playbook-app/cilium-post-install.yaml --limit k8s-manager-1`
+   9.  Это автоматически добавит в cilium-host-firewall новые ip адреса и обновит политику на сервере
    10. После этого сделать: `... join ...`
 
 # Конфигурация файла hosts.yaml
@@ -53,22 +61,26 @@
 
 # Важно про `namespace`
 ## Сменить namespace МОЖНО для любых компонентов
-## Сменить namespace НЕЛЬЗЯ для. Так указано в официальной документации
+## Сменить namespace НЕЛЬЗЯ для некоторых компонентов. Так указано в официальной документации
 - olm
 - longhorn-system
 - argocd
 
 # Первичная инициализация кластера
-1. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
+1. `ansible-playbook -i hosts.yaml node-install.yaml`
    1. Инициализация ноды
+   2. Если вызывать без `--limit` - инициализация производится на всех Node сразу
+   3. Если вызвать с `--limit` - инициализация произойдет только на указанной node
+   4. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
 2. `ansible-playbook -i hosts.yaml playbook-system/cluster-init.yaml --limit k8s-manager-1`
    1. Инициализация кластера. Именно команда: `kubeadm init ...`
+   2. `--limit` - обязательно надо указывать
 
 # Присоединение worker-node
 1. Добавить в hosts.yaml нового worker
 2. Если уже был установлен Cilium - то был включен Firewall, и просто так добавить новую Node нельзя
    1. Сначала нужно обновить правила Firewall
-   2. `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
+   2. `ansible-playbook -i hosts.yaml playbook-app/cilium-post-install.yaml --limit k8s-manager-1`
    3. Это обновит правила firewall (CiliumClusterwideNetworkPolicy)
 3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
    1. Инициализация ноды
@@ -79,14 +91,20 @@
 1. Добавить в hosts.yaml нового manager
 2. Если уже был установлен Cilium - то был включен Firewall, и просто так добавить новую Node нельзя
    1. Сначала нужно обновить правила Firewall
-   2. `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
+   2. `ansible-playbook -i hosts.yaml playbook-app/cilium-post-install.yaml --limit k8s-manager-1`
    3. Это обновит правила firewall (CiliumClusterwideNetworkPolicy)
 3. `ansible-playbook -i hosts.yaml playbook-system/apiserver-sans-update.yaml`
-   1. Эта процедура - обновит CANS в сертификатах для api-server (добавит туда нового manager-ip)
+   1. Это обновит CANS в сертификатах для api-server (добавит туда нового manager-ip)
+   2. Вызывать нужно БЕЗ `--limit`. Конфиг - нужно обновить на ВСЕХ текущих managers
+   3. Обновит - только текущие managers
+   4. Перезапуск api-server - производится последовательно, для каждого managers
 4. `ansible-playbook -i hosts.yaml playbook-system/haproxy-apiserver-lb-update.yaml`
    1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
+   2. Обновление производится по одному за раз, через playbook.serial: 1
+   3. То есть: перезапуск производится последовательно, для обеспечения HA доступности
 5. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
    1. Инициализация ноды
+   2. Указываем `--limit` - так как это добавление конкретной Node
 6. `ansible-playbook -i hosts.yaml playbook-system/manager-join.yaml --limit k8s-manager-2`
    1. Загрузка сертификатов в k8s.secrets
    2. получение токена
@@ -99,6 +117,12 @@
    3. Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
    4. Этот процесс спровоцирует полную остановку api-server
 
+# SANS (api-server). Обновление имен (SANS) в сертификатах
+1. `ansible-playbook -i hosts.yaml playbook-system/apiserver-sans-update.yaml`
+   1. На каждой control-plane будет создан новый api-server.crt
+   2. Каждый текущий api-server - будет перезапущен один раз
+   3. Перезапуск - последовательный (по одному за раз)
+
 # Обслуживание сервера (cordon + drain) и возврат в работу
 1. `ansible-playbook -i hosts.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
    1. Вывод ноды на обслуживание
@@ -108,7 +132,7 @@
 # Удаление node
 1. `ansible-playbook -i hosts.yaml playbook-system/node-remove.yaml --limit k8s-worker-4`
    1. Отключение node от кластера
-   2. Перед этим - надо выполнить `ansible-playbook -i hosts.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
+   2. Перед этим надо выполнить `ansible-playbook -i hosts.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
 
 # Очистка сервера, от всех компонентов k8s
 1. `ansible-playbook -i hosts.yaml playbook-system/server-clean.yaml --limit k8s-worker-4`
