@@ -346,3 +346,6 @@ action=snapshotPurge -> Самое важное тут ...
 ## там будет ID реплики
 ## удаляем реплику
 kubectl -n longhorn-system delete replicas.longhorn.io pvc-b8023696-662b-40a1-8838-76e192880e4b-r-7226b9e7
+
+## Как получить список longhorn-nodes
+kubectl -n longhorn-system get nodes.longhorn.io -o wide
