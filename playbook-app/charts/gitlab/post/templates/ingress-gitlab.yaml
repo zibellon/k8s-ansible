@@ -1,3 +1,6 @@
+# =============================================================================
+# CERTIFICATE FOR GITLAB (cert-manager)
+# =============================================================================
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -13,6 +16,10 @@ spec:
     name: {{ .Values.gitlab.clusterIssuer }}
     kind: ClusterIssuer
 ---
+# =============================================================================
+# INGRESS FOR GITLAB (Traefik)
+# Routes: gitlab, registry, pages -> official GitLab Helm chart services
+# =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -34,6 +41,7 @@ spec:
         - {{ .Values.gitlab.pagesDomain }}
       secretName: {{ .Values.gitlab.secretName }}
   rules:
+    # GitLab main UI and API
     - host: {{ .Values.gitlab.domain }}
       http:
         paths:
@@ -41,9 +49,10 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: svc-gitlab
+                name: gitlab-webservice-default
                 port:
-                  number: 80
+                  number: 8181
+    # Container Registry
     - host: {{ .Values.gitlab.registryDomain }}
       http:
         paths:
@@ -51,9 +60,10 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: svc-gitlab
+                name: gitlab-registry
                 port:
-                  number: 81
+                  number: 5000
+    # GitLab Pages
     - host: {{ .Values.gitlab.pagesDomain }}
       http:
         paths:
@@ -61,6 +71,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: svc-gitlab
+                name: gitlab-gitlab-pages
                 port:
-                  number: 82
+                  number: 8090

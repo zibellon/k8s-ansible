@@ -1,3 +1,6 @@
+# =============================================================================
+# CERTIFICATE FOR MINIO (cert-manager)
+# =============================================================================
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -6,16 +9,19 @@ metadata:
 spec:
   secretName: {{ .Values.minio.secretName }}
   dnsNames:
-    - {{ .Values.minio.domain }}
+    - {{ .Values.minio.consoleDomain }}
     - {{ .Values.minio.apiDomain }}
   issuerRef:
     name: {{ .Values.minio.clusterIssuer }}
     kind: ClusterIssuer
 ---
+# =============================================================================
+# INGRESS FOR MINIO (Console + API)
+# =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-gitlab-minio-https
+  name: ingress-gitlab-minio
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
@@ -28,11 +34,12 @@ spec:
   ingressClassName: {{ .Values.minio.ingressClass }}
   tls:
     - hosts:
-        - {{ .Values.minio.domain }}
+        - {{ .Values.minio.consoleDomain }}
         - {{ .Values.minio.apiDomain }}
       secretName: {{ .Values.minio.secretName }}
   rules:
-    - host: {{ .Values.minio.domain }}
+    # MinIO Console (UI)
+    - host: {{ .Values.minio.consoleDomain }}
       http:
         paths:
           - path: /
@@ -42,6 +49,7 @@ spec:
                 name: svc-gitlab-minio
                 port:
                   number: 9001
+    # MinIO API (S3)
     - host: {{ .Values.minio.apiDomain }}
       http:
         paths:

@@ -458,9 +458,9 @@ all:
             capabilities: [read, list]
 
       # ---------
-      # GitLab V2 (all secrets: postgresql, redis, minio, gitlab root)
+      # GitLab (all secrets: postgresql, redis, minio, gitlab root)
       # ---------
-      - name: eso-gitlab-v2-read
+      - name: eso-gitlab-read
         paths:
           - path: secret/data/ns-gitlab/*
             capabilities: [read, list]
@@ -527,143 +527,74 @@ all:
           - eso-gitlab-minio-read
 
       # ---------
-      # GitLab V2
+      # GitLab
       # ---------
-      - name: eso-gitlab-v2
+      - name: eso-gitlab
         namespace: ns-gitlab
-        sa_name: eso-gitlab-v2
+        sa_name: eso-gitlab
         policies:
-          - eso-gitlab-v2-read
+          - eso-gitlab-read
 
     # ------
-    # GitLab MinIO
-    # ------
-    gitlab_minio_image: "minio/minio:RELEASE.2025-04-22T22-12-26Z"
-    gitlab_minio_storage_size: "2Gi"
-    gitlab_minio_domain: "gitlab-minio-k8s-v2.drawapp.ru"
-    gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
-    gitlab_minio_https_secret_name: "cert-gitlab-minio-domain-com"
-    gitlab_minio_root_user: "admin"
-    gitlab_minio_storage_class: "lh-major-single-best-effort"
-    gitlab_minio_vpn_only_enabled: false
-    gitlab_minio_service_url: "http://svc-gitlab-minio.ns-gitlab.svc.cluster.local:9000"
-    # GitLab MinIO ESO integration
-    # NOTE: Before running playbook, create secrets in Vault with bucket_name field:
-    #   - ns-gitlab/gitlab-minio/registry: bucket_name=registry
-    #   - ns-gitlab/gitlab-minio/runner-cache: bucket_name=runner-cache
-    gitlab_minio_eso:
-      sa_name: "eso-gitlab-minio" # From vault_roles list below
-      role_name: "eso-gitlab-minio" # From vault_roles list below
-      secret_store_name: "eso-vault-gitlab-minio"
-      kv_engine_path: "secret"
-      secrets:
-        - external_secret_name: "eso-gitlab-minio-root-user"
-          target_secret_name: "eso-gitlab-minio-root-user"
-          vault_path: "/ns-gitlab/gitlab-minio/root-user"
-          refresh_interval: "1m"
-          type: "MASTER"
-        - external_secret_name: "eso-gitlab-minio-registry"
-          target_secret_name: "eso-gitlab-minio-registry"
-          vault_path: "/ns-gitlab/gitlab-minio/registry"
-          refresh_interval: "1m"
-          type: "REGISTRY"
-        - external_secret_name: "eso-gitlab-minio-runner-cache"
-          target_secret_name: "eso-gitlab-minio-runner-cache"
-          vault_path: "/ns-gitlab/gitlab-minio/runner-cache"
-          refresh_interval: "1m"
-          type: "RUNNER_CACHE"
-
-    # ------
-    # GitLab
+    # GitLab (Production Helm)
     # ------
     gitlab_namespace: "ns-gitlab"
-    gitlab_image: "gitlab/gitlab-ce:16.11.10-ce.0"
-    gitlab_domain: "gitlab-k8s.domain.com"
-    gitlab_registry_domain: "gitlab-registry-k8s.domain.com"
-    gitlab_pages_domain: "gitlab-pages-k8s.domain.com"
-    gitlab_https_secret_name: "cert-gitlab-domain-com"
-    gitlab_vpn_only_enabled: false
+    gitlab_chart_version: "8.11.8"  # GitLab 17.11
+    # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
+    # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
+    gitlab_base_domain: "gitlab-k8s-v2.drawapp.ru"
+    gitlab_domain: "gitlab-k8s-v2.drawapp.ru"
+    gitlab_registry_domain: "gitlab-registry-k8s-v2.drawapp.ru"
+    gitlab_pages_domain: "gitlab-pages-k8s-v2.drawapp.ru"
+    gitlab_minio_console_domain: "gitlab-minio-k8s-v2.drawapp.ru"
+    gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
+    gitlab_minio_secret_name: "cert-gitlab-minio-domain-com"
     gitlab_ssh_port_external: 3714
-    gitlab_storage_class: "lh-major-multi-best-effort"
-    gitlab_storage_class_logs: "lh-major-worker-multi-best-effort"
-    gitlab_storage_config_size: "1Gi"
-    gitlab_storage_data_size: "20Gi"
-    gitlab_storage_logs_size: "5Gi"
-    gitlab_resources_requests_memory: "2G"
-    gitlab_resources_limits_memory: "3G"
+
+    # GitLab Ingress settings (custom ingress via post chart)
+    gitlab_https_secret_name: "cert-gitlab-v2-domain-com"
+    gitlab_vpn_only_enabled: false
+
+    # GitLab PostgreSQL
+    gitlab_postgresql_image: "postgres:16-alpine"
+    gitlab_postgresql_storage_class: "lh-major-multi-best-effort"
+    gitlab_postgresql_storage_size: "4Gi"
+
+    # GitLab Redis
+    gitlab_redis_image: "redis/redis-stack-server:latest"
+    gitlab_redis_storage_class: "lh-major-single-best-effort"
+    gitlab_redis_storage_size: "1Gi"
+
+    # GitLab MinIO
+    gitlab_minio_image: "minio/minio:latest"
+    gitlab_minio_root_user: "admin"
+    gitlab_minio_storage_class: "lh-major-single-best-effort"
+    gitlab_minio_storage_size: "2Gi"
+
+    # GitLab MinIO S3 connection settings (used by ESO template for gitlab_minio_connection secret)
+    gitlab_minio_s3_endpoint: "http://svc-gitlab-minio:9000"
+    gitlab_minio_s3_region: "us-east-1"
+    gitlab_minio_s3_path_style: true
+
+    # GitLab Webservice
+    gitlab_webservice_memory_request: "2Gi"
+    gitlab_webservice_cpu_request: "250m"
+    gitlab_webservice_memory_limit: "4Gi"
+
+    # GitLab Sidekiq
+    gitlab_sidekiq_memory_request: "1Gi"
+    gitlab_sidekiq_cpu_request: "250m"
+    gitlab_sidekiq_memory_limit: "3Gi"
+
+    # GitLab Gitaly
+    gitlab_gitaly_storage_size: "4Gi"
+    gitlab_gitaly_storage_class: "lh-major-single-best-effort"
+
     # GitLab ESO integration
     gitlab_eso:
       sa_name: "eso-gitlab"
       role_name: "eso-gitlab"
       secret_store_name: "eso-vault-gitlab"
-      kv_engine_path: "secret"
-      secrets:
-        - external_secret_name: "eso-gitlab-root-user"
-          target_secret_name: "eso-gitlab-root-user"
-          vault_path: "/ns-gitlab/gitlab/root-user"
-          refresh_interval: "1m"
-          type: "MASTER"
-
-    # ------
-    # GitLab V2 (Production Helm)
-    # ------
-    gitlab_v2_namespace: "ns-gitlab"
-    gitlab_v2_chart_version: "8.11.8"  # GitLab 17.11
-    # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
-    # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
-    gitlab_v2_base_domain: "gitlab-k8s-v2.drawapp.ru"
-    gitlab_v2_domain: "gitlab-k8s-v2.drawapp.ru"
-    gitlab_v2_registry_domain: "gitlab-registry-k8s-v2.drawapp.ru"
-    gitlab_v2_pages_domain: "gitlab-pages-k8s-v2.drawapp.ru"
-    gitlab_v2_minio_console_domain: "gitlab-minio-k8s-v2.drawapp.ru"
-    gitlab_v2_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
-    gitlab_v2_minio_secret_name: "cert-gitlab-minio-domain-com"
-    gitlab_v2_ssh_port_external: 3714
-
-    # GitLab V2 Ingress settings (custom ingress via post chart)
-    gitlab_v2_https_secret_name: "cert-gitlab-v2-domain-com"
-    gitlab_v2_vpn_only_enabled: false
-
-    # GitLab V2 PostgreSQL
-    gitlab_v2_postgresql_image: "postgres:16-alpine"
-    gitlab_v2_postgresql_storage_class: "lh-major-multi-best-effort"
-    gitlab_v2_postgresql_storage_size: "4Gi"
-
-    # GitLab V2 Redis
-    gitlab_v2_redis_image: "redis/redis-stack-server:latest"
-    gitlab_v2_redis_storage_class: "lh-major-single-best-effort"
-    gitlab_v2_redis_storage_size: "1Gi"
-
-    # GitLab V2 MinIO
-    gitlab_v2_minio_image: "minio/minio:latest"
-    gitlab_v2_minio_root_user: "admin"
-    gitlab_v2_minio_storage_class: "lh-major-single-best-effort"
-    gitlab_v2_minio_storage_size: "2Gi"
-
-    # GitLab V2 MinIO S3 connection settings (used by ESO template for gitlab_minio_connection secret)
-    gitlab_v2_minio_s3_endpoint: "http://svc-gitlab-minio:9000"
-    gitlab_v2_minio_s3_region: "us-east-1"
-    gitlab_v2_minio_s3_path_style: true
-
-    # GitLab V2 Webservice
-    gitlab_v2_webservice_memory_request: "2Gi"
-    gitlab_v2_webservice_cpu_request: "250m"
-    gitlab_v2_webservice_memory_limit: "4Gi"
-
-    # GitLab V2 Sidekiq
-    gitlab_v2_sidekiq_memory_request: "1Gi"
-    gitlab_v2_sidekiq_cpu_request: "250m"
-    gitlab_v2_sidekiq_memory_limit: "3Gi"
-
-    # GitLab V2 Gitaly
-    gitlab_v2_gitaly_storage_size: "4Gi"
-    gitlab_v2_gitaly_storage_class: "lh-major-single-best-effort"
-
-    # GitLab V2 ESO integration
-    gitlab_v2_eso:
-      sa_name: "eso-gitlab-v2"
-      role_name: "eso-gitlab-v2"
-      secret_store_name: "eso-vault-gitlab-v2"
       kv_engine_path: "secret"
       secrets:
         - external_secret_name: "eso-gitlab-postgresql"
@@ -753,15 +684,10 @@ all:
     # Vault
     vault_helm_timeout: "5m"
     vault_config_helm_timeout: "2m"
-    # GitLab MinIO
-    gitlab_minio_helm_timeout: "5m"
     # GitLab
-    gitlab_helm_timeout: "10m"
-    gitlab_config_helm_timeout: "2m"
-    # GitLab V2
-    gitlab_v2_helm_timeout: "15m"
-    gitlab_v2_pre_helm_timeout: "5m"
-    gitlab_v2_storage_helm_timeout: "5m"
+    gitlab_helm_timeout: "15m"
+    gitlab_pre_helm_timeout: "5m"
+    gitlab_storage_helm_timeout: "5m"
     # ArgoCD
     argocd_helm_timeout: "5m"
 
@@ -790,9 +716,7 @@ all:
     gitlab_minio_rollout_timeout: "300s"
     # GitLab
     gitlab_rollout_timeout: "600s"
-    # GitLab V2
-    gitlab_v2_rollout_timeout: "600s"
-    gitlab_v2_storage_rollout_timeout: "300s"
+    gitlab_storage_rollout_timeout: "300s"
     # ArgoCD
     argocd_components_rollout_timeout: "120s"
 

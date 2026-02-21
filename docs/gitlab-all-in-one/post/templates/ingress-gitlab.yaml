@@ -1,6 +1,3 @@
-# =============================================================================
-# CERTIFICATE FOR GITLAB V2 (cert-manager)
-# =============================================================================
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -16,14 +13,10 @@ spec:
     name: {{ .Values.gitlab.clusterIssuer }}
     kind: ClusterIssuer
 ---
-# =============================================================================
-# INGRESS FOR GITLAB V2 (Traefik)
-# Routes: gitlab, registry, pages -> official GitLab Helm chart services
-# =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-gitlab-v2-https
+  name: ingress-gitlab-https
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
@@ -41,7 +34,6 @@ spec:
         - {{ .Values.gitlab.pagesDomain }}
       secretName: {{ .Values.gitlab.secretName }}
   rules:
-    # GitLab main UI and API
     - host: {{ .Values.gitlab.domain }}
       http:
         paths:
@@ -49,10 +41,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: gitlab-webservice-default
+                name: svc-gitlab
                 port:
-                  number: 8181
-    # Container Registry
+                  number: 80
     - host: {{ .Values.gitlab.registryDomain }}
       http:
         paths:
@@ -60,10 +51,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: gitlab-registry
+                name: svc-gitlab
                 port:
-                  number: 5000
-    # GitLab Pages
+                  number: 81
     - host: {{ .Values.gitlab.pagesDomain }}
       http:
         paths:
@@ -71,6 +61,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: gitlab-gitlab-pages
+                name: svc-gitlab
                 port:
-                  number: 8090
+                  number: 82
