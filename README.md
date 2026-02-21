@@ -7,7 +7,7 @@
 
 
 # Подготовка к конфигураци
-## Выполнить команду: `ansible-playbook -i hosts.yaml node-info.yaml`
+## Выполнить команду: `ansible-playbook -i hosts.yaml playbook-system/node-info.yaml`
 
 # Подготовка_1
 ## Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx | eth_xxx)
@@ -67,11 +67,11 @@
 - argocd
 
 # Первичная инициализация кластера
-1. `ansible-playbook -i hosts.yaml node-install.yaml`
+1. `ansible-playbook -i hosts.yaml playbook-system/node-install.yaml`
    1. Инициализация ноды
    2. Если вызывать без `--limit` - инициализация производится на всех Node сразу
    3. Если вызвать с `--limit` - инициализация произойдет только на указанной node
-   4. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-1`
+   4. `ansible-playbook -i hosts.yaml playbook-system/node-install.yaml --limit k8s-manager-1`
 2. `ansible-playbook -i hosts.yaml playbook-system/cluster-init.yaml --limit k8s-manager-1`
    1. Инициализация кластера. Именно команда: `kubeadm init ...`
    2. `--limit` - обязательно надо указывать
@@ -82,7 +82,7 @@
    1. Сначала нужно обновить правила Firewall
    2. `ansible-playbook -i hosts.yaml playbook-app/cilium-post-install.yaml --limit k8s-manager-1`
    3. Это обновит правила firewall (CiliumClusterwideNetworkPolicy)
-3. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-worker-1`
+3. `ansible-playbook -i hosts.yaml playbook-system/node-install.yaml --limit k8s-worker-1`
    1. Инициализация ноды
 4. `ansible-playbook -i hosts.yaml playbook-system/worker-join.yaml --limit k8s-worker-1`
    1. Получение токена и вызов команды `kubeadm join ...`
@@ -102,7 +102,7 @@
    1. Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
    2. Обновление производится по одному за раз, через playbook.serial: 1
    3. То есть: перезапуск производится последовательно, для обеспечения HA доступности
-5. `ansible-playbook -i hosts.yaml node-install.yaml --limit k8s-manager-2`
+5. `ansible-playbook -i hosts.yaml playbook-system/node-install.yaml --limit k8s-manager-2`
    1. Инициализация ноды
    2. Указываем `--limit` - так как это добавление конкретной Node
 6. `ansible-playbook -i hosts.yaml playbook-system/manager-join.yaml --limit k8s-manager-2`
