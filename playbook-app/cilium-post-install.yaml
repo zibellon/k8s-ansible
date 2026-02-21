@@ -27,32 +27,28 @@
     # CILIUM-POST (CiliumClusterwideNetworkPolicy)
     # =========================================================================
 
-    - name: Install cilium-post
+    - name: "[cilium-post-install] Install cilium-post"
       include_tasks: tasks/tasks-cilium-post-install.yaml
 
     # =========================================================================
     # VERIFICATION
     # =========================================================================
 
-    - name: Get Cilium Helm releases
-      command: helm list -n {{ cilium_namespace }}
-      register: helm_list
-      changed_when: false
+    - name: "[cilium-post-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ cilium_namespace }}"
 
-    - name: Print Helm releases
-      debug:
-        msg: "{{ helm_list.stdout_lines }}"
-
-    - name: Get CiliumClusterwideNetworkPolicy status
+    - name: "[cilium-post-verify] Get CiliumClusterwideNetworkPolicy status"
       command: kubectl get ciliumclusterwidenetworkpolicies -n {{ cilium_namespace }}
       register: ccnp_status
       changed_when: false
       failed_when: false
 
-    - name: Print CiliumClusterwideNetworkPolicy status
+    - name: "[cilium-post-verify] Print CiliumClusterwideNetworkPolicy status"
       debug:
         msg: "{{ ccnp_status.stdout_lines }}"
 
-    - name: Installation complete
+    - name: "[cilium-post-verify] Installation complete"
       debug:
         msg: "cilium-post: OK"

@@ -1,0 +1,19 @@
+# =============================================================================
+# Wait for CRDs to be established
+# =============================================================================
+# Params:
+#   - label_name: Label for task names (used in logs)
+#   - crds_list: List of CRD names (with crd/ prefix)
+#   - crds_wait: Dict with timeout, retries, delay (from hosts.yaml)
+# =============================================================================
+
+- name: "[{{ label_name }}] Wait for CRDs to be established"
+  command: >
+    kubectl wait --for=condition=Established
+    {{ crds_list | join(' ') }}
+    --timeout={{ crds_wait.timeout }}
+  register: crds_wait_result
+  until: crds_wait_result.rc == 0
+  retries: "{{ crds_wait.retries }}"
+  delay: "{{ crds_wait.delay }}"
+  changed_when: false

@@ -20,12 +20,6 @@
     # STEP 1: TRAEFIK/PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[traefik-pre] Ensure remote charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
-
     - name: "[traefik-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -228,25 +222,21 @@
     # WAIT FOR TRAEFIK CRDs
     # =========================================================================
 
-    - name: "[traefik-install] Wait for CRDs to be established"
-      command: >
-        kubectl wait --for=condition=Established
-        crd/ingressroutes.traefik.io
-        crd/ingressroutetcps.traefik.io
-        crd/ingressrouteudps.traefik.io
-        crd/middlewares.traefik.io
-        crd/middlewaretcps.traefik.io
-        crd/serverstransports.traefik.io
-        crd/serverstransporttcps.traefik.io
-        crd/tlsoptions.traefik.io
-        crd/tlsstores.traefik.io
-        crd/traefikservices.traefik.io
-        --timeout={{ crds_wait.timeout }}
-      register: traefik_crds_wait
-      until: traefik_crds_wait.rc == 0
-      retries: "{{ crds_wait.retries }}"
-      delay: "{{ crds_wait.delay }}"
-      changed_when: false
+    - name: "[traefik-install] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "traefik-install"
+        crds_list:
+          - crd/ingressroutes.traefik.io
+          - crd/ingressroutetcps.traefik.io
+          - crd/ingressrouteudps.traefik.io
+          - crd/middlewares.traefik.io
+          - crd/middlewaretcps.traefik.io
+          - crd/serverstransports.traefik.io
+          - crd/serverstransporttcps.traefik.io
+          - crd/tlsoptions.traefik.io
+          - crd/tlsstores.traefik.io
+          - crd/traefikservices.traefik.io
 
     # =========================================================================
     # WAIT FOR TRAEFIK TO BE READY
@@ -300,14 +290,10 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Get Traefik Helm releases
-      command: helm list -n {{ traefik_namespace }}
-      register: helm_list
-      changed_when: false
-
-    - name: Print Helm releases
-      debug:
-        msg: "{{ helm_list.stdout_lines }}"
+    - name: Verify Helm releases
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ traefik_namespace }}"
 
     - name: Installation complete
       debug:

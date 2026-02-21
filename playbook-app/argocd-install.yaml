@@ -13,14 +13,8 @@
     # COPY LOCAL HELM CHARTS
     # -------------------------------------------------------------------------
 
-    - name: Ensure remote charts directory exists
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
-
     # argocd chart
-    - name: Copy argocd chart to remote server
+    - name: "[argocd-install] Copy argocd chart to remote server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
         label_name: "argocd"
@@ -32,28 +26,24 @@
     # INSTALL ARGOCD CRDs FIRST
     # -------------------------------------------------------------------------
 
-    - name: Install argocd-crds via kubectl
+    - name: "[argocd-install] Install argocd-crds via kubectl"
       command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
       failed_when: false
 
-    - name: Wait for ArgoCD CRDs to be established
-      command: >
-        kubectl wait --for=condition=Established
-        crd/applications.argoproj.io
-        crd/applicationsets.argoproj.io
-        crd/appprojects.argoproj.io
-        --timeout={{ crds_wait.timeout }}
-      register: argocd_crds_wait
-      until: argocd_crds_wait.rc == 0
-      retries: "{{ crds_wait.retries }}"
-      delay: "{{ crds_wait.delay }}"
-      changed_when: false
+    - name: "[argocd-install] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "argocd"
+        crds_list:
+          - crd/applications.argoproj.io
+          - crd/applicationsets.argoproj.io
+          - crd/appprojects.argoproj.io
 
     # -------------------------------------------------------------------------
     # CREATE VALUES FILE WITH SSH KEY
     # -------------------------------------------------------------------------
 
-    - name: Create values file with SSH key
+    - name: "[argocd-install] Create values file with SSH key"
       copy:
         dest: "{{ remote_charts_dir }}/argocd-values.yaml"
         mode: "0600"
@@ -79,7 +69,7 @@
     # INSTALL OR UPGRADE CHART
     # -------------------------------------------------------------------------
 
-    - name: Install or upgrade argocd via Helm
+    - name: "[argocd-install] Install or upgrade argocd via Helm"
       command: >
         helm upgrade --install argocd {{ remote_charts_dir }}/argocd
         --namespace {{ argocd_namespace }}
@@ -96,10 +86,10 @@
     # VERIFY INSTALLATION
     # -------------------------------------------------------------------------
 
-    - name: Wait for ArgoCD StatefulSet to be ready
+    - name: "[argocd-verify] Wait for ArgoCD StatefulSet to be ready"
       command: kubectl rollout status statefulset/argocd-application-controller -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
 
-    - name: Wait for ArgoCD Deployments to be ready
+    - name: "[argocd-verify] Wait for ArgoCD Deployments to be ready"
       command: kubectl rollout status deployment/{{ item }} -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
       loop:
         - argocd-applicationset-controller
@@ -109,32 +99,28 @@
         - argocd-repo-server
         - argocd-server
 
-    - name: Verify ArgoCD installation
-      command: helm list -n {{ argocd_namespace }}
-      register: helm_verify
-      changed_when: false
+    - name: "[argocd-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ argocd_namespace }}"
 
-    - name: Show ArgoCD Helm release
-      debug:
-        var: helm_verify.stdout_lines
-
-    - name: Get ArgoCD initial admin password
+    - name: "[argocd-verify] Get ArgoCD initial admin password"
       shell: kubectl get secret argocd-initial-admin-secret -n {{ argocd_namespace }} -o jsonpath='{.data.password}' | base64 --decode
       register: argocd_password
       changed_when: false
       failed_when: false
 
-    - name: Show ArgoCD admin password
+    - name: "[argocd-verify] Show ArgoCD admin password"
       debug:
         msg: "ArgoCD admin password: {{ argocd_password.stdout }}"
       when: argocd_password.rc == 0
 
-    - name: Verify NetworkPolicies
+    - name: "[argocd-verify] Verify NetworkPolicies"
       command: kubectl get networkpolicies -n {{ argocd_namespace }}
       register: np_verify
       changed_when: false
 
-    - name: Show NetworkPolicies
+    - name: "[argocd-verify] Show NetworkPolicies"
       debug:
         var: np_verify.stdout_lines
 

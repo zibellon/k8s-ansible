@@ -28,12 +28,6 @@
     # STEP 2: OLM-V0/INSTALL (CRDs + Namespaces + Helm)
     # =========================================================================
 
-    - name: "[olm-v0-install] Ensure remote charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
-
     - name: "[olm-v0-install] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -122,15 +116,11 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Get OLM Helm releases
-      command: helm list -n {{ olm_namespace }}
-      register: helm_list
-      changed_when: false
+    - name: "[olm-v0-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ olm_namespace }}"
 
-    - name: Print Helm releases
-      debug:
-        msg: "{{ helm_list.stdout_lines }}"
-
-    - name: Installation complete
+    - name: "[olm-v0-verify] Installation complete"
       debug:
         msg: "olm-v0: OK"

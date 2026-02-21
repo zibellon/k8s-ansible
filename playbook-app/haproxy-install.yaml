@@ -20,12 +20,6 @@
     # STEP 1: HAPROXY/PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[haproxy-pre] Ensure remote charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
-
     - name: "[haproxy-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -104,19 +98,15 @@
         --wait-for-jobs
         --timeout {{ haproxy_helm_timeout }}
 
-    - name: "[haproxy-install] Wait for HAProxy CRDs to be established"
-      command: >
-        kubectl wait --for=condition=Established
-        crd/backends.ingress.v1.haproxy.org
-        crd/defaults.ingress.v1.haproxy.org
-        crd/globals.ingress.v1.haproxy.org
-        crd/tcps.ingress.v1.haproxy.org
-        --timeout={{ crds_wait.timeout }}
-      register: haproxy_crds_wait
-      until: haproxy_crds_wait.rc == 0
-      retries: "{{ crds_wait.retries }}"
-      delay: "{{ crds_wait.delay }}"
-      changed_when: false
+    - name: "[haproxy-install] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "haproxy"
+        crds_list:
+          - crd/backends.ingress.v1.haproxy.org
+          - crd/defaults.ingress.v1.haproxy.org
+          - crd/globals.ingress.v1.haproxy.org
+          - crd/tcps.ingress.v1.haproxy.org
 
     - name: "[haproxy-install] Wait for DaemonSet to be ready"
       command: kubectl rollout status daemonset/{{ haproxy_daemonset_name }} -n {{ haproxy_namespace }} --timeout={{ haproxy_rollout_timeout }}
@@ -156,14 +146,10 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Get HAProxy Helm releases
-      command: helm list -n {{ haproxy_namespace }}
-      register: helm_list
-      changed_when: false
-
-    - name: Print Helm releases
-      debug:
-        msg: "{{ helm_list.stdout_lines }}"
+    - name: Verify Helm releases
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ haproxy_namespace }}"
 
     - name: Installation complete
       debug:

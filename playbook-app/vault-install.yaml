@@ -23,12 +23,6 @@
     # STEP 1: INSTALL PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[vault-pre] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/vault/pre"
-        state: directory
-        mode: "0755"
-
     - name: "[vault-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -491,12 +485,6 @@
     # STEP 13: INSTALL POST (Ingress + CronJob)
     # =========================================================================
 
-    - name: "[vault-post] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/vault/post"
-        state: directory
-        mode: "0755"
-
     - name: "[vault-post] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -546,23 +534,19 @@
     # STEP 14: VERIFY AND OUTPUT
     # =========================================================================
 
-    - name: "[verify] Check Helm releases"
-      command: helm list -n {{ vault_namespace }}
-      register: helm_verify
-      changed_when: false
+    - name: "[vault-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ vault_namespace }}"
 
-    - name: "[verify] Show Helm releases"
-      debug:
-        var: helm_verify.stdout_lines
-
-    - name: "[credentials] Show credentials header"
+    - name: "[vault-credentials] Show credentials header"
       debug:
         msg:
           - "=============================================="
           - "VAULT CREDENTIALS"
           - "=============================================="
 
-    - name: "[credentials] Show unseal keys"
+    - name: "[vault-credentials] Show unseal keys"
       debug:
         msg: "Unseal Key {{ idx + 1 }}: {{ key }}"
       loop: "{{ vault_unseal_keys | default([]) }}"
@@ -571,12 +555,12 @@
         loop_var: key
       when: vault_unseal_keys is defined
 
-    - name: "[credentials] Show unseal keys (already initialized)"
+    - name: "[vault-credentials] Show unseal keys (already initialized)"
       debug:
         msg: "Unseal Keys: (already initialized - check {{ vault_creds_host_path }})"
       when: vault_unseal_keys is not defined
 
-    - name: "[credentials] Show remaining info"
+    - name: "[vault-credentials] Show remaining info"
       debug:
         msg:
           - "Root Token: {{ vault_root_token | default('(already initialized)') }}"
@@ -589,6 +573,6 @@
           - "VPN-only: {{ vault_vpn_only_enabled }}"
           - "=============================================="
 
-    - name: "[verify] Confirm installation"
+    - name: "[vault-verify] Confirm installation"
       debug:
         msg: "Vault installation: OK"

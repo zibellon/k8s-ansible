@@ -20,12 +20,6 @@
     # STEP 1: CERT-MANAGER/PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[cert-manager-pre] Ensure remote charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
-
     - name: "[cert-manager-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -95,21 +89,17 @@
     # WAIT FOR CERT-MANAGER CRDs
     # =========================================================================
 
-    - name: "[cert-manager] Wait for CRDs to be established"
-      command: >
-        kubectl wait --for=condition=Established
-        crd/certificaterequests.cert-manager.io
-        crd/certificates.cert-manager.io
-        crd/challenges.acme.cert-manager.io
-        crd/clusterissuers.cert-manager.io
-        crd/issuers.cert-manager.io
-        crd/orders.acme.cert-manager.io
-        --timeout={{ crds_wait.timeout }}
-      register: cert_manager_crds_wait
-      until: cert_manager_crds_wait.rc == 0
-      retries: "{{ crds_wait.retries }}"
-      delay: "{{ crds_wait.delay }}"
-      changed_when: false
+    - name: "[cert-manager] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "cert-manager"
+        crds_list:
+          - crd/certificaterequests.cert-manager.io
+          - crd/certificates.cert-manager.io
+          - crd/challenges.acme.cert-manager.io
+          - crd/clusterissuers.cert-manager.io
+          - crd/issuers.cert-manager.io
+          - crd/orders.acme.cert-manager.io
 
     # =========================================================================
     # WAIT FOR CERT-MANAGER PODS
@@ -160,24 +150,20 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Get cert-manager Helm releases
-      command: helm list -n {{ cert_manager_namespace }}
-      register: helm_list
-      changed_when: false
+    - name: "[cert-manager-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ cert_manager_namespace }}"
 
-    - name: Print Helm releases
-      debug:
-        msg: "{{ helm_list.stdout_lines }}"
-
-    - name: Get cert-manager pods status
+    - name: "[cert-manager-verify] Get cert-manager pods status"
       command: kubectl get pods -n {{ cert_manager_namespace }} -o wide
       register: certmanager_pods
       changed_when: false
 
-    - name: Print cert-manager pods status
+    - name: "[cert-manager-verify] Print cert-manager pods status"
       debug:
         msg: "{{ certmanager_pods.stdout_lines }}"
 
-    - name: Installation complete
+    - name: "[cert-manager-verify] Installation complete"
       debug:
         msg: "cert-manager-pre + cert-manager + cert-manager-post: OK"

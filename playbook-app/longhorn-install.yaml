@@ -20,12 +20,6 @@
     # STEP 1: LONGHORN/PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[longhorn-pre] Ensure remote charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
-
     - name: "[longhorn-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -108,37 +102,33 @@
         --wait-for-jobs
         --timeout {{ longhorn_helm_timeout }}
 
-    - name: "[longhorn-install] Wait for Longhorn CRDs to be established"
-      command: >
-        kubectl wait --for=condition=Established
-        crd/backingimagedatasources.longhorn.io
-        crd/backingimagemanagers.longhorn.io
-        crd/backingimages.longhorn.io
-        crd/backupbackingimages.longhorn.io
-        crd/backups.longhorn.io
-        crd/backuptargets.longhorn.io
-        crd/backupvolumes.longhorn.io
-        crd/engineimages.longhorn.io
-        crd/engines.longhorn.io
-        crd/instancemanagers.longhorn.io
-        crd/nodes.longhorn.io
-        crd/orphans.longhorn.io
-        crd/recurringjobs.longhorn.io
-        crd/replicas.longhorn.io
-        crd/settings.longhorn.io
-        crd/sharemanagers.longhorn.io
-        crd/snapshots.longhorn.io
-        crd/supportbundles.longhorn.io
-        crd/systembackups.longhorn.io
-        crd/systemrestores.longhorn.io
-        crd/volumeattachments.longhorn.io
-        crd/volumes.longhorn.io
-        --timeout={{ crds_wait.timeout }}
-      register: longhorn_crds_wait
-      until: longhorn_crds_wait.rc == 0
-      retries: "{{ crds_wait.retries }}"
-      delay: "{{ crds_wait.delay }}"
-      changed_when: false
+    - name: "[longhorn] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "longhorn"
+        crds_list:
+          - crd/backingimagedatasources.longhorn.io
+          - crd/backingimagemanagers.longhorn.io
+          - crd/backingimages.longhorn.io
+          - crd/backupbackingimages.longhorn.io
+          - crd/backups.longhorn.io
+          - crd/backuptargets.longhorn.io
+          - crd/backupvolumes.longhorn.io
+          - crd/engineimages.longhorn.io
+          - crd/engines.longhorn.io
+          - crd/instancemanagers.longhorn.io
+          - crd/nodes.longhorn.io
+          - crd/orphans.longhorn.io
+          - crd/recurringjobs.longhorn.io
+          - crd/replicas.longhorn.io
+          - crd/settings.longhorn.io
+          - crd/sharemanagers.longhorn.io
+          - crd/snapshots.longhorn.io
+          - crd/supportbundles.longhorn.io
+          - crd/systembackups.longhorn.io
+          - crd/systemrestores.longhorn.io
+          - crd/volumeattachments.longhorn.io
+          - crd/volumes.longhorn.io
 
     - name: "[longhorn-install] Wait for Longhorn manager DaemonSet to be ready"
       command: kubectl rollout status daemonset/longhorn-manager -n {{ longhorn_namespace }} --timeout={{ longhorn_manager_rollout_timeout }}
@@ -199,14 +189,10 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Get Longhorn Helm releases
-      command: helm list -n {{ longhorn_namespace }}
-      register: helm_list
-      changed_when: false
-
-    - name: Print Helm releases
-      debug:
-        msg: "{{ helm_list.stdout_lines }}"
+    - name: Verify Helm releases
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ longhorn_namespace }}"
 
     - name: Show Longhorn access info
       debug:

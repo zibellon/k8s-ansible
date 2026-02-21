@@ -22,12 +22,6 @@
     # STEP 1: CILIUM-PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[cilium-pre] Ensure remote charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}"
-        state: directory
-        mode: "0755"
-
     - name: "[cilium-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -119,25 +113,21 @@
     # WAIT FOR CILIUM CRDs
     # =========================================================================
 
-    - name: "[cilium] Wait for CRDs to be established"
-      command: >
-        kubectl wait --for=condition=Established
-        crd/ciliumcidrgroups.cilium.io
-        crd/ciliumclusterwidenetworkpolicies.cilium.io
-        crd/ciliumendpoints.cilium.io
-        crd/ciliumidentities.cilium.io
-        crd/ciliuml2announcementpolicies.cilium.io
-        crd/ciliumloadbalancerippools.cilium.io
-        crd/ciliumnetworkpolicies.cilium.io
-        crd/ciliumnodeconfigs.cilium.io
-        crd/ciliumnodes.cilium.io
-        crd/ciliumpodippools.cilium.io
-        --timeout={{ crds_wait.timeout }}
-      register: cilium_crds_wait
-      until: cilium_crds_wait.rc == 0
-      retries: "{{ crds_wait.retries }}"
-      delay: "{{ crds_wait.delay }}"
-      changed_when: false
+    - name: "[cilium] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "cilium"
+        crds_list:
+          - crd/ciliumcidrgroups.cilium.io
+          - crd/ciliumclusterwidenetworkpolicies.cilium.io
+          - crd/ciliumendpoints.cilium.io
+          - crd/ciliumidentities.cilium.io
+          - crd/ciliuml2announcementpolicies.cilium.io
+          - crd/ciliumloadbalancerippools.cilium.io
+          - crd/ciliumnetworkpolicies.cilium.io
+          - crd/ciliumnodeconfigs.cilium.io
+          - crd/ciliumnodes.cilium.io
+          - crd/ciliumpodippools.cilium.io
 
     # =========================================================================
     # WAIT FOR CILIUM PODS
@@ -158,31 +148,27 @@
     # STEP 3: CILIUM-POST (CiliumClusterwideNetworkPolicy)
     # =========================================================================
 
-    - name: Install cilium-post
+    - name: "[cilium-post-install] Install cilium-post"
       include_tasks: tasks/tasks-cilium-post-install.yaml
 
     # =========================================================================
     # VERIFICATION
     # =========================================================================
 
-    - name: Get Cilium Helm releases
-      command: helm list -n {{ cilium_namespace }}
-      register: helm_list
-      changed_when: false
+    - name: "[cilium-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ cilium_namespace }}"
 
-    - name: Print Helm releases
-      debug:
-        msg: "{{ helm_list.stdout_lines }}"
-
-    - name: Get Cilium pods status
+    - name: "[cilium-verify] Get Cilium pods status"
       command: kubectl get pods -n {{ cilium_namespace }} -o wide
       register: cilium_pods
       changed_when: false
 
-    - name: Print Cilium pods status
+    - name: "[cilium-verify] Print Cilium pods status"
       debug:
         msg: "{{ cilium_pods.stdout_lines }}"
 
-    - name: Installation complete
+    - name: "[cilium-verify] Installation complete"
       debug:
         msg: "cilium-pre + cilium + cilium-post: OK"

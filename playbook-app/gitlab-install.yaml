@@ -107,12 +107,6 @@
     # STEP 3: INSTALL GITLAB-PRE (NetworkPolicies)
     # =========================================================================
 
-    - name: "[gitlab-pre] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/gitlab/pre"
-        state: directory
-        mode: "0755"
-
     - name: "[gitlab-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -197,12 +191,6 @@
     # =========================================================================
     # STEP 5: INSTALL GITLAB-MINIO
     # =========================================================================
-
-    - name: "[gitlab-minio] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/gitlab/install-minio"
-        state: directory
-        mode: "0755"
 
     - name: "[gitlab-minio] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
@@ -342,12 +330,6 @@
     # STEP 8: INSTALL GITLAB
     # =========================================================================
 
-    - name: "[gitlab] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/gitlab/install-gitlab"
-        state: directory
-        mode: "0755"
-
     - name: "[gitlab] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -449,12 +431,6 @@
     # STEP 10: INSTALL GITLAB-POST (Ingresses)
     # =========================================================================
 
-    - name: "[gitlab-post] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/gitlab/post"
-        state: directory
-        mode: "0755"
-
     - name: "[gitlab-post] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -503,16 +479,12 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: "[verify] Check Helm releases"
-      command: helm list -n {{ gitlab_namespace }}
-      register: helm_verify
-      changed_when: false
+    - name: "[gitlab-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ gitlab_namespace }}"
 
-    - name: "[verify] Show Helm releases"
-      debug:
-        var: helm_verify.stdout_lines
-
-    - name: "[verify] Show access info"
+    - name: "[gitlab-verify] Show access info"
       debug:
         msg:
           - "=============================================="
