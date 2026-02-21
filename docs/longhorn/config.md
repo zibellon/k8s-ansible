@@ -339,3 +339,10 @@ action=snapshotPurge -> Самое важное тут ...
 
 ## Обновление
 
+## Как удалить replica, черерз kubectl
+## Название реплики - можно достать из UI + команда `kubectl -n longhorn-system get nodes.longhorn.io k8s-worker-1 -o yaml`
+## Определяем на какой node находится реплика, через UI
+## Вызываем команду для получения информации по этой node в системе longhorn
+## там будет ID реплики
+## удаляем реплику
+kubectl -n longhorn-system delete replicas.longhorn.io pvc-b8023696-662b-40a1-8838-76e192880e4b-r-7226b9e7
