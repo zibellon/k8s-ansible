@@ -33,7 +33,7 @@
     - name: "[argocd-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "argocd"
+        label_name: "argocd-install"
         crds_list:
           - crd/applications.argoproj.io
           - crd/applicationsets.argoproj.io
@@ -86,18 +86,20 @@
     # VERIFY INSTALLATION
     # -------------------------------------------------------------------------
 
-    - name: "[argocd-verify] Wait for ArgoCD StatefulSet to be ready"
-      command: kubectl rollout status statefulset/argocd-application-controller -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
-
-    - name: "[argocd-verify] Wait for ArgoCD Deployments to be ready"
-      command: kubectl rollout status deployment/{{ item }} -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
-      loop:
-        - argocd-applicationset-controller
-        - argocd-dex-server
-        - argocd-notifications-controller
-        - argocd-redis
-        - argocd-repo-server
-        - argocd-server
+    - name: "[argocd-install] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "argocd-install"
+        rollout_namespace: "{{ argocd_namespace }}"
+        rollout_timeout: "{{ argocd_components_rollout_timeout }}"
+        rollout_resources:
+          - statefulset/argocd-application-controller
+          - deployment/argocd-applicationset-controller
+          - deployment/argocd-dex-server
+          - deployment/argocd-notifications-controller
+          - deployment/argocd-redis
+          - deployment/argocd-repo-server
+          - deployment/argocd-server
 
     - name: "[argocd-verify] Verify Helm releases"
       include_tasks: tasks/tasks-verify-helm.yaml

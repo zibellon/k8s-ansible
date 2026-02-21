@@ -24,23 +24,23 @@
     # PRE-CHECK: Verify Cilium is installed
     # -------------------------------------------------------------------------
 
-    - name: Check if Cilium namespace exists
+    - name: "[cilium-restart] Check if Cilium namespace exists"
       command: kubectl get namespace {{ cilium_namespace }}
       register: namespace_check
       changed_when: false
       failed_when: false
 
-    - name: Fail if Cilium namespace not found
+    - name: "[cilium-restart] Fail if Cilium namespace not found"
       fail:
         msg: "Cilium namespace '{{ cilium_namespace }}' not found. Install Cilium first."
       when: namespace_check.rc != 0
 
-    - name: Show current Cilium pods
+    - name: "[cilium-restart] Show current Cilium pods"
       command: kubectl get pods -n {{ cilium_namespace }} -l app.kubernetes.io/part-of=cilium -o wide
       register: pods_before
       changed_when: false
 
-    - name: Display pods before restart
+    - name: "[cilium-restart] Display pods before restart"
       debug:
         var: pods_before.stdout_lines
 
@@ -48,7 +48,7 @@
     # RESTART DAEMONSETS
     # -------------------------------------------------------------------------
 
-    - name: Restart Cilium DaemonSets
+    - name: "[cilium-restart] Restart Cilium DaemonSets"
       command: kubectl rollout restart daemonset/{{ item }} -n {{ cilium_namespace }}
       loop:
         - cilium
@@ -58,7 +58,7 @@
     # RESTART DEPLOYMENTS
     # -------------------------------------------------------------------------
 
-    - name: Restart Cilium Deployments
+    - name: "[cilium-restart] Restart Cilium Deployments"
       command: kubectl rollout restart deployment/{{ item }} -n {{ cilium_namespace }}
       loop:
         - cilium-operator
@@ -69,33 +69,41 @@
     # WAIT FOR ROLLOUTS TO COMPLETE
     # -------------------------------------------------------------------------
 
-    - name: Wait for DaemonSet rollouts to complete
-      command: kubectl rollout status daemonset/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_daemonset_rollout_timeout }}
-      loop:
-        - cilium
-        - cilium-envoy
+    - name: "[cilium-restart] Wait for DaemonSet rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "cilium-restart"
+        rollout_namespace: "{{ cilium_namespace }}"
+        rollout_timeout: "{{ cilium_daemonset_rollout_timeout }}"
+        rollout_resources:
+          - daemonset/cilium
+          - daemonset/cilium-envoy
 
-    - name: Wait for Deployment rollouts to complete
-      command: kubectl rollout status deployment/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_deployment_rollout_timeout }}
-      loop:
-        - cilium-operator
-        - hubble-relay
-        - hubble-ui
+    - name: "[cilium-restart] Wait for Deployment rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "cilium-restart"
+        rollout_namespace: "{{ cilium_namespace }}"
+        rollout_timeout: "{{ cilium_deployment_rollout_timeout }}"
+        rollout_resources:
+          - deployment/cilium-operator
+          - deployment/hubble-relay
+          - deployment/hubble-ui
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART
     # -------------------------------------------------------------------------
 
-    - name: Show Cilium pods after restart
+    - name: "[cilium-verify] Show Cilium pods after restart"
       command: kubectl get pods -n {{ cilium_namespace }} -l app.kubernetes.io/part-of=cilium -o wide
       register: pods_after
       changed_when: false
 
-    - name: Display pods after restart
+    - name: "[cilium-verify] Display pods after restart"
       debug:
         var: pods_after.stdout_lines
 
-    - name: Restart completed
+    - name: "[cilium-verify] Restart completed"
       debug:
         msg:
           - "=== Cilium Restart Complete ==="

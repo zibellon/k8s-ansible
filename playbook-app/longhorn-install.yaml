@@ -102,10 +102,10 @@
         --wait-for-jobs
         --timeout {{ longhorn_helm_timeout }}
 
-    - name: "[longhorn] Wait for CRDs"
+    - name: "[longhorn-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "longhorn"
+        label_name: "longhorn-install"
         crds_list:
           - crd/backingimagedatasources.longhorn.io
           - crd/backingimagemanagers.longhorn.io
@@ -130,11 +130,23 @@
           - crd/volumeattachments.longhorn.io
           - crd/volumes.longhorn.io
 
-    - name: "[longhorn-install] Wait for Longhorn manager DaemonSet to be ready"
-      command: kubectl rollout status daemonset/longhorn-manager -n {{ longhorn_namespace }} --timeout={{ longhorn_manager_rollout_timeout }}
+    - name: "[longhorn-install] Wait for DaemonSet rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "longhorn-install"
+        rollout_namespace: "{{ longhorn_namespace }}"
+        rollout_timeout: "{{ longhorn_manager_rollout_timeout }}"
+        rollout_resources:
+          - daemonset/longhorn-manager
 
-    - name: "[longhorn-install] Wait for Longhorn UI deployment to be ready"
-      command: kubectl rollout status deployment/longhorn-ui -n {{ longhorn_namespace }} --timeout={{ longhorn_ui_rollout_timeout }}
+    - name: "[longhorn-install] Wait for Deployment rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "longhorn-install"
+        rollout_namespace: "{{ longhorn_namespace }}"
+        rollout_timeout: "{{ longhorn_ui_rollout_timeout }}"
+        rollout_resources:
+          - deployment/longhorn-ui
 
     # =========================================================================
     # STEP 3: LONGHORN/POST (StorageClasses + Ingress + S3)
@@ -189,17 +201,17 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Verify Helm releases
+    - name: "[longhorn-verify] Verify Helm releases"
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ longhorn_namespace }}"
 
-    - name: Show Longhorn access info
+    - name: "[longhorn-verify] Show Longhorn access info"
       debug:
         msg:
           - "Longhorn UI: https://{{ longhorn_ui_domain }}"
           - "Longhorn UI VPN-only: {{ longhorn_ui_vpn_only_enabled }}"
 
-    - name: Installation complete
+    - name: "[longhorn-verify] Installation complete"
       debug:
         msg: "longhorn-pre + longhorn + longhorn-post: OK"

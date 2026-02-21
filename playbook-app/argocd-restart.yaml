@@ -22,23 +22,23 @@
     # PRE-CHECK: Verify ArgoCD is installed
     # -------------------------------------------------------------------------
 
-    - name: Check if ArgoCD namespace exists
+    - name: "[argocd-restart] Check if ArgoCD namespace exists"
       command: kubectl get namespace {{ argocd_namespace }}
       register: namespace_check
       changed_when: false
       failed_when: false
 
-    - name: Fail if ArgoCD is not installed
+    - name: "[argocd-restart] Fail if ArgoCD is not installed"
       fail:
         msg: "ArgoCD namespace '{{ argocd_namespace }}' not found. Install ArgoCD first."
       when: namespace_check.rc != 0
 
-    - name: Show current ArgoCD pods
+    - name: "[argocd-restart] Show current ArgoCD pods"
       command: kubectl get pods -n {{ argocd_namespace }}
       register: pods_before
       changed_when: false
 
-    - name: Display pods before restart
+    - name: "[argocd-restart] Display pods before restart"
       debug:
         var: pods_before.stdout_lines
 
@@ -46,14 +46,14 @@
     # RESTART STATEFULSET
     # -------------------------------------------------------------------------
 
-    - name: Restart ArgoCD StatefulSet (application-controller)
+    - name: "[argocd-restart] Restart ArgoCD StatefulSet (application-controller)"
       command: kubectl rollout restart statefulset/argocd-application-controller -n {{ argocd_namespace }}
 
     # -------------------------------------------------------------------------
     # RESTART DEPLOYMENTS
     # -------------------------------------------------------------------------
 
-    - name: Restart ArgoCD Deployments
+    - name: "[argocd-restart] Restart ArgoCD Deployments"
       command: kubectl rollout restart deployment/{{ item }} -n {{ argocd_namespace }}
       loop:
         - argocd-applicationset-controller
@@ -67,33 +67,35 @@
     # WAIT FOR ROLLOUTS TO COMPLETE
     # -------------------------------------------------------------------------
 
-    - name: Wait for StatefulSet rollout to complete
-      command: kubectl rollout status statefulset/argocd-application-controller -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
-
-    - name: Wait for Deployments rollout to complete
-      command: kubectl rollout status deployment/{{ item }} -n {{ argocd_namespace }} --timeout={{ argocd_components_rollout_timeout }}
-      loop:
-        - argocd-applicationset-controller
-        - argocd-dex-server
-        - argocd-notifications-controller
-        - argocd-redis
-        - argocd-repo-server
-        - argocd-server
+    - name: "[argocd-restart] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "argocd-restart"
+        rollout_namespace: "{{ argocd_namespace }}"
+        rollout_timeout: "{{ argocd_components_rollout_timeout }}"
+        rollout_resources:
+          - statefulset/argocd-application-controller
+          - deployment/argocd-applicationset-controller
+          - deployment/argocd-dex-server
+          - deployment/argocd-notifications-controller
+          - deployment/argocd-redis
+          - deployment/argocd-repo-server
+          - deployment/argocd-server
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART
     # -------------------------------------------------------------------------
 
-    - name: Show ArgoCD pods after restart
+    - name: "[argocd-verify] Show ArgoCD pods after restart"
       command: kubectl get pods -n {{ argocd_namespace }}
       register: pods_after
       changed_when: false
 
-    - name: Display pods after restart
+    - name: "[argocd-verify] Display pods after restart"
       debug:
         var: pods_after.stdout_lines
 
-    - name: Restart completed
+    - name: "[argocd-verify] Restart completed"
       debug:
         msg:
           - "=== ArgoCD Restart Complete ==="

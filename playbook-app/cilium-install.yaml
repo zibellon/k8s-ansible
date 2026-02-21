@@ -55,21 +55,21 @@
     # STEP 2: OFFICIAL CILIUM HELM
     # =========================================================================
 
-    - name: "[cilium] Add Cilium Helm repository"
+    - name: "[cilium-install] Add Cilium Helm repository"
       command: helm repo add cilium https://helm.cilium.io/ --force-update
       failed_when: false
 
-    - name: "[cilium] Update Helm repositories"
+    - name: "[cilium-install] Update Helm repositories"
       command: helm repo update
       changed_when: false
 
-    - name: "[cilium] Ensure charts directory exists"
+    - name: "[cilium-install] Ensure charts directory exists"
       file:
         path: "{{ remote_charts_dir }}/cilium"
         state: directory
         mode: "0755"
 
-    - name: "[cilium] Create values file"
+    - name: "[cilium-install] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/cilium/values-override.yaml"
         mode: "0644"
@@ -97,7 +97,7 @@
           hostFirewall:
             enabled: true
 
-    - name: "[cilium] Install or upgrade via Helm"
+    - name: "[cilium-install] Install or upgrade via Helm"
       command: >
         helm upgrade --install cilium cilium/cilium
         --version {{ cilium_version }}
@@ -113,10 +113,10 @@
     # WAIT FOR CILIUM CRDs
     # =========================================================================
 
-    - name: "[cilium] Wait for CRDs"
+    - name: "[cilium-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "cilium"
+        label_name: "cilium-install"
         crds_list:
           - crd/ciliumcidrgroups.cilium.io
           - crd/ciliumclusterwidenetworkpolicies.cilium.io
@@ -133,22 +133,30 @@
     # WAIT FOR CILIUM PODS
     # =========================================================================
 
-    - name: "[cilium] Wait for DaemonSet rollouts"
-      command: kubectl rollout status daemonset/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_daemonset_rollout_timeout }}
-      loop:
-        - cilium
-        - cilium-envoy
+    - name: "[cilium-install] Wait for DaemonSet rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "cilium-install"
+        rollout_namespace: "{{ cilium_namespace }}"
+        rollout_timeout: "{{ cilium_daemonset_rollout_timeout }}"
+        rollout_resources:
+          - daemonset/cilium
+          - daemonset/cilium-envoy
 
-    - name: "[cilium] Wait for Deployment rollouts"
-      command: kubectl rollout status deployment/{{ item }} -n {{ cilium_namespace }} --timeout={{ cilium_deployment_rollout_timeout }}
-      loop:
-        - cilium-operator
+    - name: "[cilium-install] Wait for Deployment rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "cilium-install"
+        rollout_namespace: "{{ cilium_namespace }}"
+        rollout_timeout: "{{ cilium_deployment_rollout_timeout }}"
+        rollout_resources:
+          - deployment/cilium-operator
 
     # =========================================================================
     # STEP 3: CILIUM-POST (CiliumClusterwideNetworkPolicy)
     # =========================================================================
 
-    - name: "[cilium-post-install] Install cilium-post"
+    - name: "[cilium-post] Install cilium-post"
       include_tasks: tasks/tasks-cilium-post-install.yaml
 
     # =========================================================================

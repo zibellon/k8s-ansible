@@ -41,23 +41,19 @@
       command: kubectl create -f {{ remote_charts_dir }}/olm-v0/install/crds/crds.yaml
       failed_when: false
 
-    - name: "[olm-v0-install] Wait for OLM CRDs to be established"
-      command: >
-        kubectl wait --for=condition=Established
-        crd/catalogsources.operators.coreos.com
-        crd/clusterserviceversions.operators.coreos.com
-        crd/installplans.operators.coreos.com
-        crd/olmconfigs.operators.coreos.com
-        crd/operatorconditions.operators.coreos.com
-        crd/operatorgroups.operators.coreos.com
-        crd/operators.operators.coreos.com
-        crd/subscriptions.operators.coreos.com
-        --timeout={{ crds_wait.timeout }}
-      register: olm_crds_wait
-      until: olm_crds_wait.rc == 0
-      retries: "{{ crds_wait.retries }}"
-      delay: "{{ crds_wait.delay }}"
-      changed_when: false
+    - name: "[olm-v0-install] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "olm-v0-install"
+        crds_list:
+          - crd/catalogsources.operators.coreos.com
+          - crd/clusterserviceversions.operators.coreos.com
+          - crd/installplans.operators.coreos.com
+          - crd/olmconfigs.operators.coreos.com
+          - crd/operatorconditions.operators.coreos.com
+          - crd/operatorgroups.operators.coreos.com
+          - crd/operators.operators.coreos.com
+          - crd/subscriptions.operators.coreos.com
 
     # Create namespaces
     - name: "[olm-v0-install] Apply OLM namespaces (olm + operators)"
@@ -88,11 +84,15 @@
     # WAIT FOR OLM TO BE READY
     # =========================================================================
 
-    - name: "[olm-v0-install] Wait for OLM operators to be ready"
-      command: kubectl rollout status deployment/{{ item }} -n {{ olm_namespace }} --timeout={{ olm_rollout_timeout }}
-      loop:
-        - olm-operator
-        - catalog-operator
+    - name: "[olm-v0-install] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "olm-v0-install"
+        rollout_namespace: "{{ olm_namespace }}"
+        rollout_timeout: "{{ olm_rollout_timeout }}"
+        rollout_resources:
+          - deployment/olm-operator
+          - deployment/catalog-operator
 
     - name: "[olm-v0-install] Wait for PackageServer CSV to succeed"
       command: >

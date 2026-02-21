@@ -19,23 +19,23 @@
     # PRE-CHECK: Verify Vault is installed
     # -------------------------------------------------------------------------
 
-    - name: Check if Vault namespace exists
+    - name: "[vault-restart] Check if Vault namespace exists"
       command: kubectl get namespace {{ vault_namespace }}
       register: namespace_check
       changed_when: false
       failed_when: false
 
-    - name: Fail if Vault namespace not found
+    - name: "[vault-restart] Fail if Vault namespace not found"
       fail:
         msg: "Vault namespace '{{ vault_namespace }}' not found. Install Vault first."
       when: namespace_check.rc != 0
 
-    - name: Show current Vault pods
+    - name: "[vault-restart] Show current Vault pods"
       command: kubectl get pods -n {{ vault_namespace }} -o wide
       register: pods_before
       changed_when: false
 
-    - name: Display pods before restart
+    - name: "[vault-restart] Display pods before restart"
       debug:
         var: pods_before.stdout_lines
 
@@ -43,29 +43,35 @@
     # RESTART STATEFULSET
     # -------------------------------------------------------------------------
 
-    - name: Restart Vault StatefulSet
+    - name: "[vault-restart] Restart Vault StatefulSet"
       command: kubectl rollout restart statefulset/vault -n {{ vault_namespace }}
 
     # -------------------------------------------------------------------------
     # WAIT FOR ROLLOUT TO COMPLETE
     # -------------------------------------------------------------------------
 
-    - name: Wait for StatefulSet rollout to complete
-      command: kubectl rollout status statefulset/vault -n {{ vault_namespace }} --timeout={{ vault_rollout_timeout }}
+    - name: "[vault-restart] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "vault"
+        rollout_namespace: "{{ vault_namespace }}"
+        rollout_timeout: "{{ vault_rollout_timeout }}"
+        rollout_resources:
+          - statefulset/vault
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART
     # -------------------------------------------------------------------------
 
-    - name: Show Vault pods after restart
+    - name: "[vault-verify] Show Vault pods after restart"
       command: kubectl get pods -n {{ vault_namespace }} -o wide
       register: pods_after
       changed_when: false
 
-    - name: Display pods after restart
+    - name: "[vault-verify] Display pods after restart"
       debug:
         var: pods_after.stdout_lines
 
-    - name: Restart completed
+    - name: "[vault-verify] Restart completed"
       debug:
         msg: "Vault StatefulSet restart complete"

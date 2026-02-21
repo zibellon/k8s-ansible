@@ -242,8 +242,14 @@
     # WAIT FOR TRAEFIK TO BE READY
     # =========================================================================
 
-    - name: "[traefik-install] Wait for DaemonSet to be ready"
-      command: kubectl rollout status daemonset/{{ traefik_daemonset_name }} -n {{ traefik_namespace }} --timeout={{ traefik_rollout_timeout }}
+    - name: "[traefik-install] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "traefik"
+        rollout_namespace: "{{ traefik_namespace }}"
+        rollout_timeout: "{{ traefik_rollout_timeout }}"
+        rollout_resources:
+          - daemonset/{{ traefik_daemonset_name }}
 
     # =========================================================================
     # STEP 3: TRAEFIK/POST (Middlewares + Dashboard Ingress)
@@ -290,11 +296,11 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Verify Helm releases
+    - name: "[traefik-verify] Verify Helm releases"
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ traefik_namespace }}"
 
-    - name: Installation complete
+    - name: "[traefik-verify] Installation complete"
       debug:
         msg: "traefik-pre + traefik + traefik-post: OK"

@@ -51,21 +51,21 @@
     # STEP 2: OFFICIAL CERT-MANAGER HELM
     # =========================================================================
 
-    - name: "[cert-manager] Add Jetstack Helm repository"
+    - name: "[cert-manager-install] Add Jetstack Helm repository"
       command: helm repo add jetstack https://charts.jetstack.io --force-update
       failed_when: false
 
-    - name: "[cert-manager] Update Helm repositories"
+    - name: "[cert-manager-install] Update Helm repositories"
       command: helm repo update
       changed_when: false
 
-    - name: "[cert-manager] Ensure charts directory exists"
+    - name: "[cert-manager-install] Ensure charts directory exists"
       file:
         path: "{{ remote_charts_dir }}/cert-manager/install"
         state: directory
         mode: "0755"
 
-    - name: "[cert-manager] Create values file"
+    - name: "[cert-manager-install] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/cert-manager/install/values-override.yaml"
         mode: "0644"
@@ -73,7 +73,7 @@
           crds:
             enabled: true
 
-    - name: "[cert-manager] Install or upgrade via Helm"
+    - name: "[cert-manager-install] Install or upgrade via Helm"
       command: >
         helm upgrade --install cert-manager jetstack/cert-manager
         --namespace {{ cert_manager_namespace }}
@@ -89,10 +89,10 @@
     # WAIT FOR CERT-MANAGER CRDs
     # =========================================================================
 
-    - name: "[cert-manager] Wait for CRDs"
+    - name: "[cert-manager-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "cert-manager"
+        label_name: "cert-manager-install"
         crds_list:
           - crd/certificaterequests.cert-manager.io
           - crd/certificates.cert-manager.io
@@ -105,12 +105,16 @@
     # WAIT FOR CERT-MANAGER PODS
     # =========================================================================
 
-    - name: "[cert-manager] Wait for Deployments to be ready"
-      command: kubectl rollout status deployment/{{ item }} -n {{ cert_manager_namespace }} --timeout={{ cert_manager_rollout_timeout }}
-      loop:
-        - cert-manager
-        - cert-manager-cainjector
-        - cert-manager-webhook
+    - name: "[cert-manager-install] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "cert-manager-install"
+        rollout_namespace: "{{ cert_manager_namespace }}"
+        rollout_timeout: "{{ cert_manager_rollout_timeout }}"
+        rollout_resources:
+          - deployment/cert-manager
+          - deployment/cert-manager-cainjector
+          - deployment/cert-manager-webhook
 
     # =========================================================================
     # STEP 3: CERT-MANAGER/POST (ClusterIssuer)

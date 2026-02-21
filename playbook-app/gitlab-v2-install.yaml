@@ -28,13 +28,13 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[gitlab-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
 
     # =========================================================================
     # INIT: Find secret names and vault paths by type from gitlab_v2_eso.secrets
     # =========================================================================
-    - name: "[init] Find secret names and vault paths by type"
+    - name: "[gitlab-init] Find secret names and vault paths by type"
       set_fact:
         # Secret names
         secret_postgresql: "{{ (gitlab_v2_eso.secrets | selectattr('type', 'equalto', 'postgresql') | first).target_secret_name }}"
@@ -58,7 +58,7 @@
     # =========================================================================
 
     # ----- PostgreSQL credentials -----
-    - name: "[vault-secrets] Check if PostgreSQL secret exists"
+    - name: "[gitlab-vault-secrets] Check if PostgreSQL secret exists"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -format=json \
@@ -67,12 +67,12 @@
       failed_when: false
       changed_when: false
 
-    - name: "[vault-secrets] Generate PostgreSQL password"
+    - name: "[gitlab-vault-secrets] Generate PostgreSQL password"
       set_fact:
         generated_postgresql_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when: postgresql_secret_check.rc != 0
 
-    - name: "[vault-secrets] Store PostgreSQL credentials in Vault"
+    - name: "[gitlab-vault-secrets] Store PostgreSQL credentials in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_postgresql }}
@@ -81,7 +81,7 @@
       when: postgresql_secret_check.rc != 0
 
     # ----- Redis credentials -----
-    - name: "[vault-secrets] Check if Redis secret exists"
+    - name: "[gitlab-vault-secrets] Check if Redis secret exists"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -format=json \
@@ -90,12 +90,12 @@
       failed_when: false
       changed_when: false
 
-    - name: "[vault-secrets] Generate Redis password"
+    - name: "[gitlab-vault-secrets] Generate Redis password"
       set_fact:
         generated_redis_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when: redis_secret_check.rc != 0
 
-    - name: "[vault-secrets] Store Redis credentials in Vault"
+    - name: "[gitlab-vault-secrets] Store Redis credentials in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_redis }}
@@ -104,7 +104,7 @@
       when: redis_secret_check.rc != 0
 
     # ----- MinIO root credentials -----
-    - name: "[vault-secrets] Check if MinIO root secret exists"
+    - name: "[gitlab-vault-secrets] Check if MinIO root secret exists"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -format=json \
@@ -113,12 +113,12 @@
       failed_when: false
       changed_when: false
 
-    - name: "[vault-secrets] Generate MinIO root password"
+    - name: "[gitlab-vault-secrets] Generate MinIO root password"
       set_fact:
         generated_minio_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when: minio_root_secret_check.rc != 0
 
-    - name: "[vault-secrets] Store MinIO root credentials in Vault"
+    - name: "[gitlab-vault-secrets] Store MinIO root credentials in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_root }}
@@ -130,15 +130,15 @@
     # STEP 3: INSTALL PRE (ESO Resources, NetworkPolicies)
     # =========================================================================
 
-    - name: "[pre] Copy chart to remote"
+    - name: "[gitlab-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-v2-pre"
+        label_name: "gitlab-pre"
         chart_name: "pre"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/gitlab-v2/pre/"
         chart_remote_dest: "{{ remote_charts_dir }}/gitlab-v2/pre"
 
-    - name: "[pre] Create values file"
+    - name: "[gitlab-pre] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/gitlab-v2/pre/values-override.yaml"
         mode: "0644"
@@ -168,7 +168,7 @@
             s3Region: {{ gitlab_v2_minio_s3_region }}
             s3PathStyle: {{ gitlab_v2_minio_s3_path_style }}
 
-    - name: "[pre] Install via Helm"
+    - name: "[gitlab-pre] Install via Helm"
       command: >
         helm upgrade --install gitlab-v2-pre {{ remote_charts_dir }}/gitlab-v2/pre
         --namespace {{ gitlab_v2_namespace }}
@@ -183,7 +183,7 @@
     # STEP 4: WAIT FOR INITIAL SECRETS TO SYNC
     # =========================================================================
 
-    - name: "[wait-eso] Wait for PostgreSQL secret"
+    - name: "[gitlab-wait-eso] Wait for PostgreSQL secret"
       command: kubectl get secret {{ secret_postgresql }} -n {{ gitlab_v2_namespace }}
       register: postgresql_secret_wait
       until: postgresql_secret_wait.rc == 0
@@ -191,7 +191,7 @@
       delay: 5
       changed_when: false
 
-    - name: "[wait-eso] Wait for Redis secret"
+    - name: "[gitlab-wait-eso] Wait for Redis secret"
       command: kubectl get secret {{ secret_redis }} -n {{ gitlab_v2_namespace }}
       register: redis_secret_wait
       until: redis_secret_wait.rc == 0
@@ -199,7 +199,7 @@
       delay: 5
       changed_when: false
 
-    - name: "[wait-eso] Wait for MinIO root secret"
+    - name: "[gitlab-wait-eso] Wait for MinIO root secret"
       command: kubectl get secret {{ secret_minio_root }} -n {{ gitlab_v2_namespace }}
       register: minio_root_secret_wait
       until: minio_root_secret_wait.rc == 0
@@ -211,7 +211,7 @@
     # STEP 5: INSTALL POSTGRESQL
     # =========================================================================
 
-    - name: "[postgresql] Copy chart to remote"
+    - name: "[gitlab-postgresql] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
         label_name: "gitlab-v2-postgresql"
@@ -219,7 +219,7 @@
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/gitlab-v2/postgresql/"
         chart_remote_dest: "{{ remote_charts_dir }}/gitlab-v2/postgresql"
 
-    - name: "[postgresql] Create values file"
+    - name: "[gitlab-postgresql] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/gitlab-v2/postgresql/values-override.yaml"
         mode: "0644"
@@ -230,7 +230,7 @@
           storageSize: {{ gitlab_v2_postgresql_storage_size }}
           credentialsSecretName: {{ secret_postgresql }}
 
-    - name: "[postgresql] Install via Helm"
+    - name: "[gitlab-postgresql] Install via Helm"
       command: >
         helm upgrade --install gitlab-v2-postgresql {{ remote_charts_dir }}/gitlab-v2/postgresql
         --namespace {{ gitlab_v2_namespace }}
@@ -240,22 +240,28 @@
         --wait
         --timeout {{ gitlab_v2_storage_helm_timeout }}
 
-    - name: "[postgresql] Wait for deployment to be ready"
-      command: kubectl rollout status deployment/gitlab-postgresql -n {{ gitlab_v2_namespace }} --timeout={{ gitlab_v2_storage_rollout_timeout }}
+    - name: "[gitlab-postgresql] Wait for rollout to be ready"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "gitlab-postgresql"
+        rollout_namespace: "{{ gitlab_v2_namespace }}"
+        rollout_timeout: "{{ gitlab_v2_storage_rollout_timeout }}"
+        rollout_resources:
+          - deployment/gitlab-postgresql
 
     # =========================================================================
     # STEP 6: INSTALL REDIS
     # =========================================================================
 
-    - name: "[redis] Copy chart to remote"
+    - name: "[gitlab-redis] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-v2-redis"
+        label_name: "gitlab-redis"
         chart_name: "redis"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/gitlab-v2/redis/"
         chart_remote_dest: "{{ remote_charts_dir }}/gitlab-v2/redis"
 
-    - name: "[redis] Create values file"
+    - name: "[gitlab-redis] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/gitlab-v2/redis/values-override.yaml"
         mode: "0644"
@@ -266,7 +272,7 @@
           storageClass: {{ gitlab_v2_redis_storage_class }}
           storageSize: {{ gitlab_v2_redis_storage_size }}
 
-    - name: "[redis] Install via Helm"
+    - name: "[gitlab-redis] Install via Helm"
       command: >
         helm upgrade --install gitlab-v2-redis {{ remote_charts_dir }}/gitlab-v2/redis
         --namespace {{ gitlab_v2_namespace }}
@@ -276,22 +282,28 @@
         --wait
         --timeout {{ gitlab_v2_storage_helm_timeout }}
 
-    - name: "[redis] Wait for deployment to be ready"
-      command: kubectl rollout status deployment/gitlab-redis -n {{ gitlab_v2_namespace }} --timeout={{ gitlab_v2_storage_rollout_timeout }}
+    - name: "[gitlab-redis] Wait for rollout to be ready"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "gitlab-redis"
+        rollout_namespace: "{{ gitlab_v2_namespace }}"
+        rollout_timeout: "{{ gitlab_v2_storage_rollout_timeout }}"
+        rollout_resources:
+          - deployment/gitlab-redis
 
     # =========================================================================
     # STEP 7: INSTALL MINIO
     # =========================================================================
 
-    - name: "[minio] Copy chart to remote"
+    - name: "[gitlab-minio] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-v2-minio"
+        label_name: "gitlab-minio"
         chart_name: "minio"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/gitlab-v2/minio/"
         chart_remote_dest: "{{ remote_charts_dir }}/gitlab-v2/minio"
 
-    - name: "[minio] Create values file"
+    - name: "[gitlab-minio] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/gitlab-v2/minio/values-override.yaml"
         mode: "0644"
@@ -302,7 +314,7 @@
           storageSize: {{ gitlab_v2_minio_storage_size }}
           rootSecretName: {{ secret_minio_root }}
 
-    - name: "[minio] Install via Helm"
+    - name: "[gitlab-minio] Install via Helm"
       command: >
         helm upgrade --install gitlab-v2-minio {{ remote_charts_dir }}/gitlab-v2/minio
         --namespace {{ gitlab_v2_namespace }}
@@ -312,35 +324,41 @@
         --wait
         --timeout {{ gitlab_v2_storage_helm_timeout }}
 
-    - name: "[minio] Wait for deployment to be ready"
-      command: kubectl rollout status deployment/gitlab-minio -n {{ gitlab_v2_namespace }} --timeout={{ gitlab_v2_storage_rollout_timeout }}
+    - name: "[gitlab-minio] Wait for rollout to be ready"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "gitlab-minio"
+        rollout_namespace: "{{ gitlab_v2_namespace }}"
+        rollout_timeout: "{{ gitlab_v2_storage_rollout_timeout }}"
+        rollout_resources:
+          - deployment/gitlab-minio
 
     # =========================================================================
     # STEP 8: MINIO SETUP (Buckets and Access Keys)
     # =========================================================================
 
-    - name: "[minio-setup] Get MinIO pod name"
+    - name: "[gitlab-minio-setup] Get MinIO pod name"
       command: >
         kubectl get pods -n {{ gitlab_v2_namespace }}
         -l app.kubernetes.io/name=gitlab-minio
         -o jsonpath='{.items[0].metadata.name}'
       register: minio_pod_name
 
-    - name: "[minio-setup] Get MinIO root credentials from secret"
+    - name: "[gitlab-minio-setup] Get MinIO root credentials from secret"
       shell: |
         kubectl get secret {{ secret_minio_root }} -n {{ gitlab_v2_namespace }} \
           -o jsonpath='{.data.username}' | base64 -d
       register: minio_root_user_from_secret
       changed_when: false
 
-    - name: "[minio-setup] Get MinIO root password from secret"
+    - name: "[gitlab-minio-setup] Get MinIO root password from secret"
       shell: |
         kubectl get secret {{ secret_minio_root }} -n {{ gitlab_v2_namespace }} \
           -o jsonpath='{.data.password}' | base64 -d
       register: minio_root_password_from_secret
       changed_when: false
 
-    - name: "[minio-setup] Configure mc alias"
+    - name: "[gitlab-minio-setup] Configure mc alias"
       command: >
         kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
         mc alias set myminio http://localhost:9000
@@ -348,7 +366,7 @@
         '{{ minio_root_password_from_secret.stdout }}'
 
     # Create buckets
-    - name: "[minio-setup] Create buckets"
+    - name: "[gitlab-minio-setup] Create buckets"
       command: >
         kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
         mc mb myminio/{{ item }} --ignore-existing
@@ -361,7 +379,7 @@
         - runner-cache
 
     # Create access keys for registry
-    - name: "[minio-setup] Check if registry access_key exists in Vault"
+    - name: "[gitlab-minio-setup] Check if registry access_key exists in Vault"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -format=json \
@@ -371,7 +389,7 @@
       failed_when: false
       changed_when: false
 
-    - name: "[minio-setup] Create access key for registry"
+    - name: "[gitlab-minio-setup] Create access key for registry"
       command: >
         kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
         mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }}
@@ -379,7 +397,7 @@
       register: registry_accesskey_result
       when: registry_access_key_check.stdout == ""
 
-    - name: "[minio-setup] Store registry access key in Vault"
+    - name: "[gitlab-minio-setup] Store registry access key in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_registry }}
@@ -389,7 +407,7 @@
       when: registry_access_key_check.stdout == ""
 
     # Create access keys for runner-cache
-    - name: "[minio-setup] Check if runner-cache access_key exists in Vault"
+    - name: "[gitlab-minio-setup] Check if runner-cache access_key exists in Vault"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -format=json \
@@ -399,7 +417,7 @@
       failed_when: false
       changed_when: false
 
-    - name: "[minio-setup] Create access key for runner-cache"
+    - name: "[gitlab-minio-setup] Create access key for runner-cache"
       command: >
         kubectl exec -n {{ gitlab_v2_namespace }} {{ minio_pod_name.stdout }} --
         mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }}
@@ -407,7 +425,7 @@
       register: runner_cache_accesskey_result
       when: runner_cache_access_key_check.stdout == ""
 
-    - name: "[minio-setup] Parse and store runner-cache access key in Vault"
+    - name: "[gitlab-minio-setup] Parse and store runner-cache access key in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault kv put {{ gitlab_v2_eso.kv_engine_path }}{{ vault_path_minio_runner_cache }}
@@ -420,7 +438,7 @@
     # STEP 9: WAIT FOR MINIO ACCESS KEYS TO SYNC
     # =========================================================================
 
-    - name: "[wait-eso] Wait for registry secret with access_key"
+    - name: "[gitlab-wait-eso] Wait for registry secret with access_key"
       shell: |
         kubectl get secret {{ secret_minio_registry }} -n {{ gitlab_v2_namespace }} \
           -o jsonpath='{.data.access_key}' | base64 -d
@@ -619,7 +637,7 @@
     # STEP 12: INSTALL POST CHART (Ingress, HAProxy SSH)
     # =========================================================================
 
-    - name: "[post] Copy chart to remote"
+    - name: "[gitlab-post] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
         label_name: "gitlab-v2-post"
@@ -627,7 +645,7 @@
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/gitlab-v2/post/"
         chart_remote_dest: "{{ remote_charts_dir }}/gitlab-v2/post"
 
-    - name: "[post] Create values file"
+    - name: "[gitlab-post] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/gitlab-v2/post/values-override.yaml"
         mode: "0644"
@@ -657,7 +675,7 @@
             namespace: {{ haproxy_namespace }}
             ingressClass: {{ haproxy_ingress_class }}
 
-    - name: "[post] Install via Helm"
+    - name: "[gitlab-post] Install via Helm"
       command: >
         helm upgrade --install gitlab-v2-post {{ remote_charts_dir }}/gitlab-v2/post
         --namespace {{ gitlab_v2_namespace }}

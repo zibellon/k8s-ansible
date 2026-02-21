@@ -101,15 +101,21 @@
     - name: "[haproxy-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "haproxy"
+        label_name: "haproxy-install"
         crds_list:
           - crd/backends.ingress.v1.haproxy.org
           - crd/defaults.ingress.v1.haproxy.org
           - crd/globals.ingress.v1.haproxy.org
           - crd/tcps.ingress.v1.haproxy.org
 
-    - name: "[haproxy-install] Wait for DaemonSet to be ready"
-      command: kubectl rollout status daemonset/{{ haproxy_daemonset_name }} -n {{ haproxy_namespace }} --timeout={{ haproxy_rollout_timeout }}
+    - name: "[haproxy-install] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "haproxy-install"
+        rollout_namespace: "{{ haproxy_namespace }}"
+        rollout_timeout: "{{ haproxy_rollout_timeout }}"
+        rollout_resources:
+          - daemonset/{{ haproxy_daemonset_name }}
 
     # =========================================================================
     # STEP 3: HAPROXY/POST (Global + Defaults config)
@@ -146,11 +152,11 @@
     # VERIFICATION
     # =========================================================================
 
-    - name: Verify Helm releases
+    - name: "[haproxy-verify] Verify Helm releases"
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ haproxy_namespace }}"
 
-    - name: Installation complete
+    - name: "[haproxy-verify] Installation complete"
       debug:
         msg: "haproxy-pre + haproxy-ingress + haproxy-post: OK"
