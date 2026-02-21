@@ -273,15 +273,15 @@ all:
     # ------
     # External Secrets Operator
     # ------
-    external_secrets_namespace: "ns-external-secrets"
-    external_secrets_version: "1.2.1"
+    external_secrets_namespace: "external-secrets"
+    external_secrets_version: "v1.2.1"
 
     # ------
     # Traefik
     # ------
     traefik_chart_version: "38.0.2"
-    traefik_version: "3.6.2"
-    traefik_namespace: "ns-traefik-master"
+    traefik_version: "v3.6.2"
+    traefik_namespace: "traefik-master"
     traefik_daemonset_name: "traefik-master"
     traefik_ingress_class: "traefik-master-lb"
     traefik_web_entrypoint: "web" # WARNING: DO NOT CHANGE - hardcoded in helm chart
@@ -295,7 +295,7 @@ all:
     # HAProxy (Ingress Controller)
     # ------
     haproxy_chart_version: "1.44.0"
-    haproxy_namespace: "ns-haproxy-master"
+    haproxy_namespace: "haproxy-master"
     haproxy_daemonset_name: "haproxy-master"
     haproxy_ingress_class: "haproxy-master-lb"
 
@@ -363,7 +363,7 @@ all:
     # vault_path - это full path в Vault
     # refresh_interval - это интервал обновления секрета
     # ------
-    vault_namespace: "ns-vault"
+    vault_namespace: "vault"
     vault_image_tag: "1.21.2"
     vault_domain: "vault-k8s-v2.drawapp.ru"
     vault_https_secret_name: "cert-vault-domain-com"
@@ -392,15 +392,15 @@ all:
       secrets:
         - external_secret_name: "eso-vault-self-creds"
           target_secret_name: "eso-vault-self-creds"
-          vault_path: "/ns-vault/vault-self/creds"
+          vault_path: "/vault/vault-self/creds"
           refresh_interval: "1m"
           is_master: true
 
     # ---------
     # VAULT POLICIES (Single Source of Truth)
     # secret = это secret_engine (из массива vault_kv_engines)
-    # data = это данные по секретам (path: secret/data/ns-vault/*)
-    # metadata = это metadata по секретам (path: secret/metadata/ns-vault/*)
+    # data = это данные по секретам (path: secret/data/vault/*)
+    # metadata = это metadata по секретам (path: secret/metadata/vault/*)
     # ---------
     vault_policies:
       # ---------
@@ -408,9 +408,9 @@ all:
       # ---------
       - name: eso-vault-self
         paths:
-          - path: secret/data/ns-vault/*
+          - path: secret/data/vault/*
             capabilities: [read, list]
-          - path: secret/metadata/ns-vault/*
+          - path: secret/metadata/vault/*
             capabilities: [read, list]
 
       # ---------
@@ -442,9 +442,9 @@ all:
       # ---------
       - name: eso-gitlab-read
         paths:
-          - path: secret/data/ns-gitlab/*
+          - path: secret/data/gitlab/*
             capabilities: [read, list]
-          - path: secret/metadata/ns-gitlab/*
+          - path: secret/metadata/gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -452,9 +452,9 @@ all:
       # ---------
       - name: eso-gitlab-minio-read
         paths:
-          - path: secret/data/ns-gitlab/*
+          - path: secret/data/gitlab/*
             capabilities: [read, list]
-          - path: secret/metadata/ns-gitlab/*
+          - path: secret/metadata/gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -462,9 +462,9 @@ all:
       # ---------
       - name: eso-gitlab-read
         paths:
-          - path: secret/data/ns-gitlab/*
+          - path: secret/data/gitlab/*
             capabilities: [read, list]
-          - path: secret/metadata/ns-gitlab/*
+          - path: secret/metadata/gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -485,7 +485,7 @@ all:
       # Vault ESO root (for reading vault credentials)
       # ---------
       - name: eso-vault-self
-        namespace: ns-vault
+        namespace: vault
         sa_name: eso-vault-self
         policies:
           - eso-vault-self
@@ -494,7 +494,7 @@ all:
       # Vault Admin (for writing secrets from Ansible)
       # ---------
       - name: eso-vault-admin
-        namespace: ns-vault
+        namespace: vault
         sa_name: eso-vault-admin
         policies:
           - eso-vault-admin
@@ -512,7 +512,7 @@ all:
       # GitLab
       # ---------
       - name: eso-gitlab
-        namespace: ns-gitlab
+        namespace: gitlab
         sa_name: eso-gitlab
         policies:
           - eso-gitlab-read
@@ -521,7 +521,7 @@ all:
       # GitLab MinIO
       # ---------
       - name: eso-gitlab-minio
-        namespace: ns-gitlab
+        namespace: gitlab
         sa_name: eso-gitlab-minio
         policies:
           - eso-gitlab-minio-read
@@ -530,7 +530,7 @@ all:
       # GitLab
       # ---------
       - name: eso-gitlab
-        namespace: ns-gitlab
+        namespace: gitlab
         sa_name: eso-gitlab
         policies:
           - eso-gitlab-read
@@ -538,7 +538,7 @@ all:
     # ------
     # GitLab (Production Helm)
     # ------
-    gitlab_namespace: "ns-gitlab"
+    gitlab_namespace: "gitlab"
     gitlab_chart_version: "8.11.8"  # GitLab 17.11
     # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
     # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
@@ -599,44 +599,44 @@ all:
       secrets:
         - external_secret_name: "eso-gitlab-postgresql"
           target_secret_name: "secret-gitlab-postgresql"
-          vault_path: "/ns-gitlab/postgresql/creds"
+          vault_path: "/gitlab/postgresql/creds"
           refresh_interval: "1m"
           type: "postgresql"
         - external_secret_name: "eso-gitlab-redis"
           target_secret_name: "secret-gitlab-redis"
-          vault_path: "/ns-gitlab/redis/creds"
+          vault_path: "/gitlab/redis/creds"
           refresh_interval: "1m"
           type: "redis"
         - external_secret_name: "eso-gitlab-minio-root"
           target_secret_name: "secret-gitlab-minio-root"
-          vault_path: "/ns-gitlab/minio/root"
+          vault_path: "/gitlab/minio/root"
           refresh_interval: "1m"
           type: "minio_root"
         - external_secret_name: "eso-gitlab-minio-registry"
           target_secret_name: "secret-gitlab-minio-registry"
-          vault_path: "/ns-gitlab/minio/registry"
+          vault_path: "/gitlab/minio/registry"
           refresh_interval: "1m"
           type: "minio_registry"
         # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
         - external_secret_name: "eso-gitlab-registry-minio-connection"
           target_secret_name: "secret-gitlab-registry-minio-connection"
-          vault_path: "/ns-gitlab/minio/registry"
+          vault_path: "/gitlab/minio/registry"
           refresh_interval: "1m"
           type: "gitlab_registry_minio_connection"
         # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
         - external_secret_name: "eso-gitlab-minio-connection"
           target_secret_name: "secret-gitlab-minio-connection"
-          vault_path: "/ns-gitlab/minio/registry"
+          vault_path: "/gitlab/minio/registry"
           refresh_interval: "1m"
           type: "gitlab_minio_connection"
         - external_secret_name: "eso-gitlab-minio-runner-cache"
           target_secret_name: "secret-gitlab-minio-runner-cache"
-          vault_path: "/ns-gitlab/minio/runner-cache"
+          vault_path: "/gitlab/minio/runner-cache"
           refresh_interval: "1m"
           type: "minio_runner_cache"
         - external_secret_name: "eso-gitlab-root"
           target_secret_name: "secret-gitlab-root"
-          vault_path: "/ns-gitlab/gitlab/root"
+          vault_path: "/gitlab/gitlab/root"
           refresh_interval: "1m"
           type: "gitlab_root"
 
@@ -651,7 +651,7 @@ all:
     argocd_reconciliation_timeout: "30s"
     argocd_reconciliation_jitter: "10s"
     argocd_session_duration: "120h"
-    argocd_gitlab_internal_url: "ssh://git@svc-gitlab.ns-gitlab.svc.cluster.local:22/server/git-ops.git"
+    argocd_gitlab_internal_url: "ssh://git@svc-gitlab.gitlab.svc.cluster.local:22/server/git-ops.git"
     argocd_gitlab_ssh_key: |
       -----BEGIN OPENSSH PRIVATE KEY-----
       REPLACE_WITH_YOUR_KEY
@@ -724,44 +724,44 @@ all:
     managers:
       hosts:
         k8s-manager-1:
-          ansible_host: 158.160.1.66
+          ansible_host: 89.169.176.128
           ansible_user: ubuntu
           ansible_password: "some-password-123"
           new_hostname: k8s-manager-1
           is_master: true
           # internal_ip - internal network interface IP (same as api_server_advertise_address for managers)
-          internal_ip: "10.129.0.12"
+          internal_ip: "10.129.0.26"
           # api_server_advertise_address - IP for kube-apiserver to listen on and advertise to cluster
           # BareMetal: usually same as ansible_host (public IP)
           # Cloud (AWS/Yandex): usually private VPC IP (check with: ip route get 1)
-          api_server_advertise_address: "10.129.0.12"
+          api_server_advertise_address: "10.129.0.26"
           api_server_bind_port: 6443
           longhorn_default_tags:
             - "lh-az-fra-1"
             - "lh-manager"
             - "lh-major-volume"
 
-        k8s-manager-2:
-          ansible_host: 84.201.165.81
-          ansible_user: ubuntu
-          ansible_password: "some-password-456"
-          new_hostname: k8s-manager-2
-          internal_ip: "10.129.0.4"
-          api_server_advertise_address: "10.129.0.4"
-          api_server_bind_port: 6443
-          longhorn_default_tags:
-            - "lh-az-fra-1"
-            - "lh-manager"
-            - "lh-major-volume"
+        # k8s-manager-2:
+        #   ansible_host: 84.201.165.81
+        #   ansible_user: ubuntu
+        #   ansible_password: "some-password-456"
+        #   new_hostname: k8s-manager-2
+        #   internal_ip: "10.129.0.4"
+        #   api_server_advertise_address: "10.129.0.4"
+        #   api_server_bind_port: 6443
+        #   longhorn_default_tags:
+        #     - "lh-az-fra-1"
+        #     - "lh-manager"
+        #     - "lh-major-volume"
 
     workers:
       hosts:
         k8s-worker-1:
-          ansible_host: 84.201.136.113
+          ansible_host: 89.169.171.31
           ansible_user: ubuntu
           ansible_password: "some-password-789"
           new_hostname: k8s-worker-1
-          internal_ip: "10.129.0.3"
+          internal_ip: "10.129.0.24"
           node_labels:
             - "node-role.kubernetes.io/worker="
           longhorn_default_tags:
@@ -770,15 +770,16 @@ all:
             - "lh-major-volume"
             - "lh-minor-volume"
 
-        # k8s-worker-2:
-        #   ansible_host: 13.14.15.16
-        #   ansible_user: root
-        #   ansible_password: "some-password-101"
-        #   new_hostname: k8s-worker-2
-        #   node_labels:
-        #     - "node-role.kubernetes.io/worker="
-        #   longhorn_default_tags:
-        #     - "lh-az-fra-1"
-        #     - "lh-worker"
-        #     - "lh-major-volume"
-        #     - "lh-minor-volume"
+        k8s-worker-2:
+          ansible_host: 89.169.188.67
+          ansible_user: ubuntu
+          ansible_password: "some-password-101"
+          new_hostname: k8s-worker-2
+          internal_ip: "10.129.0.23"
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+          longhorn_default_tags:
+            - "lh-az-fra-1"
+            - "lh-worker"
+            - "lh-major-volume"
+            - "lh-minor-volume"

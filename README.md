@@ -233,7 +233,7 @@
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml`
 
-## cilium-post (относится к cilium). yaml -> helm
+## cilium-hubble (относится к cilium). yaml -> helm
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Это просто дополнительная конфигурация
 ## Тут не запускается никаких контейнеров

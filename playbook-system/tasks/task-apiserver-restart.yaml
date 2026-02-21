@@ -22,10 +22,18 @@
 - name: "Move kube-apiserver manifest back"
   command: mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
 
-# Wait for apiserver to be healthy
-- name: "Wait for kube-apiserver to be healthy"
+# Wait for apiserver to be healthy (liveness)
+- name: "Wait for kube-apiserver to be healthy (liveness)"
   command: curl -sk --max-time 5 https://localhost:6443/healthz
   register: health_check
   until: health_check.rc == 0 and health_check.stdout == "ok"
+  retries: 30
+  delay: 10
+
+# Wait for apiserver to be fully ready (readiness)
+- name: "Wait for kube-apiserver to be ready (readiness)"
+  command: curl -sk --max-time 5 https://localhost:6443/readyz
+  register: ready_check
+  until: ready_check.rc == 0 and ready_check.stdout == "ok"
   retries: 30
   delay: 10

@@ -220,7 +220,7 @@ Path: `{{ vault_creds_host_path }}` (default: `/etc/kubernetes/vault-unseal.json
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `vault_namespace` | `ns-vault` | Kubernetes namespace |
+| `vault_namespace` | `vault` | Kubernetes namespace |
 | `vault_key_shares` | `5` | Number of unseal key shares |
 | `vault_key_threshold` | `2` | Keys required to unseal |
 | `vault_creds_host_path` | `/etc/kubernetes/vault-unseal.json` | Credentials file path |

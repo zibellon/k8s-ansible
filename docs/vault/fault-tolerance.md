@@ -289,10 +289,10 @@ ansible-playbook -i hosts.yaml playbook-app/vault-rotate.yaml --limit <master_ma
 # Единственное решение - переинициализация:
 
 # 1. Удалить PVC
-kubectl delete pvc -n ns-vault data-vault-0
+kubectl delete pvc -n vault data-vault-0
 
 # 2. Удалить pod (для пересоздания)
-kubectl delete pod -n ns-vault vault-0
+kubectl delete pod -n vault vault-0
 
 # 3. Перезапустить установку
 ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml --limit <master_manager>

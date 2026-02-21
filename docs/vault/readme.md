@@ -240,7 +240,7 @@ metadata:
 spec:
   provider:
     vault:
-      server: http://vault.ns-vault.svc.cluster.local:8200
+      server: http://vault.vault.svc.cluster.local:8200
       path: secret
       version: v2
       auth:
@@ -361,7 +361,7 @@ metadata:
 spec:
   provider:
     vault:
-      server: http://vault.ns-vault.svc.cluster.local:8200
+      server: http://vault.vault.svc.cluster.local:8200
       path: secret
       version: v2
       auth:
@@ -428,7 +428,7 @@ spec:
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         VAULT (ns-vault)                            │   │
+│  │                         VAULT (vault)                               │   │
 │  │                                                                     │   │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐ │   │
 │  │  │   Secrets   │  │  Policies   │  │    Kubernetes Auth          │ │   │
@@ -436,12 +436,12 @@ spec:
 │  │  │             │  │ admin-      │  │  ┌─────────────────────┐   │ │   │
 │  │  │ secret/     │  │ policy      │  │  │ Role: admin-role    │   │ │   │
 │  │  │ ├─vault/    │  │             │  │  │ SA: vault-admin     │   │ │   │
-│  │  │ ├─myapp/    │  │ self-eso-   │  │  │ NS: ns-vault        │   │ │   │
+│  │  │ ├─myapp/    │  │ self-eso-   │  │  │ NS: vault           │   │ │   │
 │  │  │ └─other/    │  │ policy      │  │  └─────────────────────┘   │ │   │
 │  │  │             │  │             │  │  ┌─────────────────────┐   │ │   │
 │  │  │             │  │ myapp-      │  │  │ Role: self-eso-role │   │ │   │
 │  │  │             │  │ policy      │  │  │ SA: vault-self-eso  │   │ │   │
-│  │  │             │  │             │  │  │ NS: ns-vault        │   │ │   │
+│  │  │             │  │             │  │  │ NS: vault           │   │ │   │
 │  │  │             │  │             │  │  └─────────────────────┘   │ │   │
 │  │  │             │  │             │  │  ┌─────────────────────┐   │ │   │
 │  │  │             │  │             │  │  │ Role: myapp-role    │   │ │   │
@@ -491,31 +491,31 @@ spec:
 
 ```bash
 # Статус Vault
-kubectl exec -n ns-vault vault-0 -- vault status
+kubectl exec -n vault vault-0 -- vault status
 
 # Login
-kubectl exec -n ns-vault vault-0 -- vault login <token>
+kubectl exec -n vault vault-0 -- vault login <token>
 
 # List secrets
-kubectl exec -n ns-vault vault-0 -- vault kv list secret/
+kubectl exec -n vault vault-0 -- vault kv list secret/
 
 # Read secret
-kubectl exec -n ns-vault vault-0 -- vault kv get secret/myapp/database
+kubectl exec -n vault vault-0 -- vault kv get secret/myapp/database
 
 # Write secret
-kubectl exec -n ns-vault vault-0 -- vault kv put secret/myapp/database password=newpass
+kubectl exec -n vault vault-0 -- vault kv put secret/myapp/database password=newpass
 
 # List policies
-kubectl exec -n ns-vault vault-0 -- vault policy list
+kubectl exec -n vault vault-0 -- vault policy list
 
 # Read policy
-kubectl exec -n ns-vault vault-0 -- vault policy read myapp-policy
+kubectl exec -n vault vault-0 -- vault policy read myapp-policy
 
 # List roles
-kubectl exec -n ns-vault vault-0 -- vault list auth/kubernetes/role
+kubectl exec -n vault vault-0 -- vault list auth/kubernetes/role
 
 # Read role
-kubectl exec -n ns-vault vault-0 -- vault read auth/kubernetes/role/myapp-role
+kubectl exec -n vault vault-0 -- vault read auth/kubernetes/role/myapp-role
 ```
 
 ### Перезапуск Vault
@@ -527,8 +527,8 @@ ansible-playbook -i hosts.yaml playbook-app/vault-restart.yaml
 **Важно:** После перезапуска Vault будет в состоянии **sealed**. Необходимо выполнить unseal:
 
 ```bash
-kubectl exec -n ns-vault vault-0 -- vault operator unseal <unseal_key_1>
-kubectl exec -n ns-vault vault-0 -- vault operator unseal <unseal_key_2>
+kubectl exec -n vault vault-0 -- vault operator unseal <unseal_key_1>
+kubectl exec -n vault vault-0 -- vault operator unseal <unseal_key_2>
 ```
 
-Unseal keys хранятся в K8s Secret `vault-root-credentials` в namespace `ns-vault`.
+Unseal keys хранятся в K8s Secret `vault-root-credentials` в namespace `vault`.

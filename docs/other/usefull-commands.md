@@ -236,15 +236,15 @@ status:
   loadBalancer: {}
 
 # Как получить значения секретов в DECODE
-kubectl get secret vault-self-creds -n ns-vault -o json | jq '.data | map_values(@base64d)'
+kubectl get secret vault-self-creds -n vault -o json | jq '.data | map_values(@base64d)'
 
 # Как посмотреть логи от CronJob
-kubectl get CronJob -n ns-vault
-kubectl logs -n ns-vault -l job-name --tail=100
+kubectl get CronJob -n vault
+kubectl logs -n vault -l job-name --tail=100
 
 # HELM, commands
-helm history <release-name> -n ns-gitlab
-helm rollback <release-name> 2 -n ns-gitlab
+helm history <release-name> -n gitlab
+helm rollback <release-name> 2 -n gitlab
 
 # ETCD commands
 ## Получить список members

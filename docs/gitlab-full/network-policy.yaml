@@ -1,18 +1,18 @@
 # =============================================================================
 # GITLAB NAMESPACE NETWORK POLICIES
 # =============================================================================
-# Full policies for ns-gitlab namespace:
+# Full policies for gitlab namespace:
 # - GitLab, MinIO, GitLab Runner
 # - ACME solver, Traefik egress
 # =============================================================================
 
 ---
-# Default deny all traffic in ns-gitlab namespace
+# Default deny all traffic in gitlab namespace
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: deny-all
-  namespace: ns-gitlab
+  namespace: gitlab
 spec:
   podSelector: {}
   policyTypes:
@@ -20,12 +20,12 @@ spec:
     - Egress
 
 ---
-# Allow DNS for all pods in ns-gitlab namespace
+# Allow DNS for all pods in gitlab namespace
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dns-egress
-  namespace: ns-gitlab
+  namespace: gitlab
 spec:
   podSelector: {}
   policyTypes:
@@ -53,7 +53,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-gitlab
-  namespace: ns-gitlab
+  namespace: gitlab
 spec:
   podSelector:
     matchLabels:
@@ -113,12 +113,12 @@ spec:
 # =============================================================================
 
 ---
-# Allow MinIO ingress from pods within ns-gitlab (for GitLab access)
+# Allow MinIO ingress from pods within gitlab (for GitLab access)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-gitlab-minio
-  namespace: ns-gitlab
+  namespace: gitlab
 spec:
   podSelector:
     matchLabels:
@@ -127,7 +127,7 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # From any pod in ns-gitlab namespace (GitLab will use this)
+    # From any pod in gitlab namespace (GitLab will use this)
     - from:
         - podSelector:
             matchLabels:
@@ -160,7 +160,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-acme-solver
-  namespace: ns-gitlab
+  namespace: gitlab
 spec:
   podSelector:
     matchLabels:
@@ -186,11 +186,11 @@ spec:
 # =============================================================================
 
 ---
-# Traefik -> ns-gitlab (MinIO + GitLab + ACME solver)
+# Traefik -> gitlab (MinIO + GitLab + ACME solver)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ns-gitlab-allow-traefik
+  name: gitlab-allow-traefik
   namespace: ns-traefik-master
 spec:
   podSelector:
@@ -204,7 +204,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ns-gitlab
+              kubernetes.io/metadata.name: gitlab
           podSelector:
             matchLabels:
               app-key: gitlab-minio
@@ -218,7 +218,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ns-gitlab
+              kubernetes.io/metadata.name: gitlab
           podSelector:
             matchLabels:
               app-key: gitlab
@@ -230,11 +230,11 @@ spec:
           port: 81 # registry
         - protocol: TCP
           port: 82 # pages
-    # ACME solver in ns-gitlab
+    # ACME solver in gitlab
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ns-gitlab
+              kubernetes.io/metadata.name: gitlab
           podSelector:
             matchLabels:
               app-key: acme-solver-traefik-master
@@ -247,7 +247,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ns-gitlab-allow-haproxy
+  name: gitlab-allow-haproxy
   namespace: ns-haproxy-master
 spec:
   podSelector:
@@ -265,7 +265,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ns-gitlab
+              kubernetes.io/metadata.name: gitlab
           podSelector:
             matchLabels:
               app-key: gitlab
