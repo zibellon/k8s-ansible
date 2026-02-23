@@ -14,6 +14,10 @@
 # Fault tolerance: uses temp file to resume from interrupted rotate
 # - If rotate temp file exists: resume from interrupted rotate
 # - If no temp file: perform fresh rekey
+#
+# Simplified credential flow:
+# - Distribute to all managers BEFORE any vault operations
+# - vars for distribute-creds are read directly from hostvars[master_manager_fact]
 # =============================================================================
 
 ---
@@ -92,6 +96,7 @@
 
     # =========================================================================
     # STEP 3: RESUME FROM INTERRUPTED ROTATE (temp file exists)
+    # New flow: distribute FIRST → delete temp → unseal with new keys
     # =========================================================================
 
     - name: "[vault-resume] Read credentials from rotate temp file"
@@ -115,8 +120,24 @@
         msg:
           - "=============================================="
           - "RESUMING from interrupted rotate"
-          - "Using new keys from temp file"
+          - "Distributing new keys to all managers first"
           - "=============================================="
+      when: vault_rotate_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[vault-resume] Distribute new credentials to all managers"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        vault_root_token_tmp: "{{ hostvars[master_manager_fact].current_root_token | default('') }}"
+        vault_unseal_keys_tmp: "{{ hostvars[master_manager_fact].new_unseal_keys | default([]) }}"
+        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
+      when: hostvars[master_manager_fact].vault_rotate_tmp_file_exists | default(false)
+
+    - name: "[vault-resume] Delete rotate temp file"
+      file:
+        path: "{{ vault_creds_rotate_tmp_path }}"
+        state: absent
       when: vault_rotate_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -131,28 +152,6 @@
       when:
         - vault_rotate_tmp_file.stat.exists
         - vault_is_sealed | bool
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[vault-resume] Broadcast credentials to all managers"
-      set_fact:
-        _dist_current_root_token: "{{ hostvars[master_manager_fact].current_root_token | default('') }}"
-        _dist_new_unseal_keys: "{{ hostvars[master_manager_fact].new_unseal_keys | default([]) }}"
-      when: hostvars[master_manager_fact].vault_rotate_tmp_file_exists | default(false)
-
-    - name: "[vault-resume] Distribute new credentials to all managers"
-      include_tasks: tasks/tasks-vault-distribute-creds.yaml
-      vars:
-        vault_root_token_tmp: "{{ _dist_current_root_token }}"
-        vault_unseal_keys_tmp: "{{ _dist_new_unseal_keys }}"
-        vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when: hostvars[master_manager_fact].vault_rotate_tmp_file_exists | default(false)
-
-    - name: "[vault-resume] Delete rotate temp file"
-      file:
-        path: "{{ vault_creds_rotate_tmp_path }}"
-        state: absent
-      when: vault_rotate_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -359,18 +358,14 @@
 
     # =========================================================================
     # STEP 8: DISTRIBUTE NEW CREDENTIALS TO ALL MANAGERS
+    # vars read directly from hostvars[master_manager_fact] — no broadcast step
     # =========================================================================
-
-    - name: "[vault-creds] Broadcast new credentials to all managers"
-      set_fact:
-        _dist_current_root_token: "{{ hostvars[master_manager_fact].current_root_token }}"
-        _dist_new_unseal_keys: "{{ hostvars[master_manager_fact].new_unseal_keys }}"
 
     - name: "[vault-creds] Distribute new credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        vault_root_token_tmp: "{{ _dist_current_root_token }}"
-        vault_unseal_keys_tmp: "{{ _dist_new_unseal_keys }}"
+        vault_root_token_tmp: "{{ hostvars[master_manager_fact].vault_rotate_creds_json.root_token }}"
+        vault_unseal_keys_tmp: "{{ hostvars[master_manager_fact].vault_rotate_creds_json.unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
 
     # =========================================================================
