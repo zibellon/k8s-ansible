@@ -15,6 +15,45 @@
 # =============================================================================
 
 # -------------------------------------------------------------------------
+# Reconcile policies: delete removed from hosts.yaml
+# -------------------------------------------------------------------------
+- name: "[vault-policy-sync] Get existing policies from Vault"
+  shell: >
+    kubectl exec -n {{ vault_namespace }} vault-0 --
+    vault policy list -format=json 2>/dev/null || echo '[]'
+  register: vault_existing_policies_raw
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Set policies to delete (drift cleanup)"
+  set_fact:
+    vault_policies_to_delete: >-
+      {{
+        (vault_existing_policies_raw.stdout | from_json)
+        | difference(vault_policies | map(attribute='name') | list)
+        | difference(['default', 'root'])
+      }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Show policies to delete"
+  debug:
+    msg: "Policies to delete (removed from hosts.yaml): {{ vault_policies_to_delete }}"
+  when: vault_policies_to_delete | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Delete removed policies"
+  command: >
+    kubectl exec -n {{ vault_namespace }} vault-0 --
+    vault policy delete {{ item }}
+  loop: "{{ vault_policies_to_delete }}"
+  when: vault_policies_to_delete | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+# -------------------------------------------------------------------------
 # Sync policies from vault_policies array
 # -------------------------------------------------------------------------
 - name: "[vault-policy-sync] Show policies to sync"
@@ -64,6 +103,44 @@
   loop: "{{ vault_policies }}"
   loop_control:
     label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+# -------------------------------------------------------------------------
+# Reconcile roles: delete removed from hosts.yaml
+# -------------------------------------------------------------------------
+- name: "[vault-policy-sync] Get existing roles from Vault"
+  shell: >
+    kubectl exec -n {{ vault_namespace }} vault-0 --
+    vault list -format=json auth/kubernetes/role 2>/dev/null || echo '[]'
+  register: vault_existing_roles_raw
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Set roles to delete (drift cleanup)"
+  set_fact:
+    vault_roles_to_delete: >-
+      {{
+        (vault_existing_roles_raw.stdout | from_json)
+        | difference(vault_roles | map(attribute='name') | list)
+      }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Show roles to delete"
+  debug:
+    msg: "Roles to delete (removed from hosts.yaml): {{ vault_roles_to_delete }}"
+  when: vault_roles_to_delete | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Delete removed roles"
+  command: >
+    kubectl exec -n {{ vault_namespace }} vault-0 --
+    vault delete auth/kubernetes/role/{{ item }}
+  loop: "{{ vault_roles_to_delete }}"
+  when: vault_roles_to_delete | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
 
