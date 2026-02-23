@@ -261,6 +261,11 @@ all:
     cilium_hubble_ui_domain: "cilium-hubble-ui-k8s-v2.drawapp.ru" # Hubble UI domain
     cilium_hubble_ui_vpn_only_enabled: false
     cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui-domain-com"
+    cilium_helm_timeout: "5m"
+    cilium_config_helm_timeout: "2m"
+    cilium_post_config_helm_timeout: "2m"
+    cilium_daemonset_rollout_timeout: "300s"
+    cilium_deployment_rollout_timeout: "120s"
 
     # ------
     # Cert-manager
@@ -269,12 +274,17 @@ all:
     cert_manager_namespace: "cert-manager"
     cert_manager_acme_email: "some-email-123@gmail.com"
     cert_manager_cluster_issuer: "cluster-issuer-acme-prod"
+    cert_manager_helm_timeout: "5m"
+    cert_manager_config_helm_timeout: "2m"
+    cert_manager_rollout_timeout: "180s"
 
     # ------
     # External Secrets Operator
     # ------
     external_secrets_namespace: "external-secrets"
     external_secrets_version: "v1.2.1"
+    external_secrets_helm_timeout: "5m"
+    external_secrets_rollout_timeout: "300s"
 
     # ------
     # Traefik
@@ -290,6 +300,8 @@ all:
     traefik_dashboard_vpn_only_enabled: false
     traefik_dashboard_https_secret_name: "cert-traefik-dashboard-domain-com"
     traefik_dashboard_service_name: "traefik-dashboard"
+    traefik_helm_timeout: "5m"
+    traefik_rollout_timeout: "300s"
 
     # ------
     # HAProxy (Ingress Controller)
@@ -298,12 +310,17 @@ all:
     haproxy_namespace: "haproxy-master"
     haproxy_daemonset_name: "haproxy-master"
     haproxy_ingress_class: "haproxy-master-lb"
+    haproxy_helm_timeout: "5m"
+    haproxy_config_helm_timeout: "2m"
+    haproxy_rollout_timeout: "300s"
 
     # ------
     # OLM v0 (Operator Lifecycle Manager)
     # ------
     olm_namespace: "olm" # DO NOT CHANGE - hardcoded in templates/olm-v0-install.yaml
     olm_operators_namespace: "operators" # DO NOT CHANGE - hardcoded in templates/olm-v0-install.yaml
+    olm_helm_timeout: "5m"
+    olm_rollout_timeout: "300s"
 
     # ------
     # medik8s (Node Health Check + Self Node Remediation)
@@ -320,6 +337,7 @@ all:
     medik8s_nhc_unhealthy_duration: "15s"
     medik8s_nhc_workers_min_healthy: "51%"
     medik8s_nhc_control_plane_min_healthy: "51%"
+    medik8s_config_helm_timeout: "2m"
 
     # ------
     # Longhorn
@@ -343,12 +361,16 @@ all:
       sa_name: "eso-longhorn" # Из списка ниже (vault_roles)
       role_name: "eso-longhorn" # Из списка ниже (vault_roles)
       secret_store_name: "eso-vault-longhorn"
-      kv_engine_path: "secret"
+      kv_engine_path: "eso-secret"
       secrets:
         - external_secret_name: "s3-backup" # Название ExternalSecret (который будет создан в этом namespace)
           target_secret_name: "longhorn-s3-backup-creds" # Название секрета в Kubernetes (который будет создан в этом namespace)
           vault_path: "/longhorn-system/s3-backup" # Full path in Vault
           refresh_interval: "1m"
+    longhorn_helm_timeout: "5m"
+    longhorn_config_helm_timeout: "2m"
+    longhorn_manager_rollout_timeout: "300s"
+    longhorn_ui_rollout_timeout: "120s"
 
     # ------
     # Vault (HashiCorp)
@@ -388,7 +410,7 @@ all:
       sa_name: "eso-vault-self"
       role_name: "eso-vault-self"
       secret_store_name: "eso-vault-self"
-      kv_engine_path: "secret"
+      kv_engine_path: "eso-secret"
       secrets:
         - external_secret_name: "eso-vault-self-creds"
           target_secret_name: "eso-vault-self-creds"
@@ -398,21 +420,11 @@ all:
 
     # ---------
     # VAULT POLICIES (Single Source of Truth)
-    # secret = это secret_engine (из массива vault_kv_engines)
+    # secret | eso-secret = это secret_engine (из массива vault_kv_engines)
     # data = это данные по секретам (path: secret/data/vault/*)
     # metadata = это metadata по секретам (path: secret/metadata/vault/*)
     # ---------
     vault_policies:
-      # ---------
-      # Vault self credentials (for ESO to read vault root credentials)
-      # ---------
-      - name: eso-vault-self
-        paths:
-          - path: secret/data/vault/*
-            capabilities: [read, list]
-          - path: secret/metadata/vault/*
-            capabilities: [read, list]
-
       # ---------
       # Vault Admin (full access for vault-admin SA)
       # ---------
@@ -422,19 +434,33 @@ all:
             capabilities: [create, read, update, delete, list]
           - path: secret/metadata/*
             capabilities: [create, read, update, delete, list]
+          - path: eso-secret/data/*
+            capabilities: [create, read, update, delete, list]
+          - path: eso-secret/metadata/*
+            capabilities: [create, read, update, delete, list]
           - path: sys/policies/acl/*
             capabilities: [create, read, update, delete, list]
           - path: auth/*
             capabilities: [create, read, update, delete, list]
 
       # ---------
+      # Vault self credentials (for ESO to read vault root credentials)
+      # ---------
+      - name: eso-vault-self
+        paths:
+          - path: eso-secret/data/vault/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/vault/*
+            capabilities: [read, list]
+
+      # ---------
       # Longhorn (S3 backup credentials)
       # ---------
       - name: eso-longhorn-read
         paths:
-          - path: secret/data/longhorn-system/*
+          - path: eso-secret/data/longhorn-system/*
             capabilities: [read, list]
-          - path: secret/metadata/longhorn-system/*
+          - path: eso-secret/metadata/longhorn-system/*
             capabilities: [read, list]
 
       # ---------
@@ -442,9 +468,9 @@ all:
       # ---------
       - name: eso-gitlab-read
         paths:
-          - path: secret/data/gitlab/*
+          - path: eso-secret/data/gitlab/*
             capabilities: [read, list]
-          - path: secret/metadata/gitlab/*
+          - path: eso-secret/metadata/gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -452,9 +478,9 @@ all:
       # ---------
       - name: eso-gitlab-minio-read
         paths:
-          - path: secret/data/gitlab/*
+          - path: eso-secret/data/gitlab/*
             capabilities: [read, list]
-          - path: secret/metadata/gitlab/*
+          - path: eso-secret/metadata/gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -462,9 +488,9 @@ all:
       # ---------
       - name: eso-gitlab-read
         paths:
-          - path: secret/data/gitlab/*
+          - path: eso-secret/data/gitlab/*
             capabilities: [read, list]
-          - path: secret/metadata/gitlab/*
+          - path: eso-secret/metadata/gitlab/*
             capabilities: [read, list]
 
       # ---------
@@ -472,24 +498,15 @@ all:
       # ---------
       - name: eso-argocd-read
         paths:
-          - path: secret/data/argocd/*
+          - path: eso-secret/data/argocd/*
             capabilities: [read, list]
-          - path: secret/metadata/argocd/*
+          - path: eso-secret/metadata/argocd/*
             capabilities: [read, list]
 
     # ---------
     # VAULT ROLES (Single Source of Truth)
     # ---------
     vault_roles:
-      # ---------
-      # Vault ESO root (for reading vault credentials)
-      # ---------
-      - name: eso-vault-self
-        namespace: vault
-        sa_name: eso-vault-self
-        policies:
-          - eso-vault-self
-
       # ---------
       # Vault Admin (for writing secrets from Ansible)
       # ---------
@@ -498,6 +515,15 @@ all:
         sa_name: eso-vault-admin
         policies:
           - eso-vault-admin
+
+      # ---------
+      # Vault ESO root (for reading vault credentials)
+      # ---------
+      - name: eso-vault-self
+        namespace: vault
+        sa_name: eso-vault-self
+        policies:
+          - eso-vault-self
 
       # ---------
       # Longhorn
@@ -534,6 +560,9 @@ all:
         sa_name: eso-gitlab
         policies:
           - eso-gitlab-read
+    vault_helm_timeout: "5m"
+    vault_config_helm_timeout: "2m"
+    vault_rollout_timeout: "300s"
 
     # ------
     # GitLab (Production Helm)
@@ -595,7 +624,7 @@ all:
       sa_name: "eso-gitlab"
       role_name: "eso-gitlab"
       secret_store_name: "eso-vault-gitlab"
-      kv_engine_path: "secret"
+      kv_engine_path: "eso-secret"
       secrets:
         - external_secret_name: "eso-gitlab-postgresql"
           target_secret_name: "secret-gitlab-postgresql"
@@ -639,6 +668,12 @@ all:
           vault_path: "/gitlab/gitlab/root"
           refresh_interval: "1m"
           type: "gitlab_root"
+    gitlab_helm_timeout: "15m"
+    gitlab_pre_helm_timeout: "5m"
+    gitlab_storage_helm_timeout: "5m"
+    gitlab_minio_rollout_timeout: "300s"
+    gitlab_rollout_timeout: "600s"
+    gitlab_storage_rollout_timeout: "300s"
 
     # ------
     # ArgoCD
@@ -656,85 +691,24 @@ all:
       -----BEGIN OPENSSH PRIVATE KEY-----
       REPLACE_WITH_YOUR_KEY
       -----END OPENSSH PRIVATE KEY-----
-
-    # ------
-    # Helm timeouts
-    # ------
-    # Cilium
-    cilium_helm_timeout: "5m"
-    cilium_config_helm_timeout: "2m"
-    cilium_post_config_helm_timeout: "2m"
-    # Cert-manager
-    cert_manager_helm_timeout: "5m"
-    cert_manager_config_helm_timeout: "2m"
-    # Traefik
-    traefik_helm_timeout: "5m"
-    # HAProxy
-    haproxy_helm_timeout: "5m"
-    haproxy_config_helm_timeout: "2m"
-    # OLM
-    olm_helm_timeout: "5m"
-    # Medik8s
-    medik8s_config_helm_timeout: "2m"
-    # Longhorn
-    longhorn_helm_timeout: "5m"
-    longhorn_config_helm_timeout: "2m"
-    # External Secrets
-    external_secrets_helm_timeout: "5m"
-    # Vault
-    vault_helm_timeout: "5m"
-    vault_config_helm_timeout: "2m"
-    # GitLab
-    gitlab_helm_timeout: "15m"
-    gitlab_pre_helm_timeout: "5m"
-    gitlab_storage_helm_timeout: "5m"
-    # ArgoCD
     argocd_helm_timeout: "5m"
-
-    # ------
-    # kubectl rollout/wait timeouts
-    # ------
-    # Cilium
-    cilium_daemonset_rollout_timeout: "300s"
-    cilium_deployment_rollout_timeout: "120s"
-    # Cert-manager
-    cert_manager_rollout_timeout: "180s"
-    # Traefik
-    traefik_rollout_timeout: "300s"
-    # HAProxy
-    haproxy_rollout_timeout: "300s"
-    # OLM
-    olm_rollout_timeout: "300s"
-    # Longhorn
-    longhorn_manager_rollout_timeout: "300s"
-    longhorn_ui_rollout_timeout: "120s"
-    # External Secrets
-    external_secrets_rollout_timeout: "300s"
-    # Vault
-    vault_rollout_timeout: "300s"
-    # GitLab MinIO
-    gitlab_minio_rollout_timeout: "300s"
-    # GitLab
-    gitlab_rollout_timeout: "600s"
-    gitlab_storage_rollout_timeout: "300s"
-    # ArgoCD
     argocd_components_rollout_timeout: "120s"
 
   children:
     managers:
       hosts:
         k8s-manager-1:
-          ansible_host: 89.169.176.128
+          ansible_host: 158.160.8.137
           ansible_user: ubuntu
           ansible_password: "some-password-123"
           new_hostname: k8s-manager-1
           is_master: true
           # internal_ip - internal network interface IP (same as api_server_advertise_address for managers)
-          internal_ip: "10.129.0.26"
+          internal_ip: "10.129.0.10"
           # api_server_advertise_address - IP for kube-apiserver to listen on and advertise to cluster
           # BareMetal: usually same as ansible_host (public IP)
           # Cloud (AWS/Yandex): usually private VPC IP (check with: ip route get 1)
-          api_server_advertise_address: "10.129.0.26"
+          api_server_advertise_address: "10.129.0.10"
           api_server_bind_port: 6443
           longhorn_default_tags:
             - "lh-az-fra-1"
@@ -757,7 +731,7 @@ all:
     workers:
       hosts:
         k8s-worker-1:
-          ansible_host: 89.169.171.31
+          ansible_host: 51.250.17.248
           ansible_user: ubuntu
           ansible_password: "some-password-789"
           new_hostname: k8s-worker-1
@@ -771,11 +745,11 @@ all:
             - "lh-minor-volume"
 
         k8s-worker-2:
-          ansible_host: 89.169.188.67
+          ansible_host: 178.154.198.58
           ansible_user: ubuntu
           ansible_password: "some-password-101"
           new_hostname: k8s-worker-2
-          internal_ip: "10.129.0.23"
+          internal_ip: "10.129.0.25"
           node_labels:
             - "node-role.kubernetes.io/worker="
           longhorn_default_tags:
