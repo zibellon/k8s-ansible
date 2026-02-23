@@ -1,38 +1,28 @@
 # =============================================================================
-# Pre-check: validate target is the master manager (exactly one host)
+# Pre-check: auto-detect master manager, fail if not found
 # =============================================================================
 # Shared tasks for validating playbook target
 #
 # Used by all *-install.yaml and *-sync.yaml playbooks
 #
-# Requires:
-#   - Run with --limit <master_manager> (exactly one host)
-#   - Target must be in 'managers' group
-#   - Target must have is_master: true
+# Params:
+#   - label_name: Label prefix for task names (e.g. "cilium-install-pre-check")
+#
+# Sets fact: master_manager_fact
+# Fails if no host with is_master: true exists in managers group
 # =============================================================================
 
-- name: Fail if no limit specified
+- name: "[{{ label_name }}] Set master manager fact"
+  include_tasks: tasks/tasks-set-master-manager.yaml
+
+- name: "[{{ label_name }}] Fail if master manager not found"
   fail:
-    msg: "ERROR: --limit required. Use: ansible-playbook -i hosts.yaml <playbook> --limit <master_manager>"
-  when: ansible_limit is not defined
+    msg: "ERROR: No host with is_master: true found in managers group"
+  when: not is_master_manager_exist
   run_once: true
 
-- name: Fail if more than one host targeted
-  fail:
-    msg: "ERROR: --limit must target exactly ONE host. Current targets: {{ ansible_play_hosts | join(', ') }}"
-  when: ansible_play_hosts | length > 1
-  run_once: true
-
-- name: Fail if not a manager node
-  fail:
-    msg: "ERROR: {{ inventory_hostname }} is not in 'managers' group"
-  when: inventory_hostname not in groups['managers']
-
-- name: Fail if not the master manager
-  fail:
-    msg: "ERROR: {{ inventory_hostname }} does not have is_master: true"
-  when: not (is_master | default(false))
-
-- name: Confirm target
+- name: "[{{ label_name }}] Confirm master manager"
   debug:
-    msg: "Target: {{ inventory_hostname }} (master manager)"
+    msg: "Using master manager: {{ master_manager_fact }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true

@@ -17,8 +17,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[cilium-restart-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "cilium-restart-pre-check"
 
     # -------------------------------------------------------------------------
     # PRE-CHECK: Verify Cilium is installed
@@ -29,20 +31,27 @@
       register: namespace_check
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-restart] Fail if Cilium namespace not found"
       fail:
         msg: "Cilium namespace '{{ cilium_namespace }}' not found. Install Cilium first."
       when: namespace_check.rc != 0
+      run_once: true
 
     - name: "[cilium-restart] Show current Cilium pods"
       command: kubectl get pods -n {{ cilium_namespace }} -l app.kubernetes.io/part-of=cilium -o wide
       register: pods_before
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-restart] Display pods before restart"
       debug:
         var: pods_before.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # RESTART DAEMONSETS
@@ -53,6 +62,8 @@
       loop:
         - cilium
         - cilium-envoy
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # RESTART DEPLOYMENTS
@@ -64,6 +75,8 @@
         - cilium-operator
         - hubble-relay
         - hubble-ui
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # WAIT FOR ROLLOUTS TO COMPLETE
@@ -98,10 +111,14 @@
       command: kubectl get pods -n {{ cilium_namespace }} -l app.kubernetes.io/part-of=cilium -o wide
       register: pods_after
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-verify] Display pods after restart"
       debug:
         var: pods_after.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-verify] Restart completed"
       debug:
@@ -109,4 +126,5 @@
           - "=== Cilium Restart Complete ==="
           - "All components have been restarted and are ready."
           - "ConfigMap changes are now applied."
-
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

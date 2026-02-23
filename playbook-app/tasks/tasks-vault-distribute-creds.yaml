@@ -2,7 +2,7 @@
 # Distribute Vault credentials to ALL control-plane nodes
 # =============================================================================
 # This task distributes vault credentials (root_token + unseal_keys) to all
-# manager nodes, ignoring --limit flag.
+# manager nodes. Runs naturally on all hosts in the play (hosts: managers).
 #
 # Required vars:
 #   - vault_root_token_tmp: Vault root token
@@ -25,10 +25,6 @@
     mode: "0755"
     owner: root
     group: root
-  delegate_to: "{{ item }}"
-  loop: "{{ groups['managers'] }}"
-  loop_control:
-    label: "{{ item }}"
 
 - name: "[vault-creds] Distribute credentials to all managers"
   copy:
@@ -37,20 +33,13 @@
     mode: "0600"
     owner: root
     group: root
-  delegate_to: "{{ item }}"
-  loop: "{{ groups['managers'] }}"
-  loop_control:
-    label: "{{ item }}"
 
 - name: "[vault-creds] Verify credentials file on all managers"
   stat:
     path: "{{ vault_creds_host_path_tmp }}"
-  delegate_to: "{{ item }}"
-  loop: "{{ groups['managers'] }}"
-  loop_control:
-    label: "{{ item }}"
   register: creds_file_check
 
 - name: "[vault-creds] Show distribution result"
   debug:
     msg: "Credentials distributed to {{ groups['managers'] | length }} manager(s): {{ groups['managers'] | join(', ') }}"
+  run_once: true

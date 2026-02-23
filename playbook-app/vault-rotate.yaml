@@ -5,7 +5,7 @@
 # and distributes them to all control-plane nodes.
 #
 # Usage:
-#   ansible-playbook -i hosts.yaml playbook-app/vault-rotate.yaml --limit <manager>
+#   ansible-playbook -i hosts.yaml playbook-app/vault-rotate.yaml
 #
 # Prerequisites:
 #   - Vault must be running
@@ -23,8 +23,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[vault-rotate-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "vault-rotate-pre-check"
 
     # =========================================================================
     # STEP 1: CHECK VAULT STATUS
@@ -35,26 +37,35 @@
         kubectl wait --for=jsonpath='{.status.phase}'=Running
         pod/vault-0 -n {{ vault_namespace }}
         --timeout={{ vault_rollout_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Get Vault status"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json
       register: vault_status
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Parse status"
       set_fact:
         vault_is_sealed: "{{ (vault_status.stdout | from_json).sealed }}"
         vault_is_initialized: "{{ (vault_status.stdout | from_json).initialized }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Fail if not initialized"
       fail:
         msg: "Vault is not initialized. Run vault-install.yaml first."
       when: not (vault_is_initialized | bool)
+      run_once: true
 
     - name: "[vault] Show current status"
       debug:
         msg: "Vault status: initialized={{ vault_is_initialized }}, sealed={{ vault_is_sealed }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: CHECK FOR INTERRUPTED ROTATE (temp file exists)
@@ -64,10 +75,20 @@
       stat:
         path: "{{ vault_creds_rotate_tmp_path }}"
       register: vault_rotate_tmp_file
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show temp file status"
       debug:
         msg: "Rotate temp file exists: {{ vault_rotate_tmp_file.stat.exists }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[vault] Set rotate temp file exists fact"
+      set_fact:
+        vault_rotate_tmp_file_exists: "{{ vault_rotate_tmp_file.stat.exists }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 3: RESUME FROM INTERRUPTED ROTATE (temp file exists)
@@ -78,12 +99,16 @@
         src: "{{ vault_creds_rotate_tmp_path }}"
       register: vault_rotate_tmp_content
       when: vault_rotate_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Parse credentials from temp file"
       set_fact:
         new_unseal_keys: "{{ (vault_rotate_tmp_content.content | b64decode | from_json).unseal_keys }}"
         current_root_token: "{{ (vault_rotate_tmp_content.content | b64decode | from_json).root_token }}"
       when: vault_rotate_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Show resume info"
       debug:
@@ -93,6 +118,8 @@
           - "Using new keys from temp file"
           - "=============================================="
       when: vault_rotate_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Unseal Vault with new keys"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
@@ -104,20 +131,30 @@
       when:
         - vault_rotate_tmp_file.stat.exists
         - vault_is_sealed | bool
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[vault-resume] Broadcast credentials to all managers"
+      set_fact:
+        _dist_current_root_token: "{{ hostvars[master_manager_fact].current_root_token | default('') }}"
+        _dist_new_unseal_keys: "{{ hostvars[master_manager_fact].new_unseal_keys | default([]) }}"
+      when: hostvars[master_manager_fact].vault_rotate_tmp_file_exists | default(false)
 
     - name: "[vault-resume] Distribute new credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        vault_root_token_tmp: "{{ current_root_token }}"
-        vault_unseal_keys_tmp: "{{ new_unseal_keys }}"
+        vault_root_token_tmp: "{{ _dist_current_root_token }}"
+        vault_unseal_keys_tmp: "{{ _dist_new_unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when: vault_rotate_tmp_file.stat.exists
+      when: hostvars[master_manager_fact].vault_rotate_tmp_file_exists | default(false)
 
     - name: "[vault-resume] Delete rotate temp file"
       file:
         path: "{{ vault_creds_rotate_tmp_path }}"
         state: absent
       when: vault_rotate_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Show resume complete"
       debug:
@@ -129,6 +166,8 @@
           - "Credentials file: {{ vault_creds_host_path }}"
           - "=============================================="
       when: vault_rotate_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] End play if resumed"
       meta: end_play
@@ -142,25 +181,34 @@
       stat:
         path: "{{ vault_creds_host_path }}"
       register: vault_creds_file
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Fail if no credentials file"
       fail:
         msg: "Credentials file not found at {{ vault_creds_host_path }}. Cannot perform rekey."
       when: not vault_creds_file.stat.exists
+      run_once: true
 
     - name: "[vault] Read current credentials"
       slurp:
         src: "{{ vault_creds_host_path }}"
       register: vault_creds_content
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Parse current credentials"
       set_fact:
         current_unseal_keys: "{{ (vault_creds_content.content | b64decode | from_json).unseal_keys }}"
         current_root_token: "{{ (vault_creds_content.content | b64decode | from_json).root_token }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show current credentials loaded"
       debug:
         msg: "Loaded {{ current_unseal_keys | length }} unseal keys from {{ vault_creds_host_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 5: UNSEAL IF NEEDED (with current keys)
@@ -174,17 +222,22 @@
         loop_var: key
         label: "Key {{ idx + 1 }}"
       when: vault_is_sealed | bool
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Verify unsealed"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
       register: vault_sealed_after
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Fail if still sealed"
       fail:
         msg: "Failed to unseal Vault"
       when: vault_sealed_after.stdout == 'true'
+      run_once: true
 
     # =========================================================================
     # STEP 6: PERFORM REKEY
@@ -192,6 +245,8 @@
 
     - name: "[vault] Login with root token"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ current_root_token }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Initialize rekey operation"
       shell: |
@@ -201,14 +256,20 @@
           -key-threshold={{ vault_key_threshold }} \
           -format=json
       register: rekey_init
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Parse rekey nonce"
       set_fact:
         rekey_nonce: "{{ (rekey_init.stdout | from_json).nonce }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Show rekey started"
       debug:
         msg: "Rekey initiated with nonce: {{ rekey_nonce }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Submit unseal keys for rekey"
       shell: |
@@ -222,16 +283,21 @@
         loop_var: key
         label: "Key {{ idx + 1 }}"
       register: rekey_results
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Parse new unseal keys"
       set_fact:
         new_unseal_keys: "{{ (rekey_results.results[-1].stdout | from_json).keys_base64 }}"
       when: rekey_results.results[-1].stdout is defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Fail if no new keys"
       fail:
         msg: "Rekey failed - no new keys generated"
       when: new_unseal_keys is not defined
+      run_once: true
 
     - name: "[rekey] Show new keys generated"
       debug:
@@ -239,6 +305,8 @@
           - "=============================================="
           - "NEW UNSEAL KEYS GENERATED"
           - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Show new unseal keys"
       debug:
@@ -247,6 +315,8 @@
       loop_control:
         index_var: idx
         loop_var: key
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Show footer"
       debug:
@@ -255,6 +325,8 @@
           - "Old keys are now INVALID"
           - "Saving to temp file for fault tolerance"
           - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 7: SAVE TO TEMP FILE FIRST (fault tolerance)
@@ -266,6 +338,8 @@
           root_token: "{{ current_root_token }}"
           unseal_keys: "{{ new_unseal_keys }}"
           key_threshold: "{{ vault_key_threshold }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Save credentials to rotate temp file"
       copy:
@@ -274,20 +348,29 @@
         mode: "0600"
         owner: root
         group: root
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Show temp file saved"
       debug:
         msg: "New credentials saved to temp file: {{ vault_creds_rotate_tmp_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 8: DISTRIBUTE NEW CREDENTIALS TO ALL MANAGERS
     # =========================================================================
 
+    - name: "[vault-creds] Broadcast new credentials to all managers"
+      set_fact:
+        _dist_current_root_token: "{{ hostvars[master_manager_fact].current_root_token }}"
+        _dist_new_unseal_keys: "{{ hostvars[master_manager_fact].new_unseal_keys }}"
+
     - name: "[vault-creds] Distribute new credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        vault_root_token_tmp: "{{ current_root_token }}"
-        vault_unseal_keys_tmp: "{{ new_unseal_keys }}"
+        vault_root_token_tmp: "{{ _dist_current_root_token }}"
+        vault_unseal_keys_tmp: "{{ _dist_new_unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
 
     # =========================================================================
@@ -298,10 +381,14 @@
       file:
         path: "{{ vault_creds_rotate_tmp_path }}"
         state: absent
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[rekey] Show temp file deleted"
       debug:
         msg: "Temp file deleted: {{ vault_creds_rotate_tmp_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 10: VERIFY
@@ -312,6 +399,8 @@
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json
       register: vault_final_status
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[verify] Show final status"
       debug:
@@ -323,3 +412,5 @@
           - "New credentials distributed to: {{ groups['managers'] | join(', ') }}"
           - "Credentials file: {{ vault_creds_host_path }}"
           - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

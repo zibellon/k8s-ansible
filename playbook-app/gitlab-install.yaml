@@ -30,6 +30,8 @@
   tasks:
     - name: "[gitlab-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "gitlab-pre-check"
 
     # =========================================================================
     # INIT: Find secret names and vault paths by type from gitlab_eso.secrets
@@ -52,6 +54,8 @@
         vault_path_minio_registry: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_registry') | first).vault_path }}"
         vault_path_minio_runner_cache: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).vault_path }}"
         vault_path_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 1: GENERATE AND STORE INITIAL SECRETS IN VAULT
@@ -66,11 +70,15 @@
       register: postgresql_secret_check
       failed_when: false
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-vault-secrets] Generate PostgreSQL password"
       set_fact:
         generated_postgresql_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when: postgresql_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-vault-secrets] Store PostgreSQL credentials in Vault"
       command: >
@@ -79,6 +87,8 @@
         username=gitlab
         password={{ generated_postgresql_password }}
       when: postgresql_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # ----- Redis credentials -----
     - name: "[gitlab-vault-secrets] Check if Redis secret exists"
@@ -89,11 +99,15 @@
       register: redis_secret_check
       failed_when: false
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-vault-secrets] Generate Redis password"
       set_fact:
         generated_redis_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when: redis_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-vault-secrets] Store Redis credentials in Vault"
       command: >
@@ -102,6 +116,8 @@
         password={{ generated_redis_password }}
         redis_args="--save 1 1 --notify-keyspace-events KEA --requirepass {{ generated_redis_password }}"
       when: redis_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # ----- MinIO root credentials -----
     - name: "[gitlab-vault-secrets] Check if MinIO root secret exists"
@@ -112,11 +128,15 @@
       register: minio_root_secret_check
       failed_when: false
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-vault-secrets] Generate MinIO root password"
       set_fact:
         generated_minio_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when: minio_root_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-vault-secrets] Store MinIO root credentials in Vault"
       command: >
@@ -125,6 +145,8 @@
         username={{ gitlab_minio_root_user }}
         password={{ generated_minio_password }}
       when: minio_root_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 3: INSTALL PRE (ESO Resources, NetworkPolicies)
@@ -167,6 +189,8 @@
             s3Endpoint: {{ gitlab_minio_s3_endpoint }}
             s3Region: {{ gitlab_minio_s3_region }}
             s3PathStyle: {{ gitlab_minio_s3_path_style }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-pre] Install via Helm"
       command: >
@@ -178,6 +202,8 @@
         --atomic
         --wait
         --timeout {{ gitlab_pre_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 4: WAIT FOR INITIAL SECRETS TO SYNC
@@ -190,6 +216,8 @@
       retries: 30
       delay: 5
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-wait-eso] Wait for Redis secret"
       command: kubectl get secret {{ secret_redis }} -n {{ gitlab_namespace }}
@@ -198,6 +226,8 @@
       retries: 30
       delay: 5
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-wait-eso] Wait for MinIO root secret"
       command: kubectl get secret {{ secret_minio_root }} -n {{ gitlab_namespace }}
@@ -206,6 +236,8 @@
       retries: 30
       delay: 5
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 5: INSTALL POSTGRESQL
@@ -229,6 +261,8 @@
           storageClass: {{ gitlab_postgresql_storage_class }}
           storageSize: {{ gitlab_postgresql_storage_size }}
           credentialsSecretName: {{ secret_postgresql }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-postgresql] Install via Helm"
       command: >
@@ -239,6 +273,8 @@
         --atomic
         --wait
         --timeout {{ gitlab_storage_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-postgresql] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
@@ -271,6 +307,8 @@
           credentialsSecretName: {{ secret_redis }}
           storageClass: {{ gitlab_redis_storage_class }}
           storageSize: {{ gitlab_redis_storage_size }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-redis] Install via Helm"
       command: >
@@ -281,6 +319,8 @@
         --atomic
         --wait
         --timeout {{ gitlab_storage_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-redis] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
@@ -313,6 +353,8 @@
           storageClass: {{ gitlab_minio_storage_class }}
           storageSize: {{ gitlab_minio_storage_size }}
           rootSecretName: {{ secret_minio_root }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio] Install via Helm"
       command: >
@@ -323,6 +365,8 @@
         --atomic
         --wait
         --timeout {{ gitlab_storage_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
@@ -343,6 +387,8 @@
         -l app.kubernetes.io/name=gitlab-minio
         -o jsonpath='{.items[0].metadata.name}'
       register: minio_pod_name
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio-setup] Get MinIO root credentials from secret"
       shell: |
@@ -350,6 +396,8 @@
           -o jsonpath='{.data.username}' | base64 -d
       register: minio_root_user_from_secret
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio-setup] Get MinIO root password from secret"
       shell: |
@@ -357,6 +405,8 @@
           -o jsonpath='{.data.password}' | base64 -d
       register: minio_root_password_from_secret
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio-setup] Configure mc alias"
       command: >
@@ -364,6 +414,8 @@
         mc alias set myminio http://localhost:9000
         '{{ minio_root_user_from_secret.stdout }}'
         '{{ minio_root_password_from_secret.stdout }}'
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # Create buckets
     - name: "[gitlab-minio-setup] Create buckets"
@@ -377,6 +429,8 @@
         - gitlab-packages
         - gitlab-backups
         - runner-cache
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # Create access keys for registry
     - name: "[gitlab-minio-setup] Check if registry access_key exists in Vault"
@@ -388,6 +442,8 @@
       register: registry_access_key_check
       failed_when: false
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio-setup] Create access key for registry"
       command: >
@@ -396,6 +452,8 @@
         --name 'registry-key' --json
       register: registry_accesskey_result
       when: registry_access_key_check.stdout == ""
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio-setup] Store registry access key in Vault"
       command: >
@@ -405,6 +463,8 @@
         secret_key={{ (registry_accesskey_result.stdout | from_json).secretKey }}
         bucket_name=registry
       when: registry_access_key_check.stdout == ""
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # Create access keys for runner-cache
     - name: "[gitlab-minio-setup] Check if runner-cache access_key exists in Vault"
@@ -416,6 +476,8 @@
       register: runner_cache_access_key_check
       failed_when: false
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio-setup] Create access key for runner-cache"
       command: >
@@ -424,6 +486,8 @@
         --name 'runner-cache-key' --json
       register: runner_cache_accesskey_result
       when: runner_cache_access_key_check.stdout == ""
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-minio-setup] Parse and store runner-cache access key in Vault"
       command: >
@@ -433,6 +497,8 @@
         secret_key={{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}
         bucket_name=runner-cache
       when: runner_cache_access_key_check.stdout == ""
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 9: WAIT FOR MINIO ACCESS KEYS TO SYNC
@@ -447,6 +513,8 @@
       retries: 30
       delay: 5
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 10: INSTALL GITLAB (Official Helm Chart)
@@ -577,12 +645,18 @@
               enabled: true
           gitlab-runner:
             install: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab] Add GitLab Helm repository"
       command: helm repo add gitlab https://charts.gitlab.io --force-update
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab] Update Helm repositories"
       command: helm repo update
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab] Install via Helm"
       command: >
@@ -594,12 +668,16 @@
         --atomic
         --wait
         --timeout {{ gitlab_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab] Wait for webservice deployment to be ready"
       command: >
         kubectl rollout status deployment -l app=webservice
         -n {{ gitlab_namespace }}
         --timeout={{ gitlab_rollout_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 11: SAVE GITLAB ROOT PASSWORD TO VAULT
@@ -613,6 +691,8 @@
       register: gitlab_root_vault_check
       failed_when: false
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-root] Get root password from Kubernetes secret"
       shell: |
@@ -621,6 +701,8 @@
           -o jsonpath='{.data.password}' | base64 -d
       register: gitlab_root_password_result
       when: gitlab_root_vault_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-root] Store root password in Vault"
       command: >
@@ -632,6 +714,8 @@
         - gitlab_root_vault_check.rc != 0
         - gitlab_root_password_result.stdout is defined
         - gitlab_root_password_result.stdout | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 12: INSTALL POST CHART (Ingress, HAProxy SSH)
@@ -674,6 +758,8 @@
           haproxy:
             namespace: {{ haproxy_namespace }}
             ingressClass: {{ haproxy_ingress_class }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[gitlab-post] Install via Helm"
       command: >
@@ -684,6 +770,8 @@
         --atomic
         --wait
         --timeout {{ gitlab_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 13: VERIFICATION
@@ -693,6 +781,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ gitlab_namespace }}"
+        label_name: "gitlab-verify"
 
     - name: "[gitlab-verify] Show access info"
       debug:
@@ -716,3 +805,5 @@
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."
           - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

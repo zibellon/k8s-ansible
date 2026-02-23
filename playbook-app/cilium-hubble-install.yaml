@@ -13,8 +13,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[cilium-hubble-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "cilium-hubble-install-pre-check"
 
     # =========================================================================
     # STEP 1: CILIUM-HUBBLE/PRE (NetworkPolicies)
@@ -36,6 +38,8 @@
           namespace: {{ cilium_namespace }}
           traefik:
             namespace: {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-hubble-pre] Install or upgrade via Helm"
       command: >
@@ -46,6 +50,8 @@
         --atomic
         --wait
         --timeout {{ cilium_hubble_helm_timeout | default('2m') }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: CILIUM-HUBBLE/INSTALL (Certificate + Ingress)
@@ -76,6 +82,8 @@
 
           traefik:
             namespace: {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-hubble-install] Install or upgrade via Helm"
       command: >
@@ -87,6 +95,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ cilium_hubble_helm_timeout | default('2m') }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 3: CILIUM-HUBBLE/POST (No resources)
@@ -95,6 +105,8 @@
     - name: "[cilium-hubble-post] Skip - no post-install resources"
       debug:
         msg: "cilium-hubble/post: No resources to install"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # VERIFICATION
@@ -104,11 +116,17 @@
       command: helm list -n {{ cilium_namespace }} -f cilium-hubble
       register: helm_list
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-hubble-verify] Print Helm releases"
       debug:
         msg: "{{ helm_list.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-hubble-verify] Installation complete"
       debug:
         msg: "cilium-hubble: OK (Hubble UI available at https://{{ cilium_hubble_ui_domain }})"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

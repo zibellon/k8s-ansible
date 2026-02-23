@@ -12,8 +12,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[vault-restart-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "vault-restart-pre-check"
 
     # -------------------------------------------------------------------------
     # PRE-CHECK: Verify Vault is installed
@@ -24,20 +26,27 @@
       register: namespace_check
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-restart] Fail if Vault namespace not found"
       fail:
         msg: "Vault namespace '{{ vault_namespace }}' not found. Install Vault first."
       when: namespace_check.rc != 0
+      run_once: true
 
     - name: "[vault-restart] Show current Vault pods"
       command: kubectl get pods -n {{ vault_namespace }} -o wide
       register: pods_before
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-restart] Display pods before restart"
       debug:
         var: pods_before.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # RESTART STATEFULSET
@@ -45,6 +54,8 @@
 
     - name: "[vault-restart] Restart Vault StatefulSet"
       command: kubectl rollout restart statefulset/vault -n {{ vault_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # WAIT FOR ROLLOUT TO COMPLETE
@@ -67,11 +78,17 @@
       command: kubectl get pods -n {{ vault_namespace }} -o wide
       register: pods_after
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-verify] Display pods after restart"
       debug:
         var: pods_after.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-verify] Restart completed"
       debug:
         msg: "Vault StatefulSet restart complete"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

@@ -20,8 +20,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[cilium-post-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "cilium-post-install-pre-check"
 
     # =========================================================================
     # CILIUM-POST (CiliumClusterwideNetworkPolicy)
@@ -38,17 +40,24 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ cilium_namespace }}"
+        label_name: "cilium-post-verify"
 
     - name: "[cilium-post-verify] Get CiliumClusterwideNetworkPolicy status"
       command: kubectl get ciliumclusterwidenetworkpolicies -n {{ cilium_namespace }}
       register: ccnp_status
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-post-verify] Print CiliumClusterwideNetworkPolicy status"
       debug:
         msg: "{{ ccnp_status.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-post-verify] Installation complete"
       debug:
         msg: "cilium-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

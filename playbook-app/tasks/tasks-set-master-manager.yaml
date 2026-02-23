@@ -1,0 +1,20 @@
+# =============================================================================
+# Find master manager from hosts.yaml
+# =============================================================================
+# Sets fact: master_manager_fact, is_master_manager_exist
+# =============================================================================
+
+- name: Find master manager
+  set_fact:
+    master_manager_fact: "{{ item }}"
+  loop: "{{ groups['managers'] }}"
+  when: hostvars[item].is_master | default(false)
+
+- name: Set is_master_manager_exist fact
+  set_fact:
+    is_master_manager_exist: "{{ master_manager_fact is defined and master_manager_fact | length > 0 }}"
+
+- name: Print master manager status
+  debug:
+    msg: "Master manager: {{ master_manager_fact | default('NOT FOUND') }} (exists: {{ is_master_manager_exist }})"
+  run_once: true

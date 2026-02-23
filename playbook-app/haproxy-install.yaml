@@ -13,8 +13,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[haproxy-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "haproxy-install-pre-check"
 
     # =========================================================================
     # STEP 1: HAPROXY/PRE (NetworkPolicies)
@@ -34,6 +36,8 @@
         mode: "0644"
         content: |
           namespace: {{ haproxy_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[haproxy-pre] Install or upgrade via Helm"
       command: >
@@ -46,6 +50,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ haproxy_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: OFFICIAL HAPROXYTECH/KUBERNETES-INGRESS
@@ -53,9 +59,13 @@
 
     - name: "[haproxy-install] Add haproxy Helm repository"
       command: helm repo add haproxytech https://haproxytech.github.io/helm-charts --force-update
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[haproxy-install] Update Helm repositories"
       command: helm repo update
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[haproxy-install] Create values file"
       copy:
@@ -85,6 +95,8 @@
                 quic: false
           serviceAccount:
             create: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[haproxy-install] Install or upgrade HAProxy via Helm"
       command: >
@@ -97,6 +109,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ haproxy_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[haproxy-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
@@ -136,6 +150,8 @@
         content: |
           namespace: {{ haproxy_namespace }}
           ingressClass: {{ haproxy_ingress_class }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[haproxy-post] Install or upgrade via Helm"
       command: >
@@ -147,6 +163,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ haproxy_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # VERIFICATION
@@ -156,7 +174,10 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ haproxy_namespace }}"
+        label_name: "haproxy-verify"
 
     - name: "[haproxy-verify] Installation complete"
       debug:
         msg: "haproxy-pre + haproxy-ingress + haproxy-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

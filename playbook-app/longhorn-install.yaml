@@ -13,8 +13,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[longhorn-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "longhorn-install-pre-check"
 
     # =========================================================================
     # STEP 1: LONGHORN/PRE (NetworkPolicies)
@@ -36,6 +38,8 @@
           namespace: {{ longhorn_namespace }}
           traefik:
             namespace: {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[longhorn-pre] Install or upgrade via Helm"
       command: >
@@ -48,6 +52,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ longhorn_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: OFFICIAL LONGHORN/LONGHORN
@@ -55,9 +61,13 @@
 
     - name: "[longhorn-install] Add Longhorn Helm repository"
       command: helm repo add longhorn https://charts.longhorn.io --force-update
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[longhorn-install] Update Helm repositories"
       command: helm repo update
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[longhorn-install] Create values file"
       copy:
@@ -89,6 +99,8 @@
           longhornUI:
             replicas: 1
             affinity: {}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[longhorn-install] Install or upgrade Longhorn via Helm"
       command: >
@@ -101,6 +113,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ longhorn_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[longhorn-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
@@ -185,6 +199,8 @@
             kvEnginePath: {{ longhorn_eso.kv_engine_path }}
             secrets: {{ longhorn_eso.secrets | to_json }}
           azList: {{ longhorn_az_list | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[longhorn-post] Install or upgrade via Helm"
       command: >
@@ -196,6 +212,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ longhorn_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # VERIFICATION
@@ -205,13 +223,18 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ longhorn_namespace }}"
+        label_name: "longhorn-verify"
 
     - name: "[longhorn-verify] Show Longhorn access info"
       debug:
         msg:
           - "Longhorn UI: https://{{ longhorn_ui_domain }}"
           - "Longhorn UI VPN-only: {{ longhorn_ui_vpn_only_enabled }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[longhorn-verify] Installation complete"
       debug:
         msg: "longhorn-pre + longhorn + longhorn-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

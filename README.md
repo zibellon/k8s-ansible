@@ -162,12 +162,12 @@
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml`
   - Что ставится: cilium, host-network-policy, kube-system-network-policy
 - обновление (версия, конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbook-app/cilium-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-restart.yaml`
 
 ## cert-manager. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -175,11 +175,11 @@
 ## 
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/cert-manager-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cert-manager-install.yaml`
   - Что ставится: cert-manager, network-policy
 - обновление (версия, конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/cert-manager-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cert-manager-install.yaml`
 
 ## ExternalSecret. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -187,13 +187,13 @@
 ##
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-install.yaml`
   - Ставится: cert-controller, secrets-webhook, core
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-install.yaml`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-restart.yaml`
 
 ## traefik (ingress). yaml -> helm
 ## Параметры (конфиг) для работы - в cli (как аргументы при запуске)
@@ -203,14 +203,14 @@
 ##
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml`
   - Ставится: traefik, network-policy, ingress (dashboard)
 - обновление (версия)
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml`
 - обновление (конфиг)
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/traefik-restart.yaml`
 
@@ -221,15 +221,15 @@
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml`
   - Ставится: haproxy-ingress, network-policy
 - обновление (версия)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml`
 - обновление (конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml`
 
@@ -240,11 +240,11 @@
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/cilium-hubble-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-hubble-install.yaml`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
 - обновление (Версия + конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/cilium-hubble-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/cilium-hubble-install.yaml`
 
 ## olm. yaml -> helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -252,7 +252,7 @@
 ##
 - установка
   - Никаких переменных в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/olm-v0-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/olm-v0-install.yaml`
   - Ставится: немного компонентов
 - обновление (версия + конфиг)
   - Никаких переменных в `hosts.yaml`
@@ -261,13 +261,13 @@
   - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml
   - Положить сожержимое в `playbook-app/charts/olm-v0/templates/olm-v0-install.yaml`
   - Перенести содержимое namespace в `playbook-app/charts/olm-v0/namespaces.yaml` и удалить из оригинала
-  - `ansible-playbook -i hosts.yaml playbook-app/olm-v0-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/olm-v0-install.yaml`
 
 ## medik8s. Установка идет через kubectl apply -f ...
 ##
 - установка
   - Много переменных в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/medik8s-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/medik8s-install.yaml`
 
 ## longhorn. Официальный helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -280,11 +280,11 @@
 ## 
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/longhorn-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/longhorn-install.yaml`
   - Ставится: longhorn, network-policy, ingress (longhorn-ui)
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/longhorn-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/longhorn-install.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует volume (PVC)
@@ -301,21 +301,21 @@
 ##
 - установка
   - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml`
   - Ставится: cert-controller, secrets-webhook, core
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
   - Устанавливается через официальный HELM, но через исходники с Github
-  - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml playbook-app/vault-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/vault-restart.yaml`
 - Внутренняя структу VAULT
-  - `ansible-playbook -i hosts.yaml playbook-app/tasks/tasks-vault-policy-sync.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/tasks/tasks-vault-policy-sync.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
 ## В файле `hosts.yaml` есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
-## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml --limit k8s-manager-1`
+## Вызов синхронизации VAULT, на основе файла: `ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml`
 ## План, при добавлении чего-то в VAULT
 ## 1. добавить в hosts.yaml новые данные (policy + role + sa + namespoace + secret_path)
 ## 2. Вызвать синхронизацию
@@ -334,12 +334,12 @@
 ## 
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-install.yaml`
   - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
 - обновление (версия + конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-minio-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-minio-install.yaml`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -349,7 +349,7 @@
 ##
 - установка
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), git-ops
 - обновление (версия)
   - Только параметры в `hosts.yaml`
@@ -360,9 +360,9 @@
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
   - Версия не указывается в `hosts.yaml` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/arocd/...`
-  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml`
 - обновление (конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml --limit k8s-manager-1`
-  - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml --limit k8s-manager-1`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml`

@@ -16,8 +16,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[vault-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "vault-install-pre-check"
 
     # =========================================================================
     # STEP 1: INSTALL PRE (NetworkPolicies)
@@ -41,6 +43,8 @@
             namespace: {{ traefik_namespace }}
           externalSecrets:
             namespace: {{ external_secrets_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-pre] Install via Helm"
       command: >
@@ -52,6 +56,8 @@
         --atomic
         --wait
         --timeout {{ vault_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: INSTALL VAULT (Local Helm Chart)
@@ -107,6 +113,8 @@
 
           injector:
             enabled: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Install via Helm"
       command: >
@@ -118,6 +126,8 @@
         --atomic
         --wait
         --timeout {{ vault_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 3: WAIT FOR VAULT POD
@@ -128,6 +138,8 @@
         kubectl wait --for=jsonpath='{.status.phase}'=Running
         pod/vault-0 -n {{ vault_namespace }}
         --timeout={{ vault_rollout_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 4: CHECK IF VAULT IS INITIALIZED
@@ -138,21 +150,29 @@
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json 2>&1 || true
       register: vault_status_raw
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Parse initialization status"
       set_fact:
         vault_is_initialized: "{{ (vault_status_raw.stdout | from_json).initialized | default(false) | bool }}"
       failed_when: false
       ignore_errors: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Set default if parse failed"
       set_fact:
         vault_is_initialized: false
       when: vault_is_initialized is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show initialization status"
       debug:
         msg: "Vault initialized: {{ vault_is_initialized }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 5: CHECK FOR INTERRUPTED INIT (temp file exists)
@@ -162,10 +182,20 @@
       stat:
         path: "{{ vault_creds_init_tmp_path }}"
       register: vault_init_tmp_file
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show temp file status"
       debug:
         msg: "Init temp file exists: {{ vault_init_tmp_file.stat.exists }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[vault] Set init temp file exists fact"
+      set_fact:
+        vault_init_tmp_file_exists: "{{ vault_init_tmp_file.stat.exists }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 6: RESUME FROM INTERRUPTED INIT (temp file exists)
@@ -176,12 +206,16 @@
         src: "{{ vault_creds_init_tmp_path }}"
       register: vault_tmp_content
       when: vault_init_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Parse credentials from temp file"
       set_fact:
         vault_unseal_keys: "{{ (vault_tmp_content.content | b64decode | from_json).unseal_keys }}"
         vault_root_token: "{{ (vault_tmp_content.content | b64decode | from_json).root_token }}"
       when: vault_init_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Show resume info"
       debug:
@@ -191,6 +225,8 @@
           - "Using credentials from temp file"
           - "=============================================="
       when: vault_init_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Check seal status"
       shell: |
@@ -198,6 +234,8 @@
       register: vault_resume_sealed_check
       when: vault_init_tmp_file.stat.exists
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Unseal Vault"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
@@ -209,25 +247,37 @@
       when:
         - vault_init_tmp_file.stat.exists
         - vault_resume_sealed_check.stdout | default('true') == 'true'
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[vault-resume] Broadcast credentials to all managers"
+      set_fact:
+        _dist_vault_root_token: "{{ hostvars[master_manager_fact].vault_root_token | default('') }}"
+        _dist_vault_unseal_keys: "{{ hostvars[master_manager_fact].vault_unseal_keys | default([]) }}"
+      when: hostvars[master_manager_fact].vault_init_tmp_file_exists | default(false)
 
     - name: "[vault-resume] Distribute credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        vault_root_token_tmp: "{{ vault_root_token }}"
-        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
+        vault_root_token_tmp: "{{ _dist_vault_root_token }}"
+        vault_unseal_keys_tmp: "{{ _dist_vault_unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when: vault_init_tmp_file.stat.exists
+      when: hostvars[master_manager_fact].vault_init_tmp_file_exists | default(false)
 
     - name: "[vault-resume] Delete temp file"
       file:
         path: "{{ vault_creds_init_tmp_path }}"
         state: absent
       when: vault_init_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-resume] Show resume complete"
       debug:
         msg: "Resume complete - temp file deleted"
       when: vault_init_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 7: ALREADY INITIALIZED + NO TEMP FILE (normal case)
@@ -241,6 +291,8 @@
         - vault_is_initialized | bool
         - not vault_init_tmp_file.stat.exists
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show seal status (initialized, no temp)"
       debug:
@@ -248,6 +300,8 @@
       when:
         - vault_is_initialized | bool
         - not vault_init_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 7.1: READ CREDENTIALS FROM MAIN FILE (if needed)
@@ -260,16 +314,18 @@
       when:
         - vault_is_initialized | bool
         - not vault_init_tmp_file.stat.exists
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] FAIL if no credentials file found"
       fail:
         msg: |
           =====================================================
           CRITICAL: Vault is initialized but credentials file not found!
-          
+
           Main file: {{ vault_creds_host_path }} - NOT FOUND
           Temp file: {{ vault_creds_init_tmp_path }} - NOT FOUND
-          
+
           This means unseal keys and root token are LOST.
           You need to manually recover or reinitialize Vault.
           =====================================================
@@ -277,6 +333,7 @@
         - vault_is_initialized | bool
         - not vault_init_tmp_file.stat.exists
         - not (vault_creds_file.stat.exists | default(false))
+      run_once: true
 
     - name: "[vault] Read credentials from main file"
       slurp:
@@ -286,6 +343,8 @@
         - vault_is_initialized | bool
         - not vault_init_tmp_file.stat.exists
         - vault_creds_file.stat.exists | default(false)
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Parse credentials from main file"
       set_fact:
@@ -296,6 +355,8 @@
         - not vault_init_tmp_file.stat.exists
         - vault_main_creds_content is defined
         - vault_main_creds_content.content is defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 7.2: UNSEAL IF SEALED (initialized, no temp)
@@ -313,6 +374,8 @@
         - not vault_init_tmp_file.stat.exists
         - vault_sealed_check.stdout | default('false') == 'true'
         - vault_unseal_keys is defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Login with root token (initialized, no temp)"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
@@ -320,6 +383,8 @@
         - vault_is_initialized | bool
         - not vault_init_tmp_file.stat.exists
         - vault_root_token is defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 8: INITIALIZE VAULT (if not initialized)
@@ -333,12 +398,22 @@
           -format=json
       register: vault_init_result
       when: not (vault_is_initialized | bool)
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Parse init result"
       set_fact:
         vault_unseal_keys: "{{ (vault_init_result.stdout | from_json).unseal_keys_b64 }}"
         vault_root_token: "{{ (vault_init_result.stdout | from_json).root_token }}"
       when: vault_init_result is not skipped and vault_init_result.stdout is defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[vault] Set init was run fact"
+      set_fact:
+        vault_init_was_run: "{{ not (vault_init_result.skipped | default(true)) }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show initialization header"
       debug:
@@ -347,6 +422,8 @@
           - "VAULT INITIALIZATION RESULT"
           - "=============================================="
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show unseal keys"
       debug:
@@ -356,6 +433,8 @@
         index_var: idx
         loop_var: key
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show root token and footer"
       debug:
@@ -365,6 +444,8 @@
           - "IMPORTANT: Saving to temp file first for fault tolerance"
           - "=============================================="
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 8.1: SAVE TO TEMP FILE FIRST (fault tolerance)
@@ -377,6 +458,8 @@
           unseal_keys: "{{ vault_unseal_keys }}"
           key_threshold: "{{ vault_key_threshold }}"
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-init] Save credentials to temp file"
       copy:
@@ -386,11 +469,15 @@
         owner: root
         group: root
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-init] Show temp file saved"
       debug:
         msg: "Credentials saved to temp file: {{ vault_creds_init_tmp_path }}"
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 9: UNSEAL VAULT (if just initialized)
@@ -404,28 +491,40 @@
         loop_var: key
         label: "Key {{ idx + 1 }}"
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Verify Vault is unsealed"
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
       register: vault_sealed_status
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Show seal status"
       debug:
         msg: "Vault sealed: {{ vault_sealed_status.stdout }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 9.1: DISTRIBUTE CREDENTIALS TO ALL MANAGERS (after init)
     # =========================================================================
 
+    - name: "[vault-creds] Broadcast credentials to all managers"
+      set_fact:
+        _dist_vault_root_token: "{{ hostvars[master_manager_fact].vault_root_token | default('') }}"
+        _dist_vault_unseal_keys: "{{ hostvars[master_manager_fact].vault_unseal_keys | default([]) }}"
+      when: hostvars[master_manager_fact].vault_init_was_run | default(false)
+
     - name: "[vault-creds] Distribute credentials to all managers (after init)"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        vault_root_token_tmp: "{{ vault_root_token }}"
-        vault_unseal_keys_tmp: "{{ vault_unseal_keys }}"
+        vault_root_token_tmp: "{{ _dist_vault_root_token }}"
+        vault_unseal_keys_tmp: "{{ _dist_vault_unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
-      when: vault_init_result is not skipped
+      when: hostvars[master_manager_fact].vault_init_was_run | default(false)
 
     # =========================================================================
     # STEP 9.2: DELETE TEMP FILE (after successful distribution)
@@ -436,11 +535,15 @@
         path: "{{ vault_creds_init_tmp_path }}"
         state: absent
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-init] Show temp file deleted"
       debug:
         msg: "Temp file deleted: {{ vault_creds_init_tmp_path }}"
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 10: CONFIGURE KUBERNETES AUTH (if just initialized)
@@ -449,18 +552,24 @@
     - name: "[vault] Login with root token"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
       when: vault_root_token is defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Enable Kubernetes auth method"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault auth enable kubernetes
       register: k8s_auth_result
       failed_when: false
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault] Configure Kubernetes auth"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/config
         kubernetes_host="{{ vault_kubernetes_host }}"
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 11: ENABLE KV SECRETS ENGINE (if just initialized)
@@ -472,6 +581,8 @@
       register: kv_enable_result
       failed_when: false
       when: vault_init_result is not skipped
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 12: SYNC VAULT POLICIES AND ROLES (only when unsealed)
@@ -519,6 +630,8 @@
             schedule: "{{ vault_auto_unseal_schedule }}"
             keyThreshold: {{ vault_key_threshold }}
             credsHostPath: "{{ vault_creds_host_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-post] Install via Helm"
       command: >
@@ -529,6 +642,8 @@
         --atomic
         --wait
         --timeout {{ vault_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 14: VERIFY AND OUTPUT
@@ -538,6 +653,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ vault_namespace }}"
+        label_name: "vault-verify"
 
     - name: "[vault-credentials] Show credentials header"
       debug:
@@ -545,6 +661,8 @@
           - "=============================================="
           - "VAULT CREDENTIALS"
           - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-credentials] Show unseal keys"
       debug:
@@ -554,11 +672,15 @@
         index_var: idx
         loop_var: key
       when: vault_unseal_keys is defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-credentials] Show unseal keys (already initialized)"
       debug:
         msg: "Unseal Keys: (already initialized - check {{ vault_creds_host_path }})"
       when: vault_unseal_keys is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-credentials] Show remaining info"
       debug:
@@ -572,7 +694,11 @@
           - "Vault UI: https://{{ vault_domain }}"
           - "VPN-only: {{ vault_vpn_only_enabled }}"
           - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-verify] Confirm installation"
       debug:
         msg: "Vault installation: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

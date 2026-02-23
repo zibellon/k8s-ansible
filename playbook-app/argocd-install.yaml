@@ -9,6 +9,11 @@
   gather_facts: false
 
   tasks:
+    - name: "[argocd-install-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "argocd-install-pre-check"
+
     # -------------------------------------------------------------------------
     # COPY LOCAL HELM CHARTS
     # -------------------------------------------------------------------------
@@ -29,6 +34,8 @@
     - name: "[argocd-install] Install argocd-crds via kubectl"
       command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
@@ -64,6 +71,8 @@
             internalUrl: "{{ argocd_gitlab_internal_url }}"
             sshPrivateKey: |-
               {{ argocd_gitlab_ssh_key | indent(14) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # INSTALL OR UPGRADE CHART
@@ -81,6 +90,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ argocd_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # VERIFY INSTALLATION
@@ -105,24 +116,32 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ argocd_namespace }}"
+        label_name: "argocd-verify"
 
     - name: "[argocd-verify] Get ArgoCD initial admin password"
       shell: kubectl get secret argocd-initial-admin-secret -n {{ argocd_namespace }} -o jsonpath='{.data.password}' | base64 --decode
       register: argocd_password
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-verify] Show ArgoCD admin password"
       debug:
         msg: "ArgoCD admin password: {{ argocd_password.stdout }}"
       when: argocd_password.rc == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-verify] Verify NetworkPolicies"
       command: kubectl get networkpolicies -n {{ argocd_namespace }}
       register: np_verify
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-verify] Show NetworkPolicies"
       debug:
         var: np_verify.stdout_lines
-
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

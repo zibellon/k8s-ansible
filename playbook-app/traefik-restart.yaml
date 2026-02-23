@@ -12,8 +12,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[traefik-restart-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "traefik-restart-pre-check"
 
     # -------------------------------------------------------------------------
     # PRE-CHECK: Verify Traefik is installed
@@ -24,20 +26,27 @@
       register: namespace_check
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-restart] Fail if Traefik namespace not found"
       fail:
         msg: "Traefik namespace '{{ traefik_namespace }}' not found. Install Traefik first."
       when: namespace_check.rc != 0
+      run_once: true
 
     - name: "[traefik-restart] Show current Traefik pods"
       command: kubectl get pods -n {{ traefik_namespace }} -o wide
       register: pods_before
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-restart] Display pods before restart"
       debug:
         var: pods_before.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # RESTART DAEMONSET
@@ -45,6 +54,8 @@
 
     - name: "[traefik-restart] Restart Traefik DaemonSet"
       command: kubectl rollout restart daemonset/{{ traefik_daemonset_name }} -n {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # WAIT FOR ROLLOUT TO COMPLETE
@@ -67,11 +78,17 @@
       command: kubectl get pods -n {{ traefik_namespace }} -o wide
       register: pods_after
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-verify] Display pods after restart"
       debug:
         var: pods_after.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-verify] Restart completed"
       debug:
         msg: "Traefik DaemonSet restart complete"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

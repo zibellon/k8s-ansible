@@ -13,8 +13,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[cert-manager-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "cert-manager-install-pre-check"
 
     # =========================================================================
     # STEP 1: CERT-MANAGER/PRE (NetworkPolicies)
@@ -34,6 +36,8 @@
         mode: "0644"
         content: |
           namespace: {{ cert_manager_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-pre] Install or upgrade via Helm"
       command: >
@@ -46,6 +50,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ cert_manager_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: OFFICIAL CERT-MANAGER HELM
@@ -54,16 +60,22 @@
     - name: "[cert-manager-install] Add Jetstack Helm repository"
       command: helm repo add jetstack https://charts.jetstack.io --force-update
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-install] Update Helm repositories"
       command: helm repo update
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-install] Ensure charts directory exists"
       file:
         path: "{{ remote_charts_dir }}/cert-manager/install"
         state: directory
         mode: "0755"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-install] Create values file"
       copy:
@@ -72,6 +84,8 @@
         content: |
           crds:
             enabled: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-install] Install or upgrade via Helm"
       command: >
@@ -84,6 +98,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ cert_manager_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # WAIT FOR CERT-MANAGER CRDs
@@ -138,6 +154,8 @@
             email: {{ cert_manager_acme_email }}
             ingressClass: {{ traefik_ingress_class }}
             traefikEntrypoint: {{ traefik_web_entrypoint }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-post] Install or upgrade via Helm"
       command: >
@@ -149,6 +167,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ cert_manager_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # VERIFICATION
@@ -158,16 +178,23 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ cert_manager_namespace }}"
+        label_name: "cert-manager-verify"
 
     - name: "[cert-manager-verify] Get cert-manager pods status"
       command: kubectl get pods -n {{ cert_manager_namespace }} -o wide
       register: certmanager_pods
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-verify] Print cert-manager pods status"
       debug:
         msg: "{{ certmanager_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cert-manager-verify] Installation complete"
       debug:
         msg: "cert-manager-pre + cert-manager + cert-manager-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

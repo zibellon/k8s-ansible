@@ -13,8 +13,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[olm-v0-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "olm-v0-install-pre-check"
 
     # =========================================================================
     # STEP 1: OLM-V0/PRE (No resources)
@@ -23,6 +25,8 @@
     - name: "[olm-v0-pre] Skip - no pre-install resources"
       debug:
         msg: "olm-v0/pre: No resources to install"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: OLM-V0/INSTALL (CRDs + Namespaces + Helm)
@@ -40,6 +44,8 @@
     - name: "[olm-v0-install] Install OLM CRDs via kubectl"
       command: kubectl create -f {{ remote_charts_dir }}/olm-v0/install/crds/crds.yaml
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[olm-v0-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
@@ -58,6 +64,8 @@
     # Create namespaces
     - name: "[olm-v0-install] Apply OLM namespaces (olm + operators)"
       command: kubectl apply -f {{ remote_charts_dir }}/olm-v0/install/namespaces.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # Create values file
     - name: "[olm-v0-install] Create values file"
@@ -66,6 +74,8 @@
         mode: "0644"
         content: |
           replicas: 1
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # Install Helm chart
     - name: "[olm-v0-install] Install or upgrade via Helm (skip-crds)"
@@ -79,6 +89,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ olm_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # WAIT FOR OLM TO BE READY
@@ -103,6 +115,8 @@
       retries: 3
       delay: 10
       until: packageserver_wait.rc == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 3: OLM-V0/POST (No resources)
@@ -111,6 +125,8 @@
     - name: "[olm-v0-post] Skip - no post-install resources"
       debug:
         msg: "olm-v0/post: No resources to install"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # VERIFICATION
@@ -120,7 +136,10 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ olm_namespace }}"
+        label_name: "olm-v0-verify"
 
     - name: "[olm-v0-verify] Installation complete"
       debug:
         msg: "olm-v0: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

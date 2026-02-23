@@ -15,8 +15,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[cilium-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "cilium-install-pre-check"
 
     # =========================================================================
     # STEP 1: CILIUM-PRE (NetworkPolicies)
@@ -38,6 +40,8 @@
           namespace: {{ cilium_namespace }}
           traefik:
             namespace: {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-pre] Install or upgrade via Helm"
       command: >
@@ -50,6 +54,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ cilium_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: OFFICIAL CILIUM HELM
@@ -58,16 +64,22 @@
     - name: "[cilium-install] Add Cilium Helm repository"
       command: helm repo add cilium https://helm.cilium.io/ --force-update
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-install] Update Helm repositories"
       command: helm repo update
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-install] Ensure charts directory exists"
       file:
         path: "{{ remote_charts_dir }}/cilium"
         state: directory
         mode: "0755"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-install] Create values file"
       copy:
@@ -96,6 +108,8 @@
               clusterDomain: {{ dns_domain }}
           hostFirewall:
             enabled: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-install] Install or upgrade via Helm"
       command: >
@@ -108,6 +122,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ cilium_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # WAIT FOR CILIUM CRDs
@@ -167,16 +183,23 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ cilium_namespace }}"
+        label_name: "cilium-verify"
 
     - name: "[cilium-verify] Get Cilium pods status"
       command: kubectl get pods -n {{ cilium_namespace }} -o wide
       register: cilium_pods
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-verify] Print Cilium pods status"
       debug:
         msg: "{{ cilium_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[cilium-verify] Installation complete"
       debug:
         msg: "cilium-pre + cilium + cilium-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

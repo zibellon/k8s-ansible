@@ -13,8 +13,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[traefik-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "traefik-install-pre-check"
 
     # =========================================================================
     # STEP 1: TRAEFIK/PRE (NetworkPolicies)
@@ -34,6 +36,8 @@
         mode: "0644"
         content: |
           namespace: {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-pre] Install or upgrade via Helm"
       command: >
@@ -46,6 +50,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ traefik_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: OFFICIAL TRAEFIK CHART
@@ -56,15 +62,21 @@
       register: helm_repo_add
       changed_when: "'has been added' in helm_repo_add.stdout"
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-install] Update Helm repositories"
       command: helm repo update traefik
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-install] Create values directory"
       file:
         path: "{{ remote_charts_dir }}/traefik/install"
         state: directory
         mode: "0755"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-install] Create values-override.yaml"
       copy:
@@ -205,6 +217,8 @@
                     protocol: TCP
                     port: 8080
                     targetPort: 8080
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-install] Install or upgrade via Helm"
       command: >
@@ -217,6 +231,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ traefik_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # WAIT FOR TRAEFIK CRDs
@@ -280,6 +296,8 @@
             secretName: {{ traefik_dashboard_https_secret_name }}
             clusterIssuer: {{ cert_manager_cluster_issuer }}
             vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[traefik-post] Install or upgrade via Helm"
       command: >
@@ -291,6 +309,8 @@
         --wait
         --wait-for-jobs
         --timeout {{ traefik_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # VERIFICATION
@@ -300,7 +320,10 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         helm_namespace: "{{ traefik_namespace }}"
+        label_name: "traefik-verify"
 
     - name: "[traefik-verify] Installation complete"
       debug:
         msg: "traefik-pre + traefik + traefik-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

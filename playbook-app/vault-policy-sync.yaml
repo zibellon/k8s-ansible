@@ -10,7 +10,7 @@
 #   4. Creates/updates all roles in Vault
 #
 # Usage:
-#   ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml --limit manager-1
+#   ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml
 # =============================================================================
 
 ---
@@ -20,8 +20,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[vault-policy-sync-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "vault-policy-sync-pre-check"
 
     # =========================================================================
     # STEP 1: CHECK VAULT IS READY
@@ -32,15 +34,20 @@
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault status -format=json | jq -r '.sealed'
       register: vault_sealed_check
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[vault-check] Fail if Vault is sealed"
       fail:
         msg: "Vault is sealed. Please unseal Vault first."
       when: vault_sealed_check.stdout == "true"
+      run_once: true
 
     - name: "[vault-check] Vault is ready"
       debug:
         msg: "Vault is unsealed and ready"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: SYNC ALL POLICIES AND ROLES
@@ -58,20 +65,28 @@
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault policy list
       register: vault_policies_list
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[verify] Show policies"
       debug:
         var: vault_policies_list.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[verify] List all roles in Vault"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault list auth/kubernetes/role
       register: vault_roles_list
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[verify] Show roles"
       debug:
         var: vault_roles_list.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # SUMMARY
@@ -93,3 +108,5 @@
           - "Roles:"
           - "{% for r in vault_roles %}  - {{ r.name }} -> {{ r.sa_name }} ({{ r.namespace }})\n{% endfor %}"
           - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

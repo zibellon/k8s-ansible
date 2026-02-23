@@ -14,6 +14,8 @@
     path: "{{ chart_remote_dest | dirname }}"
     state: directory
     mode: "0755"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
 
 - name: "[{{ label_name }}] Archive chart locally"
   archive:
@@ -22,33 +24,44 @@
     format: gz
   delegate_to: localhost
   become: false
+  run_once: true
 
 - name: "[{{ label_name }}] Remove old chart from remote"
   file:
     path: "{{ chart_remote_dest }}"
     state: absent
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
 
 - name: "[{{ label_name }}] Create remote directory"
   file:
     path: "{{ chart_remote_dest }}"
     state: directory
     mode: "0755"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
 
 - name: "[{{ label_name }}] Copy archive to remote"
   copy:
     src: "{{ chart_local_src | dirname }}/{{ chart_name }}.tar.gz"
     dest: "{{ chart_remote_dest }}.tar.gz"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
 
 - name: "[{{ label_name }}] Unarchive on remote"
   unarchive:
     src: "{{ chart_remote_dest }}.tar.gz"
     dest: "{{ chart_remote_dest }}"
     remote_src: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
 
 - name: "[{{ label_name }}] Cleanup remote archive"
   file:
     path: "{{ chart_remote_dest }}.tar.gz"
     state: absent
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
 
 - name: "[{{ label_name }}] Cleanup local archive"
   file:
@@ -56,3 +69,4 @@
     state: absent
   delegate_to: localhost
   become: false
+  run_once: true

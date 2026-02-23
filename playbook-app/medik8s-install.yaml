@@ -14,8 +14,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[medik8s-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "medik8s-install-pre-check"
 
     # =========================================================================
     # STEP 1: MEDIK8S/PRE (NetworkPolicies via Helm)
@@ -35,6 +37,8 @@
         mode: "0644"
         content: |
           namespace: {{ olm_operators_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-pre] Install or upgrade via Helm"
       command: >
@@ -45,6 +49,8 @@
         --atomic
         --wait
         --timeout {{ medik8s_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 2: MEDIK8S/INSTALL (OLM Subscriptions)
@@ -55,6 +61,8 @@
         path: "{{ remote_charts_dir }}/medik8s/install"
         state: directory
         mode: "0755"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-install] Create Node Health Check Subscription manifest"
       copy:
@@ -71,6 +79,8 @@
             name: node-healthcheck-operator
             source: operatorhubio-catalog
             sourceNamespace: {{ olm_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-install] Create Self Node Remediation Subscription manifest"
       copy:
@@ -87,12 +97,18 @@
             name: self-node-remediation
             source: operatorhubio-catalog
             sourceNamespace: {{ olm_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-install] Apply Node Health Check Subscription"
       command: kubectl apply -f {{ remote_charts_dir }}/medik8s/install/subscription-nhc.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-install] Apply Self Node Remediation Subscription"
       command: kubectl apply -f {{ remote_charts_dir }}/medik8s/install/subscription-snr.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-install] Wait for Self Node Remediation CSV to be ready"
       command: >
@@ -104,6 +120,8 @@
       retries: 60
       delay: 5
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-install] Wait for Node Health Check CSV to be ready"
       command: >
@@ -115,10 +133,14 @@
       retries: 60
       delay: 5
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-install] Show CSV status"
       debug:
         msg: "SNR CSV: {{ snr_csv_status.stdout }}, NHC CSV: {{ nhc_csv_status.stdout }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # STEP 3: MEDIK8S/POST (Config manifests)
@@ -129,6 +151,8 @@
         path: "{{ remote_charts_dir }}/medik8s/post"
         state: directory
         mode: "0755"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Create SelfNodeRemediationConfig manifest"
       copy:
@@ -150,6 +174,8 @@
             peerUpdateInterval: "{{ medik8s_peer_update_interval }}"
             safeTimeToAssumeNodeRebootedSeconds: {{ medik8s_safe_time_to_assume_rebooted }}
             isSoftwareRebootEnabled: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Create SelfNodeRemediationTemplate manifest"
       copy:
@@ -165,6 +191,8 @@
             template:
               spec:
                 remediationStrategy: {{ medik8s_remediation_strategy }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Create NodeHealthCheck manifest for workers"
       copy:
@@ -194,6 +222,8 @@
               kind: SelfNodeRemediationTemplate
               name: self-node-remediation-template
               namespace: {{ olm_operators_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Create NodeHealthCheck manifest for control-plane"
       copy:
@@ -223,51 +253,75 @@
               kind: SelfNodeRemediationTemplate
               name: self-node-remediation-template
               namespace: {{ olm_operators_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Apply SelfNodeRemediationConfig"
       command: kubectl apply -f {{ remote_charts_dir }}/medik8s/post/self-node-remediation-config.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Apply SelfNodeRemediationTemplate"
       command: kubectl apply -f {{ remote_charts_dir }}/medik8s/post/self-node-remediation-template.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Apply NodeHealthCheck for workers"
       command: kubectl apply -f {{ remote_charts_dir }}/medik8s/post/nhc-workers.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[medik8s-post] Apply NodeHealthCheck for control-plane"
       command: kubectl apply -f {{ remote_charts_dir }}/medik8s/post/nhc-control-plane.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # =========================================================================
     # VERIFICATION
     # =========================================================================
 
-    - name: List installed CSVs
+    - name: "[medik8s-verify] List installed CSVs"
       command: kubectl get csv -n {{ olm_operators_namespace }}
       register: csv_list
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
-    - name: Show installed CSVs
+    - name: "[medik8s-verify] Show installed CSVs"
       debug:
         var: csv_list.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
-    - name: Check SelfNodeRemediationConfig
+    - name: "[medik8s-verify] Check SelfNodeRemediationConfig"
       command: kubectl get selfnoderemediationconfig -n {{ olm_operators_namespace }}
       register: snr_config_list
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
-    - name: Show SelfNodeRemediationConfig
+    - name: "[medik8s-verify] Show SelfNodeRemediationConfig"
       debug:
         var: snr_config_list.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
-    - name: Check NodeHealthCheck CR
+    - name: "[medik8s-verify] Check NodeHealthCheck CR"
       command: kubectl get nodehealthcheck -A
       register: nhc_list
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
-    - name: Show NodeHealthCheck CRs
+    - name: "[medik8s-verify] Show NodeHealthCheck CRs"
       debug:
         var: nhc_list.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
-    - name: Installation complete
+    - name: "[medik8s-verify] Installation complete"
       debug:
         msg: "medik8s-pre + medik8s-install + medik8s-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

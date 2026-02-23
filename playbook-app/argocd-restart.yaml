@@ -15,8 +15,10 @@
   gather_facts: false
 
   tasks:
-    - name: "[pre-check] Validate target"
+    - name: "[argocd-restart-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "argocd-restart-pre-check"
 
     # -------------------------------------------------------------------------
     # PRE-CHECK: Verify ArgoCD is installed
@@ -27,20 +29,27 @@
       register: namespace_check
       changed_when: false
       failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-restart] Fail if ArgoCD is not installed"
       fail:
         msg: "ArgoCD namespace '{{ argocd_namespace }}' not found. Install ArgoCD first."
       when: namespace_check.rc != 0
+      run_once: true
 
     - name: "[argocd-restart] Show current ArgoCD pods"
       command: kubectl get pods -n {{ argocd_namespace }}
       register: pods_before
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-restart] Display pods before restart"
       debug:
         var: pods_before.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # RESTART STATEFULSET
@@ -48,6 +57,8 @@
 
     - name: "[argocd-restart] Restart ArgoCD StatefulSet (application-controller)"
       command: kubectl rollout restart statefulset/argocd-application-controller -n {{ argocd_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # RESTART DEPLOYMENTS
@@ -62,6 +73,8 @@
         - argocd-redis
         - argocd-repo-server
         - argocd-server
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     # -------------------------------------------------------------------------
     # WAIT FOR ROLLOUTS TO COMPLETE
@@ -90,10 +103,14 @@
       command: kubectl get pods -n {{ argocd_namespace }}
       register: pods_after
       changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-verify] Display pods after restart"
       debug:
         var: pods_after.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-verify] Restart completed"
       debug:
@@ -101,5 +118,5 @@
           - "=== ArgoCD Restart Complete ==="
           - "All components have been restarted and are ready."
           - "ConfigMap changes are now applied."
-
-
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
