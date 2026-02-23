@@ -313,8 +313,8 @@
   - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/vault-restart.yaml`
-- Внутренняя структу VAULT
-  - `ansible-playbook -i hosts.yaml playbook-app/tasks/tasks-vault-policy-sync.yaml`
+- Есть дополнительный playbook, для синхронизации политик и ролей. Внутренняя структу VAULT
+  - `ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
