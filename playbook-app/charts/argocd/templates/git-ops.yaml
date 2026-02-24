@@ -7,42 +7,44 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: prj-root
-  namespace: {{ .Values.namespace }}
+  name: root-app-of-apps
+  namespace: "{{ .Values.namespace }}"
 spec:
   sourceRepos:
-    - "*"
+    {{- toYaml .Values.gitOps.project.sourceRepos | nindent 4 }}
   sourceNamespaces:
     - "*"
   destinations:
-    - name: "*"
-      namespace: "*"
-      server: "*"
-  clusterResourceWhitelist:
+    {{- toYaml .Values.gitOps.project.destinations | nindent 4 }}
+  # No cluster-resources (only namespace-resources)
+  clusterResourceBlacklist:
     - group: "*"
       kind: "*"
-  namespaceResourceWhitelist:
-    - group: "*"
-      kind: "*"
+  # Allow only namespace-resources - AppProject | Application
+  namespaceResourceBlacklist:
+    - group: "argoproj.io"
+      kind: "AppProject"
+    - group: "argoproj.io"
+      kind: "Application"
 
 ---
 # Root application (app-of-apps)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: app-of-apps-root
-  namespace: {{ .Values.namespace }}
+  name: "root-app-of-apps"
+  namespace: "{{ .Values.namespace }}"
   finalizers:
     - resources-finalizer.argocd.argoproj.io/background
 spec:
-  project: prj-root
+  project: "root-app-of-apps"
   revisionHistoryLimit: 3
   source:
-    repoURL: {{ .Values.gitlab.internalUrl }}
-    targetRevision: master
-    path: argocd-system
+    repoURL: "{{ .Values.gitOps.app.repoURL }}"
+    targetRevision: "{{ .Values.gitOps.app.targetRevision }}"
+    path: "{{ .Values.gitOps.app.path }}"
   destination:
-    server: https://kubernetes.default.svc
+    server: "{{ .Values.gitOps.app.destinationServer }}"
   syncPolicy:
     automated:
       prune: true
@@ -53,24 +55,8 @@ spec:
       - ApplyOutOfSyncOnly=true
       - PrunePropagationPolicy=background
     retry:
-      limit: 5
+      limit: "{{ .Values.gitOps.retry.limit }}"
       backoff:
-        duration: 20s
-        factor: 1
-        maxDuration: 30s
-
----
-# SSH key for GitLab repo-creds (global, not project-scoped)
-apiVersion: v1
-kind: Secret
-metadata:
-  name: git-ops-root-key-internal
-  namespace: {{ .Values.namespace }}
-  labels:
-    argocd.argoproj.io/secret-type: repo-creds
-type: Opaque
-stringData:
-  type: git
-  url: {{ .Values.gitlab.internalUrl }}
-  sshPrivateKey: |
-{{ .Values.gitlab.sshPrivateKey | indent 4 }}
+        duration: "{{ .Values.gitOps.retry.backoff.duration }}"
+        factor: "{{ .Values.gitOps.retry.backoff.factor }}"
+        maxDuration: "{{ .Values.gitOps.retry.backoff.maxDuration }}"

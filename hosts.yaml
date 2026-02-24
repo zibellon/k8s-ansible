@@ -484,14 +484,14 @@ all:
             capabilities: [read, list]
 
       # ---------
-      # ArgoCD (admin password)
+      # ArgoCD (SSH repo-creds)
       # ---------
-      # - name: eso-argocd-read
-      #   paths:
-      #     - path: eso-secret/data/argocd/*
-      #       capabilities: [read, list]
-      #     - path: eso-secret/metadata/argocd/*
-      #       capabilities: [read, list]
+      - name: eso-argocd-read
+        paths:
+          - path: eso-secret/data/argocd/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/argocd/*
+            capabilities: [read, list]
 
     # ---------
     # VAULT ROLES (Single Source of Truth)
@@ -541,6 +541,15 @@ all:
         sa_name: eso-gitlab
         policies:
           - eso-gitlab-read
+
+      # ---------
+      # ArgoCD
+      # ---------
+      - name: eso-argocd
+        namespace: argocd
+        sa_name: eso-argocd
+        policies:
+          - eso-argocd-read
 
     # ------
     vault_helm_timeout: "5m"
@@ -670,11 +679,31 @@ all:
     argocd_reconciliation_timeout: "30s"
     argocd_reconciliation_jitter: "10s"
     argocd_session_duration: "120h"
-    argocd_gitlab_internal_url: "ssh://git@svc-gitlab.gitlab.svc.cluster.local:22/server/git-ops.git"
-    argocd_gitlab_ssh_key: |
-      -----BEGIN OPENSSH PRIVATE KEY-----
-      REPLACE_WITH_YOUR_KEY
-      -----END OPENSSH PRIVATE KEY-----
+    # git-ops AppProject / Application settings
+    argocd_git_ops_source_repos: ["*"]
+    argocd_git_ops_destinations:
+      - name: "*"
+        namespace: "*"
+        server: "*"
+    argocd_git_ops_repo_url: "ssh://git@svc-gitlab.gitlab.svc.cluster.local:22/server/git-ops.git"
+    argocd_git_ops_target_revision: "master"
+    argocd_git_ops_path: "argocd-system"
+    argocd_git_ops_destination_server: "https://kubernetes.default.svc"
+    argocd_git_ops_retry_limit: 5
+    argocd_git_ops_retry_backoff_duration: "20s"
+    argocd_git_ops_retry_backoff_factor: 1
+    argocd_git_ops_retry_backoff_max_duration: "30s"
+    # ArgoCD ESO integration (SSH repo-creds secret from Vault)
+    argocd_eso:
+      sa_name: "eso-argocd"
+      role_name: "eso-argocd"
+      secret_store_name: "eso-vault-argocd"
+      kv_engine_path: "eso-secret"
+      secrets:
+        - external_secret_name: "eso-argocd-repo-creds"
+          target_secret_name: "git-ops-root-key-internal"
+          vault_path: "/argocd/repo-creds"
+          refresh_interval: "1m"
     # ------
     argocd_helm_timeout: "5m"
     argocd_components_rollout_timeout: "120s"
