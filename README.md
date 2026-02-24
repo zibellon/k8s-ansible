@@ -354,7 +354,7 @@
 - установка
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml`
-  - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), git-ops
+  - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc)
 - обновление (версия)
   - Только параметры в `hosts.yaml`
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
@@ -370,3 +370,14 @@
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml`
+
+## argocd-git-ops. yaml -> helm
+## Установка всех необходимых ресурсов k8s - для git-ops паттерна. Создание необходимых групп и репозиториев в gitlab + создание ключей в VAULT
+##
+- установка
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-git-ops-install.yaml`
+  - Ставится: argo-proj, argo-application
+- обновление (конфиг)
+  - Только параметры в `hosts.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/argocd-git-ops-install.yaml`
