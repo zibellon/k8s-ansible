@@ -1,0 +1,389 @@
+# =============================================================================
+# ARGOCD GIT-OPS SETUP
+# Prerequisites:
+#   - ArgoCD must be installed (argocd-install.yaml)
+#   - GitLab must be installed (gitlab-install.yaml) — root PAT must exist in Vault
+#   - Vault must be installed and unsealed
+#   - Vault policies and roles must be synced (vault-policy-sync.yaml)
+#   - External Secrets Operator must be installed
+#
+# This playbook:
+#   PRE:
+#     1. Read GitLab root PAT from Vault
+#     2. Create GitLab group and repository (if not exists)
+#     3. Generate SSH key pair and store in Vault (if not exists)
+#     4. Add SSH public key as deploy key to GitLab repo (if not exists)
+#     5. Install ESO resources (ServiceAccount, SecretStore, ExternalSecret)
+#     6. Wait for SSH key Secret to appear in Kubernetes
+#   INSTALL:
+#     7. Install ArgoCD AppProject and root Application
+#   VERIFY:
+#     8. Show root Application status
+#
+# =============================================================================
+
+---
+- name: Setup ArgoCD git-ops
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[argocd-git-ops-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "argocd-git-ops-pre-check"
+
+    # =========================================================================
+    # INIT: resolve vault paths and read GitLab root PAT
+    # =========================================================================
+
+    - name: "[argocd-git-ops-init] Resolve vault paths from argocd_eso and gitlab_eso"
+      set_fact:
+        vault_path_argocd_ssh: "{{ (argocd_eso.secrets | first).vault_path }}"
+        vault_path_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-init] Read GitLab root PAT from Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['data'].get('token',''))"
+      register: gitlab_root_pat
+      failed_when: gitlab_root_pat.stdout | trim | length == 0
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # PRE — STEP 1: Create GitLab group and repository
+    # =========================================================================
+
+    - name: "[argocd-git-ops-gitlab] Search for GitLab group '{{ argocd_git_ops_gitlab_group }}'"
+      uri:
+        url: "https://{{ gitlab_domain }}/api/v4/groups?search={{ argocd_git_ops_gitlab_group }}"
+        method: GET
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_root_pat.stdout | trim }}"
+        validate_certs: false
+        status_code: 200
+      register: gitlab_groups_result
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-gitlab] Set group_id if group already exists"
+      set_fact:
+        gitlab_group_id: "{{ (gitlab_groups_result.json | selectattr('path', 'equalto', argocd_git_ops_gitlab_group) | list | first).id }}"
+      when: gitlab_groups_result.json | selectattr('path', 'equalto', argocd_git_ops_gitlab_group) | list | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-gitlab] Create GitLab group '{{ argocd_git_ops_gitlab_group }}'"
+      uri:
+        url: "https://{{ gitlab_domain }}/api/v4/groups"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_root_pat.stdout | trim }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ argocd_git_ops_gitlab_group }}"
+          path: "{{ argocd_git_ops_gitlab_group }}"
+          visibility: "private"
+        validate_certs: false
+        status_code: 201
+      register: gitlab_group_create_result
+      when: gitlab_group_id is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-gitlab] Set group_id from created group"
+      set_fact:
+        gitlab_group_id: "{{ gitlab_group_create_result.json.id }}"
+      when: gitlab_group_id is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-gitlab] Search for project '{{ argocd_git_ops_gitlab_repo }}' in group"
+      uri:
+        url: "https://{{ gitlab_domain }}/api/v4/groups/{{ gitlab_group_id }}/projects?search={{ argocd_git_ops_gitlab_repo }}"
+        method: GET
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_root_pat.stdout | trim }}"
+        validate_certs: false
+        status_code: 200
+      register: gitlab_projects_result
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-gitlab] Set project_id if project already exists"
+      set_fact:
+        gitlab_project_id: "{{ (gitlab_projects_result.json | selectattr('path', 'equalto', argocd_git_ops_gitlab_repo) | list | first).id }}"
+      when: gitlab_projects_result.json | selectattr('path', 'equalto', argocd_git_ops_gitlab_repo) | list | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-gitlab] Create project '{{ argocd_git_ops_gitlab_repo }}'"
+      uri:
+        url: "https://{{ gitlab_domain }}/api/v4/projects"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_root_pat.stdout | trim }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ argocd_git_ops_gitlab_repo }}"
+          path: "{{ argocd_git_ops_gitlab_repo }}"
+          namespace_id: "{{ gitlab_group_id }}"
+          visibility: "private"
+          initialize_with_readme: true
+          default_branch: master
+        validate_certs: false
+        status_code: 201
+      register: gitlab_project_create_result
+      when: gitlab_project_id is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-gitlab] Set project_id from created project"
+      set_fact:
+        gitlab_project_id: "{{ gitlab_project_create_result.json.id }}"
+      when: gitlab_project_id is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # PRE — STEP 2: Generate SSH key pair (if not exists in Vault)
+    # =========================================================================
+
+    - name: "[argocd-git-ops-ssh] Check if SSH key exists in Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_ssh }} 2>/dev/null \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['data'].get('ssh_private_key',''))" 2>/dev/null || true
+      register: argocd_ssh_key_check
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-ssh] Generate SSH ed25519 key pair"
+      command: >
+        ssh-keygen -t ed25519 -C "argocd-git-ops"
+        -f /tmp/argocd-git-ops-key -N ""
+      when: argocd_ssh_key_check.stdout | trim | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-ssh] Read generated private key"
+      command: cat /tmp/argocd-git-ops-key
+      register: argocd_ssh_private_key
+      when: argocd_ssh_key_check.stdout | trim | length == 0
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-ssh] Read generated public key"
+      command: cat /tmp/argocd-git-ops-key.pub
+      register: argocd_ssh_public_key_generated
+      when: argocd_ssh_key_check.stdout | trim | length == 0
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-ssh] Store SSH key pair in Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv put {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_ssh }} \
+          ssh_private_key="{{ argocd_ssh_private_key.stdout }}" \
+          ssh_public_key="{{ argocd_ssh_public_key_generated.stdout }}"
+      when: argocd_ssh_key_check.stdout | trim | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-ssh] Remove temporary key files"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/argocd-git-ops-key
+        - /tmp/argocd-git-ops-key.pub
+      when: argocd_ssh_key_check.stdout | trim | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-ssh] Read public key from Vault (for deploy key)"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_ssh }} \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['data']['ssh_public_key'])"
+      register: argocd_ssh_public_key
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # PRE — STEP 3: Add deploy key to GitLab repository (if not exists)
+    # =========================================================================
+
+    - name: "[argocd-git-ops-deploy-key] Get existing deploy keys for project"
+      uri:
+        url: "https://{{ gitlab_domain }}/api/v4/projects/{{ gitlab_project_id }}/deploy_keys"
+        method: GET
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_root_pat.stdout | trim }}"
+        validate_certs: false
+        status_code: 200
+      register: gitlab_deploy_keys_result
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-deploy-key] Add deploy key to repository"
+      uri:
+        url: "https://{{ gitlab_domain }}/api/v4/projects/{{ gitlab_project_id }}/deploy_keys"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_root_pat.stdout | trim }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          title: "{{ argocd_git_ops_gitlab_deploy_key_name }}"
+          key: "{{ argocd_ssh_public_key.stdout | trim }}"
+          can_push: false
+        validate_certs: false
+        status_code: 201
+      when: >
+        gitlab_deploy_keys_result.json
+        | selectattr('title', 'equalto', argocd_git_ops_gitlab_deploy_key_name)
+        | list | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # PRE — STEP 4: Install argocd-git-ops/pre chart (ESO resources)
+    # =========================================================================
+
+    - name: "[argocd-git-ops-pre] Copy pre chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-git-ops-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd-git-ops/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd-git-ops/pre"
+
+    - name: "[argocd-git-ops-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/argocd-git-ops/pre/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ argocd_namespace }}
+          gitlab:
+            internalUrl: "{{ argocd_gitlab_internal_url }}"
+          eso:
+            saName: {{ argocd_eso.sa_name }}
+            roleName: {{ argocd_eso.role_name }}
+            secretStoreName: {{ argocd_eso.secret_store_name }}
+            kvEnginePath: {{ argocd_eso.kv_engine_path }}
+            secrets: {{ argocd_eso.secrets | to_json }}
+          vault:
+            namespace: {{ vault_namespace }}
+          clusterDomain: {{ dns_domain }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-pre] Install via Helm"
+      command: >
+        helm upgrade --install argocd-git-ops-pre {{ remote_charts_dir }}/argocd-git-ops/pre
+        --namespace {{ argocd_namespace }}
+        --values {{ remote_charts_dir }}/argocd-git-ops/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ argocd_git_ops_pre_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-pre] Wait for SSH key Secret to appear"
+      command: >
+        kubectl get secret {{ (argocd_eso.secrets | first).target_secret_name }}
+        -n {{ argocd_namespace }}
+      register: argocd_ssh_secret_check
+      until: argocd_ssh_secret_check.rc == 0
+      retries: "{{ argocd_git_ops_secret_wait_retries }}"
+      delay: "{{ argocd_git_ops_secret_wait_delay }}"
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # INSTALL — STEP 5: Install argocd-git-ops/install chart (AppProject + Application)
+    # =========================================================================
+
+    - name: "[argocd-git-ops-install] Copy install chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-git-ops-install"
+        chart_name: "install"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd-git-ops/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd-git-ops/install"
+
+    - name: "[argocd-git-ops-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/argocd-git-ops/install/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ argocd_namespace }}
+          gitOps:
+            project:
+              sourceRepos: {{ argocd_git_ops_source_repos | to_json }}
+              destinations: {{ argocd_git_ops_destinations | to_json }}
+            app:
+              repoURL: "{{ argocd_gitlab_internal_url }}"
+              targetRevision: {{ argocd_git_ops_target_revision }}
+              path: {{ argocd_git_ops_path }}
+              destinationServer: {{ argocd_git_ops_destination_server }}
+            retry:
+              limit: {{ argocd_git_ops_retry_limit }}
+              backoff:
+                duration: {{ argocd_git_ops_retry_backoff_duration }}
+                factor: {{ argocd_git_ops_retry_backoff_factor }}
+                maxDuration: {{ argocd_git_ops_retry_backoff_max_duration }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-install] Install via Helm"
+      command: >
+        helm upgrade --install argocd-git-ops {{ remote_charts_dir }}/argocd-git-ops/install
+        --namespace {{ argocd_namespace }}
+        --values {{ remote_charts_dir }}/argocd-git-ops/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ argocd_git_ops_install_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # VERIFY
+    # =========================================================================
+
+    - name: "[argocd-git-ops-verify] Get root-app-of-apps status"
+      command: >
+        kubectl get application root-app-of-apps
+        -n {{ argocd_namespace }}
+        -o jsonpath='{.status.sync.status} / {.status.health.status}'
+      register: argocd_app_status
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-verify] Show root-app-of-apps status"
+      debug:
+        msg: "root-app-of-apps: {{ argocd_app_status.stdout }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

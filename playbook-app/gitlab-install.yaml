@@ -209,6 +209,22 @@
     # STEP 4: WAIT FOR INITIAL SECRETS TO SYNC
     # =========================================================================
 
+    - name: "[gitlab-wait-eso] Force sync initial secrets"
+      command: >
+        kubectl annotate externalsecret {{ item }}
+        -n {{ gitlab_namespace }}
+        force-sync={{ ansible_date_time.epoch }} --overwrite
+      loop: >-
+        {{
+          gitlab_eso.secrets
+          | selectattr('type', 'in', ['postgresql', 'redis', 'minio_root'])
+          | map(attribute='external_secret_name')
+          | list
+        }}
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
     - name: "[gitlab-wait-eso] Wait for PostgreSQL secret"
       command: kubectl get secret {{ secret_postgresql }} -n {{ gitlab_namespace }}
       register: postgresql_secret_wait
@@ -504,6 +520,22 @@
     # STEP 9: WAIT FOR MINIO ACCESS KEYS TO SYNC
     # =========================================================================
 
+    - name: "[gitlab-wait-eso] Force sync MinIO access key secrets"
+      command: >
+        kubectl annotate externalsecret {{ item }}
+        -n {{ gitlab_namespace }}
+        force-sync={{ ansible_date_time.epoch }} --overwrite
+      loop: >-
+        {{
+          gitlab_eso.secrets
+          | selectattr('type', 'in', ['minio_registry', 'minio_runner_cache', 'gitlab_registry_minio_connection', 'gitlab_minio_connection'])
+          | map(attribute='external_secret_name')
+          | list
+        }}
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
     - name: "[gitlab-wait-eso] Wait for registry secret with access_key"
       shell: |
         kubectl get secret {{ secret_minio_registry }} -n {{ gitlab_namespace }} \
@@ -715,7 +747,54 @@
       run_once: true
 
     # =========================================================================
-    # STEP 12: INSTALL POST CHART (Ingress, HAProxy SSH)
+    # STEP 12: CREATE GITLAB ROOT PAT (for API access by other playbooks)
+    # =========================================================================
+
+    - name: "[gitlab-root-pat] Check if root PAT token exists in Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -field=token \
+          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null || true
+      register: gitlab_root_pat_check
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[gitlab-root-pat] Get GitLab pod name"
+      command: >
+        kubectl get pods -n {{ gitlab_namespace }}
+        -l app=webservice
+        -o jsonpath='{.items[0].metadata.name}'
+      register: gitlab_pod_name
+      when: gitlab_root_pat_check.stdout | trim | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[gitlab-root-pat] Create root PAT via gitlab-rails runner"
+      shell: |
+        kubectl exec -n {{ gitlab_namespace }} {{ gitlab_pod_name.stdout }} -- \
+          gitlab-rails runner \
+          "token = User.find_by_username('root').personal_access_tokens.create(scopes: ['api'], name: 'gitlab-root', expires_at: 365.days.from_now); puts token.token"
+      register: gitlab_root_pat_result
+      when: gitlab_root_pat_check.stdout | trim | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[gitlab-root-pat] Store root PAT token in Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv patch {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
+        token={{ gitlab_root_pat_result.stdout | trim }}
+      when:
+        - gitlab_root_pat_check.stdout | trim | length == 0
+        - gitlab_root_pat_result.stdout is defined
+        - gitlab_root_pat_result.stdout | trim | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # STEP 13: INSTALL POST CHART (Ingress, HAProxy SSH)
     # =========================================================================
 
     - name: "[gitlab-post] Copy chart to remote"
