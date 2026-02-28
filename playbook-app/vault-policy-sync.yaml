@@ -1,15 +1,17 @@
 # =============================================================================
 # Vault Projects Sync
 # =============================================================================
-# Synchronizes policies and roles from hosts.yaml to Vault
+# Synchronizes policies and roles from hosts.yaml (+ hosts-extra.yaml) to Vault
 #
-# This playbook:
-#   1. Reads vault_policies from hosts.yaml
-#   2. Reads vault_roles from hosts.yaml
-#   3. Creates/updates all policies in Vault
-#   4. Creates/updates all roles in Vault
+# Policy/role sources (merged in order, conflict on duplicate names):
+#   1. eso_vault_integrations — auto-derived from secrets[] (per-secret policy)
+#   2. vault_policies / vault_roles — manual overrides in hosts.yaml
+#   3. vault_policies_extra / vault_roles_extra — from hosts-extra.yaml (gitignored)
 #
 # Usage:
+#   ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml
+#
+# Without hosts-extra.yaml (vault_policies_extra/vault_roles_extra default to []):
 #   ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml
 # =============================================================================
 
@@ -98,15 +100,18 @@
           - "=============================================="
           - "VAULT POLICY SYNC COMPLETE"
           - "=============================================="
-          - "Policies synced: {{ vault_policies | length }}"
-          - "Roles synced: {{ vault_roles | length }}"
+          - "Sources:"
+          - "  eso_vault_integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
+          - "  vault_policies/roles (hosts.yaml): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
+          - "  vault_policies_extra/roles_extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"
+          - "Total synced: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"
           - "=============================================="
           - ""
           - "Policies:"
-          - "{% for p in vault_policies %}  - {{ p.name }}\n{% endfor %}"
+          - "{% for p in vault_policies_final %}  - {{ p.name }}\n{% endfor %}"
           - ""
           - "Roles:"
-          - "{% for r in vault_roles %}  - {{ r.name }} -> {{ r.sa_name }} ({{ r.namespace }})\n{% endfor %}"
+          - "{% for r in vault_roles_final %}  - {{ r.name }} -> {{ r.sa_name }} ({{ r.namespace }})\n{% endfor %}"
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true

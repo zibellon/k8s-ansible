@@ -26,6 +26,23 @@
         label_name: "vault-install-pre-check"
 
     # =========================================================================
+    # INIT: Resolve ESO config
+    # =========================================================================
+
+    - name: "[vault-install-init] Fail if VAULT not found in eso_vault_integrations"
+      fail:
+        msg: "No entry with type=VAULT found in eso_vault_integrations. Check hosts.yaml."
+      when: eso_vault_integrations | selectattr('type', 'equalto', 'VAULT') | list | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[vault-install-init] Resolve ESO config"
+      set_fact:
+        vault_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'VAULT') | first }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
     # STEP 1: INSTALL PRE (NetworkPolicies)
     # =========================================================================
 

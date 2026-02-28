@@ -9,14 +9,135 @@
 #
 # Requires variables:
 #   - vault_namespace
-#   - vault_policies (array) - paths should be full paths (e.g. secret/data/vault/*)
-#   - vault_roles (array)
+#   - eso_vault_integrations (array) - ESO integrations, policies/roles are auto-derived
+#   - vault_policies (array) - manual overrides not tied to ESO integrations
+#   - vault_roles (array) - manual overrides not tied to ESO integrations
+#   - vault_policies_extra (array, optional) - from hosts-extra.yaml, must have unique names
+#   - vault_roles_extra (array, optional) - from hosts-extra.yaml, must have unique names
 #   - remote_charts_dir
+#
+# Policy derivation rules (per secret in eso_vault_integrations):
+#   policy.name  = {namespace}_{external_secret_name}
+#   policy.paths = [{kv_engine_path}/data{vault_path}, {kv_engine_path}/metadata{vault_path}]
+#   capabilities = [read, list]
 # =============================================================================
 
 # -------------------------------------------------------------------------
-# Reconcile policies: delete removed from hosts.yaml
+# STAGE 1: Derive policies and roles from eso_vault_integrations
 # -------------------------------------------------------------------------
+
+- name: "[vault-policy-sync] Initialize derived lists"
+  set_fact:
+    _derived_policies: []
+    _derived_roles: []
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Derive policies from eso_vault_integrations.secrets"
+  set_fact:
+    _derived_policies: >-
+      {{ _derived_policies + [{
+        'name': item.0.namespace ~ '_' ~ item.1.external_secret_name,
+        'paths': [
+          {
+            'path': item.0.kv_engine_path ~ '/data' ~ item.1.vault_path,
+            'capabilities': ['read', 'list']
+          },
+          {
+            'path': item.0.kv_engine_path ~ '/metadata' ~ item.1.vault_path,
+            'capabilities': ['read', 'list']
+          }
+        ]
+      }] }}
+  loop: "{{ eso_vault_integrations | subelements('secrets') }}"
+  loop_control:
+    label: "{{ item.0.namespace }}_{{ item.1.external_secret_name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Derive roles from eso_vault_integrations"
+  set_fact:
+    _derived_roles: >-
+      {{ _derived_roles + [{
+        'name': item.role_name,
+        'namespace': item.namespace,
+        'sa_name': item.sa_name,
+        'policies': item.secrets | map(attribute='external_secret_name') | map('regex_replace', '^', item.namespace ~ '_') | list
+      }] }}
+  loop: "{{ eso_vault_integrations }}"
+  loop_control:
+    label: "{{ item.type }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+# -------------------------------------------------------------------------
+# STAGE 2: Conflict detection — hosts-extra names must not clash with base
+# -------------------------------------------------------------------------
+
+- name: "[vault-policy-sync] Collect base policy and role names"
+  set_fact:
+    _base_policy_names: "{{ (_derived_policies + vault_policies) | map(attribute='name') | list }}"
+    _base_role_names: "{{ (_derived_roles + vault_roles) | map(attribute='name') | list }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Detect policy name conflicts with hosts-extra"
+  set_fact:
+    _policy_conflicts: "{{ (vault_policies_extra | default([])) | map(attribute='name') | list | intersect(_base_policy_names) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Detect role name conflicts with hosts-extra"
+  set_fact:
+    _role_conflicts: "{{ (vault_roles_extra | default([])) | map(attribute='name') | list | intersect(_base_role_names) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Fail on policy name conflicts"
+  fail:
+    msg: >-
+      Conflict in vault_policies_extra (hosts-extra.yaml): names {{ _policy_conflicts }}
+      already exist in eso_vault_integrations or vault_policies.
+      Rename them in hosts-extra.yaml.
+  when: _policy_conflicts | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Fail on role name conflicts"
+  fail:
+    msg: >-
+      Conflict in vault_roles_extra (hosts-extra.yaml): names {{ _role_conflicts }}
+      already exist in eso_vault_integrations or vault_roles.
+      Rename them in hosts-extra.yaml.
+  when: _role_conflicts | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+# -------------------------------------------------------------------------
+# STAGE 3: Merge all sources into final lists
+# -------------------------------------------------------------------------
+
+- name: "[vault-policy-sync] Merge all policy and role sources"
+  set_fact:
+    vault_policies_final: "{{ _derived_policies + vault_policies + (vault_policies_extra | default([])) }}"
+    vault_roles_final: "{{ _derived_roles + vault_roles + (vault_roles_extra | default([])) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: "[vault-policy-sync] Show sync summary"
+  debug:
+    msg:
+      - "Derived from eso_vault_integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
+      - "Manual overrides (vault_policies/vault_roles): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
+      - "Extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"
+      - "Final totals: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+# -------------------------------------------------------------------------
+# Reconcile policies: delete removed ones
+# -------------------------------------------------------------------------
+
 - name: "[vault-policy-sync] Get existing policies from Vault"
   shell: >
     kubectl exec -n {{ vault_namespace }} vault-0 --
@@ -31,7 +152,7 @@
     vault_policies_to_delete: >-
       {{
         (vault_existing_policies_raw.stdout | from_json)
-        | difference(vault_policies | map(attribute='name') | list)
+        | difference(vault_policies_final | map(attribute='name') | list)
         | difference(['default', 'root'])
       }}
   delegate_to: "{{ master_manager_fact }}"
@@ -54,11 +175,12 @@
   run_once: true
 
 # -------------------------------------------------------------------------
-# Sync policies from vault_policies array
+# Sync policies from vault_policies_final
 # -------------------------------------------------------------------------
+
 - name: "[vault-policy-sync] Show policies to sync"
   debug:
-    msg: "Syncing {{ vault_policies | length }} policies"
+    msg: "Syncing {{ vault_policies_final | length }} policies"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
 
@@ -80,7 +202,7 @@
         capabilities = {{ p.capabilities | to_json }}
       }
       {% endfor %}
-  loop: "{{ vault_policies }}"
+  loop: "{{ vault_policies_final }}"
   loop_control:
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
@@ -90,7 +212,7 @@
   command: >
     kubectl cp {{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl
     {{ vault_namespace }}/vault-0:/tmp/{{ item.name }}.hcl
-  loop: "{{ vault_policies }}"
+  loop: "{{ vault_policies_final }}"
   loop_control:
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
@@ -100,19 +222,21 @@
   command: >
     kubectl exec -n {{ vault_namespace }} vault-0 --
     vault policy write {{ item.name }} /tmp/{{ item.name }}.hcl
-  loop: "{{ vault_policies }}"
+  loop: "{{ vault_policies_final }}"
   loop_control:
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
 
 # -------------------------------------------------------------------------
-# Reconcile roles: delete removed from hosts.yaml
+# Reconcile roles: delete removed ones
 # -------------------------------------------------------------------------
+
 - name: "[vault-policy-sync] Get existing roles from Vault"
-  shell: >
-    kubectl exec -n {{ vault_namespace }} vault-0 --
-    vault list -format=json auth/kubernetes/role 2>/dev/null || echo '[]'
+  shell: |
+    result=$(kubectl exec -n {{ vault_namespace }} vault-0 -- \
+      vault list -format=json auth/kubernetes/role 2>/dev/null) || true
+    echo "${result:-[]}"
   register: vault_existing_roles_raw
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
@@ -123,7 +247,7 @@
     vault_roles_to_delete: >-
       {{
         (vault_existing_roles_raw.stdout | from_json)
-        | difference(vault_roles | map(attribute='name') | list)
+        | difference(vault_roles_final | map(attribute='name') | list)
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -145,11 +269,12 @@
   run_once: true
 
 # -------------------------------------------------------------------------
-# Sync roles from vault_roles array
+# Sync roles from vault_roles_final
 # -------------------------------------------------------------------------
+
 - name: "[vault-policy-sync] Show roles to sync"
   debug:
-    msg: "Syncing {{ vault_roles | length }} roles"
+    msg: "Syncing {{ vault_roles_final | length }} roles"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
 
@@ -160,7 +285,7 @@
     bound_service_account_namespaces={{ item.namespace }}
     policies={{ item.policies | join(',') }}
     ttl=1h
-  loop: "{{ vault_roles }}"
+  loop: "{{ vault_roles_final }}"
   loop_control:
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"

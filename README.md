@@ -163,6 +163,11 @@
 ## Можно сделать предположение, что для применения новых ConfigMap - надо сделать ручной restart
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/cilium-install.yaml`
+## ---
+## Важно! При установке - может зависнуть на пункте: TASK [[cilium-post] Install or upgrade via Helm]
+## Если такое произошло: Ctrl+C (Остановить процесс) + запустить заново
+## Причина: когда cilium берет под контроль сеть на node - все соединения обрываются (в том числе и SSH)
+## ---
 ##
 - установка
   - Только параметры в `hosts.yaml`
@@ -172,6 +177,10 @@
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/cilium-install.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/cilium-restart.yaml`
+
+##
+## Добавить установку api-metrics. Чтобы работала команда `kubectl top ...`
+##
 
 ## cert-manager. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -199,7 +208,7 @@
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/external-secrets-restart.yaml`
 
-## traefik (ingress). yaml -> helm
+## traefik (ingress). Официальный helm
 ## Параметры (конфиг) для работы - в cli (как аргументы при запуске)
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -209,10 +218,7 @@
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml`
   - Ставится: traefik, network-policy, ingress (dashboard)
-- обновление (версия)
-  - Параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml`
-- обновление (конфиг)
+- обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml`
 - Есть дополнительный playbook, для перезапуска
@@ -227,13 +233,9 @@
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml`
   - Ставится: haproxy-ingress, network-policy
-- обновление (версия)
+- обновление (версия, конфиг)
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml`
-- обновление (конфиг)
-  - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml`
 
@@ -294,6 +296,9 @@
 ## Теперь, можно запускать что-то, что требует volume (PVC)
 ## ---
 
+
+Обновить правила по файлам
+
 ## Vault. Официальный helm
 ## ЕСТЬ проблема: официальный helm не работает из РФ (Региональная блокировка)
 ## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
@@ -302,19 +307,26 @@
 ## Есть volume -> требуется Longhorn
 ## Ожидание готовности deployment/daemonset - `kubectl wait --for=jsonpath='{.status.phase}'=Running`
 ## Потому что проверка внутри пода: смотрит на готовность самого VAULT (что он инициализирован), а не просто на работоспособность контейнера
+## ---
+## Важно! Если был создан дополнительный файл `hosts-extra.yaml`, и там есть что-то для политик vault - его тоже нужно указат при  установке
+## `-i hosts.yaml -i hosts-extra.yaml`
+## ---
 ##
 - установка
-  - Параметры в `hosts.yaml`
+  - Параметры в `hosts.yaml` и `hosts-extra.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml`
   - Ставится: cert-controller, secrets-webhook, core
 - обновление (версия, конфиг)
-  - Параметры в `hosts.yaml`
+  - Параметры в `hosts.yaml` и `hosts-extra.yaml`
   - Устанавливается через официальный HELM, но через исходники с Github
   - `ansible-playbook -i hosts.yaml playbook-app/vault-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/vault-restart.yaml`
 - Есть дополнительный playbook, для синхронизации политик и ролей. Внутренняя структу VAULT
   - `ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml`
+- Если есть дополнительный файл с политиками (-i hosts-extra.yaml)
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
@@ -327,7 +339,7 @@
 ## ВАЖНО: синхронизация только добавляет и обновляет структуру в VAULT. Удалять что-то - нужно руками
 ## ---
 
-## gitlab. yaml -> helm
+## gitlab. Официальный helm
 ## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -343,7 +355,7 @@
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
 - обновление (версия + конфиг)
   - Только параметры в `hosts.yaml`
-  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-minio-install.yaml`
+  - `ansible-playbook -i hosts.yaml playbook-app/gitlab-install.yaml`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)

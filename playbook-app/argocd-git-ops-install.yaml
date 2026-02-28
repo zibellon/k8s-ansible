@@ -35,8 +35,29 @@
         label_name: "argocd-git-ops-pre-check"
 
     # =========================================================================
-    # INIT: resolve vault paths and read GitLab root PAT
+    # INIT: Resolve ESO configs, vault paths, and read GitLab root PAT
     # =========================================================================
+
+    - name: "[argocd-git-ops-init] Fail if ARGOCD not found in eso_vault_integrations"
+      fail:
+        msg: "No entry with type=ARGOCD found in eso_vault_integrations. Check hosts.yaml."
+      when: eso_vault_integrations | selectattr('type', 'equalto', 'ARGOCD') | list | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-init] Fail if GITLAB not found in eso_vault_integrations"
+      fail:
+        msg: "No entry with type=GITLAB found in eso_vault_integrations. Check hosts.yaml."
+      when: eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | list | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-git-ops-init] Resolve ESO configs"
+      set_fact:
+        argocd_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'ARGOCD') | first }}"
+        gitlab_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | first }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
 
     - name: "[argocd-git-ops-init] Resolve vault paths from argocd_eso and gitlab_eso"
       set_fact:

@@ -34,9 +34,23 @@
         label_name: "gitlab-pre-check"
 
     # =========================================================================
-    # INIT: Find secret names and vault paths by type from gitlab_eso.secrets
+    # INIT: Resolve ESO config and find secret names/vault paths by type
     # =========================================================================
-    - name: "[gitlab-init] Find secret names and vault paths by type"
+
+    - name: "[gitlab-install-init] Fail if GITLAB not found in eso_vault_integrations"
+      fail:
+        msg: "No entry with type=GITLAB found in eso_vault_integrations. Check hosts.yaml."
+      when: eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | list | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[gitlab-install-init] Resolve ESO config"
+      set_fact:
+        gitlab_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | first }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[gitlab-install-init] Find secret names and vault paths by type"
       set_fact:
         # Secret names
         secret_postgresql: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'postgresql') | first).target_secret_name }}"
@@ -213,7 +227,7 @@
       command: >
         kubectl annotate externalsecret {{ item }}
         -n {{ gitlab_namespace }}
-        force-sync={{ ansible_date_time.epoch }} --overwrite
+        force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
       loop: >-
         {{
           gitlab_eso.secrets
@@ -524,7 +538,7 @@
       command: >
         kubectl annotate externalsecret {{ item }}
         -n {{ gitlab_namespace }}
-        force-sync={{ ansible_date_time.epoch }} --overwrite
+        force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
       loop: >-
         {{
           gitlab_eso.secrets
@@ -761,10 +775,10 @@
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    - name: "[gitlab-root-pat] Get GitLab pod name"
+    - name: "[gitlab-root-pat] Get GitLab toolbox pod name"
       command: >
         kubectl get pods -n {{ gitlab_namespace }}
-        -l app=webservice
+        -l app=toolbox
         -o jsonpath='{.items[0].metadata.name}'
       register: gitlab_pod_name
       when: gitlab_root_pat_check.stdout | trim | length == 0
