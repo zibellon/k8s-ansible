@@ -35,33 +35,22 @@
         label_name: "argocd-git-ops-pre-check"
 
     # =========================================================================
-    # INIT: Resolve ESO configs, vault paths, and read GitLab root PAT
+    # INIT: Merge ESO integrations, resolve configs, vault paths, read GitLab root PAT
     # =========================================================================
 
-    - name: "[argocd-git-ops-init] Fail if ARGOCD not found in eso_vault_integrations"
-      fail:
-        msg: "No entry with type=ARGOCD found in eso_vault_integrations. Check hosts.yaml."
-      when: eso_vault_integrations | selectattr('type', 'equalto', 'ARGOCD') | list | length == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[argocd-git-ops-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
 
-    - name: "[argocd-git-ops-init] Fail if GITLAB not found in eso_vault_integrations"
-      fail:
-        msg: "No entry with type=GITLAB found in eso_vault_integrations. Check hosts.yaml."
-      when: eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | list | length == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[argocd-git-ops-init] Resolve ESO configs"
+    - name: "[argocd-git-ops-init] Set ESO configs from merged integrations"
       set_fact:
-        argocd_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'ARGOCD') | first }}"
-        gitlab_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | first }}"
+        argocd_eso: "{{ eso_vault_integration_argocd_merged }}"
+        gitlab_eso: "{{ eso_vault_integration_gitlab_merged }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
     - name: "[argocd-git-ops-init] Resolve vault paths from argocd_eso and gitlab_eso"
       set_fact:
-        vault_path_argocd_ssh: "{{ (argocd_eso.secrets | first).vault_path }}"
+        vault_path_argocd_ssh: "{{ (argocd_eso.secrets | selectattr('type', 'equalto', 'git_ops_repo_creds') | first).vault_path }}"
         vault_path_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -163,6 +152,7 @@
           default_branch: master
         validate_certs: false
         status_code: 201
+        timeout: 60
       register: gitlab_project_create_result
       when: gitlab_project_id is not defined
       delegate_to: "{{ master_manager_fact }}"
@@ -220,7 +210,8 @@
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv put {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_ssh }} \
           ssh_private_key="{{ argocd_ssh_private_key.stdout }}" \
-          ssh_public_key="{{ argocd_ssh_public_key_generated.stdout }}"
+          ssh_public_key="{{ argocd_ssh_public_key_generated.stdout }}" \
+          repo_url="{{ argocd_git_ops_repo_url }}"
       when: argocd_ssh_key_check.stdout | trim | length == 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -285,52 +276,12 @@
       run_once: true
 
     # =========================================================================
-    # PRE — STEP 4: Install argocd-git-ops/pre chart (ESO resources)
+    # PRE — STEP 4: Wait for SSH key Secret (synced by ESO after key stored in Vault)
     # =========================================================================
 
-    - name: "[argocd-git-ops-pre] Copy pre chart to remote"
-      include_tasks: tasks/tasks-copy-chart.yaml
-      vars:
-        label_name: "argocd-git-ops-pre"
-        chart_name: "pre"
-        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd-git-ops/pre/"
-        chart_remote_dest: "{{ remote_charts_dir }}/argocd-git-ops/pre"
-
-    - name: "[argocd-git-ops-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/argocd-git-ops/pre/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ argocd_namespace }}
-          gitlab:
-            internalUrl: "{{ argocd_gitlab_internal_url }}"
-          eso:
-            saName: {{ argocd_eso.sa_name }}
-            roleName: {{ argocd_eso.role_name }}
-            secretStoreName: {{ argocd_eso.secret_store_name }}
-            kvEnginePath: {{ argocd_eso.kv_engine_path }}
-            secrets: {{ argocd_eso.secrets | to_json }}
-          vault:
-            namespace: {{ vault_namespace }}
-          clusterDomain: {{ dns_domain }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[argocd-git-ops-pre] Install via Helm"
+    - name: "[argocd-git-ops-ssh] Wait for SSH key Secret to appear"
       command: >
-        helm upgrade --install argocd-git-ops-pre {{ remote_charts_dir }}/argocd-git-ops/pre
-        --namespace {{ argocd_namespace }}
-        --values {{ remote_charts_dir }}/argocd-git-ops/pre/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ argocd_git_ops_pre_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[argocd-git-ops-pre] Wait for SSH key Secret to appear"
-      command: >
-        kubectl get secret {{ (argocd_eso.secrets | first).target_secret_name }}
+        kubectl get secret {{ (argocd_eso.secrets | selectattr('type', 'equalto', 'git_ops_repo_creds') | first).target_secret_name }}
         -n {{ argocd_namespace }}
       register: argocd_ssh_secret_check
       until: argocd_ssh_secret_check.rc == 0
@@ -363,7 +314,7 @@
               sourceRepos: {{ argocd_git_ops_source_repos | to_json }}
               destinations: {{ argocd_git_ops_destinations | to_json }}
             app:
-              repoURL: "{{ argocd_gitlab_internal_url }}"
+              repoURL: "{{ argocd_git_ops_repo_url }}"
               targetRevision: {{ argocd_git_ops_target_revision }}
               path: {{ argocd_git_ops_path }}
               destinationServer: {{ argocd_git_ops_destination_server }}

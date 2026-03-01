@@ -356,17 +356,6 @@ all:
       - "lh-az-fra-1"
       - "lh-az-waw-1"
       - "lh-az-swe-1"
-    # Longhorn ESO integration
-    longhorn_eso:
-      sa_name: "eso-longhorn" # Из списка ниже (vault_roles)
-      role_name: "eso-longhorn" # Из списка ниже (vault_roles)
-      secret_store_name: "eso-vault-longhorn"
-      kv_engine_path: "eso-secret"
-      secrets:
-        - external_secret_name: "s3-backup" # Название ExternalSecret (который будет создан в этом namespace)
-          target_secret_name: "longhorn-s3-backup-creds" # Название секрета в Kubernetes (который будет создан в этом namespace)
-          vault_path: "/longhorn-system/s3-backup" # Full path in Vault
-          refresh_interval: "1m"
     longhorn_helm_timeout: "5m"
     longhorn_config_helm_timeout: "2m"
     longhorn_manager_rollout_timeout: "300s"
@@ -405,8 +394,20 @@ all:
     vault_kv_engines:
       - "secret"
       - "eso-secret"
-    # Vault ESO integration (for storing vault credentials)
-    vault_eso:
+    # ---------
+    # ESO VAULT INTEGRATIONS (per-component, Single Source of Truth)
+    # Каждый объект = 1 NS + 1 SA + 1 SecretStore + N ExternalSecrets
+    # Политики и роли Vault выводятся автоматически при vault-policy-sync (tasks-eso-merge.yaml):
+    #   policy.name = {namespace}_{external_secret_name}
+    #   policy.paths = {kv_engine_path}/data{vault_path} + {kv_engine_path}/metadata{vault_path} [read, list]
+    # Дополнительные secrets определяются в hosts-extra.yaml через eso_vault_integration_XXXXX_extra
+    # ---------
+
+    # ---------
+    # Vault self credentials
+    # ---------
+    eso_vault_integration_vault:
+      namespace: "vault"
       sa_name: "eso-vault-self"
       role_name: "eso-vault-self"
       secret_store_name: "eso-vault-self"
@@ -416,19 +417,140 @@ all:
           target_secret_name: "eso-vault-self-creds"
           vault_path: "/vault/vault-self/creds"
           refresh_interval: "1m"
-          is_master: true
 
     # ---------
-    # VAULT POLICIES (Single Source of Truth)
-    # secret | eso-secret = это secret_engine (из массива vault_kv_engines)
-    # data = это данные по секретам (path: secret/data/vault/*)
-    # metadata = это metadata по секретам (path: secret/metadata/vault/*)
+    # Traefik
     # ---------
+    eso_vault_integration_traefik:
+      namespace: "traefik-master"
+      sa_name: "eso-traefik"
+      role_name: "eso-traefik"
+      secret_store_name: "eso-vault-traefik"
+      kv_engine_path: "eso-secret"
+      secrets: []
+
+    # ---------
+    # HAProxy
+    # ---------
+    eso_vault_integration_haproxy:
+      namespace: "haproxy-master"
+      sa_name: "eso-haproxy"
+      role_name: "eso-haproxy"
+      secret_store_name: "eso-vault-haproxy"
+      kv_engine_path: "eso-secret"
+      secrets: []
+
+    # ---------
+    # Longhorn (S3 backup credentials)
+    # ---------
+    eso_vault_integration_longhorn:
+      namespace: "longhorn-system"
+      sa_name: "eso-longhorn"
+      role_name: "eso-longhorn"
+      secret_store_name: "eso-vault-longhorn"
+      kv_engine_path: "eso-secret"
+      secrets: []  # S3-backup secrets определяются в hosts-extra.yaml (eso_vault_integration_longhorn_extra)
+
+    # ---------
+    # GitLab (all secrets: postgresql, redis, minio, gitlab root)
+    # ---------
+    eso_vault_integration_gitlab:
+      namespace: "gitlab"
+      sa_name: "eso-gitlab"
+      role_name: "eso-gitlab"
+      secret_store_name: "eso-vault-gitlab"
+      kv_engine_path: "eso-secret"
+      secrets:
+        - external_secret_name: "eso-gitlab-postgresql"
+          target_secret_name: "eso-gitlab-postgresql"
+          vault_path: "/gitlab/postgresql/creds"
+          refresh_interval: "1m"
+          type: "postgresql"
+        - external_secret_name: "eso-gitlab-redis"
+          target_secret_name: "eso-gitlab-redis"
+          vault_path: "/gitlab/redis/creds"
+          refresh_interval: "1m"
+          type: "redis"
+        - external_secret_name: "eso-gitlab-minio-root"
+          target_secret_name: "eso-gitlab-minio-root"
+          vault_path: "/gitlab/minio/root"
+          refresh_interval: "1m"
+          type: "minio_root"
+        - external_secret_name: "eso-gitlab-minio-registry"
+          target_secret_name: "eso-gitlab-minio-registry"
+          vault_path: "/gitlab/minio/registry"
+          refresh_interval: "1m"
+          type: "minio_registry"
+        # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
+        - external_secret_name: "eso-gitlab-registry-minio-connection"
+          target_secret_name: "eso-gitlab-registry-minio-connection"
+          vault_path: "/gitlab/minio/registry"
+          refresh_interval: "1m"
+          type: "gitlab_registry_minio_connection"
+        # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
+        - external_secret_name: "eso-gitlab-minio-connection"
+          target_secret_name: "eso-gitlab-minio-connection"
+          vault_path: "/gitlab/minio/registry"
+          refresh_interval: "1m"
+          type: "gitlab_minio_connection"
+        - external_secret_name: "eso-gitlab-minio-runner-cache"
+          target_secret_name: "eso-gitlab-minio-runner-cache"
+          vault_path: "/gitlab/minio/runner-cache"
+          refresh_interval: "1m"
+          type: "minio_runner_cache"
+        - external_secret_name: "eso-gitlab-root"
+          target_secret_name: "eso-gitlab-root"
+          vault_path: "/gitlab/gitlab/root/creds"
+          refresh_interval: "1m"
+          type: "gitlab_root"
+
+    # ---------
+    # ArgoCD (SSH repo-creds)
+    # ---------
+    eso_vault_integration_argocd:
+      namespace: "argocd"
+      sa_name: "eso-argocd"
+      role_name: "eso-argocd"
+      secret_store_name: "eso-vault-argocd"
+      kv_engine_path: "eso-secret"
+      secrets:
+        - external_secret_name: "eso-argocd-repo-creds"
+          target_secret_name: "eso-git-ops-root-key-internal"
+          vault_path: "/argocd/repo-creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_creds"
+        - external_secret_name: "eso-argocd-root"
+          target_secret_name: "eso-argocd-root"
+          vault_path: "/argocd/root/creds"
+          refresh_interval: "1m"
+          type: "argocd_root"
+
+    # ---------
+    # ESO extra secrets defaults (overridden by hosts-extra.yaml)
+    # ---------
+    eso_vault_integration_vault_extra:
+      secrets: []
+    eso_vault_integration_traefik_extra:
+      secrets: []
+    eso_vault_integration_haproxy_extra:
+      secrets: []
+    eso_vault_integration_longhorn_extra:
+      secrets: []
+    eso_vault_integration_gitlab_extra:
+      secrets: []
+    eso_vault_integration_argocd_extra:
+      secrets: []
+
+    # ---------
+    # VAULT POLICIES (manual overrides, not tied to ESO integrations)
+    # Policies from integrations are auto-derived at sync time (tasks-eso-merge.yaml)
+    # ---------
+    vault_policies_extra: []
     vault_policies:
       # ---------
-      # Vault Admin (full access for vault-admin SA)
+      # Vault Admin (full access for vault-admin SA, used by Ansible for writing secrets)
       # ---------
-      - name: eso-vault-admin
+      - name: vault-admin
         paths:
           - path: secret/data/*
             capabilities: [create, read, update, delete, list]
@@ -443,94 +565,20 @@ all:
           - path: auth/*
             capabilities: [create, read, update, delete, list]
 
-      # ---------
-      # Vault self credentials (for ESO to read vault root credentials)
-      # ---------
-      - name: eso-vault-self
-        paths:
-          - path: eso-secret/data/vault/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/vault/*
-            capabilities: [read, list]
-
-      # ---------
-      # Longhorn (S3 backup credentials)
-      # ---------
-      - name: eso-longhorn-read
-        paths:
-          - path: eso-secret/data/longhorn-system/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/longhorn-system/*
-            capabilities: [read, list]
-
-      # ---------
-      # GitLab (all secrets: postgresql, redis, minio, gitlab root)
-      # ---------
-      - name: eso-gitlab-read
-        paths:
-          - path: eso-secret/data/gitlab/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/gitlab/*
-            capabilities: [read, list]
-
-      # ---------
-      # ArgoCD (SSH repo-creds)
-      # ---------
-      - name: eso-argocd-read
-        paths:
-          - path: eso-secret/data/argocd/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/argocd/*
-            capabilities: [read, list]
-
     # ---------
-    # VAULT ROLES (Single Source of Truth)
+    # VAULT ROLES (manual overrides, not tied to ESO integrations)
+    # Roles from eso_vault_integrations are auto-derived at sync time
     # ---------
+    vault_roles_extra: []
     vault_roles:
       # ---------
       # Vault Admin (for writing secrets from Ansible)
       # ---------
-      - name: eso-vault-admin
+      - name: vault-admin
         namespace: vault
-        sa_name: eso-vault-admin
+        sa_name: vault-admin
         policies:
-          - eso-vault-admin
-
-      # ---------
-      # Vault ESO root (for reading vault credentials)
-      # ---------
-      - name: eso-vault-self
-        namespace: vault
-        sa_name: eso-vault-self
-        policies:
-          - eso-vault-self
-
-      # ---------
-      # Longhorn
-      # ---------
-      - name: eso-longhorn
-        namespace: longhorn-system
-        sa_name: eso-longhorn
-        policies:
-          - eso-longhorn-read
-
-      # ---------
-      # GitLab + Gitlab-minio + gitlab-runner
-      # ---------
-      - name: eso-gitlab
-        namespace: gitlab
-        sa_name: eso-gitlab
-        policies:
-          - eso-gitlab-read
-
-      # ---------
-      # ArgoCD
-      # ---------
-      - name: eso-argocd
-        namespace: argocd
-        sa_name: eso-argocd
-        policies:
-          - eso-argocd-read
+          - vault-admin
 
     # ------
     vault_helm_timeout: "5m"
@@ -592,55 +640,6 @@ all:
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lh-major-single-best-effort"
 
-    # GitLab ESO integration
-    gitlab_eso:
-      sa_name: "eso-gitlab"
-      role_name: "eso-gitlab"
-      secret_store_name: "eso-vault-gitlab"
-      kv_engine_path: "eso-secret"
-      secrets:
-        - external_secret_name: "eso-gitlab-postgresql"
-          target_secret_name: "eso-gitlab-postgresql"
-          vault_path: "/gitlab/postgresql/creds"
-          refresh_interval: "1m"
-          type: "postgresql"
-        - external_secret_name: "eso-gitlab-redis"
-          target_secret_name: "eso-gitlab-redis"
-          vault_path: "/gitlab/redis/creds"
-          refresh_interval: "1m"
-          type: "redis"
-        - external_secret_name: "eso-gitlab-minio-root"
-          target_secret_name: "eso-gitlab-minio-root"
-          vault_path: "/gitlab/minio/root"
-          refresh_interval: "1m"
-          type: "minio_root"
-        - external_secret_name: "eso-gitlab-minio-registry"
-          target_secret_name: "eso-gitlab-minio-registry"
-          vault_path: "/gitlab/minio/registry"
-          refresh_interval: "1m"
-          type: "minio_registry"
-        # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
-        - external_secret_name: "eso-gitlab-registry-minio-connection"
-          target_secret_name: "eso-gitlab-registry-minio-connection"
-          vault_path: "/gitlab/minio/registry"
-          refresh_interval: "1m"
-          type: "gitlab_registry_minio_connection"
-        # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
-        - external_secret_name: "eso-gitlab-minio-connection"
-          target_secret_name: "eso-gitlab-minio-connection"
-          vault_path: "/gitlab/minio/registry"
-          refresh_interval: "1m"
-          type: "gitlab_minio_connection"
-        - external_secret_name: "eso-gitlab-minio-runner-cache"
-          target_secret_name: "eso-gitlab-minio-runner-cache"
-          vault_path: "/gitlab/minio/runner-cache"
-          refresh_interval: "1m"
-          type: "minio_runner_cache"
-        - external_secret_name: "eso-gitlab-root"
-          target_secret_name: "eso-gitlab-root"
-          vault_path: "/gitlab/gitlab/root"
-          refresh_interval: "1m"
-          type: "gitlab_root"
     # ------
     gitlab_helm_timeout: "15m"
     gitlab_pre_helm_timeout: "5m"
@@ -653,24 +652,13 @@ all:
     # ArgoCD
     # ------
     argocd_namespace: "argocd" # DO NOT CHANGE - hardcoded in ClusterRoleBindings
-    argocd_ui_domain: "argocd-ui-k8s.domain.com"
-    argocd_rpc_domain: "argocd-rpc-k8s.domain.com"
+    argocd_ui_domain: "argocd-ui-k8s-v2.drawapp.ru"
+    argocd_rpc_domain: "argocd-rpc-k8s-v2.drawapp.ru"
     argocd_https_secret_name: "cert-argocd-domain-com"
     argocd_vpn_only_enabled: false
     argocd_reconciliation_timeout: "30s"
     argocd_reconciliation_jitter: "10s"
     argocd_session_duration: "120h"
-    # ArgoCD ESO integration (SSH repo-creds secret from Vault)
-    argocd_eso:
-      sa_name: "eso-argocd"
-      role_name: "eso-argocd"
-      secret_store_name: "eso-vault-argocd"
-      kv_engine_path: "eso-secret"
-      secrets:
-        - external_secret_name: "eso-argocd-repo-creds"
-          target_secret_name: "eso-git-ops-root-key-internal"
-          vault_path: "/argocd/repo-creds"
-          refresh_interval: "1m"
     # ------
     argocd_helm_timeout: "5m"
     argocd_components_rollout_timeout: "120s"
@@ -685,7 +673,7 @@ all:
     argocd_git_ops_gitlab_deploy_key_name: "argocd-read-only"
     argocd_git_ops_retry_backoff_max_duration: "30s"
     argocd_git_ops_destination_server: "https://kubernetes.default.svc"
-    argocd_git_ops_repo_url: "ssh://git@svc-gitlab.gitlab.svc.cluster.local:22/server/git-ops.git"
+    argocd_git_ops_repo_url: "ssh://git@gitlab-gitlab-shell.gitlab.svc.cluster.local:3714/server/git-ops.git"
     argocd_git_ops_source_repos: ["*"]
     argocd_git_ops_destinations:
       - name: "*"
@@ -703,17 +691,17 @@ all:
     managers:
       hosts:
         k8s-manager-1:
-          ansible_host: 158.160.8.137
+          ansible_host: 89.169.175.229
           ansible_user: ubuntu
           ansible_password: "some-password-123"
           new_hostname: k8s-manager-1
           is_master: true
           # internal_ip - internal network interface IP (same as api_server_advertise_address for managers)
-          internal_ip: "10.129.0.10"
+          internal_ip: "10.129.0.26"
           # api_server_advertise_address - IP for kube-apiserver to listen on and advertise to cluster
           # BareMetal: usually same as ansible_host (public IP)
           # Cloud (AWS/Yandex): usually private VPC IP (check with: ip route get 1)
-          api_server_advertise_address: "10.129.0.10"
+          api_server_advertise_address: "10.129.0.26"
           api_server_bind_port: 6443
           longhorn_default_tags:
             - "lh-az-fra-1"
@@ -736,11 +724,11 @@ all:
     workers:
       hosts:
         k8s-worker-1:
-          ansible_host: 51.250.17.248
+          ansible_host: 89.169.185.44
           ansible_user: ubuntu
           ansible_password: "some-password-789"
           new_hostname: k8s-worker-1
-          internal_ip: "10.129.0.24"
+          internal_ip: "10.129.0.27"
           node_labels:
             - "node-role.kubernetes.io/worker="
           longhorn_default_tags:
@@ -750,11 +738,11 @@ all:
             - "lh-minor-volume"
 
         k8s-worker-2:
-          ansible_host: 178.154.198.58
+          ansible_host: 89.169.170.15
           ansible_user: ubuntu
           ansible_password: "some-password-101"
           new_hostname: k8s-worker-2
-          internal_ip: "10.129.0.25"
+          internal_ip: "10.129.0.32"
           node_labels:
             - "node-role.kubernetes.io/worker="
           longhorn_default_tags:

@@ -1,0 +1,104 @@
+# =============================================================================
+# Longhorn S3 Restore — Create temporary S3 secrets (Disaster Recovery)
+# =============================================================================
+# Используется когда Vault недоступен и нужно вручную создать k8s Secrets
+# с S3-credentials для Longhorn backup restore.
+#
+# Данные берутся из hosts-extra.yaml (longhorn_s3_restore_secrets).
+# После восстановления Vault — удалить: longhorn-s3-restore-delete.yaml
+# =============================================================================
+
+---
+- name: Longhorn S3 Restore — Create temporary S3 secrets
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[longhorn-s3-restore-create] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "longhorn-s3-restore-create"
+
+    # =========================================================================
+    # INIT: Validate input
+    # =========================================================================
+
+    - name: "[longhorn-s3-restore-create] Fail if longhorn_s3_restore_secrets is not defined or empty"
+      fail:
+        msg: >-
+          Variable 'longhorn_s3_restore_secrets' is not defined or empty.
+          Define it in hosts-extra.yaml. See hosts-extra.yaml.example for reference.
+      when: (longhorn_s3_restore_secrets | default([])) | length == 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[longhorn-s3-restore-create] Detect conflicts with hosts.yaml LONGHORN.secrets"
+      fail:
+        msg: >-
+          Secret '{{ item }}' уже определён в базовом файле hosts.yaml (LONGHORN.secrets).
+          Поменяйте название в hosts-extra.yaml.
+      vars:
+        _longhorn_entry: >-
+          {{ eso_vault_integrations | selectattr('type', 'equalto', 'LONGHORN') | first | default({'secrets': []}) }}
+        _longhorn_base_names: >-
+          {{ _longhorn_entry.secrets | map(attribute='target_secret_name') | list
+             + _longhorn_entry.secrets | map(attribute='external_secret_name') | list }}
+      when: item in _longhorn_base_names
+      loop: "{{ longhorn_s3_restore_secrets | map(attribute='name') | list }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # DEPLOY: Create secrets via Helm
+    # =========================================================================
+
+    - name: "[longhorn-s3-restore-create] Copy chart to server"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "longhorn-s3-restore-create"
+        chart_name: "s3-restore"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/longhorn-s3-restore/"
+        chart_remote_dest: "{{ remote_charts_dir }}/longhorn-s3-restore"
+
+    - name: "[longhorn-s3-restore-create] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/longhorn-s3-restore/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ longhorn_namespace }}
+          secrets: {{ longhorn_s3_restore_secrets | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[longhorn-s3-restore-create] Install via Helm"
+      command: >
+        helm upgrade --install longhorn-s3-restore {{ remote_charts_dir }}/longhorn-s3-restore
+        --namespace {{ longhorn_namespace }}
+        --values {{ remote_charts_dir }}/longhorn-s3-restore/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ longhorn_config_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[longhorn-s3-restore-create] Verify Helm release"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ longhorn_namespace }}"
+        label_name: "longhorn-s3-restore-create"
+
+    - name: "[longhorn-s3-restore-create] Show created secrets"
+      debug:
+        msg:
+          - "Created {{ longhorn_s3_restore_secrets | length }} temporary S3 secret(s) in namespace '{{ longhorn_namespace }}':"
+          - "{{ longhorn_s3_restore_secrets | map(attribute='name') | list }}"
+          - "After restoring Vault — run longhorn-s3-restore-delete.yaml to remove them."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

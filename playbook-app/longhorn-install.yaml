@@ -19,19 +19,15 @@
         label_name: "longhorn-install-pre-check"
 
     # =========================================================================
-    # INIT: Resolve ESO config
+    # INIT: Merge ESO integrations and resolve Longhorn config
     # =========================================================================
 
-    - name: "[longhorn-install-init] Fail if LONGHORN not found in eso_vault_integrations"
-      fail:
-        msg: "No entry with type=LONGHORN found in eso_vault_integrations. Check hosts.yaml."
-      when: eso_vault_integrations | selectattr('type', 'equalto', 'LONGHORN') | list | length == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[longhorn-install-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
 
-    - name: "[longhorn-install-init] Resolve ESO config"
+    - name: "[longhorn-install-init] Set longhorn_eso from merged integration"
       set_fact:
-        longhorn_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'LONGHORN') | first }}"
+        longhorn_eso: "{{ eso_vault_integration_longhorn_merged }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 

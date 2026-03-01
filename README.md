@@ -180,6 +180,8 @@
 
 ##
 ## Добавить установку api-metrics. Чтобы работала команда `kubectl top ...`
+## ...
+## ...
 ##
 
 ## cert-manager. Официальный helm
@@ -213,6 +215,10 @@
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/traefik-install.yaml`
+## ---
+## Важно_1. Можно указать дополнительные секреты в файле `hosts-extra.yaml`, в секции `eso_vault_integration_traefik_extra`
+## Если такое есть - при установке нужно указать `... -i hosts-extra.yaml ...`
+## ---
 ##
 - установка
   - Параметры в `hosts.yaml`
@@ -223,11 +229,17 @@
   - `ansible-playbook -i hosts.yaml playbook-app/traefik-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/traefik-restart.yaml`
+- Есть дополнительный файл для vault + ESO
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-install.yaml`
 
 ## haproxy (ingress-2). Официальный helm
 ## Автоматически подхватывает конфиг, который генерируется через CRD
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/haproxy-install.yaml`
+## ---
+## Важно_1. Можно указать дополнительные секреты в файле `hosts-extra.yaml`, в секции `eso_vault_integration_haproxy_extra`
+## Если такое есть - при установке нужно указать `... -i hosts-extra.yaml ...`
+## ---
 ##
 - установка
   - Только параметры в `hosts.yaml`
@@ -238,6 +250,8 @@
   - `ansible-playbook -i hosts.yaml playbook-app/haproxy-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml playbook-app/haproxy-restart.yaml`
+- Есть дополнительный файл для vault + ESO
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/haproxy-install.yaml`
 
 ## cilium-hubble (относится к cilium). yaml -> helm
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -283,6 +297,23 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/longhorn-install.yaml`
 ## Есть создание секретов для БЭКАПА в S3 -> использует CRD от ESO (Но секреты сразу работать не будут, так как они появляются в VAULT, позже)
+## ---
+## Важно_1. Для создания секретов для работы с backup - их нужно определить `hosts-extra.yaml` (пример в `hosts-extra.yaml.example`)
+## После их определния: они будут использоваться при установке longhorn-install.yaml + vault-install.yaml + vault-policy-sync.yaml
+## Как вызывать: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml ...`
+## ---
+## Важно_2. Восстановдение VAULT
+## Ситуация: был кластер с vault + longhorn, есть backup, нужно восстановиться из бэкапа
+## Бэкап лежит на S3 (все доступы есть), но правило такое: все секреты в кластере только через vault + ESO. Что делать ?
+## Чтобы восстановить vault - нужно скачать бэкап через longhorn, чтобы скачать backup - нужно создать k8s: Secret + s3-creds
+## План действий
+## - в hosts-extra.yaml определить все секреты для восстановления ьжкапа или бэкапов (их может быть несколько). переменная: `longhorn_s3_restore_secrets`
+## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-create.yaml`. Это создаст секреты в k8s
+## - Зайти в longhorn-ui, использовать секреты для скачивания и восстановления backups, восстановить volume для VAULT
+## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-delete.yaml`. Это удалит секреты из k8s
+## - запустить vault с восстановленным состоянием
+## - сразу же подрубится ESO (из пункта 1 - Важно_1)
+## ---
 ## 
 - установка
   - Параметры в `hosts.yaml`
@@ -291,13 +322,12 @@
 - обновление (версия, конфиг)
   - Параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/longhorn-install.yaml`
+- Есть дополнительный файл для vault + ESO
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-install.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует volume (PVC)
 ## ---
-
-
-Обновить правила по файлам
 
 ## Vault. Официальный helm
 ## ЕСТЬ проблема: официальный helm не работает из РФ (Региональная блокировка)
@@ -309,7 +339,7 @@
 ## Потому что проверка внутри пода: смотрит на готовность самого VAULT (что он инициализирован), а не просто на работоспособность контейнера
 ## ---
 ## Важно! Если был создан дополнительный файл `hosts-extra.yaml`, и там есть что-то для политик vault - его тоже нужно указат при  установке
-## `-i hosts.yaml -i hosts-extra.yaml`
+## Если такое есть - при установке нужно указать `... -i hosts-extra.yaml ...`
 ## ---
 ##
 - установка
@@ -327,6 +357,10 @@
 - Если есть дополнительный файл с политиками (-i hosts-extra.yaml)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
+
+## VAULT, после установки - синхронизировать политики и роли
+## Без допов: `ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml`
+## С допами: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
@@ -347,6 +381,10 @@
 ## 1. Для deployment используется `checksum/config: ...`
 ## 2. При обновлении конфига `/gitlab/templates/configmap.yaml` POD c GitLab будет перезапущен
 ## 3. checksum/config - вычисляется через HELM (include ...)
+## ---
+## Важно_1. Можно указать дополнительные секреты в файле `hosts-extra.yaml`, в секции `eso_vault_integration_gitlab_extra`
+## Если такое есть - при установке нужно указать `... -i hosts-extra.yaml ...`
+## ---
 ## 
 - установка
   - Только параметры в `hosts.yaml`
@@ -356,12 +394,18 @@
 - обновление (версия + конфиг)
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/gitlab-install.yaml`
+- Есть дополнительный файл для vault + ESO
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-install.yaml`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Нет автоматической обработки новых конфигов (Как у Cilium). То есть: После обновления конфигов - ручной restart
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/argocd-install.yaml`
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## ---
+## Важно_1. Можно указать дополнительные секреты в файле `hosts-extra.yaml`, в секции `eso_vault_integration_argocd_extra`
+## Если такое есть - при установке нужно указать `... -i hosts-extra.yaml ...`
+## ---
 ##
 - установка
   - Только параметры в `hosts.yaml`
@@ -382,6 +426,12 @@
   - Только параметры в `hosts.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/argocd-install.yaml`
   - `ansible-playbook -i hosts.yaml playbook-app/argocd-restart.yaml`
+- Есть дополнительный файл для vault + ESO
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-install.yaml`
+
+## ---
+## Добавить ротацию пароля - АДМИНА
+## ---
 
 ## argocd-git-ops. yaml -> helm
 ## Установка всех необходимых ресурсов k8s - для git-ops паттерна. Создание необходимых групп и репозиториев в gitlab + создание ключей в VAULT

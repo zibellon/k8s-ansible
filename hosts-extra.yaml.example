@@ -1,5 +1,5 @@
 # =============================================================================
-# hosts-extra.yaml — дополнительные Vault политики и роли
+# hosts-extra.yaml — дополнительные Vault политики, роли и ESO secrets
 # =============================================================================
 # Этот файл НЕ входит в git (добавлен в .gitignore).
 # Скопируй этот шаблон: cp hosts-extra.yaml.example hosts-extra.yaml
@@ -9,7 +9,9 @@
 #
 # Правила именования:
 #   - Имена политик/ролей НЕ должны совпадать с именами, выводимыми из
-#     eso_vault_integrations или vault_policies/vault_roles в hosts.yaml.
+#     eso_vault_integration_XXXXX или vault_policies/vault_roles в hosts.yaml.
+#   - external_secret_name и target_secret_name в _extra НЕ должны совпадать
+#     с уже определёнными в hosts.yaml для того же компонента.
 #   - При конфликте имён playbook упадёт с ошибкой.
 # =============================================================================
 
@@ -35,3 +37,92 @@ all:
     #     sa_name: my-app-sa
     #     policies:
     #       - my-custom-policy
+
+    # Дополнительные ExternalSecrets для Vault self
+    eso_vault_integration_vault_extra:
+      secrets: []
+    # Пример:
+    # eso_vault_integration_vault_extra:
+    #   secrets:
+    #     - external_secret_name: "eso-vault-custom"
+    #       target_secret_name: "eso-vault-custom"
+    #       vault_path: "/vault/custom/creds"
+    #       refresh_interval: "1m"
+    #       type: "default"
+
+    # Дополнительные ExternalSecrets для Traefik
+    eso_vault_integration_traefik_extra:
+      secrets: []
+    # Пример:
+    # eso_vault_integration_traefik_extra:
+    #   secrets:
+    #     - external_secret_name: "traefik-custom-cert"
+    #       target_secret_name: "traefik-custom-cert"
+    #       vault_path: "/traefik/custom/creds"
+    #       refresh_interval: "1m"
+    #       type: "default"
+
+    # Дополнительные ExternalSecrets для HAProxy
+    eso_vault_integration_haproxy_extra:
+      secrets: []
+    # Пример:
+    # eso_vault_integration_haproxy_extra:
+    #   secrets:
+    #     - external_secret_name: "haproxy-custom-secret"
+    #       target_secret_name: "haproxy-custom-secret"
+    #       vault_path: "/haproxy/custom/creds"
+    #       refresh_interval: "1m"
+    #       type: "default"
+
+    # Дополнительные ExternalSecrets для Longhorn (S3-backup credentials)
+    eso_vault_integration_longhorn_extra:
+      secrets: []
+    # Пример:
+    # eso_vault_integration_longhorn_extra:
+    #   secrets:
+    #     - external_secret_name: "s3-backup"
+    #       target_secret_name: "longhorn-s3-backup-creds"
+    #       vault_path: "/longhorn-system/s3-backup"
+    #       refresh_interval: "1m"
+    #       type: "default"
+
+    # Дополнительные ExternalSecrets для GitLab
+    eso_vault_integration_gitlab_extra:
+      secrets: []
+    # Пример (type: "default" для обычных секретов без ESO-шаблона):
+    # eso_vault_integration_gitlab_extra:
+    #   secrets:
+    #     - external_secret_name: "eso-gitlab-custom"
+    #       target_secret_name: "eso-gitlab-custom"
+    #       vault_path: "/gitlab/custom/creds"
+    #       refresh_interval: "1m"
+    #       type: "default"
+
+    # Дополнительные ExternalSecrets для ArgoCD
+    eso_vault_integration_argocd_extra:
+      secrets: []
+    # Пример:
+    # eso_vault_integration_argocd_extra:
+    #   secrets:
+    #     - external_secret_name: "eso-argocd-custom"
+    #       target_secret_name: "eso-argocd-custom"
+    #       vault_path: "/argocd/custom/creds"
+    #       refresh_interval: "1m"
+    #       type: "default"
+    #     - external_secret_name: "eso-argocd-repo-creds-custom"
+    #       target_secret_name: "eso-argocd-repo-creds-custom"
+    #       vault_path: "/argocd/repo-creds-custom/creds"
+    #       refresh_interval: "1m"
+    #       type: "repo_creds"
+
+    # Временные S3-секреты для Longhorn disaster recovery (без Vault/ESO)
+    # Используются playbook-ами longhorn-s3-restore-create.yaml / longhorn-s3-restore-delete.yaml
+    longhorn_s3_restore_secrets: []
+    # Пример:
+    # longhorn_s3_restore_secrets:
+    #   - name: "longhorn-s3-backup-creds"
+    #     data:
+    #       AWS_ACCESS_KEY_ID: "my-access-key"
+    #       AWS_SECRET_ACCESS_KEY: "my-secret-key"
+    #       AWS_ENDPOINTS: "https://s3.example.com"
+    #       AWS_REGION: "us-east-1"

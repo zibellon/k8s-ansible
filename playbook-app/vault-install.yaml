@@ -26,19 +26,15 @@
         label_name: "vault-install-pre-check"
 
     # =========================================================================
-    # INIT: Resolve ESO config
+    # INIT: Merge ESO integrations and resolve Vault config
     # =========================================================================
 
-    - name: "[vault-install-init] Fail if VAULT not found in eso_vault_integrations"
-      fail:
-        msg: "No entry with type=VAULT found in eso_vault_integrations. Check hosts.yaml."
-      when: eso_vault_integrations | selectattr('type', 'equalto', 'VAULT') | list | length == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-install-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
 
-    - name: "[vault-install-init] Resolve ESO config"
+    - name: "[vault-install-init] Set vault_eso from merged integration"
       set_fact:
-        vault_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'VAULT') | first }}"
+        vault_eso: "{{ eso_vault_integration_vault_merged }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -645,15 +641,7 @@
       run_once: true
 
     # =========================================================================
-    # STEP 12: SYNC VAULT POLICIES AND ROLES (only when unsealed)
-    # =========================================================================
-
-    - name: "[vault-policy-sync] Sync policies and roles from hosts.yaml"
-      include_tasks: tasks/tasks-vault-policy-sync.yaml
-      when: vault_sealed_status.stdout | default('true') == 'false'
-
-    # =========================================================================
-    # STEP 13: INSTALL POST (Ingress + CronJob)
+    # STEP 12: INSTALL POST (Ingress + CronJob)
     # =========================================================================
 
     - name: "[vault-post] Copy chart to remote"
@@ -706,7 +694,7 @@
       run_once: true
 
     # =========================================================================
-    # STEP 14: VERIFY AND OUTPUT
+    # STEP 13: VERIFY AND OUTPUT
     # =========================================================================
 
     - name: "[vault-verify] Verify Helm releases"

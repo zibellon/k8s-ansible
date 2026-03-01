@@ -34,19 +34,15 @@
         label_name: "gitlab-pre-check"
 
     # =========================================================================
-    # INIT: Resolve ESO config and find secret names/vault paths by type
+    # INIT: Merge ESO integrations and resolve GitLab config
     # =========================================================================
 
-    - name: "[gitlab-install-init] Fail if GITLAB not found in eso_vault_integrations"
-      fail:
-        msg: "No entry with type=GITLAB found in eso_vault_integrations. Check hosts.yaml."
-      when: eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | list | length == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-install-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
 
-    - name: "[gitlab-install-init] Resolve ESO config"
+    - name: "[gitlab-install-init] Set gitlab_eso from merged integration"
       set_fact:
-        gitlab_eso: "{{ eso_vault_integrations | selectattr('type', 'equalto', 'GITLAB') | first }}"
+        gitlab_eso: "{{ eso_vault_integration_gitlab_merged }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 

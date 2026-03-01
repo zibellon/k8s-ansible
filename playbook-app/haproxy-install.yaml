@@ -19,6 +19,19 @@
         label_name: "haproxy-install-pre-check"
 
     # =========================================================================
+    # INIT: Merge ESO integrations and resolve HAProxy config
+    # =========================================================================
+
+    - name: "[haproxy-install-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+
+    - name: "[haproxy-install-init] Set haproxy_eso from merged integration"
+      set_fact:
+        haproxy_eso: "{{ eso_vault_integration_haproxy_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
     # STEP 1: HAPROXY/PRE (NetworkPolicies)
     # =========================================================================
 
@@ -146,7 +159,16 @@
         mode: "0644"
         content: |
           namespace: {{ haproxy_namespace }}
+          clusterDomain: {{ dns_domain }}
           ingressClass: {{ haproxy_ingress_class }}
+          vault:
+            namespace: {{ vault_namespace }}
+          eso:
+            saName: {{ haproxy_eso.sa_name }}
+            roleName: {{ haproxy_eso.role_name }}
+            secretStoreName: {{ haproxy_eso.secret_store_name }}
+            kvEnginePath: {{ haproxy_eso.kv_engine_path }}
+            secrets: {{ haproxy_eso.secrets | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 

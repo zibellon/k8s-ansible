@@ -1,0 +1,35 @@
+# =============================================================================
+# Longhorn S3 Restore — Delete temporary S3 secrets (Disaster Recovery)
+# =============================================================================
+# Удаляет временные k8s Secrets, созданные playbook-ом
+# longhorn-s3-restore-create.yaml после восстановления Vault.
+# =============================================================================
+
+---
+- name: Longhorn S3 Restore — Delete temporary S3 secrets
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[longhorn-s3-restore-delete] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "longhorn-s3-restore-delete"
+
+    # =========================================================================
+    # CLEANUP: Uninstall Helm release
+    # =========================================================================
+
+    - name: "[longhorn-s3-restore-delete] Uninstall Helm release"
+      command: >
+        helm uninstall longhorn-s3-restore
+        --namespace {{ longhorn_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[longhorn-s3-restore-delete] Confirm removal"
+      debug:
+        msg: "longhorn-s3-restore Helm release uninstalled — temporary S3 secrets removed from namespace '{{ longhorn_namespace }}'."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

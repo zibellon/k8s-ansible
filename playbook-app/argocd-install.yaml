@@ -1,6 +1,8 @@
 # =============================================================================
-# ARGOCD INSTALLATION VIA LOCAL HELM CHART
-# Downloads official manifests, modifies configs, installs via Helm
+# ARGOCD INSTALLATION VIA LOCAL HELM CHARTS
+# Steps:
+#   1. argocd/pre:     NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
+#   2. argocd/install: Official ArgoCD manifests + Ingress + default AppProject
 # =============================================================================
 
 - name: Install ArgoCD via local Helm chart
@@ -14,25 +16,81 @@
       vars:
         label_name: "argocd-install-pre-check"
 
-    # -------------------------------------------------------------------------
-    # COPY LOCAL HELM CHARTS
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # INIT: Merge ESO integrations and resolve ArgoCD config
+    # =========================================================================
 
-    # argocd chart
-    - name: "[argocd-install] Copy argocd chart to remote server"
+    - name: "[argocd-install-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+
+    - name: "[argocd-install-init] Set argocd_eso from merged integration"
+      set_fact:
+        argocd_eso: "{{ eso_vault_integration_argocd_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # STEP 1: ARGOCD/PRE (NetworkPolicies + ESO resources)
+    # =========================================================================
+
+    - name: "[argocd-pre] Copy pre chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "argocd"
-        chart_name: "argocd"
-        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd/"
-        chart_remote_dest: "{{ remote_charts_dir }}/argocd"
+        label_name: "argocd-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd/pre"
 
-    # -------------------------------------------------------------------------
-    # INSTALL ARGOCD CRDs FIRST
-    # -------------------------------------------------------------------------
+    - name: "[argocd-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/argocd/pre/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ argocd_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+          gitlab:
+            namespace: {{ gitlab_namespace }}
+          clusterDomain: {{ dns_domain }}
+          vault:
+            namespace: {{ vault_namespace }}
+          eso:
+            saName: {{ argocd_eso.sa_name }}
+            roleName: {{ argocd_eso.role_name }}
+            secretStoreName: {{ argocd_eso.secret_store_name }}
+            kvEnginePath: {{ argocd_eso.kv_engine_path }}
+            secrets: {{ argocd_eso.secrets | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install argocd-pre {{ remote_charts_dir }}/argocd/pre
+        --namespace {{ argocd_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/argocd/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ argocd_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
+    # STEP 2: ARGOCD/INSTALL (ArgoCD manifests + Ingress + AppProject)
+    # =========================================================================
+
+    - name: "[argocd-install] Copy install chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-install"
+        chart_name: "install"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd/install"
 
     - name: "[argocd-install] Install argocd-crds via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
+      command: kubectl create -f {{ remote_charts_dir }}/argocd/install/crds/crds.yaml
       failed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -46,13 +104,9 @@
           - crd/applicationsets.argoproj.io
           - crd/appprojects.argoproj.io
 
-    # -------------------------------------------------------------------------
-    # CREATE VALUES FILE WITH SSH KEY
-    # -------------------------------------------------------------------------
-
-    - name: "[argocd-install] Create values file with SSH key"
+    - name: "[argocd-install] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/argocd-values.yaml"
+        dest: "{{ remote_charts_dir }}/argocd/install/values-override.yaml"
         mode: "0600"
         content: |
           namespace: {{ argocd_namespace }}
@@ -71,16 +125,12 @@
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    # -------------------------------------------------------------------------
-    # INSTALL OR UPGRADE CHART
-    # -------------------------------------------------------------------------
-
     - name: "[argocd-install] Install or upgrade argocd via Helm"
       command: >
-        helm upgrade --install argocd {{ remote_charts_dir }}/argocd
+        helm upgrade --install argocd {{ remote_charts_dir }}/argocd/install
         --namespace {{ argocd_namespace }}
         --create-namespace
-        --values {{ remote_charts_dir }}/argocd-values.yaml
+        --values {{ remote_charts_dir }}/argocd/install/values-override.yaml
         --cleanup-on-fail
         --skip-crds
         --atomic
@@ -90,9 +140,9 @@
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    # -------------------------------------------------------------------------
-    # VERIFY INSTALLATION
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
 
     - name: "[argocd-install] Wait for rollouts"
       include_tasks: tasks/tasks-wait-rollout.yaml
@@ -130,6 +180,37 @@
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
+    - name: "[argocd-admin] Resolve vault_path for admin credentials"
+      set_fact:
+        vault_path_argocd_admin: >-
+          {{ (argocd_eso.secrets | selectattr('type', 'equalto', 'argocd_root') | first).vault_path }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-admin] Check if admin credentials exist in Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }} 2>/dev/null
+      register: argocd_admin_vault_check
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-admin] Store admin credentials in Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }}
+        username=admin
+        password={{ argocd_password.stdout }}
+      when:
+        - argocd_admin_vault_check.rc != 0
+        - argocd_password.rc == 0
+        - argocd_password.stdout | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
     - name: "[argocd-verify] Verify NetworkPolicies"
       command: kubectl get networkpolicies -n {{ argocd_namespace }}
       register: np_verify
@@ -140,5 +221,11 @@
     - name: "[argocd-verify] Show NetworkPolicies"
       debug:
         var: np_verify.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argocd-verify] Installation complete"
+      debug:
+        msg: "argocd-pre + argocd: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true

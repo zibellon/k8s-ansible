@@ -4,14 +4,14 @@
 # Synchronizes policies and roles from hosts.yaml (+ hosts-extra.yaml) to Vault
 #
 # Policy/role sources (merged in order, conflict on duplicate names):
-#   1. eso_vault_integrations — auto-derived from secrets[] (per-secret policy)
+#   1. eso_vault_integration_XXXXX — auto-derived from secrets[] (per-secret policy)
 #   2. vault_policies / vault_roles — manual overrides in hosts.yaml
 #   3. vault_policies_extra / vault_roles_extra — from hosts-extra.yaml (gitignored)
 #
 # Usage:
 #   ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml
 #
-# Without hosts-extra.yaml (vault_policies_extra/vault_roles_extra default to []):
+# Without hosts-extra.yaml (_extra variables default to empty in hosts.yaml):
 #   ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml
 # =============================================================================
 
@@ -52,11 +52,13 @@
       run_once: true
 
     # =========================================================================
-    # STEP 2: SYNC ALL POLICIES AND ROLES
+    # STEP 2: MERGE ESO INTEGRATIONS + SYNC POLICIES AND ROLES
     # =========================================================================
-    # Uses shared tasks from tasks/tasks-vault-policy-sync.yaml
 
-    - name: "[vault-policy-sync] Sync policies and roles from hosts.yaml"
+    - name: "[vault-policy-sync] Merge ESO integrations and derive policies/roles"
+      include_tasks: tasks/tasks-eso-merge.yaml
+
+    - name: "[vault-policy-sync] Sync policies and roles to Vault"
       include_tasks: tasks/tasks-vault-policy-sync.yaml
 
     # =========================================================================
@@ -101,7 +103,7 @@
           - "VAULT POLICY SYNC COMPLETE"
           - "=============================================="
           - "Sources:"
-          - "  eso_vault_integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
+          - "  Derived from integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
           - "  vault_policies/roles (hosts.yaml): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
           - "  vault_policies_extra/roles_extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"
           - "Total synced: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"

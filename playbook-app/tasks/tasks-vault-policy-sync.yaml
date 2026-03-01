@@ -1,133 +1,31 @@
 # =============================================================================
 # Vault Sync Policies and Roles
 # =============================================================================
-# Shared tasks for syncing policies and roles from hosts.yaml to Vault
+# Applies pre-merged policy and role lists to Vault (API operations only).
 #
 # Used by:
-#   - vault-install.yaml (initial setup)
-#   - vault-policy-sync.yaml (manual sync)
+#   - vault-install.yaml     (called AFTER tasks-eso-merge.yaml)
+#   - vault-policy-sync.yaml (called AFTER tasks-eso-merge.yaml)
 #
-# Requires variables:
+# Requires variables (produced by tasks-eso-merge.yaml):
+#   - vault_policies_final (array)
+#   - vault_roles_final    (array)
 #   - vault_namespace
-#   - eso_vault_integrations (array) - ESO integrations, policies/roles are auto-derived
-#   - vault_policies (array) - manual overrides not tied to ESO integrations
-#   - vault_roles (array) - manual overrides not tied to ESO integrations
-#   - vault_policies_extra (array, optional) - from hosts-extra.yaml, must have unique names
-#   - vault_roles_extra (array, optional) - from hosts-extra.yaml, must have unique names
 #   - remote_charts_dir
-#
-# Policy derivation rules (per secret in eso_vault_integrations):
-#   policy.name  = {namespace}_{external_secret_name}
-#   policy.paths = [{kv_engine_path}/data{vault_path}, {kv_engine_path}/metadata{vault_path}]
-#   capabilities = [read, list]
+#   - _derived_policies    (for summary)
+#   - _derived_roles       (for summary)
+#   - vault_policies, vault_roles
+#   - vault_policies_extra, vault_roles_extra
 # =============================================================================
 
 # -------------------------------------------------------------------------
-# STAGE 1: Derive policies and roles from eso_vault_integrations
+# Show sync summary
 # -------------------------------------------------------------------------
-
-- name: "[vault-policy-sync] Initialize derived lists"
-  set_fact:
-    _derived_policies: []
-    _derived_roles: []
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-- name: "[vault-policy-sync] Derive policies from eso_vault_integrations.secrets"
-  set_fact:
-    _derived_policies: >-
-      {{ _derived_policies + [{
-        'name': item.0.namespace ~ '_' ~ item.1.external_secret_name,
-        'paths': [
-          {
-            'path': item.0.kv_engine_path ~ '/data' ~ item.1.vault_path,
-            'capabilities': ['read', 'list']
-          },
-          {
-            'path': item.0.kv_engine_path ~ '/metadata' ~ item.1.vault_path,
-            'capabilities': ['read', 'list']
-          }
-        ]
-      }] }}
-  loop: "{{ eso_vault_integrations | subelements('secrets') }}"
-  loop_control:
-    label: "{{ item.0.namespace }}_{{ item.1.external_secret_name }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-- name: "[vault-policy-sync] Derive roles from eso_vault_integrations"
-  set_fact:
-    _derived_roles: >-
-      {{ _derived_roles + [{
-        'name': item.role_name,
-        'namespace': item.namespace,
-        'sa_name': item.sa_name,
-        'policies': item.secrets | map(attribute='external_secret_name') | map('regex_replace', '^', item.namespace ~ '_') | list
-      }] }}
-  loop: "{{ eso_vault_integrations }}"
-  loop_control:
-    label: "{{ item.type }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-# -------------------------------------------------------------------------
-# STAGE 2: Conflict detection — hosts-extra names must not clash with base
-# -------------------------------------------------------------------------
-
-- name: "[vault-policy-sync] Collect base policy and role names"
-  set_fact:
-    _base_policy_names: "{{ (_derived_policies + vault_policies) | map(attribute='name') | list }}"
-    _base_role_names: "{{ (_derived_roles + vault_roles) | map(attribute='name') | list }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-- name: "[vault-policy-sync] Detect policy name conflicts with hosts-extra"
-  set_fact:
-    _policy_conflicts: "{{ (vault_policies_extra | default([])) | map(attribute='name') | list | intersect(_base_policy_names) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-- name: "[vault-policy-sync] Detect role name conflicts with hosts-extra"
-  set_fact:
-    _role_conflicts: "{{ (vault_roles_extra | default([])) | map(attribute='name') | list | intersect(_base_role_names) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-- name: "[vault-policy-sync] Fail on policy name conflicts"
-  fail:
-    msg: >-
-      Conflict in vault_policies_extra (hosts-extra.yaml): names {{ _policy_conflicts }}
-      already exist in eso_vault_integrations or vault_policies.
-      Rename them in hosts-extra.yaml.
-  when: _policy_conflicts | length > 0
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-- name: "[vault-policy-sync] Fail on role name conflicts"
-  fail:
-    msg: >-
-      Conflict in vault_roles_extra (hosts-extra.yaml): names {{ _role_conflicts }}
-      already exist in eso_vault_integrations or vault_roles.
-      Rename them in hosts-extra.yaml.
-  when: _role_conflicts | length > 0
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-
-# -------------------------------------------------------------------------
-# STAGE 3: Merge all sources into final lists
-# -------------------------------------------------------------------------
-
-- name: "[vault-policy-sync] Merge all policy and role sources"
-  set_fact:
-    vault_policies_final: "{{ _derived_policies + vault_policies + (vault_policies_extra | default([])) }}"
-    vault_roles_final: "{{ _derived_roles + vault_roles + (vault_roles_extra | default([])) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
 
 - name: "[vault-policy-sync] Show sync summary"
   debug:
     msg:
-      - "Derived from eso_vault_integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
+      - "Derived from integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
       - "Manual overrides (vault_policies/vault_roles): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
       - "Extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"
       - "Final totals: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"

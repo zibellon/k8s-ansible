@@ -19,6 +19,19 @@
         label_name: "traefik-install-pre-check"
 
     # =========================================================================
+    # INIT: Merge ESO integrations and resolve Traefik config
+    # =========================================================================
+
+    - name: "[traefik-install-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+
+    - name: "[traefik-install-init] Set traefik_eso from merged integration"
+      set_fact:
+        traefik_eso: "{{ eso_vault_integration_traefik_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
     # STEP 1: TRAEFIK/PRE (NetworkPolicies)
     # =========================================================================
 
@@ -255,7 +268,7 @@
     - name: "[traefik-install] Wait for rollouts"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "traefik"
+        label_name: "traefik-install"
         rollout_namespace: "{{ traefik_namespace }}"
         rollout_timeout: "{{ traefik_rollout_timeout }}"
         rollout_resources:
@@ -279,6 +292,7 @@
         mode: "0644"
         content: |
           namespace: {{ traefik_namespace }}
+          clusterDomain: {{ dns_domain }}
           ingressClass: {{ traefik_ingress_class }}
           entryPoints:
             web: {{ traefik_web_entrypoint }}
@@ -290,6 +304,14 @@
             secretName: {{ traefik_dashboard_https_secret_name }}
             clusterIssuer: {{ cert_manager_cluster_issuer }}
             vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
+          vault:
+            namespace: {{ vault_namespace }}
+          eso:
+            saName: {{ traefik_eso.sa_name }}
+            roleName: {{ traefik_eso.role_name }}
+            secretStoreName: {{ traefik_eso.secret_store_name }}
+            kvEnginePath: {{ traefik_eso.kv_engine_path }}
+            secrets: {{ traefik_eso.secrets | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
