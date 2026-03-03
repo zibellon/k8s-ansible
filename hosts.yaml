@@ -286,6 +286,23 @@ all:
     external_secrets_helm_timeout: "5m"
     external_secrets_rollout_timeout: "300s"
 
+    # ---------
+    # ESO controller flags
+    # ---------
+    eso_controller_config:
+      client_burst: 200
+      concurrent: 10
+      enable_managed_secrets_caching: false
+      store_requeue_interval: "1m0s"
+
+    # ---------
+    # ESO resources global config (SecretStore + ExternalSecret)
+    # ---------
+    eso_resources_config:
+      secret_store_refresh_interval: 60   # int (секунды); SecretStoreSpec.refreshInterval
+      external_secret_refresh_interval: "1m"  # string (Golang Duration); ExternalSecretSpec.refreshInterval (default, per-secret override через refresh_interval)
+      external_secret_refresh_policy: "Periodic"  # ExternalSecretSpec.refreshPolicy
+
     # ------
     # Traefik
     # ------
@@ -372,7 +389,7 @@ all:
     # name - это название ExternalSecret
     # target_secret - это название секрета в Kubernetes (который будет создан в этом namespace)
     # vault_path - это full path в Vault
-    # refresh_interval - это интервал обновления секрета
+    # refresh_interval - опциональное переопределение интервала (иначе используется eso_resources_config.external_secret_refresh_interval)
     # ------
     vault_namespace: "vault"
     vault_image_tag: "1.21.2"
@@ -416,7 +433,6 @@ all:
         - external_secret_name: "eso-vault-self-creds"
           target_secret_name: "eso-vault-self-creds"
           vault_path: "/vault/vault-self/creds"
-          refresh_interval: "1m"
 
     # ---------
     # Traefik
@@ -464,44 +480,36 @@ all:
         - external_secret_name: "eso-gitlab-postgresql"
           target_secret_name: "eso-gitlab-postgresql"
           vault_path: "/gitlab/postgresql/creds"
-          refresh_interval: "1m"
           type: "postgresql"
         - external_secret_name: "eso-gitlab-redis"
           target_secret_name: "eso-gitlab-redis"
           vault_path: "/gitlab/redis/creds"
-          refresh_interval: "1m"
           type: "redis"
         - external_secret_name: "eso-gitlab-minio-root"
           target_secret_name: "eso-gitlab-minio-root"
           vault_path: "/gitlab/minio/root"
-          refresh_interval: "1m"
           type: "minio_root"
         - external_secret_name: "eso-gitlab-minio-registry"
           target_secret_name: "eso-gitlab-minio-registry"
           vault_path: "/gitlab/minio/registry"
-          refresh_interval: "1m"
           type: "minio_registry"
         # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
         - external_secret_name: "eso-gitlab-registry-minio-connection"
           target_secret_name: "eso-gitlab-registry-minio-connection"
           vault_path: "/gitlab/minio/registry"
-          refresh_interval: "1m"
           type: "gitlab_registry_minio_connection"
         # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
         - external_secret_name: "eso-gitlab-minio-connection"
           target_secret_name: "eso-gitlab-minio-connection"
           vault_path: "/gitlab/minio/registry"
-          refresh_interval: "1m"
           type: "gitlab_minio_connection"
         - external_secret_name: "eso-gitlab-minio-runner-cache"
           target_secret_name: "eso-gitlab-minio-runner-cache"
           vault_path: "/gitlab/minio/runner-cache"
-          refresh_interval: "1m"
           type: "minio_runner_cache"
         - external_secret_name: "eso-gitlab-root"
           target_secret_name: "eso-gitlab-root"
           vault_path: "/gitlab/gitlab/root/creds"
-          refresh_interval: "1m"
           type: "gitlab_root"
 
     # ---------
@@ -517,12 +525,10 @@ all:
         - external_secret_name: "eso-argocd-repo-creds"
           target_secret_name: "eso-git-ops-root-key-internal"
           vault_path: "/argocd/repo-creds"
-          refresh_interval: "1m"
           type: "git_ops_repo_creds"
         - external_secret_name: "eso-argocd-root"
           target_secret_name: "eso-argocd-root"
           vault_path: "/argocd/root/creds"
-          refresh_interval: "1m"
           type: "argocd_root"
 
     # ---------
