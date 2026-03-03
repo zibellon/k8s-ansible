@@ -32,7 +32,7 @@
       run_once: true
 
     # =========================================================================
-    # STEP 1: LONGHORN/PRE (NetworkPolicies)
+    # STEP 1: LONGHORN/PRE (NetworkPolicies, ESO)
     # =========================================================================
 
     - name: "[longhorn-pre] Copy chart to server"
@@ -49,8 +49,17 @@
         mode: "0644"
         content: |
           namespace: {{ longhorn_namespace }}
+          clusterDomain: {{ dns_domain }}
           traefik:
             namespace: {{ traefik_namespace }}
+          vault:
+            namespace: {{ vault_namespace }}
+          eso:
+            saName: {{ longhorn_eso.sa_name }}
+            roleName: {{ longhorn_eso.role_name }}
+            secretStoreName: {{ longhorn_eso.secret_store_name }}
+            kvEnginePath: {{ longhorn_eso.kv_engine_path }}
+            secrets: {{ longhorn_eso.secrets | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -173,7 +182,7 @@
           - deployment/longhorn-ui
 
     # =========================================================================
-    # STEP 3: LONGHORN/POST (ESO + StorageClasses + Ingress + S3)
+    # STEP 3: LONGHORN/POST (StorageClasses + Ingress)
     # =========================================================================
 
     - name: "[longhorn-post] Copy chart to server"
@@ -190,7 +199,6 @@
         mode: "0644"
         content: |
           namespace: {{ longhorn_namespace }}
-          clusterDomain: {{ dns_domain }}
           ingress:
             ingressClass: {{ traefik_ingress_class }}
             entrypoint: {{ traefik_websecure_entrypoint }}
@@ -200,14 +208,6 @@
             vpnOnlyEnabled: {{ longhorn_ui_vpn_only_enabled }}
           traefik:
             namespace: {{ traefik_namespace }}
-          vault:
-            namespace: {{ vault_namespace }}
-          eso:
-            saName: {{ longhorn_eso.sa_name }}
-            roleName: {{ longhorn_eso.role_name }}
-            secretStoreName: {{ longhorn_eso.secret_store_name }}
-            kvEnginePath: {{ longhorn_eso.kv_engine_path }}
-            secrets: {{ longhorn_eso.secrets | to_json }}
           azList: {{ longhorn_az_list | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
