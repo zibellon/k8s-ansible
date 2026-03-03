@@ -4,6 +4,12 @@
 #   1. traefik/pre: NetworkPolicies for traefik namespace
 #   2. Official traefik/traefik chart (DaemonSet, Services, RBAC, CRDs)
 #   3. traefik/post: Middlewares + Dashboard Ingress
+#
+# Usage (tags):
+#   ansible-playbook traefik-install.yaml              # full install
+#   ansible-playbook traefik-install.yaml --tags pre   # only pre (NetworkPolicies + ESO)
+#   ansible-playbook traefik-install.yaml --tags install
+#   ansible-playbook traefik-install.yaml --tags post  # only post (Middlewares + Dashboard)
 # =============================================================================
 
 ---
@@ -17,6 +23,7 @@
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
         label_name: "traefik-install-pre-check"
+      tags: [always]
 
     # =========================================================================
     # INIT: Merge ESO integrations and resolve Traefik config
@@ -24,12 +31,14 @@
 
     - name: "[traefik-install-init] Merge ESO integrations"
       include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
 
     - name: "[traefik-install-init] Set traefik_eso from merged integration"
       set_fact:
         traefik_eso: "{{ eso_vault_integration_traefik_merged }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     # =========================================================================
     # STEP 1: TRAEFIK/PRE (NetworkPolicies, ESO)
@@ -42,6 +51,7 @@
         chart_name: "pre"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/traefik/pre/"
         chart_remote_dest: "{{ remote_charts_dir }}/traefik/pre"
+      tags: [pre]
 
     - name: "[traefik-pre] Create values file"
       copy:
@@ -64,6 +74,7 @@
             externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     - name: "[traefik-pre] Install or upgrade via Helm"
       command: >
@@ -78,6 +89,7 @@
         --timeout {{ traefik_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     # =========================================================================
     # STEP 2: OFFICIAL TRAEFIK CHART
@@ -89,6 +101,7 @@
         label_name: "traefik-install"
         helm_repo_name: "traefik"
         helm_repo_url: "https://traefik.github.io/charts"
+      tags: [install]
 
     - name: "[traefik-install] Create values directory"
       file:
@@ -97,6 +110,7 @@
         mode: "0755"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[traefik-install] Create values-override.yaml"
       copy:
@@ -239,6 +253,7 @@
                     targetPort: 8080
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[traefik-install] Install or upgrade via Helm"
       command: >
@@ -253,6 +268,7 @@
         --timeout {{ traefik_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # WAIT FOR TRAEFIK CRDs
@@ -273,6 +289,7 @@
           - crd/tlsoptions.traefik.io
           - crd/tlsstores.traefik.io
           - crd/traefikservices.traefik.io
+      tags: [install]
 
     # =========================================================================
     # WAIT FOR TRAEFIK TO BE READY
@@ -286,6 +303,7 @@
         rollout_timeout: "{{ traefik_rollout_timeout }}"
         rollout_resources:
           - daemonset/{{ traefik_daemonset_name }}
+      tags: [install]
 
     # =========================================================================
     # STEP 3: TRAEFIK/POST (Middlewares + Dashboard Ingress)
@@ -298,6 +316,7 @@
         chart_name: "post"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/traefik/post/"
         chart_remote_dest: "{{ remote_charts_dir }}/traefik/post"
+      tags: [post]
 
     - name: "[traefik-post] Create values file"
       copy:
@@ -318,6 +337,7 @@
             vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [post]
 
     - name: "[traefik-post] Install or upgrade via Helm"
       command: >
@@ -331,6 +351,7 @@
         --timeout {{ traefik_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [post]
 
     # =========================================================================
     # VERIFICATION
@@ -341,9 +362,26 @@
       vars:
         helm_namespace: "{{ traefik_namespace }}"
         label_name: "traefik-verify"
+      tags: [always]
+
+    - name: "[traefik-verify] Get traefik pods status"
+      command: kubectl get pods -n {{ traefik_namespace }} -o wide
+      register: traefik_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[traefik-verify] Print traefik pods status"
+      debug:
+        msg: "{{ traefik_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
 
     - name: "[traefik-verify] Installation complete"
       debug:
         msg: "traefik-pre + traefik + traefik-post: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]

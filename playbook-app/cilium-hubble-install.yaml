@@ -4,6 +4,12 @@
 #   1. cilium-hubble/pre: NetworkPolicies for Hubble UI Ingress
 #   2. cilium-hubble/install: Certificate + Ingress for Hubble UI
 #   3. cilium-hubble/post: No resources (README only)
+#
+# Usage (tags):
+#   ansible-playbook cilium-hubble-install.yaml              # full install
+#   ansible-playbook cilium-hubble-install.yaml --tags pre   # only pre (NetworkPolicies)
+#   ansible-playbook cilium-hubble-install.yaml --tags install
+#   ansible-playbook cilium-hubble-install.yaml --tags post  # only post (no resources)
 # =============================================================================
 
 ---
@@ -17,6 +23,7 @@
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
         label_name: "cilium-hubble-install-pre-check"
+      tags: [always]
 
     # =========================================================================
     # STEP 1: CILIUM-HUBBLE/PRE (NetworkPolicies)
@@ -29,6 +36,7 @@
         chart_name: "pre"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/cilium-hubble/pre/"
         chart_remote_dest: "{{ remote_charts_dir }}/cilium-hubble/pre"
+      tags: [pre]
 
     - name: "[cilium-hubble-pre] Create values file"
       copy:
@@ -40,6 +48,7 @@
             namespace: {{ traefik_namespace }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     - name: "[cilium-hubble-pre] Install or upgrade via Helm"
       command: >
@@ -52,6 +61,7 @@
         --timeout {{ cilium_hubble_helm_timeout | default('2m') }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     # =========================================================================
     # STEP 2: CILIUM-HUBBLE/INSTALL (Certificate + Ingress)
@@ -64,6 +74,7 @@
         chart_name: "install"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/cilium-hubble/install/"
         chart_remote_dest: "{{ remote_charts_dir }}/cilium-hubble/install"
+      tags: [install]
 
     - name: "[cilium-hubble-install] Create values file"
       copy:
@@ -84,6 +95,7 @@
             namespace: {{ traefik_namespace }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[cilium-hubble-install] Install or upgrade via Helm"
       command: >
@@ -97,6 +109,7 @@
         --timeout {{ cilium_hubble_helm_timeout | default('2m') }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 3: CILIUM-HUBBLE/POST (No resources)
@@ -107,6 +120,7 @@
         msg: "cilium-hubble/post: No resources to install"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [post]
 
     # =========================================================================
     # VERIFICATION
@@ -118,15 +132,33 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[cilium-hubble-verify] Print Helm releases"
       debug:
         msg: "{{ helm_list.stdout_lines }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
+
+    - name: "[cilium-hubble-verify] Get Cilium Hubble pods status"
+      command: kubectl get pods -n {{ cilium_namespace }} -o wide
+      register: hubble_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[cilium-hubble-verify] Print Cilium Hubble pods status"
+      debug:
+        msg: "{{ hubble_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
 
     - name: "[cilium-hubble-verify] Installation complete"
       debug:
         msg: "cilium-hubble: OK (Hubble UI available at https://{{ cilium_hubble_ui_domain }})"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]

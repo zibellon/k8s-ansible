@@ -4,6 +4,12 @@
 #   1. cert-manager/pre: NetworkPolicies for cert-manager namespace
 #   2. Official cert-manager Helm chart (jetstack/cert-manager)
 #   3. cert-manager/post: ClusterIssuer for Let's Encrypt
+#
+# Usage (tags):
+#   ansible-playbook cert-manager-install.yaml              # full install
+#   ansible-playbook cert-manager-install.yaml --tags pre   # only pre (NetworkPolicies)
+#   ansible-playbook cert-manager-install.yaml --tags install
+#   ansible-playbook cert-manager-install.yaml --tags post  # only post (ClusterIssuer)
 # =============================================================================
 
 ---
@@ -17,6 +23,7 @@
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
         label_name: "cert-manager-install-pre-check"
+      tags: [always]
 
     # =========================================================================
     # STEP 1: CERT-MANAGER/PRE (NetworkPolicies)
@@ -29,6 +36,7 @@
         chart_name: "pre"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/cert-manager/pre/"
         chart_remote_dest: "{{ remote_charts_dir }}/cert-manager/pre"
+      tags: [pre]
 
     - name: "[cert-manager-pre] Create values file"
       copy:
@@ -38,6 +46,7 @@
           namespace: {{ cert_manager_namespace }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     - name: "[cert-manager-pre] Install or upgrade via Helm"
       command: >
@@ -52,6 +61,7 @@
         --timeout {{ cert_manager_config_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     # =========================================================================
     # STEP 2: OFFICIAL CERT-MANAGER HELM
@@ -63,6 +73,7 @@
         label_name: "cert-manager-install"
         helm_repo_name: "jetstack"
         helm_repo_url: "https://charts.jetstack.io"
+      tags: [install]
 
     - name: "[cert-manager-install] Ensure charts directory exists"
       file:
@@ -71,6 +82,7 @@
         mode: "0755"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[cert-manager-install] Create values file"
       copy:
@@ -81,6 +93,7 @@
             enabled: true
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[cert-manager-install] Install or upgrade via Helm"
       command: >
@@ -95,6 +108,7 @@
         --timeout {{ cert_manager_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # WAIT FOR CERT-MANAGER CRDs
@@ -111,6 +125,7 @@
           - crd/clusterissuers.cert-manager.io
           - crd/issuers.cert-manager.io
           - crd/orders.acme.cert-manager.io
+      tags: [install]
 
     # =========================================================================
     # WAIT FOR CERT-MANAGER PODS
@@ -126,6 +141,7 @@
           - deployment/cert-manager
           - deployment/cert-manager-cainjector
           - deployment/cert-manager-webhook
+      tags: [install]
 
     # =========================================================================
     # STEP 3: CERT-MANAGER/POST (ClusterIssuer)
@@ -138,6 +154,7 @@
         chart_name: "post"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/cert-manager/post/"
         chart_remote_dest: "{{ remote_charts_dir }}/cert-manager/post"
+      tags: [post]
 
     - name: "[cert-manager-post] Create values file"
       copy:
@@ -151,6 +168,7 @@
             traefikEntrypoint: {{ traefik_web_entrypoint }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [post]
 
     - name: "[cert-manager-post] Install or upgrade via Helm"
       command: >
@@ -164,6 +182,7 @@
         --timeout {{ cert_manager_config_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [post]
 
     # =========================================================================
     # VERIFICATION
@@ -174,6 +193,7 @@
       vars:
         helm_namespace: "{{ cert_manager_namespace }}"
         label_name: "cert-manager-verify"
+      tags: [always]
 
     - name: "[cert-manager-verify] Get cert-manager pods status"
       command: kubectl get pods -n {{ cert_manager_namespace }} -o wide
@@ -181,15 +201,18 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[cert-manager-verify] Print cert-manager pods status"
       debug:
         msg: "{{ certmanager_pods.stdout_lines }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[cert-manager-verify] Installation complete"
       debug:
         msg: "cert-manager-pre + cert-manager + cert-manager-post: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]

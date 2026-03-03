@@ -1,9 +1,16 @@
 # =============================================================================
 # Install HashiCorp Vault
-# - pre: NetworkPolicies, ESO (ServiceAccount, SecretStore, ExternalSecret)
-# - install: Official Helm chart (hashicorp/vault)
-# - post: Ingress + CronJob for auto-unseal
-# =============================================================================
+# Steps:
+#   1. vault/pre: NetworkPolicies, ESO (ServiceAccount, SecretStore, ExternalSecret)
+#   2. hashicorp/vault Helm chart
+#   3. vault/post: Ingress + CronJob for auto-unseal
+#
+# Usage (tags):
+#   ansible-playbook vault-install.yaml              # full install
+#   ansible-playbook vault-install.yaml --tags pre   # only pre (NetworkPolicies + ESO)
+#   ansible-playbook vault-install.yaml --tags install
+#   ansible-playbook vault-install.yaml --tags post  # only post (Ingress + auto-unseal CronJob)
+#
 # Fault tolerance: uses temp file to resume from interrupted init
 # - If init temp file exists: resume from interrupted init
 # - If no temp file and initialized: use main credentials file
@@ -24,6 +31,7 @@
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
         label_name: "vault-install-pre-check"
+      tags: [always]
 
     # =========================================================================
     # INIT: Merge ESO integrations and resolve Vault config
@@ -31,12 +39,14 @@
 
     - name: "[vault-install-init] Merge ESO integrations"
       include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
 
     - name: "[vault-install-init] Set vault_eso from merged integration"
       set_fact:
         vault_eso: "{{ eso_vault_integration_vault_merged }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     # =========================================================================
     # STEP 1: INSTALL PRE (NetworkPolicies, ESO)
@@ -49,6 +59,7 @@
         chart_name: "pre"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/vault/pre/"
         chart_remote_dest: "{{ remote_charts_dir }}/vault/pre"
+      tags: [pre]
 
     - name: "[vault-pre] Create values file"
       copy:
@@ -73,6 +84,7 @@
             externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     - name: "[vault-pre] Install via Helm"
       command: >
@@ -86,6 +98,7 @@
         --timeout {{ vault_config_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [pre]
 
     # =========================================================================
     # STEP 2: INSTALL VAULT (Local Helm Chart)
@@ -98,6 +111,7 @@
         chart_name: "install"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/vault/install/"
         chart_remote_dest: "{{ remote_charts_dir }}/vault/install"
+      tags: [install]
 
     - name: "[vault] Create values file"
       copy:
@@ -143,6 +157,7 @@
             enabled: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Install via Helm"
       command: >
@@ -156,6 +171,7 @@
         --timeout {{ vault_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 3: WAIT FOR VAULT POD
@@ -168,6 +184,7 @@
         --timeout={{ vault_rollout_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 4: CHECK IF VAULT IS INITIALIZED
@@ -180,6 +197,7 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Parse initialization status"
       set_fact:
@@ -188,6 +206,7 @@
       ignore_errors: true
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Set default if parse failed"
       set_fact:
@@ -195,12 +214,14 @@
       when: vault_is_initialized is not defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Show initialization status"
       debug:
         msg: "Vault initialized: {{ vault_is_initialized }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 5: CHECK FOR INTERRUPTED INIT (temp file exists)
@@ -212,18 +233,21 @@
       register: vault_init_tmp_file
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Show temp file status"
       debug:
         msg: "Init temp file exists: {{ vault_init_tmp_file.stat.exists }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Set init temp file exists fact"
       set_fact:
         vault_init_tmp_file_exists: "{{ vault_init_tmp_file.stat.exists }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 6: RESUME FROM INTERRUPTED INIT (temp file exists)
@@ -237,6 +261,7 @@
       when: vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Store temp credentials as fact for distribution"
       set_fact:
@@ -246,6 +271,7 @@
       when: vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Show resume info"
       debug:
@@ -257,12 +283,14 @@
       when: vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Broadcast credentials for distribution"
       set_fact:
         _dist_vault_root_token: "{{ hostvars[master_manager_fact].vault_resume_creds.root_token | default('') }}"
         _dist_vault_unseal_keys: "{{ hostvars[master_manager_fact].vault_resume_creds.unseal_keys | default([]) }}"
       when: hostvars[master_manager_fact].vault_init_tmp_file_exists | default(false)
+      tags: [install]
 
     - name: "[vault-resume] Distribute credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
@@ -271,6 +299,7 @@
         vault_unseal_keys_tmp: "{{ _dist_vault_unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
       when: hostvars[master_manager_fact].vault_init_tmp_file_exists | default(false)
+      tags: [install]
 
     - name: "[vault-resume] Delete temp file"
       file:
@@ -279,6 +308,7 @@
       when: vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Read credentials from main file"
       slurp:
@@ -287,6 +317,7 @@
       when: vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Set credentials from main file"
       set_fact:
@@ -298,6 +329,7 @@
         - vault_main_after_resume.content is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Check seal status"
       shell: |
@@ -307,6 +339,7 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Unseal Vault if sealed"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault operator unseal {{ key }}
@@ -321,6 +354,7 @@
         - vault_unseal_keys is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-resume] Show resume complete"
       debug:
@@ -328,6 +362,7 @@
       when: vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 7: ALREADY INITIALIZED + NO TEMP FILE (normal case)
@@ -343,6 +378,7 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Show seal status (initialized, no temp)"
       debug:
@@ -352,6 +388,7 @@
         - not vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 7.1: READ CREDENTIALS FROM MAIN FILE (if needed)
@@ -366,6 +403,7 @@
         - not vault_init_tmp_file.stat.exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] FAIL if no credentials file found"
       fail:
@@ -384,6 +422,7 @@
         - not vault_init_tmp_file.stat.exists
         - not (vault_creds_file.stat.exists | default(false))
       run_once: true
+      tags: [install]
 
     - name: "[vault] Read credentials from main file"
       slurp:
@@ -395,6 +434,7 @@
         - vault_creds_file.stat.exists | default(false)
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Parse credentials from main file"
       set_fact:
@@ -407,6 +447,7 @@
         - vault_main_creds_content.content is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 7.2: UNSEAL IF SEALED (initialized, no temp)
@@ -426,6 +467,7 @@
         - vault_unseal_keys is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Login with root token (initialized, no temp)"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault login {{ vault_root_token }}
@@ -435,6 +477,7 @@
         - vault_root_token is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 8: INITIALIZE VAULT (if not initialized)
@@ -450,6 +493,7 @@
       when: not (vault_is_initialized | bool)
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Show initialization header"
       debug:
@@ -460,6 +504,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 8.1: SAVE TO TEMP FILE (fault tolerance checkpoint)
@@ -474,6 +519,7 @@
       when: vault_init_result is not skipped and vault_init_result.stdout is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-init] Save credentials to temp file"
       copy:
@@ -485,6 +531,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-init] Show temp file saved"
       debug:
@@ -492,6 +539,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 9: DISTRIBUTE CREDENTIALS TO ALL MANAGERS (before unseal)
@@ -503,6 +551,7 @@
         _dist_vault_root_token: "{{ hostvars[master_manager_fact].vault_init_creds_json.root_token | default('') }}"
         _dist_vault_unseal_keys: "{{ hostvars[master_manager_fact].vault_init_creds_json.unseal_keys | default([]) }}"
       when: hostvars[master_manager_fact].vault_init_creds_json is defined
+      tags: [install]
 
     - name: "[vault-creds] Distribute credentials to all managers (after init)"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
@@ -511,6 +560,7 @@
         vault_unseal_keys_tmp: "{{ _dist_vault_unseal_keys }}"
         vault_creds_host_path_tmp: "{{ vault_creds_host_path }}"
       when: hostvars[master_manager_fact].vault_init_creds_json is defined
+      tags: [install]
 
     # =========================================================================
     # STEP 9.1: DELETE TEMP FILE (after successful distribution)
@@ -523,6 +573,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-init] Show temp file deleted"
       debug:
@@ -530,6 +581,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 9.2: READ FROM MAIN FILE → set_fact (always from file, not stdout)
@@ -542,6 +594,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-init] Set credentials from main file"
       set_fact:
@@ -553,6 +606,7 @@
         - vault_creds_from_file.content is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-init] Show unseal keys (from main file)"
       debug:
@@ -564,6 +618,7 @@
       when: vault_init_result is not skipped and vault_unseal_keys is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault-init] Show root token (from main file)"
       debug:
@@ -576,6 +631,7 @@
       when: vault_init_result is not skipped and vault_root_token is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 9.3: UNSEAL VAULT (after distribution and file read)
@@ -593,6 +649,7 @@
         - vault_unseal_keys is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # COMMON: Verify seal status (used for policy sync condition)
@@ -605,12 +662,14 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Show seal status"
       debug:
         msg: "Vault sealed: {{ vault_sealed_status.stdout }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 10: CONFIGURE KUBERNETES AUTH (if just initialized)
@@ -621,6 +680,7 @@
       when: vault_root_token is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Enable Kubernetes auth method"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault auth enable kubernetes
@@ -629,6 +689,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[vault] Configure Kubernetes auth"
       command: >
@@ -637,6 +698,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 11: ENABLE KV SECRETS ENGINE (if just initialized)
@@ -650,6 +712,7 @@
       when: vault_init_result is not skipped
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # STEP 12: INSTALL POST (Ingress + auto-unseal CronJob)
@@ -662,6 +725,7 @@
         chart_name: "post"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/vault/post/"
         chart_remote_dest: "{{ remote_charts_dir }}/vault/post"
+      tags: [post]
 
     - name: "[vault-post] Create values file"
       copy:
@@ -684,6 +748,7 @@
             credsHostPath: "{{ vault_creds_host_path }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [post]
 
     - name: "[vault-post] Install via Helm"
       command: >
@@ -696,6 +761,7 @@
         --timeout {{ vault_config_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [post]
 
     # =========================================================================
     # STEP 13: VERIFY AND OUTPUT
@@ -706,6 +772,22 @@
       vars:
         helm_namespace: "{{ vault_namespace }}"
         label_name: "vault-verify"
+      tags: [always]
+
+    - name: "[vault-verify] Get vault pods status"
+      command: kubectl get pods -n {{ vault_namespace }} -o wide
+      register: vault_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[vault-verify] Print vault pods status"
+      debug:
+        msg: "{{ vault_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
 
     - name: "[vault-credentials] Show credentials header"
       debug:
@@ -715,6 +797,7 @@
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[vault-credentials] Show unseal keys"
       debug:
@@ -726,6 +809,7 @@
       when: vault_unseal_keys is defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[vault-credentials] Show unseal keys (already initialized)"
       debug:
@@ -733,6 +817,7 @@
       when: vault_unseal_keys is not defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[vault-credentials] Show remaining info"
       debug:
@@ -748,9 +833,11 @@
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
-    - name: "[vault-verify] Confirm installation"
+    - name: "[vault-verify] Installation complete"
       debug:
-        msg: "Vault installation: OK"
+        msg: "vault-pre + vault + vault-post: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
