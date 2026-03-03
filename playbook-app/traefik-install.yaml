@@ -32,7 +32,7 @@
       run_once: true
 
     # =========================================================================
-    # STEP 1: TRAEFIK/PRE (NetworkPolicies)
+    # STEP 1: TRAEFIK/PRE (NetworkPolicies, ESO)
     # =========================================================================
 
     - name: "[traefik-pre] Copy chart to server"
@@ -49,6 +49,15 @@
         mode: "0644"
         content: |
           namespace: {{ traefik_namespace }}
+          clusterDomain: {{ dns_domain }}
+          vault:
+            namespace: {{ vault_namespace }}
+          eso:
+            saName: {{ traefik_eso.sa_name }}
+            roleName: {{ traefik_eso.role_name }}
+            secretStoreName: {{ traefik_eso.secret_store_name }}
+            kvEnginePath: {{ traefik_eso.kv_engine_path }}
+            secrets: {{ traefik_eso.secrets | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -292,7 +301,6 @@
         mode: "0644"
         content: |
           namespace: {{ traefik_namespace }}
-          clusterDomain: {{ dns_domain }}
           ingressClass: {{ traefik_ingress_class }}
           entryPoints:
             web: {{ traefik_web_entrypoint }}
@@ -304,14 +312,6 @@
             secretName: {{ traefik_dashboard_https_secret_name }}
             clusterIssuer: {{ cert_manager_cluster_issuer }}
             vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
-          vault:
-            namespace: {{ vault_namespace }}
-          eso:
-            saName: {{ traefik_eso.sa_name }}
-            roleName: {{ traefik_eso.role_name }}
-            secretStoreName: {{ traefik_eso.secret_store_name }}
-            kvEnginePath: {{ traefik_eso.kv_engine_path }}
-            secrets: {{ traefik_eso.secrets | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
