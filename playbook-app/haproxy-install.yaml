@@ -32,7 +32,7 @@
       run_once: true
 
     # =========================================================================
-    # STEP 1: HAPROXY/PRE (NetworkPolicies)
+    # STEP 1: HAPROXY/PRE (NetworkPolicies, ESO)
     # =========================================================================
 
     - name: "[haproxy-pre] Copy chart to server"
@@ -49,6 +49,15 @@
         mode: "0644"
         content: |
           namespace: {{ haproxy_namespace }}
+          clusterDomain: {{ dns_domain }}
+          vault:
+            namespace: {{ vault_namespace }}
+          eso:
+            saName: {{ haproxy_eso.sa_name }}
+            roleName: {{ haproxy_eso.role_name }}
+            secretStoreName: {{ haproxy_eso.secret_store_name }}
+            kvEnginePath: {{ haproxy_eso.kv_engine_path }}
+            secrets: {{ haproxy_eso.secrets | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -159,16 +168,7 @@
         mode: "0644"
         content: |
           namespace: {{ haproxy_namespace }}
-          clusterDomain: {{ dns_domain }}
           ingressClass: {{ haproxy_ingress_class }}
-          vault:
-            namespace: {{ vault_namespace }}
-          eso:
-            saName: {{ haproxy_eso.sa_name }}
-            roleName: {{ haproxy_eso.role_name }}
-            secretStoreName: {{ haproxy_eso.secret_store_name }}
-            kvEnginePath: {{ haproxy_eso.kv_engine_path }}
-            secrets: {{ haproxy_eso.secrets | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
