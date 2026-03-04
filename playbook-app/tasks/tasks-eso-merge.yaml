@@ -337,6 +337,9 @@
   loop: "{{ _all_eso_integrations | subelements('secrets') }}"
   loop_control:
     label: "{{ item.0.namespace }}_{{ item.1.external_secret_name }}"
+  when:
+    - item.0.is_need_eso | default(true)
+    - item.1.is_need_eso | default(true)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
 
@@ -351,11 +354,15 @@
         'name': item.role_name,
         'namespace': item.namespace,
         'sa_name': item.sa_name,
-        'policies': item.secrets | map(attribute='external_secret_name') | map('regex_replace', '^', item.namespace ~ '_') | list
+        'policies': item.secrets
+          | rejectattr('is_need_eso', 'equalto', false)
+          | map(attribute='external_secret_name')
+          | map('regex_replace', '^', item.namespace ~ '_') | list
       }] }}
   loop: "{{ _all_eso_integrations }}"
   loop_control:
     label: "{{ item.namespace }}"
+  when: item.is_need_eso | default(true)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
 
