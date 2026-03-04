@@ -1,0 +1,77 @@
+# =============================================================================
+# METRICS-SERVER NETWORK POLICIES
+# Targets only metrics-server pods (k8s-app: metrics-server) in kube-system.
+# =============================================================================
+
+---
+# Deny all traffic for metrics-server pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-metrics-server
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: metrics-server
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for metrics-server pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress-metrics-server
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: metrics-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Allow metrics-server egress to kubelet on all nodes (port 10250)
+# and to kube-apiserver (port 6443).
+# Allow ingress from kube-apiserver via aggregation layer (port 10250).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-server
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: metrics-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # kube-apiserver calls metrics-server via aggregation layer
+    - ports:
+        - protocol: TCP
+          port: 10250
+  egress:
+    # Scrape kubelet metrics on all nodes
+    - ports:
+        - protocol: TCP
+          port: 10250
+    # Watch nodes/pods via kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: 6443

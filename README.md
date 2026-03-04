@@ -220,11 +220,15 @@
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml`
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-restart.yaml`
 
+## metrics-server. Официальный helm
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Чтобы работала команда `kubectl top ...`
+## ---
+## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
 ##
-## Добавить установку api-metrics. Чтобы работала команда `kubectl top ...`
-## ...
-## ...
-##
+- установка + обновление (версия, конфиг)
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/metrics-server-install.yaml`
 
 ## cert-manager. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`

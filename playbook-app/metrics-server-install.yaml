@@ -1,0 +1,166 @@
+# =============================================================================
+# Install metrics-server via Helm
+# Steps:
+#   1. metrics-server/pre: NetworkPolicies for metrics-server pods in kube-system
+#   2. Official metrics-server Helm chart (kubernetes-sigs/metrics-server)
+#
+# Usage (tags):
+#   ansible-playbook metrics-server-install.yaml              # full install
+#   ansible-playbook metrics-server-install.yaml --tags pre   # only pre (NetworkPolicies)
+#   ansible-playbook metrics-server-install.yaml --tags install
+#   ansible-playbook metrics-server-install.yaml --tags post  # (no-op)
+# =============================================================================
+
+---
+- name: Install metrics-server
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[metrics-server-install-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "metrics-server-install-pre-check"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: METRICS-SERVER/PRE (NetworkPolicies)
+    # =========================================================================
+
+    - name: "[metrics-server-pre] Copy chart to server"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "metrics-server-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/metrics-server/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/metrics-server/pre"
+      tags: [pre]
+
+    - name: "[metrics-server-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/metrics-server/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ metrics_server_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[metrics-server-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install metrics-server-pre {{ remote_charts_dir }}/metrics-server/pre
+        --namespace {{ metrics_server_namespace }}
+        --values {{ remote_charts_dir }}/metrics-server/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ metrics_server_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: OFFICIAL METRICS-SERVER HELM
+    # =========================================================================
+
+    - name: "[metrics-server-install] Add Helm repository"
+      include_tasks: tasks/tasks-add-helm-repo.yaml
+      vars:
+        label_name: "metrics-server-install"
+        helm_repo_name: "metrics-server"
+        helm_repo_url: "https://kubernetes-sigs.github.io/metrics-server/"
+      tags: [install]
+
+    - name: "[metrics-server-install] Ensure charts directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/metrics-server/install"
+        state: directory
+        mode: "0755"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[metrics-server-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/metrics-server/install/values-override.yaml"
+        mode: "0644"
+        content: |
+          defaultArgs:
+            - --cert-dir=/tmp
+            - --secure-port=10250
+            - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+            - --kubelet-use-node-status-port
+            - --metric-resolution=15s
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[metrics-server-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install metrics-server metrics-server/metrics-server
+        --namespace {{ metrics_server_namespace }}
+        --version {{ metrics_server_version }}
+        --values {{ remote_charts_dir }}/metrics-server/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ metrics_server_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # WAIT FOR METRICS-SERVER PODS
+    # =========================================================================
+
+    - name: "[metrics-server-install] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "metrics-server-install"
+        rollout_namespace: "{{ metrics_server_namespace }}"
+        rollout_timeout: "{{ metrics_server_rollout_timeout }}"
+        rollout_resources:
+          - deployment/metrics-server
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: POST (no-op)
+    # =========================================================================
+
+    # post: nothing to do for metrics-server
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[metrics-server-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ metrics_server_namespace }}"
+        label_name: "metrics-server-verify"
+      tags: [always]
+
+    - name: "[metrics-server-verify] Get metrics-server pods status"
+      command: kubectl get pods -n {{ metrics_server_namespace }} -l k8s-app=metrics-server -o wide
+      register: metrics_server_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[metrics-server-verify] Print metrics-server pods status"
+      debug:
+        msg: "{{ metrics_server_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[metrics-server-verify] Installation complete"
+      debug:
+        msg: "metrics-server-pre + metrics-server: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
