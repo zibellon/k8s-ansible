@@ -58,6 +58,7 @@
   loop: "{{ eso_vault_integration_vault_extra.secrets | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-vault] Detect secret conflicts in eso_vault_integration_vault_extra"
   fail:
@@ -76,6 +77,7 @@
        | map(attribute='target_secret_name') | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-vault] Merge eso_vault_integration_vault + extra"
   set_fact:
@@ -86,6 +88,7 @@
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # --- TRAEFIK ---
 
@@ -99,6 +102,7 @@
   loop: "{{ eso_vault_integration_traefik_extra.secrets | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Detect secret conflicts in eso_vault_integration_traefik_extra"
   fail:
@@ -117,6 +121,7 @@
        | map(attribute='target_secret_name') | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Merge eso_vault_integration_traefik + extra"
   set_fact:
@@ -127,6 +132,7 @@
          }) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # --- HAPROXY ---
 
@@ -140,6 +146,7 @@
   loop: "{{ eso_vault_integration_haproxy_extra.secrets | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Detect secret conflicts in eso_vault_integration_haproxy_extra"
   fail:
@@ -158,6 +165,7 @@
        | map(attribute='target_secret_name') | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Merge eso_vault_integration_haproxy + extra"
   set_fact:
@@ -168,6 +176,7 @@
          }) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # --- LONGHORN ---
 
@@ -181,6 +190,7 @@
   loop: "{{ eso_vault_integration_longhorn_extra.secrets | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-longhorn] Detect secret conflicts in eso_vault_integration_longhorn_extra"
   fail:
@@ -199,6 +209,7 @@
        | map(attribute='target_secret_name') | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-longhorn] Merge eso_vault_integration_longhorn + extra"
   set_fact:
@@ -209,6 +220,7 @@
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # --- GITLAB ---
 
@@ -222,6 +234,7 @@
   loop: "{{ eso_vault_integration_gitlab_extra.secrets | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-gitlab] Detect secret conflicts in eso_vault_integration_gitlab_extra"
   fail:
@@ -240,6 +253,7 @@
        | map(attribute='target_secret_name') | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-gitlab] Merge eso_vault_integration_gitlab + extra"
   set_fact:
@@ -250,6 +264,7 @@
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # --- ARGOCD ---
 
@@ -263,6 +278,7 @@
   loop: "{{ eso_vault_integration_argocd_extra.secrets | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-argocd] Detect secret conflicts in eso_vault_integration_argocd_extra"
   fail:
@@ -281,6 +297,7 @@
        | map(attribute='target_secret_name') | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge-argocd] Merge eso_vault_integration_argocd + extra"
   set_fact:
@@ -290,6 +307,7 @@
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # -------------------------------------------------------------------------
 # STAGE 2: Build combined integrations list
@@ -306,6 +324,7 @@
       - "{{ eso_vault_integration_argocd_merged }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # -------------------------------------------------------------------------
 # STAGE 3: Derive policies from merged integrations
@@ -317,6 +336,7 @@
     _derived_roles: []
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Derive policies from integration secrets"
   set_fact:
@@ -342,6 +362,7 @@
     - item.1.is_need_eso | default(true)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # -------------------------------------------------------------------------
 # STAGE 4: Derive roles from merged integrations
@@ -354,8 +375,10 @@
         'name': item.role_name,
         'namespace': item.namespace,
         'sa_name': item.sa_name,
-        'policies': item.secrets
-          | rejectattr('is_need_eso', 'equalto', false)
+        'policies': (
+            (item.secrets | selectattr('is_need_eso', 'undefined') | list)
+            + (item.secrets | selectattr('is_need_eso', 'defined') | rejectattr('is_need_eso', 'equalto', false) | list)
+          )
           | map(attribute='external_secret_name')
           | map('regex_replace', '^', item.namespace ~ '_') | list
       }] }}
@@ -365,6 +388,7 @@
   when: item.is_need_eso | default(true)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # -------------------------------------------------------------------------
 # STAGE 5: Conflict check vault_policies / vault_roles vs extras
@@ -376,18 +400,21 @@
     _base_role_names: "{{ (_derived_roles + vault_roles) | map(attribute='name') | list }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Detect policy name conflicts with hosts-extra"
   set_fact:
     _policy_conflicts: "{{ (vault_policies_extra | default([])) | map(attribute='name') | list | intersect(_base_policy_names) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Detect role name conflicts with hosts-extra"
   set_fact:
     _role_conflicts: "{{ (vault_roles_extra | default([])) | map(attribute='name') | list | intersect(_base_role_names) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Fail on policy name conflicts"
   fail:
@@ -398,6 +425,7 @@
   when: _policy_conflicts | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Fail on role name conflicts"
   fail:
@@ -408,6 +436,7 @@
   when: _role_conflicts | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # -------------------------------------------------------------------------
 # STAGE 6: Produce vault_policies_final and vault_roles_final
@@ -419,6 +448,7 @@
     vault_roles_final: "{{ _derived_roles + vault_roles + (vault_roles_extra | default([])) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[eso-merge] Show merge summary"
   debug:
@@ -430,3 +460,4 @@
       - "Final totals: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]

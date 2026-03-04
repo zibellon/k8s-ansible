@@ -31,6 +31,7 @@
       - "Final totals: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 # -------------------------------------------------------------------------
 # Reconcile policies: delete removed ones
@@ -44,7 +45,8 @@
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Set policies to delete (drift cleanup)"
   set_fact:
     vault_policies_to_delete: >-
@@ -55,6 +57,7 @@
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
 
 - name: "[vault-policy-sync] Show policies to delete"
   debug:
@@ -62,7 +65,8 @@
   when: vault_policies_to_delete | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Delete removed policies"
   command: >
     kubectl exec -n {{ vault_namespace }} vault-0 --
@@ -71,7 +75,8 @@
   when: vault_policies_to_delete | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 # -------------------------------------------------------------------------
 # Sync policies from vault_policies_final
 # -------------------------------------------------------------------------
@@ -81,7 +86,8 @@
     msg: "Syncing {{ vault_policies_final | length }} policies"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Ensure policies directory exists"
   file:
     path: "{{ remote_charts_dir }}/vault/config/policies"
@@ -89,7 +95,8 @@
     mode: "0755"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Create policy files on server"
   copy:
     dest: "{{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl"
@@ -105,7 +112,8 @@
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Copy policy files to container"
   command: >
     kubectl cp {{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl
@@ -115,7 +123,8 @@
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Apply policies in Vault"
   command: >
     kubectl exec -n {{ vault_namespace }} vault-0 --
@@ -125,7 +134,8 @@
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 # -------------------------------------------------------------------------
 # Reconcile roles: delete removed ones
 # -------------------------------------------------------------------------
@@ -139,7 +149,8 @@
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Set roles to delete (drift cleanup)"
   set_fact:
     vault_roles_to_delete: >-
@@ -149,14 +160,16 @@
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Show roles to delete"
   debug:
     msg: "Roles to delete (removed from hosts.yaml): {{ vault_roles_to_delete }}"
   when: vault_roles_to_delete | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Delete removed roles"
   command: >
     kubectl exec -n {{ vault_namespace }} vault-0 --
@@ -165,7 +178,8 @@
   when: vault_roles_to_delete | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 # -------------------------------------------------------------------------
 # Sync roles from vault_roles_final
 # -------------------------------------------------------------------------
@@ -175,7 +189,8 @@
     msg: "Syncing {{ vault_roles_final | length }} roles"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-
+  tags: [always]
+  
 - name: "[vault-policy-sync] Create/update roles"
   command: >
     kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ item.name }}
@@ -188,3 +203,4 @@
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]

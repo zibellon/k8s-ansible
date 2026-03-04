@@ -63,7 +63,7 @@
    6. Как решать
    7. Добавить новый сервер в hosts.yaml
    8. Обновить cilium-host-firewall
-      1. Вызвать `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml --tags post --limit k8s-manager-1`
+      1. Вызвать `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml --tags post`
    9.  Это автоматически добавит в `cilium-host-firewall` новые ip адреса и обновит политику на сервере
    10. После этого делать: `... join ...`
 
@@ -212,6 +212,8 @@
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
+## `--tags pre, install, post`
+## ---
 ##
 - установка
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml`
@@ -226,6 +228,8 @@
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
+## `--tags pre, install`
+## ---
 ##
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/metrics-server-install.yaml`
@@ -236,12 +240,12 @@
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
+## `--tags pre, install, post`
+## ---
 ## 
-- установка
+- установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cert-manager-install.yaml`
   - Что ставится: cert-manager, network-policy
-- обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cert-manager-install.yaml`
 
 ## ExternalSecret. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -249,12 +253,12 @@
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
+## `--tags pre, install`
+## ---
 ##
-- установка
+- установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/external-secrets-install.yaml`
   - Ставится: cert-controller, secrets-webhook, core
-- обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/external-secrets-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/external-secrets-restart.yaml`
 
@@ -267,12 +271,12 @@
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
+## `--tags pre, install, post`
+## ---
 ##
-- установка
+- установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-install.yaml`
   - Ставится: traefik, network-policy, ingress (dashboard)
-- обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-restart.yaml`
 
@@ -282,10 +286,9 @@
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/haproxy-install.yaml`
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
-## Важно_1. Можно указать дополнительные секреты в файле `hosts-extra.yaml`, в секции `eso_vault_integration_haproxy_extra`
-## Если такое есть - при установке нужно указать `... -i hosts-extra.yaml ...`
-## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+## `--tags pre, install, post`
 ## ---
 ##
 - установка + обновление (версия, конфиг)
@@ -300,6 +303,8 @@
 ## Тут не запускается никаких контейнеров
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+## `--tags pre, install`
 ## ---
 ##
 - установка + обновление (версия, конфиг)
@@ -361,6 +366,8 @@
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
+## `--tags pre, install, post`
+## ---
 ## 
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-install.yaml`
@@ -381,6 +388,8 @@
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+## `--tags pre, install, post`
 ## ---
 ##
 - установка
@@ -423,6 +432,8 @@
 ##   - Но если их больше чем 1 - там какая-то возня начинается с Praefect (репликация git-данных между узлами)
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+## `--tags pre, install, post`
 ## ---
 ## 
 - установка + обновление (версия + конфиг)
