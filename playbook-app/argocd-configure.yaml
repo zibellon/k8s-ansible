@@ -77,14 +77,27 @@
       run_once: true
       tags: [always]
 
-    - name: "[argocd-admin-password] Validate Vault password via ArgoCD API"
+    - name: "[argocd-admin-password] Validate Vault password (plaintext)"
       shell: |
         kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
-          curl -s -o /dev/null -w "%{http_code}" \
-          -X POST http://localhost:8080/api/v1/session \
-          -H 'Content-Type: application/json' \
-          -d "{\"username\":\"admin\",\"password\":\"{{ vault_password_result.stdout | trim }}\"}"
-      register: vault_password_http_result
+          argocd login localhost:8080 --username admin \
+          --password "{{ vault_password_result.stdout | trim }}" \
+          --plaintext > /dev/null 2>&1
+      register: vault_login_http
+      when: vault_password_result.stdout | trim | length > 0
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Validate Vault password (TLS)"
+      shell: |
+        kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
+          argocd login localhost:8080 --username admin \
+          --password "{{ vault_password_result.stdout | trim }}" \
+          --insecure > /dev/null 2>&1
+      register: vault_login_https
       when: vault_password_result.stdout | trim | length > 0
       failed_when: false
       changed_when: false
@@ -98,20 +111,34 @@
         admin_password_source: "vault"
       when:
         - vault_password_result.stdout | trim | length > 0
-        - vault_password_http_result.stdout is defined
-        - vault_password_http_result.stdout | trim == "200"
+        - (vault_login_http.rc | default(1)) == 0 or (vault_login_https.rc | default(1)) == 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
 
-    - name: "[argocd-admin-password] Validate k8s secret password via ArgoCD API"
+    - name: "[argocd-admin-password] Validate k8s secret password (plaintext)"
       shell: |
         kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
-          curl -s -o /dev/null -w "%{http_code}" \
-          -X POST http://localhost:8080/api/v1/session \
-          -H 'Content-Type: application/json' \
-          -d "{\"username\":\"admin\",\"password\":\"{{ k8s_password_result.stdout | trim }}\"}"
-      register: k8s_password_http_result
+          argocd login localhost:8080 --username admin \
+          --password "{{ k8s_password_result.stdout | trim }}" \
+          --plaintext > /dev/null 2>&1
+      register: k8s_login_http
+      when:
+        - active_admin_password is not defined
+        - k8s_password_result.stdout | trim | length > 0
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Validate k8s secret password (TLS)"
+      shell: |
+        kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
+          argocd login localhost:8080 --username admin \
+          --password "{{ k8s_password_result.stdout | trim }}" \
+          --insecure > /dev/null 2>&1
+      register: k8s_login_https
       when:
         - active_admin_password is not defined
         - k8s_password_result.stdout | trim | length > 0
@@ -128,8 +155,7 @@
       when:
         - active_admin_password is not defined
         - k8s_password_result.stdout | trim | length > 0
-        - k8s_password_http_result.stdout is defined
-        - k8s_password_http_result.stdout | trim == "200"
+        - (k8s_login_http.rc | default(1)) == 0 or (k8s_login_https.rc | default(1)) == 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

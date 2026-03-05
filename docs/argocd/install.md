@@ -25,10 +25,3 @@ kubectl apply -n argocd -f install.yaml
 vim argocd-ingress-https.yaml
 ## Активация
 kubectl apply -f argocd-ingress-https.yaml
-
-## Как получить пароль для входа в argocd-UI
-## После запуска, пароль для пользователя `admin` генерируется в автоматическом режиме
-## Пароль хранится в k8s.secret = `argocd-initial-admin-secret`, в поле `password`
-
-## Как получить пароль через kubectl
-`kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 --decode`
