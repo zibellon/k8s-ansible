@@ -1,0 +1,193 @@
+# =============================================================================
+# Configure ArgoCD admin credentials
+# Steps:
+#   1. Resolve admin password: check Vault → check k8s secret → validate → save to Vault
+#
+# Usage:
+#   ansible-playbook argocd-configure.yaml
+#
+# Prerequisites:
+#   - ArgoCD must be installed and argocd-server running (argocd-install.yaml)
+#   - Vault must be installed and unsealed
+#   - External Secrets Operator must be installed
+# =============================================================================
+
+---
+- name: Configure ArgoCD admin credentials
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[argocd-configure-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "argocd-configure-pre-check"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations and resolve ArgoCD config
+    # =========================================================================
+
+    - name: "[argocd-configure-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
+
+    - name: "[argocd-configure-init] Set argocd_eso from merged integration"
+      set_fact:
+        argocd_eso: "{{ eso_vault_integration_argocd_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-configure-init] Resolve vault_path for admin credentials"
+      set_fact:
+        vault_path_argocd_admin: >-
+          {{ (argocd_eso.secrets | selectattr('type', 'equalto', 'argocd_root') | first).vault_path }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: RESOLVE ADMIN PASSWORD
+    # Priority: Vault password → k8s initial secret → fail if neither valid
+    # =========================================================================
+
+    - name: "[argocd-admin-password] Get admin password from Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -field=password \
+          {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }} 2>/dev/null || true
+      register: vault_password_result
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Get admin password from k8s initial secret"
+      shell: |
+        kubectl get secret argocd-initial-admin-secret \
+          -n {{ argocd_namespace }} \
+          -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode
+      register: k8s_password_result
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Validate Vault password via ArgoCD API"
+      shell: |
+        kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
+          curl -s -o /dev/null -w "%{http_code}" \
+          -X POST http://localhost:8080/api/v1/session \
+          -H 'Content-Type: application/json' \
+          -d "{\"username\":\"admin\",\"password\":\"{{ vault_password_result.stdout | trim }}\"}"
+      register: vault_password_http_result
+      when: vault_password_result.stdout | trim | length > 0
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Set active password from Vault if valid"
+      set_fact:
+        active_admin_password: "{{ vault_password_result.stdout | trim }}"
+        admin_password_source: "vault"
+      when:
+        - vault_password_result.stdout | trim | length > 0
+        - vault_password_http_result.stdout is defined
+        - vault_password_http_result.stdout | trim == "200"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Validate k8s secret password via ArgoCD API"
+      shell: |
+        kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
+          curl -s -o /dev/null -w "%{http_code}" \
+          -X POST http://localhost:8080/api/v1/session \
+          -H 'Content-Type: application/json' \
+          -d "{\"username\":\"admin\",\"password\":\"{{ k8s_password_result.stdout | trim }}\"}"
+      register: k8s_password_http_result
+      when:
+        - active_admin_password is not defined
+        - k8s_password_result.stdout | trim | length > 0
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Set active password from k8s secret if valid"
+      set_fact:
+        active_admin_password: "{{ k8s_password_result.stdout | trim }}"
+        admin_password_source: "k8s_secret"
+      when:
+        - active_admin_password is not defined
+        - k8s_password_result.stdout | trim | length > 0
+        - k8s_password_http_result.stdout is defined
+        - k8s_password_http_result.stdout | trim == "200"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Fail if no valid password found"
+      fail:
+        msg: >
+          No valid admin password found.
+          Vault password: {{ 'present but invalid' if vault_password_result.stdout | trim | length > 0 else 'not set' }}.
+          K8s secret password: {{ 'present but invalid' if k8s_password_result.stdout | trim | length > 0 else 'not set' }}.
+      when: active_admin_password is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Save active password to Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }}
+        username=admin
+        password={{ active_admin_password }}
+      when: admin_password_source == "k8s_secret"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Print password resolution result"
+      debug:
+        msg: "Admin password resolved from source: {{ admin_password_source }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # VERIFY
+    # =========================================================================
+
+    - name: "[argocd-configure-verify] Show result"
+      debug:
+        msg:
+          - "=============================================="
+          - "ARGOCD CONFIGURE COMPLETE"
+          - "=============================================="
+          - "ArgoCD Web UI: https://{{ argocd_ui_domain }}"
+          - ""
+          - "Admin credentials stored in Vault:"
+          - "  Path: {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }}"
+          - "  Fields: username, password"
+          - ""
+          - "Password source: {{ admin_password_source }}"
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-configure-verify] Configuration complete"
+      debug:
+        msg: "argocd-configure: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

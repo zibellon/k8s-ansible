@@ -2,7 +2,7 @@
 # Install GitLab (Production Helm Chart)
 # Steps:
 #   1. gitlab/pre: Vault initial secrets + ESO resources (NetworkPolicies, ServiceAccount, SecretStore, ExternalSecrets)
-#   2. gitlab: PostgreSQL + Redis + MinIO + MinIO setup + GitLab (official chart) + root credentials
+#   2. gitlab: PostgreSQL + Redis + MinIO + MinIO setup + GitLab (official chart)
 #   3. gitlab/post: Ingress (Traefik) + HAProxy SSH
 #
 # Usage (tags):
@@ -15,6 +15,8 @@
 #   - Vault must be installed and unsealed
 #   - Vault policies and roles must be synced (vault-policy-sync.yaml)
 #   - External Secrets Operator must be installed
+#
+# NOTE: Root password and PAT management → gitlab-configure.yaml
 # =============================================================================
 
 ---
@@ -798,99 +800,7 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 11: SAVE GITLAB ROOT PASSWORD TO VAULT
-    # =========================================================================
-
-    - name: "[gitlab-root] Check if root password exists in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null
-      register: gitlab_root_vault_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-root] Get root password from Kubernetes secret"
-      shell: |
-        kubectl get secret gitlab-gitlab-initial-root-password \
-          -n {{ gitlab_namespace }} \
-          -o jsonpath='{.data.password}' | base64 -d
-      register: gitlab_root_password_result
-      when: gitlab_root_vault_check.rc != 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-root] Store root password in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
-        username=root
-        password={{ gitlab_root_password_result.stdout }}
-      when:
-        - gitlab_root_vault_check.rc != 0
-        - gitlab_root_password_result.stdout is defined
-        - gitlab_root_password_result.stdout | length > 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    # =========================================================================
-    # STEP 12: CREATE GITLAB ROOT PAT (for API access by other playbooks)
-    # =========================================================================
-
-    - name: "[gitlab-root-pat] Check if root PAT token exists in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -field=token \
-          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null || true
-      register: gitlab_root_pat_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-root-pat] Get GitLab toolbox pod name"
-      command: >
-        kubectl get pods -n {{ gitlab_namespace }}
-        -l app=toolbox
-        -o jsonpath='{.items[0].metadata.name}'
-      register: gitlab_pod_name
-      when: gitlab_root_pat_check.stdout | trim | length == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-root-pat] Create root PAT via gitlab-rails runner"
-      shell: |
-        kubectl exec -n {{ gitlab_namespace }} {{ gitlab_pod_name.stdout }} -- \
-          gitlab-rails runner \
-          "token = User.find_by_username('root').personal_access_tokens.create(scopes: ['api'], name: 'gitlab-root', expires_at: 365.days.from_now); puts token.token"
-      register: gitlab_root_pat_result
-      when: gitlab_root_pat_check.stdout | trim | length == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-root-pat] Store root PAT token in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv patch {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
-        token={{ gitlab_root_pat_result.stdout | trim }}
-      when:
-        - gitlab_root_pat_check.stdout | trim | length == 0
-        - gitlab_root_pat_result.stdout is defined
-        - gitlab_root_pat_result.stdout | trim | length > 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    # =========================================================================
-    # STEP 13: INSTALL POST CHART (Ingress, HAProxy SSH)
+    # STEP 11: INSTALL POST CHART (Ingress, HAProxy SSH)
     # =========================================================================
 
     - name: "[gitlab-post] Copy chart to remote"
@@ -986,7 +896,6 @@
           - "GitLab SSH: {{ gitlab_domain }}:{{ gitlab_ssh_port_external }}"
           - ""
           - "Credentials stored in Vault:"
-          - "  GitLab root: {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}"
           - "  PostgreSQL: {{ gitlab_eso.kv_engine_path }}{{ vault_path_postgresql }}"
           - "  Redis: {{ gitlab_eso.kv_engine_path }}{{ vault_path_redis }}"
           - "  MinIO root: {{ gitlab_eso.kv_engine_path }}{{ vault_path_minio_root }}"
@@ -995,6 +904,8 @@
           - ""
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."
+          - ""
+          - "Run gitlab-configure.yaml to set root password + PAT in Vault."
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true

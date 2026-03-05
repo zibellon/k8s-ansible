@@ -1,0 +1,279 @@
+# =============================================================================
+# Configure GitLab root credentials
+# Steps:
+#   1. Resolve root password: check Vault → check k8s secret → validate → save to Vault
+#   2. Resolve root PAT: check Vault → validate → create new if invalid → save to Vault
+#
+# Usage:
+#   ansible-playbook gitlab-configure.yaml
+#
+# Prerequisites:
+#   - GitLab must be installed and webservice running (gitlab-install.yaml)
+#   - Vault must be installed and unsealed
+#   - External Secrets Operator must be installed
+# =============================================================================
+
+---
+- name: Configure GitLab root credentials
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[gitlab-configure-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "gitlab-configure-pre-check"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations and resolve GitLab config
+    # =========================================================================
+
+    - name: "[gitlab-configure-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
+
+    - name: "[gitlab-configure-init] Set gitlab_eso from merged integration"
+      set_fact:
+        gitlab_eso: "{{ eso_vault_integration_gitlab_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-configure-init] Find secret names and vault paths by type"
+      set_fact:
+        secret_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).target_secret_name }}"
+        vault_path_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: RESOLVE ROOT PASSWORD
+    # Priority: Vault password → k8s initial secret → fail if neither valid
+    # =========================================================================
+
+    - name: "[gitlab-root-password] Get root password from Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null \
+          | jq -r '.data.data.password // empty'
+      register: vault_password_result
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Get root password from k8s initial secret"
+      shell: |
+        kubectl get secret gitlab-gitlab-initial-root-password \
+          -n {{ gitlab_namespace }} \
+          -o jsonpath='{.data.password}' 2>/dev/null | base64 -d
+      register: k8s_password_result
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Get GitLab toolbox pod name"
+      command: >
+        kubectl get pods -n {{ gitlab_namespace }}
+        -l app=toolbox
+        -o jsonpath='{.items[0].metadata.name}'
+      register: gitlab_toolbox_pod
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Validate Vault password via gitlab-rails"
+      shell: |
+        kubectl exec -n {{ gitlab_namespace }} {{ gitlab_toolbox_pod.stdout }} -- \
+          gitlab-rails runner \
+          "puts User.find_by_username('root').valid_password?('{{ vault_password_result.stdout | trim }}')"
+      register: vault_password_valid_result
+      when: vault_password_result.stdout | trim | length > 0
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Set active password from Vault if valid"
+      set_fact:
+        active_root_password: "{{ vault_password_result.stdout | trim }}"
+        root_password_source: "vault"
+      when:
+        - vault_password_result.stdout | trim | length > 0
+        - vault_password_valid_result.stdout is defined
+        - vault_password_valid_result.stdout | trim == "true"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Validate k8s secret password via gitlab-rails"
+      shell: |
+        kubectl exec -n {{ gitlab_namespace }} {{ gitlab_toolbox_pod.stdout }} -- \
+          gitlab-rails runner \
+          "puts User.find_by_username('root').valid_password?('{{ k8s_password_result.stdout | trim }}')"
+      register: k8s_password_valid_result
+      when:
+        - active_root_password is not defined
+        - k8s_password_result.stdout | trim | length > 0
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Set active password from k8s secret if valid"
+      set_fact:
+        active_root_password: "{{ k8s_password_result.stdout | trim }}"
+        root_password_source: "k8s_secret"
+      when:
+        - active_root_password is not defined
+        - k8s_password_result.stdout | trim | length > 0
+        - k8s_password_valid_result.stdout is defined
+        - k8s_password_valid_result.stdout | trim == "true"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Fail if no valid password found"
+      fail:
+        msg: >
+          No valid root password found.
+          Vault password: {{ 'present but invalid' if vault_password_result.stdout | trim | length > 0 else 'not set' }}.
+          K8s secret password: {{ 'present but invalid' if k8s_password_result.stdout | trim | length > 0 else 'not set' }}.
+      when: active_root_password is not defined
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Save active password to Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
+        username=root
+        password={{ active_root_password }}
+      when: root_password_source == "k8s_secret"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Print password resolution result"
+      debug:
+        msg: "Root password resolved from source: {{ root_password_source }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # STEP 2: RESOLVE ROOT PAT
+    # If exists in Vault → validate. If invalid or absent → create new and save.
+    # =========================================================================
+
+    - name: "[gitlab-root-pat] Get PAT from Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -field=token \
+          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null || true
+      register: vault_pat_result
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-pat] Validate existing PAT via gitlab-rails"
+      shell: |
+        kubectl exec -n {{ gitlab_namespace }} {{ gitlab_toolbox_pod.stdout }} -- \
+          gitlab-rails runner \
+          "t = PersonalAccessToken.find_by_token('{{ vault_pat_result.stdout | trim }}'); puts(t && !t.revoked? && !t.expired? ? 'valid' : 'invalid')"
+      register: pat_valid_result
+      when: vault_pat_result.stdout | trim | length > 0
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-pat] Set pat_needs_rotation fact"
+      set_fact:
+        pat_needs_rotation: >-
+          {{
+            vault_pat_result.stdout | trim | length == 0
+            or (pat_valid_result.stdout is defined and pat_valid_result.stdout | trim != 'valid')
+          }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-pat] Create new PAT via gitlab-rails runner"
+      shell: |
+        kubectl exec -n {{ gitlab_namespace }} {{ gitlab_toolbox_pod.stdout }} -- \
+          gitlab-rails runner \
+          "token = User.find_by_username('root').personal_access_tokens.create(scopes: ['api'], name: 'gitlab-root', expires_at: 365.days.from_now); puts token.token"
+      register: new_pat_result
+      when: pat_needs_rotation | bool
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-pat] Save new PAT to Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv patch {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
+        token={{ new_pat_result.stdout | trim }}
+      when:
+        - pat_needs_rotation | bool
+        - new_pat_result.stdout is defined
+        - new_pat_result.stdout | trim | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-pat] Print PAT resolution result"
+      debug:
+        msg: >-
+          {{
+            'PAT already valid in Vault — no rotation needed'
+            if not pat_needs_rotation | bool
+            else 'New PAT created and saved to Vault'
+          }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # VERIFY
+    # =========================================================================
+
+    - name: "[gitlab-configure-verify] Show result"
+      debug:
+        msg:
+          - "=============================================="
+          - "GITLAB CONFIGURE COMPLETE"
+          - "=============================================="
+          - "GitLab Web UI: https://{{ gitlab_domain }}"
+          - ""
+          - "Root credentials stored in Vault:"
+          - "  Path: {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}"
+          - "  Fields: username, password, token"
+          - ""
+          - "Password source: {{ root_password_source }}"
+          - "PAT rotated: {{ pat_needs_rotation | bool }}"
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-configure-verify] Configuration complete"
+      debug:
+        msg: "gitlab-configure: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

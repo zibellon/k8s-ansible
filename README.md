@@ -392,17 +392,19 @@
 ## `--tags pre, install, post`
 ## ---
 ##
-- установка
+- установка + конфигурация. Два отдельных playbook
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
-  - Ставится: cert-controller, secrets-webhook, core
+  - Ставится: vault-0
+- конфигурация (unseal-keys, сохранить на manager и так далее)
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-configure.yaml`
+- Синхронизация политик
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
 - обновление (версия, конфиг)
   - Устанавливается через официальный HELM, но через исходники с Github
   - Их нужно скачать и нужные положить в директорию с установкой vault (описано выше)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-restart.yaml`
-- Есть дополнительный playbook, для синхронизации политик и ролей. Внутренняя структу VAULT
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
@@ -440,6 +442,8 @@
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-install.yaml`
   - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
+- конфигурация. Отдельный playbook
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-configure.yaml`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -454,6 +458,8 @@
 - установка
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-install.yaml`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc)
+- Конфигурация
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-configure.yaml`
 - обновление (версия)
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на несколько файлов

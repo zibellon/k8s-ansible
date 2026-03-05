@@ -2,12 +2,14 @@
 # Install ArgoCD via local Helm charts
 # Steps:
 #   1. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
-#   2. argocd/install: ArgoCD manifests + Ingress + default AppProject + admin credentials
+#   2. argocd/install: ArgoCD manifests + Ingress + default AppProject
 #
 # Usage (tags):
 #   ansible-playbook argocd-install.yaml              # full install
 #   ansible-playbook argocd-install.yaml --tags pre   # only pre (NetworkPolicies + ESO)
 #   ansible-playbook argocd-install.yaml --tags install
+#
+# NOTE: Admin password management → argocd-configure.yaml
 # =============================================================================
 
 - name: Install ArgoCD via local Helm chart
@@ -196,57 +198,6 @@
           - deployment/argocd-server
       tags: [install]
 
-    - name: "[argocd-verify] Get ArgoCD initial admin password"
-      shell: kubectl get secret argocd-initial-admin-secret -n {{ argocd_namespace }} -o jsonpath='{.data.password}' | base64 --decode
-      register: argocd_password
-      changed_when: false
-      failed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[argocd-verify] Show ArgoCD admin password"
-      debug:
-        msg: "ArgoCD admin password: {{ argocd_password.stdout }}"
-      when: argocd_password.rc == 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[argocd-admin] Resolve vault_path for admin credentials"
-      set_fact:
-        vault_path_argocd_admin: >-
-          {{ (argocd_eso.secrets | selectattr('type', 'equalto', 'argocd_root') | first).vault_path }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[argocd-admin] Check if admin credentials exist in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }} 2>/dev/null
-      register: argocd_admin_vault_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[argocd-admin] Store admin credentials in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }}
-        username=admin
-        password={{ argocd_password.stdout }}
-      when:
-        - argocd_admin_vault_check.rc != 0
-        - argocd_password.rc == 0
-        - argocd_password.stdout | length > 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
     # =========================================================================
     # VERIFICATION
     # =========================================================================
@@ -290,7 +241,9 @@
 
     - name: "[argocd-verify] Installation complete"
       debug:
-        msg: "argocd-pre + argocd: OK"
+        msg:
+          - "argocd-pre + argocd: OK"
+          - "Run argocd-configure.yaml to save admin password to Vault."
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
