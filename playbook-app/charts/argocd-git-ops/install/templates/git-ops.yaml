@@ -1,46 +1,39 @@
+{{- range .Values.gitOps }}
 ---
-# Root project - FULL permissions for app-of-apps
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: root-app-of-apps
-  namespace: "{{ .Values.namespace }}"
+  name: {{ .name }}
+  namespace: "{{ $.Values.namespace }}"
 spec:
   sourceRepos:
-    {{- toYaml .Values.gitOps.project.sourceRepos | nindent 4 }}
+    {{- toYaml .project.sourceRepos | nindent 4 }}
   sourceNamespaces:
-    - "*"
+    {{- toYaml (.project.sourceNamespaces | default (list "*")) | nindent 4 }}
   destinations:
-    {{- toYaml .Values.gitOps.project.destinations | nindent 4 }}
-  # No cluster-resources (only namespace-resources)
+    {{- toYaml .project.destinations | nindent 4 }}
   clusterResourceBlacklist:
-    - group: "*"
-      kind: "*"
-  # Allow only namespace-resources - AppProject | Application
+    {{- toYaml (.project.clusterResourceBlacklist | default (list (dict "group" "*" "kind" "*"))) | nindent 4 }}
   namespaceResourceBlacklist:
-    - group: "argoproj.io"
-      kind: "AppProject"
-    - group: "argoproj.io"
-      kind: "Application"
+    {{- toYaml (.project.namespaceResourceBlacklist | default (list (dict "group" "argoproj.io" "kind" "AppProject") (dict "group" "argoproj.io" "kind" "Application"))) | nindent 4 }}
 
 ---
-# Root application (app-of-apps)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: "root-app-of-apps"
-  namespace: "{{ .Values.namespace }}"
+  name: {{ .name }}
+  namespace: "{{ $.Values.namespace }}"
   finalizers:
     - resources-finalizer.argocd.argoproj.io/background
 spec:
-  project: "root-app-of-apps"
-  revisionHistoryLimit: 3
+  project: {{ .name }}
+  revisionHistoryLimit: {{ .app.revisionHistoryLimit | default 3 }}
   source:
-    repoURL: "{{ .Values.gitOps.app.repoURL }}"
-    targetRevision: "{{ .Values.gitOps.app.targetRevision }}"
-    path: "{{ .Values.gitOps.app.path }}"
+    repoURL: "{{ .app.repoURL }}"
+    targetRevision: "{{ .app.targetRevision }}"
+    path: "{{ .app.path }}"
   destination:
-    server: "{{ .Values.gitOps.app.destinationServer }}"
+    server: "{{ .app.destinationServer }}"
   syncPolicy:
     automated:
       prune: true
@@ -51,8 +44,9 @@ spec:
       - ApplyOutOfSyncOnly=true
       - PrunePropagationPolicy=background
     retry:
-      limit: {{ .Values.gitOps.retry.limit }}
+      limit: {{ .retry.limit }}
       backoff:
-        duration: {{ .Values.gitOps.retry.backoff.duration }}
-        factor: {{ .Values.gitOps.retry.backoff.factor }}
-        maxDuration: {{ .Values.gitOps.retry.backoff.maxDuration }}
+        duration: {{ .retry.backoff.duration }}
+        factor: {{ .retry.backoff.factor }}
+        maxDuration: {{ .retry.backoff.maxDuration }}
+{{- end }}

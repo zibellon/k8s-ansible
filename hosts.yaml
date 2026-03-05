@@ -531,10 +531,6 @@ all:
       secret_store_name: "eso-vault-argocd"
       kv_engine_path: "eso-secret"
       secrets:
-        - external_secret_name: "eso-argocd-repo-creds"
-          target_secret_name: "eso-git-ops-root-key-internal"
-          vault_path: "/argocd/repo-creds"
-          type: "git_ops_repo_creds"
         - external_secret_name: "eso-argocd-root"
           target_secret_name: "eso-argocd-root"
           vault_path: "/argocd/root/creds"
@@ -699,25 +695,39 @@ all:
     argocd_components_rollout_timeout: "120s"
 
     # ------
-    # ArgoCD git-ops GitLab setup
+    # ArgoCD git-ops setup
     # ------
-    argocd_git_ops_gitlab_group: "server"
-    argocd_git_ops_gitlab_repo: "git-ops"
-    argocd_git_ops_path: "argocd-system"
-    argocd_git_ops_target_revision: "master"
-    argocd_git_ops_gitlab_deploy_key_name: "argocd-read-only"
-    argocd_git_ops_retry_backoff_max_duration: "30s"
-    argocd_git_ops_destination_server: "https://kubernetes.default.svc"
-    argocd_git_ops_repo_url: "ssh://git@gitlab-gitlab-shell.gitlab.svc.cluster.local:3714/server/git-ops.git"
-    argocd_git_ops_source_repos: ["*"]
-    argocd_git_ops_destinations:
-      - name: "*"
-        namespace: "*"
-        server: "*"
-    argocd_git_ops_retry_backoff_factor: 1
-    argocd_git_ops_retry_limit: 5
-    argocd_git_ops_retry_backoff_duration: "20s"
-    argocd_git_ops_pre_helm_timeout: "3m"
+    # Each entry creates one AppProject + one Application in ArgoCD
+    argocd_git_ops_apps:
+      - name: "root-app-of-apps"
+        project:
+          sourceRepos: ["*"]
+          sourceNamespaces: ["*"]
+          destinations:
+            - name: "*"
+              namespace: "*"
+              server: "*"
+          clusterResourceBlacklist:
+            - group: "*"
+              kind: "*"
+          namespaceResourceBlacklist:
+            - group: "argoproj.io"
+              kind: "AppProject"
+            - group: "argoproj.io"
+              kind: "Application"
+        app:
+          repoURL: "ssh://git@gitlab-gitlab-shell.gitlab.svc.cluster.local:3714/server/git-ops.git"
+          targetRevision: "master"
+          path: "argocd-system"
+          destinationServer: "https://kubernetes.default.svc"
+          revisionHistoryLimit: 3
+        retry:
+          limit: 5
+          backoff:
+            duration: "20s"
+            factor: 1
+            maxDuration: "30s"
+    # ---
     argocd_git_ops_install_helm_timeout: "3m"
     argocd_git_ops_secret_wait_retries: 24
     argocd_git_ops_secret_wait_delay: 5
