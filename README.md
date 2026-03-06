@@ -423,11 +423,6 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
-## Важно про config
-## 1. Для deployment используется `checksum/config: ...`
-## 2. При обновлении конфига `/gitlab/templates/configmap.yaml` POD c GitLab будет перезапущен
-## 3. checksum/config - вычисляется через HELM (include ...)
-## ---
 ## Важно про компоненты
 ## - gitlab-exporter - hardcoded 1 в шаблоне (в самом официальном helm)
 ## - gitaly - StatefulSet, количество реплик определяется через global.gitaly.internal.names. По дефолту = 1. RollingUpdate + StatefulSet = убить, а потом создать
@@ -452,7 +447,13 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
+## Важно_1: нужно выполнить команду `ssh-keyscan` на те git-репозитории, которые планируется использовать для argo-cd
+## Добавить их публичные ключи в `hosts-extra.yaml (argocd_cm_ssh_known_hosts_extra)`. Это массив из строк
+## Без этого, argocd не сможет к ним подключиться (недоверенный host)
+## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+## `--tags pre, install, post`
 ## ---
 ##
 - установка
@@ -478,7 +479,19 @@
 ## argocd-git-ops. yaml -> helm
 ## Установка всех необходимых ресурсов k8s - для git-ops паттерна. Создание необходимых групп и репозиториев в gitlab + создание ключей в VAULT
 ## Тут нет запуска каких-либо компонентов (Deployment, CronJob и так далее)
-## Это именно создание ресурсов k8s для работы git-ops
+## Это создание ресурсов k8s (AppProject, Application) + генерация ключей (сгенерировать ключ и положить его в vault) для работы git-ops
+## ---
+## Важно_1: Создать репозиторий (если его еще нет) + добавить к нему deploy-key (из vault)
+## Эти два шага нужно выполнять в `РУЧНОМ РЕЖИМЕ`
+## ---
+## Важно_2: последовательность установки
+## - получить ssh-keyscan (перед установкой самого argocd) + указать его в `hosts-extra.yaml`
+## - установить сам argo-cd + дождаться установки + убедиться что все окей
+## - настроить необходимые конфиги для argo-cd-git-ops (`hosts-extra.yaml`)
+## - нужно настроить: `argocd_git_ops_apps` + `eso_vault_integration_argocd_extra` (вот тут в каждом секрете будет указан `argocd_repo_url`)
+## - установить argo-cd-git-ops + проверить что все ресурсы установились корректно
+## - Зайти в vault и достать оттуда SSH (private + public), которые уже созданы и уже лежат в k8s,secret
+## - создать (Где требуется) репозитории (URL которых указаны в `argocd_git_ops_apps`) + добавить к ним deploy-keys
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---

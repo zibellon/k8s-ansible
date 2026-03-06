@@ -17,6 +17,18 @@
 
 all:
   vars:
+    # Временные S3-секреты для Longhorn disaster recovery (без Vault/ESO)
+    # Используются playbook-ами longhorn-s3-restore-create.yaml / longhorn-s3-restore-delete.yaml
+    longhorn_s3_restore_secrets: []
+    # Пример:
+    # longhorn_s3_restore_secrets:
+    #   - name: "longhorn-s3-backup-creds"
+    #     data:
+    #       AWS_ACCESS_KEY_ID: "my-access-key"
+    #       AWS_SECRET_ACCESS_KEY: "my-secret-key"
+    #       AWS_ENDPOINTS: "https://s3.example.com"
+    #       AWS_REGION: "us-east-1"
+
     # Дополнительные политики Vault (не связанные с ESO интеграциями)
     vault_policies_extra: []
     # Пример:
@@ -128,6 +140,26 @@ all:
     #         # git_ops_repository — credentials для конкретного репозитория
     #         # SSH ключ генерируется автоматически и сохраняется в Vault по vault_path
 
+    # ArgoCD ConfigMaps — расширение кастомными ключами
+    # Каждая переменная независима: можно переопределить только нужную в hosts-extra.yaml
+    # Заполнить ssh_known_hosts после установки GitLab:
+    #   kubectl exec -n argocd deploy/argocd-repo-server -- ssh-keyscan -p 3714 gitlab-gitlab-shell.gitlab.svc.cluster.local
+    argocd_cm_ssh_known_hosts_extra: []
+    argocd_cm_extra: {}
+    argocd_cm_cmd_params_extra: {}
+    argocd_cm_gpg_keys_extra: {}
+    argocd_cm_notifications_extra: {}
+    argocd_cm_rbac_extra: {}
+    argocd_cm_tls_certs_extra: {}
+    # Пример: добавить SSH ключи GitLab (переопределить только эту переменную)
+    # argocd_cm_ssh_known_hosts_extra:
+    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ecdsa-sha2-nistp256 AAAA..."
+    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ssh-ed25519 AAAA..."
+    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ssh-rsa AAAA..."
+    # Пример: добавить только RBAC политики
+    # argocd_cm_rbac_extra:
+    #   policy.default: "role:readonly"
+
     # Переопределение ArgoCD git-ops приложений (заменяет argocd_git_ops_apps из hosts.yaml целиком)
     # argocd_git_ops_apps:
     #   - name: "root-app-of-apps"
@@ -158,35 +190,3 @@ all:
     #         duration: "20s"
     #         factor: 1
     #         maxDuration: "30s"
-
-    # ArgoCD ConfigMaps — расширение кастомными ключами
-    # Каждая переменная независима: можно переопределить только нужную в hosts-extra.yaml
-    # Заполнить ssh_known_hosts после установки GitLab:
-    #   kubectl exec -n argocd deploy/argocd-repo-server -- ssh-keyscan -p 3714 gitlab-gitlab-shell.gitlab.svc.cluster.local
-    argocd_cm_ssh_known_hosts_extra: []
-    argocd_cm_extra: {}
-    argocd_cm_cmd_params_extra: {}
-    argocd_cm_gpg_keys_extra: {}
-    argocd_cm_notifications_extra: {}
-    argocd_cm_rbac_extra: {}
-    argocd_cm_tls_certs_extra: {}
-    # Пример: добавить SSH ключи GitLab (переопределить только эту переменную)
-    # argocd_cm_ssh_known_hosts_extra:
-    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ecdsa-sha2-nistp256 AAAA..."
-    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ssh-ed25519 AAAA..."
-    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ssh-rsa AAAA..."
-    # Пример: добавить только RBAC политики
-    # argocd_cm_rbac_extra:
-    #   policy.default: "role:readonly"
-
-    # Временные S3-секреты для Longhorn disaster recovery (без Vault/ESO)
-    # Используются playbook-ами longhorn-s3-restore-create.yaml / longhorn-s3-restore-delete.yaml
-    longhorn_s3_restore_secrets: []
-    # Пример:
-    # longhorn_s3_restore_secrets:
-    #   - name: "longhorn-s3-backup-creds"
-    #     data:
-    #       AWS_ACCESS_KEY_ID: "my-access-key"
-    #       AWS_SECRET_ACCESS_KEY: "my-secret-key"
-    #       AWS_ENDPOINTS: "https://s3.example.com"
-    #       AWS_REGION: "us-east-1"
