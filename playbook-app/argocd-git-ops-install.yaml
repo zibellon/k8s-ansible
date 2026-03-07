@@ -6,17 +6,10 @@
 #   - Vault policies and roles must be synced (vault-policy-sync.yaml)
 #
 # This playbook:
-#   INIT:
-#     1. Merge ESO integrations
-#     2. Build list of secrets requiring SSH key generation (argocd_repo_url defined)
-#   SSH KEY GEN:
-#     3. For each such secret: check Vault → generate ed25519 key → store in Vault
-#   WAIT:
-#     4. Wait for each SSH key Secret to appear in Kubernetes (ESO syncs from Vault)
 #   INSTALL:
-#     5. Install ArgoCD AppProject + Application for each entry in argocd_git_ops_apps
+#     1. Install ArgoCD AppProject + Application for each entry in argocd_git_ops_apps
 #   VERIFY:
-#     6. Show Application status
+#     2. Show Application status
 #
 # =============================================================================
 
@@ -31,88 +24,6 @@
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
         label_name: "argocd-git-ops-pre-check"
-
-    # =========================================================================
-    # INIT: Merge ESO integrations, resolve argocd ESO config
-    # =========================================================================
-
-    - name: "[argocd-git-ops-init] Merge ESO integrations"
-      include_tasks: tasks/tasks-eso-merge.yaml
-
-    - name: "[argocd-git-ops-init] Set argocd_eso from merged integrations"
-      set_fact:
-        argocd_eso: "{{ eso_vault_integration_argocd_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[argocd-git-ops-init] Build list of secrets requiring SSH key generation"
-      set_fact:
-        argocd_ssh_secrets: >-
-          {{ argocd_eso.secrets | selectattr('argocd_repo_url', 'defined') | list }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    # =========================================================================
-    # SSH KEY GEN: Generate ed25519 key pair per secret (idempotent)
-    # =========================================================================
-
-    - name: "[argocd-git-ops-ssh] Generate and store SSH key pair in Vault"
-      shell: |
-        set -e
-        EXISTING=$(kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ argocd_eso.kv_engine_path }}{{ item.vault_path }} 2>/dev/null \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['data'].get('ssh_private_key',''))" \
-          2>/dev/null || true)
-
-        if [ -z "$EXISTING" ]; then
-          ssh-keygen -t ed25519 -C "argocd-{{ item.external_secret_name }}" \
-            -f /tmp/argocd-key-{{ item.external_secret_name | replace('/', '-') }} -N ""
-
-          PRIVATE=$(cat /tmp/argocd-key-{{ item.external_secret_name | replace('/', '-') }})
-          PUBLIC=$(cat /tmp/argocd-key-{{ item.external_secret_name | replace('/', '-') }}.pub)
-
-          kubectl exec -n {{ vault_namespace }} vault-0 -- \
-            vault kv put {{ argocd_eso.kv_engine_path }}{{ item.vault_path }} \
-            ssh_private_key="$PRIVATE" \
-            ssh_public_key="$PUBLIC" \
-            repo_url="{{ item.argocd_repo_url }}"
-
-          rm -f /tmp/argocd-key-{{ item.external_secret_name | replace('/', '-') }} \
-                /tmp/argocd-key-{{ item.external_secret_name | replace('/', '-') }}.pub
-
-          echo "generated"
-        else
-          echo "exists"
-        fi
-      register: argocd_ssh_key_result
-      changed_when: argocd_ssh_key_result.stdout | trim == "generated"
-      loop: "{{ argocd_ssh_secrets }}"
-      loop_control:
-        label: "{{ item.external_secret_name }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    # =========================================================================
-    # WAIT: Wait for K8s Secrets to appear (synced by ESO from Vault)
-    # =========================================================================
-
-    - name: "[argocd-git-ops-ssh] Wait for SSH key Secret to appear in Kubernetes"
-      command: >
-        kubectl get secret {{ item.target_secret_name }}
-        -n {{ argocd_namespace }}
-      register: argocd_ssh_secret_check
-      until: argocd_ssh_secret_check.rc == 0
-      retries: "{{ argocd_git_ops_secret_wait_retries }}"
-      delay: "{{ argocd_git_ops_secret_wait_delay }}"
-      changed_when: false
-      loop: "{{ argocd_ssh_secrets | rejectattr('is_need_eso', 'defined') | list
-                + argocd_ssh_secrets | selectattr('is_need_eso', 'defined')
-                                     | rejectattr('is_need_eso', 'equalto', false) | list }}"
-      loop_control:
-        label: "{{ item.target_secret_name }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
 
     # =========================================================================
     # INSTALL: Install argocd-git-ops/install chart (AppProject + Application)
