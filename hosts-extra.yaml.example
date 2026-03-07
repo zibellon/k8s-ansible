@@ -115,27 +115,73 @@ all:
     # Дополнительные ExternalSecrets для ArgoCD
     eso_vault_integration_argocd_extra:
       secrets: []
-    # Пример:
+    # Пример (все доступные типы):
     # eso_vault_integration_argocd_extra:
     #   secrets:
+    #
+    #     # ── type: default ──────────────────────────────────────────────────────
+    #     # Произвольный секрет (dataFrom extract), без ArgoCD-специфичных labels
     #     - external_secret_name: "eso-argocd-custom"
     #       target_secret_name: "eso-argocd-custom"
     #       vault_path: "/argocd/custom/creds"
     #       refresh_interval: "1m"
     #       type: "default"
-    #     - external_secret_name: "eso-argocd-repo-creds-custom"
-    #       target_secret_name: "eso-argocd-repo-creds-custom"
-    #       vault_path: "/argocd/repo-creds-custom/creds"
+    #
+    #     # ── type: git_ops_repo_pattern ─────────────────────────────────────────
+    #     # SSH-ключ, label: repo-creds (credential template для URL-префикса)
+    #     # Vault path must contain: repo_url, ssh_private_key
+    #     - external_secret_name: "eso-argocd-repo-creds-gitlab"
+    #       target_secret_name: "eso-argocd-repo-creds-gitlab"
+    #       vault_path: "/argocd/repo-creds-gitlab/creds"
     #       refresh_interval: "1m"
     #       type: "git_ops_repo_pattern"
-    #         # git_ops_repo_pattern — шаблон credentials для всех репозиториев с данным URL-префиксом
-    #         # git_ops_repo_direct — credentials для конкретного репозитория с данным URL
-    #     - external_secret_name: "eso-argocd-my-repo"
-    #       target_secret_name: "eso-argocd-my-repo"
-    #       vault_path: "/argocd/my-repo/creds"
+    #
+    #     # ── type: git_ops_repo_direct ──────────────────────────────────────────
+    #     # SSH-ключ, label: repository (конкретный репозиторий)
+    #     # Vault path must contain: repo_url, ssh_private_key
+    #     - external_secret_name: "eso-argocd-my-repo-ssh"
+    #       target_secret_name: "eso-argocd-my-repo-ssh"
+    #       vault_path: "/argocd/my-repo-ssh/creds"
     #       refresh_interval: "1m"
-    #       type: "git_ops_repository"
-    #         # git_ops_repository — credentials для конкретного репозитория
+    #       type: "git_ops_repo_direct"
+    #
+    #     # ── type: git_ops_repo_direct_userpass ────────────────────────────────
+    #     # Username+password, label: repository (конкретный репозиторий)
+    #     # Vault path must contain: repo_url, username, password, repo_type (git | helm)
+    #     - external_secret_name: "eso-argocd-my-repo-https"
+    #       target_secret_name: "eso-argocd-my-repo-https"
+    #       vault_path: "/argocd/my-repo-https/creds"
+    #       refresh_interval: "1m"
+    #       type: "git_ops_repo_direct_userpass"
+    #
+    #     # ── type: git_ops_repo_pattern_userpass ───────────────────────────────
+    #     # Username+password, label: repo-creds (credential template для URL-префикса)
+    #     # Vault path must contain: repo_url, username, password, repo_type (git | helm)
+    #     - external_secret_name: "eso-argocd-repo-creds-https"
+    #       target_secret_name: "eso-argocd-repo-creds-https"
+    #       vault_path: "/argocd/repo-creds-https/creds"
+    #       refresh_interval: "1m"
+    #       type: "git_ops_repo_pattern_userpass"
+    #
+    #     # ── type: helm_repo ───────────────────────────────────────────────────
+    #     # Helm chart repository, label: repository
+    #     # Vault path must contain: name, repo_url, username, password
+    #     # username/password могут быть пустыми строками для публичных репо
+    #     - external_secret_name: "eso-argocd-helm-argo"
+    #       target_secret_name: "eso-argocd-helm-argo"
+    #       vault_path: "/argocd/helm-argo/creds"
+    #       refresh_interval: "1m"
+    #       type: "helm_repo"
+    #
+    #     # ── type: helm_repo_oci ───────────────────────────────────────────────
+    #     # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
+    #     # Vault path must contain: name, repo_url, username, password
+    #     # username/password могут быть пустыми строками для публичных реестров
+    #     - external_secret_name: "eso-argocd-helm-oci-registry"
+    #       target_secret_name: "eso-argocd-helm-oci-registry"
+    #       vault_path: "/argocd/helm-oci-registry/creds"
+    #       refresh_interval: "1m"
+    #       type: "helm_repo_oci"
 
     # ArgoCD ConfigMaps — расширение кастомными ключами
     # Каждая переменная независима: можно переопределить только нужную в hosts-extra.yaml
