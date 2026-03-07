@@ -1,82 +1,78 @@
-{{- if not .Values.ingress.httpEnabled }}
 # =============================================================================
-# VAULT CERTIFICATE
+# CERTIFICATE FOR MINIO API (cert-manager)
 # =============================================================================
-
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.ingress.secretName }}
+  name: {{ .Values.minio.apiSecretName }}
   namespace: {{ .Values.namespace }}
 spec:
-  secretName: {{ .Values.ingress.secretName }}
+  secretName: {{ .Values.minio.apiSecretName }}
   dnsNames:
-    - {{ .Values.ingress.domain | quote }}
+    - {{ .Values.minio.apiDomain }}
   issuerRef:
-    name: {{ .Values.ingress.clusterIssuer }}
+    name: {{ .Values.minio.clusterIssuer }}
     kind: ClusterIssuer
-
 ---
+{{- if not .Values.minio.httpEnabled }}
 # =============================================================================
-# VAULT INGRESS (HTTPS)
+# INGRESS FOR MINIO API — HTTPS (Traefik)
 # =============================================================================
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-vault-https
+  name: ingress-gitlab-minio-api-https
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.ingress.ingressClass | quote }}
-    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.ingress.entrypoint | quote }}
+    kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.minio.entrypoint }}"
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.ingress.vpnOnlyEnabled }}
+    {{- if .Values.minio.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.ingressClass }}
+  ingressClassName: {{ .Values.minio.ingressClass }}
   tls:
     - hosts:
-        - {{ .Values.ingress.domain }}
-      secretName: {{ .Values.ingress.secretName }}
+        - {{ .Values.minio.apiDomain }}
+      secretName: {{ .Values.minio.apiSecretName }}
   rules:
-    - host: {{ .Values.ingress.domain }}
+    - host: {{ .Values.minio.apiDomain }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: vault
+                name: gitlab-minio
                 port:
-                  number: 8200
+                  number: 9000
 {{- else }}
 # =============================================================================
-# VAULT INGRESS (HTTP)
+# INGRESS FOR MINIO API — HTTP (Traefik)
 # =============================================================================
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-vault-http
+  name: ingress-gitlab-minio-api-http
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.ingress.ingressClass | quote }}
-    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.ingress.entrypoint | quote }}
-    {{- if .Values.ingress.vpnOnlyEnabled }}
+    kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "web"
+    {{- if .Values.minio.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.ingressClass }}
+  ingressClassName: {{ .Values.minio.ingressClass }}
   rules:
-    - host: {{ .Values.ingress.domain }}
+    - host: {{ .Values.minio.apiDomain }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: vault
+                name: gitlab-minio
                 port:
-                  number: 8200
+                  number: 9000
 {{- end }}

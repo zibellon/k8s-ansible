@@ -138,25 +138,25 @@
 
     - name: "[argocd-git-ops-verify] Get Application status"
       command: >
-        kubectl get application {{ item.name }}
+        kubectl get application {{ item.1.name }}
         -n {{ argocd_namespace }}
         -o jsonpath='{.status.sync.status} / {.status.health.status}'
       register: argocd_app_status
       changed_when: false
       failed_when: false
-      loop: "{{ argocd_git_ops_apps }}"
+      loop: "{{ argocd_git_ops_apps | subelements('apps') }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.1.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
 
     - name: "[argocd-git-ops-verify] Show Application status"
       debug:
-        msg: "{{ item.item.name }}: {{ item.stdout }}"
+        msg: "{{ item.item.1.name }}: {{ item.stdout }}"
       loop: "{{ argocd_app_status.results }}"
       loop_control:
-        label: "{{ item.item.name }}"
+        label: "{{ item.item.1.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

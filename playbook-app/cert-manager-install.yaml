@@ -147,6 +147,30 @@
     # STEP 3: CERT-MANAGER/POST (ClusterIssuer)
     # =========================================================================
 
+    - name: "[cert-manager-post] Validate ClusterIssuer names are unique"
+      assert:
+        that:
+          - cert_manager_cluster_issuers | map(attribute='name') | list | count ==
+            cert_manager_cluster_issuers | map(attribute='name') | unique | list | count
+        fail_msg: >-
+          cert_manager_cluster_issuers contains duplicate names:
+          {{ cert_manager_cluster_issuers | map(attribute='name') | list }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[cert-manager-post] Validate ClusterIssuer privateKeySecretNames are unique"
+      assert:
+        that:
+          - cert_manager_cluster_issuers | map(attribute='privateKeySecretName') | list | count ==
+            cert_manager_cluster_issuers | map(attribute='privateKeySecretName') | unique | list | count
+        fail_msg: >-
+          cert_manager_cluster_issuers contains duplicate privateKeySecretNames:
+          {{ cert_manager_cluster_issuers | map(attribute='privateKeySecretName') | list }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
     - name: "[cert-manager-post] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -161,11 +185,8 @@
         dest: "{{ remote_charts_dir }}/cert-manager/post/values-override.yaml"
         mode: "0644"
         content: |
-          clusterIssuer:
-            name: {{ cert_manager_cluster_issuer }}
-            email: {{ cert_manager_acme_email }}
-            ingressClass: {{ traefik_ingress_class }}
-            traefikEntrypoint: {{ traefik_web_entrypoint }}
+          clusterIssuers:
+          {{ cert_manager_cluster_issuers | to_nice_yaml | indent(2, true) }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [post]

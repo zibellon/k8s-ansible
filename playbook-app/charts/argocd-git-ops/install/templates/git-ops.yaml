@@ -16,24 +16,26 @@ spec:
     {{- toYaml (.project.clusterResourceBlacklist | default (list (dict "group" "*" "kind" "*"))) | nindent 4 }}
   namespaceResourceBlacklist:
     {{- toYaml (.project.namespaceResourceBlacklist | default (list (dict "group" "argoproj.io" "kind" "AppProject") (dict "group" "argoproj.io" "kind" "Application"))) | nindent 4 }}
-
+{{- $projectName := .name }}
+{{- $namespace := $.Values.namespace }}
+{{- range .apps }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: {{ .name }}
-  namespace: "{{ $.Values.namespace }}"
+  namespace: "{{ $namespace }}"
   finalizers:
     - resources-finalizer.argocd.argoproj.io/background
 spec:
-  project: {{ .name }}
-  revisionHistoryLimit: {{ .app.revisionHistoryLimit | default 3 }}
+  project: {{ $projectName }}
+  revisionHistoryLimit: {{ .revisionHistoryLimit | default 3 }}
   source:
-    repoURL: "{{ .app.repoURL }}"
-    targetRevision: "{{ .app.targetRevision }}"
-    path: "{{ .app.path }}"
+    repoURL: "{{ .repoURL }}"
+    targetRevision: "{{ .targetRevision }}"
+    path: "{{ .path }}"
   destination:
-    server: "{{ .app.destinationServer }}"
+    server: "{{ .destinationServer }}"
   syncPolicy:
     automated:
       prune: true
@@ -49,4 +51,5 @@ spec:
         duration: {{ .retry.backoff.duration }}
         factor: {{ .retry.backoff.factor }}
         maxDuration: {{ .retry.backoff.maxDuration }}
+{{- end }}
 {{- end }}

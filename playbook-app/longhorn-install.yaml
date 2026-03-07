@@ -44,6 +44,53 @@
     # STEP 1: LONGHORN/PRE (NetworkPolicies, ESO)
     # =========================================================================
 
+    - name: "[longhorn-install-init] Resolve Longhorn UI ClusterIssuer"
+      set_fact:
+        _longhorn_ui_issuer: >-
+          {{ cert_manager_cluster_issuers
+             | selectattr('name', 'equalto', longhorn_ui_cluster_issuer_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[longhorn-install-init] Validate Longhorn UI ClusterIssuer exists"
+      assert:
+        that: _longhorn_ui_issuer is not none
+        fail_msg: >-
+          longhorn_ui_cluster_issuer_name='{{ longhorn_ui_cluster_issuer_name }}'
+          not found in cert_manager_cluster_issuers
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[longhorn-install-init] Resolve ACME solver by ingressClass"
+      set_fact:
+        _longhorn_ui_solver: >-
+          {{ _longhorn_ui_issuer.solvers
+             | selectattr('ingressClass', 'equalto', longhorn_ui_ingress_class_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[longhorn-install-init] Validate ACME solver exists"
+      assert:
+        that: _longhorn_ui_solver is not none
+        fail_msg: >-
+          No solver with ingressClass='{{ longhorn_ui_ingress_class_name }}'
+          found in ClusterIssuer '{{ longhorn_ui_cluster_issuer_name }}'
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[longhorn-install-init] Set ACME solver pod labels"
+      set_fact:
+        longhorn_acme_solver_pod_labels: "{{ _longhorn_ui_solver.podLabels }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
     - name: "[longhorn-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -75,6 +122,7 @@
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
             externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
+          acmeSolverLabels: {{ longhorn_acme_solver_pod_labels | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [pre]
@@ -224,12 +272,13 @@
         content: |
           namespace: {{ longhorn_namespace }}
           ingress:
-            ingressClass: {{ traefik_ingress_class }}
+            ingressClass: {{ longhorn_ui_ingress_class_name }}
             entrypoint: {{ traefik_websecure_entrypoint }}
             domain: {{ longhorn_ui_domain }}
-            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            clusterIssuer: {{ longhorn_ui_cluster_issuer_name }}
             secretName: {{ longhorn_ui_https_secret_name }}
             vpnOnlyEnabled: {{ longhorn_ui_vpn_only_enabled }}
+            httpEnabled: {{ longhorn_ui_http_enabled }}
           traefik:
             namespace: {{ traefik_namespace }}
           azList: {{ longhorn_az_list | to_json }}

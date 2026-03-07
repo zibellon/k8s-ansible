@@ -1,30 +1,35 @@
 # =============================================================================
-# CLUSTER ISSUER FOR LET'S ENCRYPT
+# CLUSTER ISSUERS FOR LET'S ENCRYPT
 # =============================================================================
 
+{{- range .Values.clusterIssuers }}
+---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: {{ .Values.clusterIssuer.name }}
+  name: {{ .name }}
 spec:
   acme:
-    server: {{ .Values.clusterIssuer.server }}
-    email: {{ .Values.clusterIssuer.email }}
+    server: {{ .server }}
+    email: {{ .email }}
     privateKeySecretRef:
-      name: {{ .Values.clusterIssuer.privateKeySecretName }}
+      name: {{ .privateKeySecretName }}
     solvers:
+      {{- range .solvers }}
       - http01:
           ingress:
-            ingressClassName: {{ .Values.clusterIssuer.ingressClass }}
+            ingressClassName: {{ .ingressClass }}
             ingressTemplate:
               metadata:
                 annotations:
-                  "kubernetes.io/ingress.class": "{{ .Values.clusterIssuer.ingressClass }}"
-                  "traefik.ingress.kubernetes.io/router.entrypoints": "{{ .Values.clusterIssuer.traefikEntrypoint }}"
+                  {{- range $k, $v := .ingressAnnotations }}
+                  {{ $k | quote }}: {{ $v | quote }}
+                  {{- end }}
             podTemplate:
               metadata:
                 labels:
-                  app.kubernetes.io/name: acme-solver
-                  app.kubernetes.io/instance: traefik-master
-                  app.kubernetes.io/component: acme-http01-solver
-                  app.kubernetes.io/managed-by: cert-manager
+                  {{- range $k, $v := .podLabels }}
+                  {{ $k }}: {{ $v }}
+                  {{- end }}
+      {{- end }}
+{{- end }}

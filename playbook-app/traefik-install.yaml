@@ -40,6 +40,53 @@
       run_once: true
       tags: [always]
 
+    - name: "[traefik-init] Resolve dashboard ClusterIssuer"
+      set_fact:
+        _traefik_dashboard_issuer: >-
+          {{ cert_manager_cluster_issuers
+             | selectattr('name', 'equalto', traefik_dashboard_cluster_issuer_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[traefik-init] Validate dashboard ClusterIssuer exists"
+      assert:
+        that: _traefik_dashboard_issuer is not none
+        fail_msg: >-
+          traefik_dashboard_cluster_issuer_name='{{ traefik_dashboard_cluster_issuer_name }}'
+          not found in cert_manager_cluster_issuers
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[traefik-init] Resolve ACME solver by ingressClass"
+      set_fact:
+        _traefik_dashboard_solver: >-
+          {{ _traefik_dashboard_issuer.solvers
+             | selectattr('ingressClass', 'equalto', traefik_dashboard_ingress_class_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[traefik-init] Validate ACME solver exists"
+      assert:
+        that: _traefik_dashboard_solver is not none
+        fail_msg: >-
+          No solver with ingressClass='{{ traefik_dashboard_ingress_class_name }}'
+          found in ClusterIssuer '{{ traefik_dashboard_cluster_issuer_name }}'
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[traefik-init] Set ACME solver pod labels"
+      set_fact:
+        traefik_acme_solver_pod_labels: "{{ _traefik_dashboard_solver.podLabels }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
     # =========================================================================
     # STEP 1: TRAEFIK/PRE (NetworkPolicies, ESO)
     # =========================================================================
@@ -73,6 +120,7 @@
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
             externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
+          acmeSolverLabels: {{ traefik_acme_solver_pod_labels | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [pre]
@@ -338,7 +386,7 @@
         mode: "0644"
         content: |
           namespace: {{ traefik_namespace }}
-          ingressClass: {{ traefik_ingress_class }}
+          ingressClass: {{ traefik_dashboard_ingress_class_name }}
           entryPoints:
             web: {{ traefik_web_entrypoint }}
             websecure: {{ traefik_websecure_entrypoint }}
@@ -347,8 +395,9 @@
             serviceName: {{ traefik_dashboard_service_name }}
             domain: {{ traefik_dashboard_domain }}
             secretName: {{ traefik_dashboard_https_secret_name }}
-            clusterIssuer: {{ cert_manager_cluster_issuer }}
+            clusterIssuer: {{ traefik_dashboard_cluster_issuer_name }}
             vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
+            httpEnabled: {{ traefik_dashboard_http_enabled }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [post]

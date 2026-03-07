@@ -1,82 +1,78 @@
-{{- if not .Values.ingress.httpEnabled }}
 # =============================================================================
-# VAULT CERTIFICATE
+# CERTIFICATE FOR GITLAB PAGES (cert-manager)
 # =============================================================================
-
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.ingress.secretName }}
+  name: {{ .Values.gitlab.pagesSecretName }}
   namespace: {{ .Values.namespace }}
 spec:
-  secretName: {{ .Values.ingress.secretName }}
+  secretName: {{ .Values.gitlab.pagesSecretName }}
   dnsNames:
-    - {{ .Values.ingress.domain | quote }}
+    - {{ .Values.gitlab.pagesDomain }}
   issuerRef:
-    name: {{ .Values.ingress.clusterIssuer }}
+    name: {{ .Values.gitlab.clusterIssuer }}
     kind: ClusterIssuer
-
 ---
+{{- if not .Values.gitlab.httpEnabled }}
 # =============================================================================
-# VAULT INGRESS (HTTPS)
+# INGRESS FOR GITLAB PAGES — HTTPS (Traefik)
 # =============================================================================
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-vault-https
+  name: ingress-gitlab-pages-https
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.ingress.ingressClass | quote }}
-    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.ingress.entrypoint | quote }}
+    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.gitlab.entrypoint }}"
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.ingress.vpnOnlyEnabled }}
+    {{- if .Values.gitlab.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.ingressClass }}
+  ingressClassName: {{ .Values.gitlab.ingressClass }}
   tls:
     - hosts:
-        - {{ .Values.ingress.domain }}
-      secretName: {{ .Values.ingress.secretName }}
+        - {{ .Values.gitlab.pagesDomain }}
+      secretName: {{ .Values.gitlab.pagesSecretName }}
   rules:
-    - host: {{ .Values.ingress.domain }}
+    - host: {{ .Values.gitlab.pagesDomain }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: vault
+                name: gitlab-gitlab-pages
                 port:
-                  number: 8200
+                  number: 8090
 {{- else }}
 # =============================================================================
-# VAULT INGRESS (HTTP)
+# INGRESS FOR GITLAB PAGES — HTTP (Traefik)
 # =============================================================================
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-vault-http
+  name: ingress-gitlab-pages-http
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.ingress.ingressClass | quote }}
-    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.ingress.entrypoint | quote }}
-    {{- if .Values.ingress.vpnOnlyEnabled }}
+    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "web"
+    {{- if .Values.gitlab.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.ingressClass }}
+  ingressClassName: {{ .Values.gitlab.ingressClass }}
   rules:
-    - host: {{ .Values.ingress.domain }}
+    - host: {{ .Values.gitlab.pagesDomain }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: vault
+                name: gitlab-gitlab-pages
                 port:
-                  number: 8200
+                  number: 8090
 {{- end }}

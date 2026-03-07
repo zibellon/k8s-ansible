@@ -185,7 +185,7 @@
 # ---VAULT + ESO
 # ---------
 ## Есть список компонентов, которые используют VAULT + ESO
-## `traefik`, `haproxy`,  `longhorn`, `vault`, `gitlab`, `argocd`
+## `traefik`, `haproxy`,  `longhorn`, `vault`, `gitlab`, `argocd`, `argocd-git-ops`
 ## При удалении компонента через `kubectl delete ...` - удаляются ресурсы k8s
 ## НО: записи в vault не удаляются. Их нужно удалять руками
 ## Проблемная ситуация:
@@ -237,6 +237,8 @@
 ## cert-manager. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/cert-manager-install.yaml`
+## ---
+## Важно_1: Сейчас, через этот ansible - можно настроить только ClusterIssuer (Переменная: cert_manager_cluster_issuers)
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
@@ -392,13 +394,13 @@
 ## `--tags pre, install, post`
 ## ---
 ##
-- установка + конфигурация. Два отдельных playbook
+- установка + конфигурация + синхронизация политик. Два отдельных playbook
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
-  - Ставится: vault-0
-- конфигурация (unseal-keys, сохранить на manager и так далее)
+  - Ставится: vault-0 (StatefulSet)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-configure.yaml`
-- Синхронизация политик
+  - конфигурация (unseal-keys, сохранить на manager и так далее)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
+  - Синхронизация политик
 - обновление (версия, конфиг)
   - Устанавливается через официальный HELM, но через исходники с Github
   - Их нужно скачать и нужные положить в директорию с установкой vault (описано выше)
@@ -413,8 +415,28 @@
 ## План, при добавлении чего-то в VAULT
 ## 1. добавить в `hosts-extra.yaml` новые данные (policy + role + sa + namespoace + secret_path)
 ## 2. Вызвать синхронизацию
-## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
+## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: Namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
 ## ВАЖНО: синхронизация полностью синхронизирует структуру в VAULT (добавить, обновить, удалить)
+## ---
+## Логика синхронизации политик (`vault-policy-sync.yaml`)
+##
+## - Pre-check — проверка таргет-хоста
+## - Vault ready — проверяет, что Vault не sealed (`vault status`)
+## - Merge + conflict check (`tasks-eso-merge.yaml`):
+##   - Per-component (vault/traefik/haproxy/longhorn/gitlab/argocd/argocd-git-ops):
+##     - Проверяет допустимый `type` у секретов из _extra (fail если невалидный)
+##     - Проверяет уникальность `external_secret_name` и `target_secret_name`:
+##       если имя из hosts-extra.yaml уже есть в base (hosts.yaml) — fail
+##     - Мержит base + extra → `_merged`
+##   - Derive: из всех `_merged` генерирует `_derived_policies` и `_derived_roles`
+##   - Policy/role conflict check: имена из `vault_policies_extra` / `vault_roles_extra`
+##     не должны пересекаться с derived + manual (hosts.yaml) — иначе fail
+##   - Финальный merge → `vault_policies_final` / `vault_roles_final`
+## - Drift cleanup (policies) — удаляет из Vault политики, которых нет в финальном списке (кроме default/root)
+## - Sync policies — .hcl файл на сервер → kubectl cp в контейнер → `vault policy write`
+## - Drift cleanup (roles) — удаляет из Vault роли, которых нет в финальном списке
+## - Sync roles — `vault write auth/kubernetes/role/...` (SA + namespace + policies)
+## - Verification — выводит итоговые списки из Vault
 ## ---
 
 ## gitlab. Официальный helm
@@ -437,8 +459,8 @@
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-install.yaml`
   - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
-- конфигурация. Отдельный playbook
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-configure.yaml`
+  - конфигурация. Отдельный playbook
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -456,11 +478,11 @@
 ## `--tags pre, install, post`
 ## ---
 ##
-- установка
+- установка + конфигурация
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-install.yaml`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc)
-- Конфигурация
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-configure.yaml`
+  - Конфигурация
 - обновление (версия)
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на несколько файлов
@@ -489,7 +511,7 @@
 ## Важно_2: Создать репозиторий + добавить к нему deploy-keys (которые были созданы в пункте выше)
 ## Эти два шага нужно выполнять в `РУЧНОМ РЕЖИМЕ`
 ## ---
-## Важно_3: столько ESO для Argocd, сколько нужно разных репозиториев. Не ключей - а именно репозиториев
+## Важно_3: Столько ESO для Argocd, сколько нужно разных репозиториев. Не ключей - а именно репозиториев
 ## В теории и на практике - можно создать хоть 10 k8s.secret с одинаковым repoUrl. В этом случае - argocd возьмет тот, который первый вернется в ответе от kube-api
 ## чтобы избежать такой путаницы: 1 (repo_url + ESO.secret + vault.secret + k8s.secret)
 ## ---

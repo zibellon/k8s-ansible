@@ -24,6 +24,14 @@
         label_name: "metrics-server-install-pre-check"
       tags: [always]
 
+    - name: "[metrics-server-install-pre-check] Forbid kube-system namespace"
+      assert:
+        that: metrics_server_namespace != "kube-system"
+        fail_msg: "metrics_server_namespace must not be 'kube-system'. Got: '{{ metrics_server_namespace }}'"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
     # =========================================================================
     # STEP 1: METRICS-SERVER/PRE (NetworkPolicies)
     # =========================================================================
@@ -51,6 +59,7 @@
       command: >
         helm upgrade --install metrics-server-pre {{ remote_charts_dir }}/metrics-server/pre
         --namespace {{ metrics_server_namespace }}
+        --create-namespace
         --values {{ remote_charts_dir }}/metrics-server/pre/values-override.yaml
         --cleanup-on-fail
         --atomic
@@ -102,6 +111,7 @@
       command: >
         helm upgrade --install metrics-server metrics-server/metrics-server
         --namespace {{ metrics_server_namespace }}
+        --create-namespace
         --version {{ metrics_server_version }}
         --values {{ remote_charts_dir }}/metrics-server/install/values-override.yaml
         --cleanup-on-fail

@@ -1,29 +1,27 @@
 # =============================================================================
-# CERTIFICATE FOR GITLAB (cert-manager)
+# CERTIFICATE FOR GITLAB UI (cert-manager)
 # =============================================================================
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.gitlab.secretName }}
+  name: {{ .Values.gitlab.uiSecretName }}
   namespace: {{ .Values.namespace }}
 spec:
-  secretName: {{ .Values.gitlab.secretName }}
+  secretName: {{ .Values.gitlab.uiSecretName }}
   dnsNames:
     - {{ .Values.gitlab.domain }}
-    - {{ .Values.gitlab.registryDomain }}
-    - {{ .Values.gitlab.pagesDomain }}
   issuerRef:
     name: {{ .Values.gitlab.clusterIssuer }}
     kind: ClusterIssuer
 ---
+{{- if not .Values.gitlab.httpEnabled }}
 # =============================================================================
-# INGRESS FOR GITLAB (Traefik)
-# Routes: gitlab, registry, pages -> official GitLab Helm chart services
+# INGRESS FOR GITLAB UI — HTTPS (Traefik)
 # =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-gitlab-https
+  name: ingress-gitlab-ui-https
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
@@ -37,11 +35,8 @@ spec:
   tls:
     - hosts:
         - {{ .Values.gitlab.domain }}
-        - {{ .Values.gitlab.registryDomain }}
-        - {{ .Values.gitlab.pagesDomain }}
-      secretName: {{ .Values.gitlab.secretName }}
+      secretName: {{ .Values.gitlab.uiSecretName }}
   rules:
-    # GitLab main UI and API
     - host: {{ .Values.gitlab.domain }}
       http:
         paths:
@@ -52,25 +47,32 @@ spec:
                 name: gitlab-webservice-default
                 port:
                   number: 8181
-    # Container Registry
-    - host: {{ .Values.gitlab.registryDomain }}
+{{- else }}
+# =============================================================================
+# INGRESS FOR GITLAB UI — HTTP (Traefik)
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-gitlab-ui-http
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "web"
+    {{- if .Values.gitlab.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.gitlab.ingressClass }}
+  rules:
+    - host: {{ .Values.gitlab.domain }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: gitlab-registry
+                name: gitlab-webservice-default
                 port:
-                  number: 5000
-    # GitLab Pages
-    - host: {{ .Values.gitlab.pagesDomain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gitlab-gitlab-pages
-                port:
-                  number: 8090
+                  number: 8181
+{{- end }}

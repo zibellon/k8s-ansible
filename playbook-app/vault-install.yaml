@@ -46,6 +46,53 @@
     # STEP 1: INSTALL PRE (NetworkPolicies, ESO)
     # =========================================================================
 
+    - name: "[vault-install-init] Resolve Vault UI ClusterIssuer"
+      set_fact:
+        _vault_ui_issuer: >-
+          {{ cert_manager_cluster_issuers
+             | selectattr('name', 'equalto', vault_ui_cluster_issuer_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[vault-install-init] Validate Vault UI ClusterIssuer exists"
+      assert:
+        that: _vault_ui_issuer is not none
+        fail_msg: >-
+          vault_ui_cluster_issuer_name='{{ vault_ui_cluster_issuer_name }}'
+          not found in cert_manager_cluster_issuers
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[vault-install-init] Resolve ACME solver by ingressClass"
+      set_fact:
+        _vault_ui_solver: >-
+          {{ _vault_ui_issuer.solvers
+             | selectattr('ingressClass', 'equalto', vault_ui_ingress_class_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[vault-install-init] Validate ACME solver exists"
+      assert:
+        that: _vault_ui_solver is not none
+        fail_msg: >-
+          No solver with ingressClass='{{ vault_ui_ingress_class_name }}'
+          found in ClusterIssuer '{{ vault_ui_cluster_issuer_name }}'
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[vault-install-init] Set ACME solver pod labels"
+      set_fact:
+        vault_acme_solver_pod_labels: "{{ _vault_ui_solver.podLabels }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
     - name: "[vault-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -77,6 +124,7 @@
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
             externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
+          acmeSolverLabels: {{ vault_acme_solver_pod_labels | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [pre]
@@ -197,12 +245,13 @@
         content: |
           namespace: {{ vault_namespace }}
           ingress:
-            ingressClass: {{ traefik_ingress_class }}
+            ingressClass: {{ vault_ui_ingress_class_name }}
             entrypoint: {{ traefik_websecure_entrypoint }}
-            domain: {{ vault_domain }}
-            clusterIssuer: {{ cert_manager_cluster_issuer }}
-            secretName: {{ vault_https_secret_name }}
-            vpnOnlyEnabled: {{ vault_vpn_only_enabled }}
+            domain: {{ vault_ui_domain }}
+            clusterIssuer: {{ vault_ui_cluster_issuer_name }}
+            secretName: {{ vault_ui_https_secret_name }}
+            vpnOnlyEnabled: {{ vault_ui_vpn_only_enabled }}
+            httpEnabled: {{ vault_ui_http_enabled }}
           traefik:
             namespace: {{ traefik_namespace }}
           autoUnseal:

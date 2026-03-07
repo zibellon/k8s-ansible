@@ -254,13 +254,16 @@ all:
     # ------
     # Cilium
     # ------
-    cilium_version: "1.18.4"
+    cilium_version: "1.19.1"
     cilium_namespace: "cilium"
     cilium_mask_size: 21 # Cilium IPAM settings (pods per node)
     cilium_operator_replicas: 1 # number of replicas for cilium-operator (should be 1 for single-node cluster)
     cilium_hubble_ui_domain: "cilium-hubble-ui-k8s-v2.drawapp.ru" # Hubble UI domain
     cilium_hubble_ui_vpn_only_enabled: false
-    cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui-domain-com"
+    cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui"
+    cilium_hubble_ui_http_enabled: false
+    cilium_hubble_ui_cluster_issuer_name: "acme-prod"
+    cilium_hubble_ui_ingress_class_name: "traefik-lb"
     cilium_helm_timeout: "5m"
     cilium_config_helm_timeout: "2m"
     cilium_post_config_helm_timeout: "2m"
@@ -271,7 +274,7 @@ all:
     # Metrics Server
     # ------
     metrics_server_version: "3.13.0"
-    metrics_server_namespace: "kube-system"
+    metrics_server_namespace: "metrics-server"
     metrics_server_helm_timeout: "5m"
     metrics_server_rollout_timeout: "120s"
 
@@ -280,11 +283,24 @@ all:
     # ------
     cert_manager_version: "1.19.2"
     cert_manager_namespace: "cert-manager"
-    cert_manager_acme_email: "some-email-123@gmail.com"
-    cert_manager_cluster_issuer: "cluster-issuer-acme-prod"
     cert_manager_helm_timeout: "5m"
     cert_manager_config_helm_timeout: "2m"
     cert_manager_rollout_timeout: "180s"
+    cert_manager_cluster_issuers:
+      - name: "acme-prod"
+        email: "some-email-123@gmail.com"
+        server: "https://acme-v02.api.letsencrypt.org/directory"
+        privateKeySecretName: "cluster-issuer-acme-prod-account-key"
+        solvers:
+          - ingressClass: "traefik-lb"
+            ingressAnnotations:
+              "kubernetes.io/ingress.class": "traefik-lb"
+              "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podLabels:
+              app.kubernetes.io/name: acme-solver
+              app.kubernetes.io/instance: traefik-lb
+              app.kubernetes.io/component: acme-http01-solver
+              app.kubernetes.io/managed-by: cert-manager
 
     # ------
     # External Secrets Operator
@@ -293,19 +309,13 @@ all:
     external_secrets_version: "v1.2.1"
     external_secrets_helm_timeout: "5m"
     external_secrets_rollout_timeout: "300s"
-
-    # ---------
     # ESO controller flags
-    # ---------
     eso_controller_config:
       client_burst: 200
       concurrent: 10
       enable_managed_secrets_caching: false
       store_requeue_interval: "1m0s"
-
-    # ---------
     # ESO resources global config (SecretStore + ExternalSecret)
-    # ---------
     eso_resources_config:
       secret_store_refresh_interval: 60   # int (секунды); SecretStoreSpec.refreshInterval
       external_secret_refresh_interval: "1m"  # string (Golang Duration); ExternalSecretSpec.refreshInterval (default, per-secret override через refresh_interval)
@@ -316,15 +326,18 @@ all:
     # ------
     traefik_chart_version: "38.0.2"
     traefik_version: "v3.6.2"
-    traefik_namespace: "traefik-master"
-    traefik_daemonset_name: "traefik-master"
-    traefik_ingress_class: "traefik-master-lb"
+    traefik_namespace: "traefik-lb"
+    traefik_daemonset_name: "traefik-lb"
+    traefik_ingress_class: "traefik-lb"
     traefik_web_entrypoint: "web" # WARNING: DO NOT CHANGE - hardcoded in helm chart
     traefik_websecure_entrypoint: "websecure" # WARNING: DO NOT CHANGE - hardcoded in helm chart
     traefik_dashboard_domain: "traefik-dashboard-k8s-v2.drawapp.ru"
     traefik_dashboard_vpn_only_enabled: false
-    traefik_dashboard_https_secret_name: "cert-traefik-dashboard-domain-com"
+    traefik_dashboard_https_secret_name: "cert-traefik-dashboard"
     traefik_dashboard_service_name: "traefik-dashboard"
+    traefik_dashboard_http_enabled: false
+    traefik_dashboard_cluster_issuer_name: "acme-prod"
+    traefik_dashboard_ingress_class_name: "traefik-lb"
     traefik_helm_timeout: "5m"
     traefik_rollout_timeout: "300s"
 
@@ -332,9 +345,9 @@ all:
     # HAProxy (Ingress Controller)
     # ------
     haproxy_chart_version: "1.44.0"
-    haproxy_namespace: "haproxy-master"
-    haproxy_daemonset_name: "haproxy-master"
-    haproxy_ingress_class: "haproxy-master-lb"
+    haproxy_namespace: "haproxy-lb"
+    haproxy_daemonset_name: "haproxy-lb"
+    haproxy_ingress_class: "haproxy-lb"
     haproxy_helm_timeout: "5m"
     haproxy_config_helm_timeout: "2m"
     haproxy_rollout_timeout: "300s"
@@ -371,7 +384,10 @@ all:
     longhorn_namespace: "longhorn-system" # DO NOT CHANGE
     longhorn_ui_domain: "longhorn-ui-k8s-v2.drawapp.ru"
     longhorn_ui_vpn_only_enabled: false
-    longhorn_ui_https_secret_name: "cert-longhorn-ui-domain-com"
+    longhorn_ui_https_secret_name: "cert-longhorn-ui"
+    longhorn_ui_http_enabled: false
+    longhorn_ui_cluster_issuer_name: "acme-prod"
+    longhorn_ui_ingress_class_name: "traefik-lb"
     # Longhorn AZ list (Для каждой AZ создается свой набор StorageClass)
     # Эти az должны совпадать с az в разделе managers и workers (в нижней части файла hosts.yaml)
     # цель: все реплики одного volume должны быть в одной зоне (в рамках одного StorageClass)
@@ -401,11 +417,14 @@ all:
     # ------
     vault_namespace: "vault"
     vault_image_tag: "1.21.2"
-    vault_domain: "vault-k8s-v2.drawapp.ru"
-    vault_https_secret_name: "cert-vault-domain-com"
-    vault_vpn_only_enabled: false
+    vault_ui_domain: "vault-k8s-v2.drawapp.ru"
+    vault_ui_https_secret_name: "cert-vault-ui"
+    vault_ui_vpn_only_enabled: false
+    vault_ui_http_enabled: false
+    vault_ui_cluster_issuer_name: "acme-prod"
+    vault_ui_ingress_class_name: "traefik-lb"
     vault_storage_class: "lh-major-single-best-effort"
-    vault_storage_size: "1Gi"
+    vault_storage_size: "2Gi"
     # Vault unseal
     vault_key_shares: 3
     vault_key_threshold: 2
@@ -419,6 +438,11 @@ all:
     vault_kv_engines:
       - "secret"
       - "eso-secret"
+    # ------
+    vault_helm_timeout: "5m"
+    vault_config_helm_timeout: "2m"
+    vault_rollout_timeout: "300s"
+    
     # ---------
     # ESO VAULT INTEGRATIONS (per-component, Single Source of Truth)
     # Каждый объект = 1 NS + 1 SA + 1 SecretStore + N ExternalSecrets
@@ -446,7 +470,7 @@ all:
     # Traefik
     # ---------
     eso_vault_integration_traefik:
-      namespace: "traefik-master"
+      namespace: "traefik-lb"
       sa_name: "eso-traefik"
       role_name: "eso-traefik"
       secret_store_name: "eso-vault-traefik"
@@ -457,7 +481,7 @@ all:
     # HAProxy
     # ---------
     eso_vault_integration_haproxy:
-      namespace: "haproxy-master"
+      namespace: "haproxy-lb"
       sa_name: "eso-haproxy"
       role_name: "eso-haproxy"
       secret_store_name: "eso-vault-haproxy"
@@ -608,28 +632,29 @@ all:
           - vault-admin
 
     # ------
-    vault_helm_timeout: "5m"
-    vault_config_helm_timeout: "2m"
-    vault_rollout_timeout: "300s"
-
-    # ------
     # GitLab (Production Helm)
     # ------
     gitlab_namespace: "gitlab"
     gitlab_chart_version: "8.11.8"  # GitLab 17.11
     # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
     # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
-    gitlab_base_domain: "gitlab-k8s-v2.drawapp.ru"
-    gitlab_domain: "gitlab-k8s-v2.drawapp.ru"
-    gitlab_registry_domain: "gitlab-registry-k8s-v2.drawapp.ru"
-    gitlab_pages_domain: "gitlab-pages-k8s-v2.drawapp.ru"
-    gitlab_minio_console_domain: "gitlab-minio-k8s-v2.drawapp.ru"
-    gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
-    gitlab_minio_secret_name: "cert-gitlab-minio-domain-com"
     gitlab_ssh_port_external: 3714
-
-    # GitLab Ingress settings (custom ingress via post chart)
-    gitlab_https_secret_name: "cert-gitlab-v2-domain-com"
+    gitlab_base_domain: "gitlab-k8s-v2.drawapp.ru"
+    gitlab_ui_domain: "gitlab-k8s-v2.drawapp.ru"
+    gitlab_ui_https_secret_name: "cert-gitlab-ui"
+    gitlab_registry_domain: "gitlab-registry-k8s-v2.drawapp.ru"
+    gitlab_registry_https_secret_name: "cert-gitlab-registry"
+    gitlab_pages_domain: "gitlab-pages-k8s-v2.drawapp.ru"
+    gitlab_pages_https_secret_name: "cert-gitlab-pages"
+    gitlab_minio_console_domain: "gitlab-minio-k8s-v2.drawapp.ru"
+    gitlab_minio_console_https_secret_name: "cert-gitlab-minio-console"
+    gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
+    gitlab_minio_api_https_secret_name: "cert-gitlab-minio-api"
+    # ---
+    gitlab_cluster_issuer_name: "acme-prod"
+    gitlab_ingress_class_name: "traefik-lb"
+    gitlab_http_enabled: false
+    gitlab_minio_http_enabled: false
     gitlab_vpn_only_enabled: false
 
     # GitLab PostgreSQL
@@ -649,7 +674,7 @@ all:
     gitlab_minio_storage_size: "2Gi"
 
     # GitLab MinIO S3 connection settings (used by ESO template for gitlab_minio_connection secret)
-    gitlab_minio_s3_endpoint: "http://svc-gitlab-minio:9000"
+    gitlab_minio_s3_endpoint: "http://gitlab-minio:9000"
     gitlab_minio_s3_region: "us-east-1"
     gitlab_minio_s3_path_style: true
 
@@ -680,9 +705,13 @@ all:
     # ------
     argocd_namespace: "argocd" # DO NOT CHANGE - hardcoded in ClusterRoleBindings
     argocd_ui_domain: "argocd-ui-k8s-v2.drawapp.ru"
+    argocd_ui_https_secret_name: "cert-argocd-ui"
     argocd_rpc_domain: "argocd-rpc-k8s-v2.drawapp.ru"
-    argocd_https_secret_name: "cert-argocd-domain-com"
+    argocd_rpc_https_secret_name: "cert-argocd-rpc"
     argocd_vpn_only_enabled: false
+    argocd_cluster_issuer_name: "acme-prod"
+    argocd_ingress_class_name: "traefik-lb"
+    argocd_http_enabled: false
     argocd_reconciliation_timeout: "30s"
     argocd_reconciliation_jitter: "10s"
     argocd_session_duration: "120h"
