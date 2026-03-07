@@ -480,6 +480,7 @@
 ## Установка всех необходимых ресурсов k8s - для git-ops паттерна
 ## Тут нет запуска компонентов (Deployment, CronJob и так далее)
 ## Это создание ресурсов k8s (AppProject, Application)
+## Есть дополнительный файл для `vault + ESO`
 ## ---
 ## Важно_1: сгенерировать ssh-keys + положить их в vault
 ## Чтобы argocd смог подключиться к репозиторию - нужен k8s.secret (который создается через ESO, который смотрит в VAULT)
@@ -495,17 +496,20 @@
 ## Важно_4: последовательность установки
 ## - настроить необходимые конфиги для argo-cd-git-ops (`hosts-extra.yaml`)
 ## - `argocd_git_ops_apps` (какие проекты и приложения нужно создать)
-## - `eso_vault_integration_argocd_extra` (секреты типа `git_ops_repo_pattern`/`git_ops_repo_direct`)
+## - `eso_vault_integration_argocd_git_ops_extra`
+## - секреты типа: `git_ops_repo_pattern`/`git_ops_repo_direct`/`git_ops_repo_direct_userpass`/`git_ops_repo_pattern_userpass`/`helm_repo`/`helm_repo_oci`
 ## - установить `argocd-git-ops` + проверить что все ресурсы установились корректно
 ## - Создать ssh-keys (private + public) + положить их в vault (ESO - создаст из них k8s.secret)
 ## - Создать репозитории (URL которых указаны в `argocd_git_ops_apps`) + добавить к ним deploy-keys (чтобы argocd - имел к ним доступ)
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
+## `--tags pre, install`
+## ---
 ##
 - установка + обновление (конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-git-ops-install.yaml`
-  - Ставится: argo-proj, argo-application
+  - Ставится: ESO + argo-proj, argo-application
 
 ## ---------
 ## ---Secrets-Rotation

@@ -16,10 +16,12 @@
 #   - eso_vault_integration_longhorn
 #   - eso_vault_integration_gitlab
 #   - eso_vault_integration_argocd
-#   - eso_vault_integration_vault_extra    (default: {secrets: []})
-#   - eso_vault_integration_longhorn_extra (default: {secrets: []})
-#   - eso_vault_integration_gitlab_extra   (default: {secrets: []})
-#   - eso_vault_integration_argocd_extra   (default: {secrets: []})
+#   - eso_vault_integration_argocd_git_ops
+#   - eso_vault_integration_vault_extra             (default: {secrets: []})
+#   - eso_vault_integration_longhorn_extra          (default: {secrets: []})
+#   - eso_vault_integration_gitlab_extra            (default: {secrets: []})
+#   - eso_vault_integration_argocd_extra            (default: {secrets: []})
+#   - eso_vault_integration_argocd_git_ops_extra    (default: {secrets: []})
 #   - vault_policies (array)
 #   - vault_roles    (array)
 #   - vault_policies_extra (array, optional)
@@ -30,6 +32,7 @@
 #   - eso_vault_integration_longhorn_merged
 #   - eso_vault_integration_gitlab_merged
 #   - eso_vault_integration_argocd_merged
+#   - eso_vault_integration_argocd_git_ops_merged
 #   - _derived_policies
 #   - _derived_roles
 #   - vault_policies_final
@@ -320,6 +323,60 @@
   run_once: true
   tags: [always]
 
+# --- ARGOCD GIT-OPS ---
+
+- name: "[eso-merge-argocd-git-ops] Validate type for eso_vault_integration_argocd_git_ops_extra secrets"
+  fail:
+    msg: >-
+      Secret '{{ item.external_secret_name }}' in eso_vault_integration_argocd_git_ops_extra
+      has invalid type '{{ item.type | default("MISSING") }}'.
+      Allowed types in hosts-extra.yaml for argocd-git-ops: "default", "git_ops_repo_pattern",
+      "git_ops_repo_direct", "git_ops_repo_pattern_userpass", "git_ops_repo_direct_userpass",
+      "helm_repo", "helm_repo_oci".
+  when: >-
+    (item.type | default('')) not in [
+      'default',
+      'git_ops_repo_pattern',
+      'git_ops_repo_direct',
+      'git_ops_repo_pattern_userpass',
+      'git_ops_repo_direct_userpass',
+      'helm_repo',
+      'helm_repo_oci'
+    ]
+  loop: "{{ eso_vault_integration_argocd_git_ops_extra.secrets | default([]) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-merge-argocd-git-ops] Detect secret conflicts in eso_vault_integration_argocd_git_ops_extra"
+  fail:
+    msg: >-
+      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_argocd_git_ops.secrets).
+      Поменяйте название в hosts-extra.yaml.
+  vars:
+    _base_names: >-
+      {{ eso_vault_integration_argocd_git_ops.secrets | map(attribute='external_secret_name') | list
+         + eso_vault_integration_argocd_git_ops.secrets | map(attribute='target_secret_name') | list }}
+  when: item in _base_names
+  loop: >-
+    {{ (eso_vault_integration_argocd_git_ops_extra.secrets | default([]))
+       | map(attribute='external_secret_name') | list
+       + (eso_vault_integration_argocd_git_ops_extra.secrets | default([]))
+       | map(attribute='target_secret_name') | list }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-merge-argocd-git-ops] Merge eso_vault_integration_argocd_git_ops + extra"
+  set_fact:
+    eso_vault_integration_argocd_git_ops_merged: >-
+      {{
+        eso_vault_integration_argocd_git_ops | combine({ 'secrets': eso_vault_integration_argocd_git_ops.secrets + (eso_vault_integration_argocd_git_ops_extra.secrets | default([])) })
+      }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 # -------------------------------------------------------------------------
 # STAGE 2: Build combined integrations list
 # -------------------------------------------------------------------------
@@ -333,6 +390,7 @@
       - "{{ eso_vault_integration_longhorn_merged }}"
       - "{{ eso_vault_integration_gitlab_merged }}"
       - "{{ eso_vault_integration_argocd_merged }}"
+      - "{{ eso_vault_integration_argocd_git_ops_merged }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -464,7 +522,7 @@
 - name: "[eso-merge] Show merge summary"
   debug:
     msg:
-      - "Merged integrations: vault={{ eso_vault_integration_vault_merged.secrets | length }} secrets, longhorn={{ eso_vault_integration_longhorn_merged.secrets | length }} secrets, gitlab={{ eso_vault_integration_gitlab_merged.secrets | length }} secrets, argocd={{ eso_vault_integration_argocd_merged.secrets | length }} secrets"
+      - "Merged integrations: vault={{ eso_vault_integration_vault_merged.secrets | length }} secrets, longhorn={{ eso_vault_integration_longhorn_merged.secrets | length }} secrets, gitlab={{ eso_vault_integration_gitlab_merged.secrets | length }} secrets, argocd={{ eso_vault_integration_argocd_merged.secrets | length }} secrets, argocd-git-ops={{ eso_vault_integration_argocd_git_ops_merged.secrets | length }} secrets"
       - "Derived: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
       - "Manual (vault_policies/vault_roles): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
       - "Extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"

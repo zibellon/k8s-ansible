@@ -1,15 +1,18 @@
 # =============================================================================
 # ARGOCD GIT-OPS SETUP
 # Prerequisites:
-#   - ArgoCD must be installed (argocd-install.yaml) — ESO resources already deployed
+#   - ArgoCD must be installed (argocd-install.yaml)
 #   - Vault must be installed and unsealed
 #   - Vault policies and roles must be synced (vault-policy-sync.yaml)
 #
 # This playbook:
+#   PRE:
+#     1. Install argocd-git-ops/pre: ESO resources (SA, SecretStore, ExternalSecrets)
+#        for git repo credentials (SA: eso-argocd-git-ops in namespace argocd)
 #   INSTALL:
-#     1. Install ArgoCD AppProject + Application for each entry in argocd_git_ops_apps
+#     2. Install ArgoCD AppProject + Application for each entry in argocd_git_ops_apps
 #   VERIFY:
-#     2. Show Application status
+#     3. Show Application status
 #
 # =============================================================================
 
@@ -24,6 +27,73 @@
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
         label_name: "argocd-git-ops-pre-check"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations and resolve argocd-git-ops config
+    # =========================================================================
+
+    - name: "[argocd-git-ops-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
+
+    - name: "[argocd-git-ops-init] Set argocd_git_ops_eso from merged integration"
+      set_fact:
+        argocd_git_ops_eso: "{{ eso_vault_integration_argocd_git_ops_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: ARGOCD-GIT-OPS/PRE (ESO: ServiceAccount, SecretStore, ExternalSecrets)
+    # =========================================================================
+
+    - name: "[argocd-git-ops-pre] Copy pre chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-git-ops-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd-git-ops/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd-git-ops/pre"
+      tags: [pre]
+
+    - name: "[argocd-git-ops-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/argocd-git-ops/pre/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ argocd_namespace }}
+          clusterDomain: {{ dns_domain }}
+          vault:
+            namespace: {{ vault_namespace }}
+          eso:
+            saName: {{ argocd_git_ops_eso.sa_name }}
+            roleName: {{ argocd_git_ops_eso.role_name }}
+            secretStoreName: {{ argocd_git_ops_eso.secret_store_name }}
+            kvEnginePath: {{ argocd_git_ops_eso.kv_engine_path }}
+            isNeedEso: {{ argocd_git_ops_eso.is_need_eso | default(true) }}
+            secrets: {{ argocd_git_ops_eso.secrets | to_json }}
+          esoResourcesConfig:
+            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
+            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
+            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[argocd-git-ops-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install argocd-git-ops-pre {{ remote_charts_dir }}/argocd-git-ops/pre
+        --namespace {{ argocd_namespace }}
+        --values {{ remote_charts_dir }}/argocd-git-ops/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ argocd_git_ops_install_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
 
     # =========================================================================
     # INSTALL: Install argocd-git-ops/install chart (AppProject + Application)
@@ -36,6 +106,7 @@
         chart_name: "install"
         chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd-git-ops/install/"
         chart_remote_dest: "{{ remote_charts_dir }}/argocd-git-ops/install"
+      tags: [install]
 
     - name: "[argocd-git-ops-install] Create values file"
       copy:
@@ -46,6 +117,7 @@
           gitOps: {{ argocd_git_ops_apps | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     - name: "[argocd-git-ops-install] Install via Helm"
       command: >
@@ -58,6 +130,7 @@
         --timeout {{ argocd_git_ops_install_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install]
 
     # =========================================================================
     # VERIFY
@@ -76,6 +149,7 @@
         label: "{{ item.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[argocd-git-ops-verify] Show Application status"
       debug:
@@ -85,3 +159,4 @@
         label: "{{ item.item.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
