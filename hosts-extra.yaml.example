@@ -144,9 +144,10 @@ all:
     #       type: "default"
 
     # Дополнительные ExternalSecrets для ArgoCD
+    # Допустимые типы: "default", "git_ops_repo_pattern", "git_ops_repo_direct"
     eso_vault_integration_argocd_extra:
       secrets: []
-    # Пример (все доступные типы):
+    # Пример:
     # eso_vault_integration_argocd_extra:
     #   secrets:
     #
@@ -160,68 +161,67 @@ all:
 
     # Дополнительные ExternalSecrets для ArgoCD Git-Ops (git repo credentials)
     # Обрабатываются argocd-git-ops/pre chart (SA: eso-argocd-git-ops, namespace: argocd)
-    # Допустимые типы: "default", "git_ops_repo_pattern", "git_ops_repo_direct",
-    #                  "git_ops_repo_pattern_userpass", "git_ops_repo_direct_userpass",
-    #                  "helm_repo", "helm_repo_oci"
+    # Допустимые типы: "default", "git_ops_repo_pattern", "git_ops_repo_direct"
+    #
+    # git_ops_repo_pattern — label: repo-creds (credential template для всех репо по URL-префиксу)
+    # git_ops_repo_direct  — label: repository (конкретный репозиторий или helm/OCI реестр)
+    # default      — произвольный секрет, без ArgoCD-label
+    #
+    # Vault-ключи (имена совпадают с полями ArgoCD Secret напрямую):
+    #   git SSH:       type="git", url, sshPrivateKey
+    #   git userpass:  type="git", url, username, password
+    #   helm repo:     type="helm", name, url, username*, password*  (* не добавлять если публичный)
+    #   helm OCI:      type="helm", name, url, username*, password*, enableOCI="true"
     eso_vault_integration_argocd_git_ops_extra:
       secrets: []
     # Пример (все доступные типы):
     # eso_vault_integration_argocd_git_ops_extra:
     #   secrets:
     #
-    #     # ── type: git_ops_repo_pattern ─────────────────────────────────────────
-    #     # SSH-ключ, label: repo-creds (credential template для URL-префикса)
-    #     # Vault path must contain: repo_url, ssh_private_key
+    #     # ── type: git_ops_repo_pattern ────────────────────────────────────────────────
+    #     # label: repo-creds — credential template для всех репо по URL-префиксу
+    #     # Vault path must contain: type, url, sshPrivateKey (или username + password)
     #     - external_secret_name: "eso-git-ops-repo-creds-gitlab"
     #       target_secret_name: "eso-git-ops-repo-creds-gitlab"
     #       vault_path: "/argocd/git-ops/repo-creds-gitlab/creds"
     #       refresh_interval: "1m"
     #       type: "git_ops_repo_pattern"
     #
-    #     # ── type: git_ops_repo_direct ──────────────────────────────────────────
-    #     # SSH-ключ, label: repository (конкретный репозиторий)
-    #     # Vault path must contain: repo_url, ssh_private_key
+    #     # ── type: git_ops_repo_direct (git SSH) ───────────────────────────────────────
+    #     # label: repository — конкретный репозиторий
+    #     # Vault path must contain: type, url, sshPrivateKey
     #     - external_secret_name: "eso-git-ops-my-repo-ssh"
     #       target_secret_name: "eso-git-ops-my-repo-ssh"
     #       vault_path: "/argocd/git-ops/my-repo-ssh/creds"
     #       refresh_interval: "1m"
     #       type: "git_ops_repo_direct"
     #
-    #     # ── type: git_ops_repo_direct_userpass ────────────────────────────────
-    #     # Username+password, label: repository (конкретный репозиторий)
-    #     # Vault path must contain: repo_url, username, password, repo_type (git | helm)
+    #     # ── type: git_ops_repo_direct (git userpass) ─────────────────────────────────
+    #     # label: repository — конкретный репозиторий
+    #     # Vault path must contain: type, url, username, password
     #     - external_secret_name: "eso-git-ops-my-repo-https"
     #       target_secret_name: "eso-git-ops-my-repo-https"
     #       vault_path: "/argocd/git-ops/my-repo-https/creds"
     #       refresh_interval: "1m"
-    #       type: "git_ops_repo_direct_userpass"
+    #       type: "git_ops_repo_direct"
     #
-    #     # ── type: git_ops_repo_pattern_userpass ───────────────────────────────
-    #     # Username+password, label: repo-creds (credential template для URL-префикса)
-    #     # Vault path must contain: repo_url, username, password, repo_type (git | helm)
-    #     - external_secret_name: "eso-git-ops-repo-creds-https"
-    #       target_secret_name: "eso-git-ops-repo-creds-https"
-    #       vault_path: "/argocd/git-ops/repo-creds-https/creds"
-    #       refresh_interval: "1m"
-    #       type: "git_ops_repo_pattern_userpass"
-    #
-    #     # ── type: helm_repo ───────────────────────────────────────────────────
-    #     # Helm chart repository, label: repository
-    #     # Vault path must contain: name, repo_url, username, password
+    #     # ── type: git_ops_repo_direct (helm repo) ────────────────────────────────────
+    #     # label: repository — helm chart repository
+    #     # Vault path must contain: type, name, url, username*, password*
     #     - external_secret_name: "eso-git-ops-helm-argo"
     #       target_secret_name: "eso-git-ops-helm-argo"
     #       vault_path: "/argocd/git-ops/helm-argo/creds"
     #       refresh_interval: "1m"
-    #       type: "helm_repo"
+    #       type: "git_ops_repo_direct"
     #
-    #     # ── type: helm_repo_oci ───────────────────────────────────────────────
-    #     # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
-    #     # Vault path must contain: name, repo_url, username, password
+    #     # ── type: git_ops_repo_direct (helm OCI) ─────────────────────────────────────
+    #     # label: repository — OCI-реестр как источник Helm-чартов
+    #     # Vault path must contain: type, name, url, username*, password*, enableOCI="true"
     #     - external_secret_name: "eso-git-ops-helm-oci-registry"
     #       target_secret_name: "eso-git-ops-helm-oci-registry"
     #       vault_path: "/argocd/git-ops/helm-oci-registry/creds"
     #       refresh_interval: "1m"
-    #       type: "helm_repo_oci"
+    #       type: "git_ops_repo_direct"
 
     # ArgoCD ConfigMaps — расширение кастомными ключами
     # Каждая переменная независима: можно переопределить только нужную в hosts-extra.yaml
@@ -261,6 +261,23 @@ all:
     #           kind: "AppProject"
     #         - group: "argoproj.io"
     #           kind: "Application"
+    #       clusterResourceWhitelist:
+    #         - group: ""
+    #           kind: "Namespace"
+    #       namespaceResourceWhitelist:
+    #         - group: "apps"
+    #           kind: "Deployment"
+    #         - group: "apps"
+    #           kind: "StatefulSet"
+    #       orphanedResources:
+    #         warn: false
+    #       roles:
+    #         - name: read-only
+    #           description: "Read-only privileges"
+    #           policies:
+    #             - "p, proj:root-app-of-apps:read-only, applications, get, root-app-of-apps/*, allow"
+    #           groups:
+    #             - my-oidc-group
     #     apps:
     #       - name: "root-app-of-apps"
     #         repoURL: "ssh://git@gitlab-gitlab-shell.gitlab.svc.cluster.local:3714/server/git-ops.git"
