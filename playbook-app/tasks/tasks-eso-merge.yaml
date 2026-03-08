@@ -13,11 +13,15 @@
 #
 # Requires variables (from hosts.yaml):
 #   - eso_vault_integration_vault
+#   - eso_vault_integration_traefik
+#   - eso_vault_integration_haproxy
 #   - eso_vault_integration_longhorn
 #   - eso_vault_integration_gitlab
 #   - eso_vault_integration_argocd
 #   - eso_vault_integration_argocd_git_ops
 #   - eso_vault_integration_vault_extra             (default: {secrets: []})
+#   - eso_vault_integration_traefik_extra           (default: {secrets: []})
+#   - eso_vault_integration_haproxy_extra           (default: {secrets: []})
 #   - eso_vault_integration_longhorn_extra          (default: {secrets: []})
 #   - eso_vault_integration_gitlab_extra            (default: {secrets: []})
 #   - eso_vault_integration_argocd_extra            (default: {secrets: []})
@@ -29,6 +33,8 @@
 #
 # Produces:
 #   - eso_vault_integration_vault_merged
+#   - eso_vault_integration_traefik_merged
+#   - eso_vault_integration_haproxy_merged
 #   - eso_vault_integration_longhorn_merged
 #   - eso_vault_integration_gitlab_merged
 #   - eso_vault_integration_argocd_merged
@@ -38,90 +44,64 @@
 #   - vault_policies_final
 #   - vault_roles_final
 #
-# Conflict rules (per component):
-#   - external_secret_name must be unique within namespace (base vs extra)
-#   - target_secret_name must be unique within namespace (base vs extra)
-# Policy/role conflict rules:
-#   - policy.name and role.name must be unique across all sources
+# Flow: merge first, then validate on final/merged results.
 # =============================================================================
 
 # -------------------------------------------------------------------------
-# STAGE 1: Per-component conflict check + merge
+# STAGE 1: Type validation for extra secrets
 # -------------------------------------------------------------------------
 
-# --- VAULT ---
-
-- name: "[eso-merge-vault] Validate type=default for eso_vault_integration_vault_extra secrets"
+- name: "[eso-merge] Validate type=default for extra secrets (vault/traefik/haproxy/longhorn/gitlab)"
   fail:
     msg: >-
-      Secret '{{ item.external_secret_name }}' in eso_vault_integration_vault_extra
-      has invalid type '{{ item.type | default("MISSING") }}'.
-      All secrets in hosts-extra.yaml must have type: "default".
-  when: (item.type | default('')) != 'default'
-  loop: "{{ eso_vault_integration_vault_extra.secrets | default([]) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-vault] Detect secret conflicts in eso_vault_integration_vault_extra"
-  fail:
-    msg: >-
-      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_vault.secrets).
-      Поменяйте название в hosts-extra.yaml.
+      Secret '{{ item.1.external_secret_name }}' in eso_vault_integration_{{ item.0.component }}_extra
+      has invalid type '{{ item.1.type | default("MISSING") }}'.
+      All secrets in hosts-extra.yaml for {{ item.0.component }} must have type: "default".
+  when: (item.1.type | default('')) != 'default'
+  loop: "{{ _default_only_extras | subelements('secrets') }}"
+  loop_control:
+    label: "{{ item.0.component }}/{{ item.1.external_secret_name | default('?') }}"
   vars:
-    _base_names: >-
-      {{ eso_vault_integration_vault.secrets | map(attribute='external_secret_name') | list
-         + eso_vault_integration_vault.secrets | map(attribute='target_secret_name') | list }}
-  when: item in _base_names
-  loop: >-
-    {{ (eso_vault_integration_vault_extra.secrets | default([]))
-       | map(attribute='external_secret_name') | list
-       + (eso_vault_integration_vault_extra.secrets | default([]))
-       | map(attribute='target_secret_name') | list }}
+    _default_only_extras:
+      - { component: vault, secrets: "{{ eso_vault_integration_vault_extra.secrets | default([]) }}" }
+      - { component: traefik, secrets: "{{ eso_vault_integration_traefik_extra.secrets | default([]) }}" }
+      - { component: haproxy, secrets: "{{ eso_vault_integration_haproxy_extra.secrets | default([]) }}" }
+      - { component: longhorn, secrets: "{{ eso_vault_integration_longhorn_extra.secrets | default([]) }}" }
+      - { component: gitlab, secrets: "{{ eso_vault_integration_gitlab_extra.secrets | default([]) }}" }
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[eso-merge-vault] Merge eso_vault_integration_vault + extra"
+- name: "[eso-merge] Validate type for extra secrets (argocd/argocd_git_ops)"
+  fail:
+    msg: >-
+      Secret '{{ item.1.external_secret_name }}' in eso_vault_integration_{{ item.0.component }}_extra
+      has invalid type '{{ item.1.type | default("MISSING") }}'.
+      Allowed types: "default", "git_ops_repo_pattern", "git_ops_repo_direct".
+  when: >-
+    (item.1.type | default('')) not in ['default', 'git_ops_repo_pattern', 'git_ops_repo_direct']
+  loop: "{{ _argocd_extras | subelements('secrets') }}"
+  loop_control:
+    label: "{{ item.0.component }}/{{ item.1.external_secret_name | default('?') }}"
+  vars:
+    _argocd_extras:
+      - { component: argocd, secrets: "{{ eso_vault_integration_argocd_extra.secrets | default([]) }}" }
+      - { component: argocd_git_ops, secrets: "{{ eso_vault_integration_argocd_git_ops_extra.secrets | default([]) }}" }
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# -------------------------------------------------------------------------
+# STAGE 2: Merge per-component (base + extra)
+# -------------------------------------------------------------------------
+
+- name: "[eso-merge] Merge eso_vault_integration_vault + extra"
   set_fact:
     eso_vault_integration_vault_merged: >-
       {{ eso_vault_integration_vault | combine({
            'secrets': eso_vault_integration_vault.secrets + (eso_vault_integration_vault_extra.secrets | default([]))
          })
       }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# --- TRAEFIK ---
-
-- name: "[eso-merge] Validate type=default for eso_vault_integration_traefik_extra secrets"
-  fail:
-    msg: >-
-      Secret '{{ item.external_secret_name }}' in eso_vault_integration_traefik_extra
-      has invalid type '{{ item.type | default("MISSING") }}'.
-      All secrets in hosts-extra.yaml must have type: "default".
-  when: (item.type | default('')) != 'default'
-  loop: "{{ eso_vault_integration_traefik_extra.secrets | default([]) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge] Detect secret conflicts in eso_vault_integration_traefik_extra"
-  fail:
-    msg: >-
-      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_traefik.secrets).
-      Поменяйте название в hosts-extra.yaml.
-  vars:
-    _base_names: >-
-      {{ eso_vault_integration_traefik.secrets | map(attribute='external_secret_name') | list
-         + eso_vault_integration_traefik.secrets | map(attribute='target_secret_name') | list }}
-  when: item in _base_names
-  loop: >-
-    {{ (eso_vault_integration_traefik_extra.secrets | default([]))
-       | map(attribute='external_secret_name') | list
-       + (eso_vault_integration_traefik_extra.secrets | default([]))
-       | map(attribute='target_secret_name') | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -137,39 +117,6 @@
   run_once: true
   tags: [always]
 
-# --- HAPROXY ---
-
-- name: "[eso-merge] Validate type=default for eso_vault_integration_haproxy_extra secrets"
-  fail:
-    msg: >-
-      Secret '{{ item.external_secret_name }}' in eso_vault_integration_haproxy_extra
-      has invalid type '{{ item.type | default("MISSING") }}'.
-      All secrets in hosts-extra.yaml must have type: "default".
-  when: (item.type | default('')) != 'default'
-  loop: "{{ eso_vault_integration_haproxy_extra.secrets | default([]) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge] Detect secret conflicts in eso_vault_integration_haproxy_extra"
-  fail:
-    msg: >-
-      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_haproxy.secrets).
-      Поменяйте название в hosts-extra.yaml.
-  vars:
-    _base_names: >-
-      {{ eso_vault_integration_haproxy.secrets | map(attribute='external_secret_name') | list
-         + eso_vault_integration_haproxy.secrets | map(attribute='target_secret_name') | list }}
-  when: item in _base_names
-  loop: >-
-    {{ (eso_vault_integration_haproxy_extra.secrets | default([]))
-       | map(attribute='external_secret_name') | list
-       + (eso_vault_integration_haproxy_extra.secrets | default([]))
-       | map(attribute='target_secret_name') | list }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
 - name: "[eso-merge] Merge eso_vault_integration_haproxy + extra"
   set_fact:
     eso_vault_integration_haproxy_merged: >-
@@ -181,40 +128,7 @@
   run_once: true
   tags: [always]
 
-# --- LONGHORN ---
-
-- name: "[eso-merge-longhorn] Validate type=default for eso_vault_integration_longhorn_extra secrets"
-  fail:
-    msg: >-
-      Secret '{{ item.external_secret_name }}' in eso_vault_integration_longhorn_extra
-      has invalid type '{{ item.type | default("MISSING") }}'.
-      All secrets in hosts-extra.yaml must have type: "default".
-  when: (item.type | default('')) != 'default'
-  loop: "{{ eso_vault_integration_longhorn_extra.secrets | default([]) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-longhorn] Detect secret conflicts in eso_vault_integration_longhorn_extra"
-  fail:
-    msg: >-
-      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_longhorn.secrets).
-      Поменяйте название в hosts-extra.yaml.
-  vars:
-    _base_names: >-
-      {{ eso_vault_integration_longhorn.secrets | map(attribute='external_secret_name') | list
-         + eso_vault_integration_longhorn.secrets | map(attribute='target_secret_name') | list }}
-  when: item in _base_names
-  loop: >-
-    {{ (eso_vault_integration_longhorn_extra.secrets | default([]))
-       | map(attribute='external_secret_name') | list
-       + (eso_vault_integration_longhorn_extra.secrets | default([]))
-       | map(attribute='target_secret_name') | list }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-longhorn] Merge eso_vault_integration_longhorn + extra"
+- name: "[eso-merge] Merge eso_vault_integration_longhorn + extra"
   set_fact:
     eso_vault_integration_longhorn_merged: >-
       {{ eso_vault_integration_longhorn | combine({
@@ -225,40 +139,7 @@
   run_once: true
   tags: [always]
 
-# --- GITLAB ---
-
-- name: "[eso-merge-gitlab] Validate type=default for eso_vault_integration_gitlab_extra secrets"
-  fail:
-    msg: >-
-      Secret '{{ item.external_secret_name }}' in eso_vault_integration_gitlab_extra
-      has invalid type '{{ item.type | default("MISSING") }}'.
-      All secrets in hosts-extra.yaml must have type: "default".
-  when: (item.type | default('')) != 'default'
-  loop: "{{ eso_vault_integration_gitlab_extra.secrets | default([]) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-gitlab] Detect secret conflicts in eso_vault_integration_gitlab_extra"
-  fail:
-    msg: >-
-      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_gitlab.secrets).
-      Поменяйте название в hosts-extra.yaml.
-  vars:
-    _base_names: >-
-      {{ eso_vault_integration_gitlab.secrets | map(attribute='external_secret_name') | list
-         + eso_vault_integration_gitlab.secrets | map(attribute='target_secret_name') | list }}
-  when: item in _base_names
-  loop: >-
-    {{ (eso_vault_integration_gitlab_extra.secrets | default([]))
-       | map(attribute='external_secret_name') | list
-       + (eso_vault_integration_gitlab_extra.secrets | default([]))
-       | map(attribute='target_secret_name') | list }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-gitlab] Merge eso_vault_integration_gitlab + extra"
+- name: "[eso-merge] Merge eso_vault_integration_gitlab + extra"
   set_fact:
     eso_vault_integration_gitlab_merged: >-
       {{ eso_vault_integration_gitlab | combine({
@@ -269,104 +150,30 @@
   run_once: true
   tags: [always]
 
-# --- ARGOCD ---
-
-- name: "[eso-merge-argocd] Validate type for eso_vault_integration_argocd_extra secrets"
-  fail:
-    msg: >-
-      Secret '{{ item.external_secret_name }}' in eso_vault_integration_argocd_extra
-      has invalid type '{{ item.type | default("MISSING") }}'.
-      Allowed types in hosts-extra.yaml for argocd: "default", "git_ops_repo_pattern", "git_ops_repo_direct".
-  when: >-
-    (item.type | default('')) not in [
-      'default',
-      'git_ops_repo_pattern',
-      'git_ops_repo_direct'
-    ]
-  loop: "{{ eso_vault_integration_argocd_extra.secrets | default([]) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-argocd] Detect secret conflicts in eso_vault_integration_argocd_extra"
-  fail:
-    msg: >-
-      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_argocd.secrets).
-      Поменяйте название в hosts-extra.yaml.
-  vars:
-    _base_names: >-
-      {{ eso_vault_integration_argocd.secrets | map(attribute='external_secret_name') | list
-         + eso_vault_integration_argocd.secrets | map(attribute='target_secret_name') | list }}
-  when: item in _base_names
-  loop: >-
-    {{ (eso_vault_integration_argocd_extra.secrets | default([]))
-       | map(attribute='external_secret_name') | list
-       + (eso_vault_integration_argocd_extra.secrets | default([]))
-       | map(attribute='target_secret_name') | list }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-argocd] Merge eso_vault_integration_argocd + extra"
+- name: "[eso-merge] Merge eso_vault_integration_argocd + extra"
   set_fact:
     eso_vault_integration_argocd_merged: >-
-      {{
-        eso_vault_integration_argocd | combine({ 'secrets': eso_vault_integration_argocd.secrets + (eso_vault_integration_argocd_extra.secrets | default([])) })
+      {{ eso_vault_integration_argocd | combine({
+           'secrets': eso_vault_integration_argocd.secrets + (eso_vault_integration_argocd_extra.secrets | default([]))
+         })
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-# --- ARGOCD GIT-OPS ---
-
-- name: "[eso-merge-argocd-git-ops] Validate type for eso_vault_integration_argocd_git_ops_extra secrets"
-  fail:
-    msg: >-
-      Secret '{{ item.external_secret_name }}' in eso_vault_integration_argocd_git_ops_extra
-      has invalid type '{{ item.type | default("MISSING") }}'.
-      Allowed types in hosts-extra.yaml for argocd-git-ops: "default", "git_ops_repo_pattern", "git_ops_repo_direct".
-  when: >-
-    (item.type | default('')) not in [
-      'default',
-      'git_ops_repo_pattern',
-      'git_ops_repo_direct'
-    ]
-  loop: "{{ eso_vault_integration_argocd_git_ops_extra.secrets | default([]) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-argocd-git-ops] Detect secret conflicts in eso_vault_integration_argocd_git_ops_extra"
-  fail:
-    msg: >-
-      Secret '{{ item }}' уже определён в hosts.yaml (eso_vault_integration_argocd_git_ops.secrets).
-      Поменяйте название в hosts-extra.yaml.
-  vars:
-    _base_names: >-
-      {{ eso_vault_integration_argocd_git_ops.secrets | map(attribute='external_secret_name') | list
-         + eso_vault_integration_argocd_git_ops.secrets | map(attribute='target_secret_name') | list }}
-  when: item in _base_names
-  loop: >-
-    {{ (eso_vault_integration_argocd_git_ops_extra.secrets | default([]))
-       | map(attribute='external_secret_name') | list
-       + (eso_vault_integration_argocd_git_ops_extra.secrets | default([]))
-       | map(attribute='target_secret_name') | list }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge-argocd-git-ops] Merge eso_vault_integration_argocd_git_ops + extra"
+- name: "[eso-merge] Merge eso_vault_integration_argocd_git_ops + extra"
   set_fact:
     eso_vault_integration_argocd_git_ops_merged: >-
-      {{
-        eso_vault_integration_argocd_git_ops | combine({ 'secrets': eso_vault_integration_argocd_git_ops.secrets + (eso_vault_integration_argocd_git_ops_extra.secrets | default([])) })
+      {{ eso_vault_integration_argocd_git_ops | combine({
+           'secrets': eso_vault_integration_argocd_git_ops.secrets + (eso_vault_integration_argocd_git_ops_extra.secrets | default([]))
+         })
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 # -------------------------------------------------------------------------
-# STAGE 2: Build combined integrations list
+# STAGE 3: Build combined integrations list
 # -------------------------------------------------------------------------
 
 - name: "[eso-merge] Build combined integrations list"
@@ -384,7 +191,81 @@
   tags: [always]
 
 # -------------------------------------------------------------------------
-# STAGE 3: Derive policies from merged integrations
+# STAGE 4: Validate merged components
+# -------------------------------------------------------------------------
+# Checking uniqueness on merged (base+extra) catches all three scenarios:
+#   - duplicate within base -> merged has duplicate -> fail
+#   - duplicate within extra -> merged has duplicate -> fail
+#   - collision between base and extra -> merged has duplicate -> fail
+
+- name: "[eso-merge] Check unique external_secret_name per component (merged)"
+  fail:
+    msg: >-
+      Duplicate external_secret_name in {{ item.namespace }} (merged base+extra).
+      Duplicates: {{ _names | difference(_names | unique) }}
+  vars:
+    _names: "{{ item.secrets | map(attribute='external_secret_name') | list }}"
+  when: _names | length != _names | unique | length
+  loop: "{{ _all_eso_integrations }}"
+  loop_control:
+    label: "{{ item.namespace }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-merge] Check unique target_secret_name per component (merged)"
+  fail:
+    msg: >-
+      Duplicate target_secret_name in {{ item.namespace }} (merged base+extra).
+      Duplicates: {{ _names | difference(_names | unique) }}
+  vars:
+    _names: "{{ item.secrets | map(attribute='target_secret_name') | list }}"
+  when: _names | length != _names | unique | length
+  loop: "{{ _all_eso_integrations }}"
+  loop_control:
+    label: "{{ item.namespace }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# argocd and argocd_git_ops both live in namespace "argocd" — the only case
+# where two eso_vault_integration_XXX share a namespace. Colliding names
+# would create duplicate k8s resources in the same namespace.
+
+- name: "[eso-merge] CRITICAL: argocd vs argocd_git_ops - no external_secret_name collision"
+  fail:
+    msg: >-
+      CONFLICT: external_secret_name collision between eso_vault_integration_argocd
+      and eso_vault_integration_argocd_git_ops (both namespace=argocd).
+      Colliding names: {{ _overlap }}.
+      This would create duplicate ExternalSecret resources in namespace argocd.
+  vars:
+    _argocd_names: "{{ eso_vault_integration_argocd_merged.secrets | map(attribute='external_secret_name') | list }}"
+    _git_ops_names: "{{ eso_vault_integration_argocd_git_ops_merged.secrets | map(attribute='external_secret_name') | list }}"
+    _overlap: "{{ _argocd_names | intersect(_git_ops_names) }}"
+  when: _overlap | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-merge] CRITICAL: argocd vs argocd_git_ops - no target_secret_name collision"
+  fail:
+    msg: >-
+      CONFLICT: target_secret_name collision between eso_vault_integration_argocd
+      and eso_vault_integration_argocd_git_ops (both namespace=argocd).
+      Colliding names: {{ _overlap }}.
+      This would create duplicate Secret resources in namespace argocd.
+  vars:
+    _argocd_names: "{{ eso_vault_integration_argocd_merged.secrets | map(attribute='target_secret_name') | list }}"
+    _git_ops_names: "{{ eso_vault_integration_argocd_git_ops_merged.secrets | map(attribute='target_secret_name') | list }}"
+    _overlap: "{{ _argocd_names | intersect(_git_ops_names) }}"
+  when: _overlap | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# -------------------------------------------------------------------------
+# STAGE 5: Derive policies and roles from merged integrations
 # -------------------------------------------------------------------------
 
 - name: "[eso-merge] Initialize derived lists"
@@ -421,10 +302,6 @@
   run_once: true
   tags: [always]
 
-# -------------------------------------------------------------------------
-# STAGE 4: Derive roles from merged integrations
-# -------------------------------------------------------------------------
-
 - name: "[eso-merge] Derive roles from integrations"
   set_fact:
     _derived_roles: >-
@@ -448,55 +325,7 @@
   tags: [always]
 
 # -------------------------------------------------------------------------
-# STAGE 5: Conflict check vault_policies / vault_roles vs extras
-# -------------------------------------------------------------------------
-
-- name: "[eso-merge] Collect base policy and role names"
-  set_fact:
-    _base_policy_names: "{{ (_derived_policies + vault_policies) | map(attribute='name') | list }}"
-    _base_role_names: "{{ (_derived_roles + vault_roles) | map(attribute='name') | list }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge] Detect policy name conflicts with hosts-extra"
-  set_fact:
-    _policy_conflicts: "{{ (vault_policies_extra | default([])) | map(attribute='name') | list | intersect(_base_policy_names) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge] Detect role name conflicts with hosts-extra"
-  set_fact:
-    _role_conflicts: "{{ (vault_roles_extra | default([])) | map(attribute='name') | list | intersect(_base_role_names) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge] Fail on policy name conflicts"
-  fail:
-    msg: >-
-      Conflict in vault_policies_extra (hosts-extra.yaml): names {{ _policy_conflicts }}
-      already exist in derived policies or vault_policies.
-      Rename them in hosts-extra.yaml.
-  when: _policy_conflicts | length > 0
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge] Fail on role name conflicts"
-  fail:
-    msg: >-
-      Conflict in vault_roles_extra (hosts-extra.yaml): names {{ _role_conflicts }}
-      already exist in derived roles or vault_roles.
-      Rename them in hosts-extra.yaml.
-  when: _role_conflicts | length > 0
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# -------------------------------------------------------------------------
-# STAGE 6: Produce vault_policies_final and vault_roles_final
+# STAGE 6: Build final policy/role lists + validate uniqueness
 # -------------------------------------------------------------------------
 
 - name: "[eso-merge] Merge all policy and role sources into final lists"
@@ -507,10 +336,38 @@
   run_once: true
   tags: [always]
 
+- name: "[eso-merge] Final uniqueness check - policies"
+  fail:
+    msg: >-
+      Duplicate policy names in vault_policies_final:
+      {{ _names | difference(_names | unique) }}
+  vars:
+    _names: "{{ vault_policies_final | map(attribute='name') | list }}"
+  when: _names | length != _names | unique | length
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-merge] Final uniqueness check - roles"
+  fail:
+    msg: >-
+      Duplicate role names in vault_roles_final:
+      {{ _names | difference(_names | unique) }}
+  vars:
+    _names: "{{ vault_roles_final | map(attribute='name') | list }}"
+  when: _names | length != _names | unique | length
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# -------------------------------------------------------------------------
+# Summary
+# -------------------------------------------------------------------------
+
 - name: "[eso-merge] Show merge summary"
   debug:
     msg:
-      - "Merged integrations: vault={{ eso_vault_integration_vault_merged.secrets | length }} secrets, longhorn={{ eso_vault_integration_longhorn_merged.secrets | length }} secrets, gitlab={{ eso_vault_integration_gitlab_merged.secrets | length }} secrets, argocd={{ eso_vault_integration_argocd_merged.secrets | length }} secrets, argocd-git-ops={{ eso_vault_integration_argocd_git_ops_merged.secrets | length }} secrets"
+      - "Merged integrations: vault={{ eso_vault_integration_vault_merged.secrets | length }} secrets, traefik={{ eso_vault_integration_traefik_merged.secrets | length }} secrets, haproxy={{ eso_vault_integration_haproxy_merged.secrets | length }} secrets, longhorn={{ eso_vault_integration_longhorn_merged.secrets | length }} secrets, gitlab={{ eso_vault_integration_gitlab_merged.secrets | length }} secrets, argocd={{ eso_vault_integration_argocd_merged.secrets | length }} secrets, argocd-git-ops={{ eso_vault_integration_argocd_git_ops_merged.secrets | length }} secrets"
       - "Derived: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
       - "Manual (vault_policies/vault_roles): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
       - "Extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"

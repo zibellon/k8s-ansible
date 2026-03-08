@@ -418,26 +418,6 @@
 ## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: Namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
 ## ВАЖНО: синхронизация полностью синхронизирует структуру в VAULT (добавить, обновить, удалить)
 ## ---
-## Логика синхронизации политик (`vault-policy-sync.yaml`)
-##
-## - Pre-check — проверка таргет-хоста
-## - Vault ready — проверяет, что Vault не sealed (`vault status`)
-## - Merge + conflict check (`tasks-eso-merge.yaml`):
-##   - Per-component (vault/traefik/haproxy/longhorn/gitlab/argocd/argocd-git-ops):
-##     - Проверяет допустимый `type` у секретов из _extra (fail если невалидный)
-##     - Проверяет уникальность `external_secret_name` и `target_secret_name`:
-##       если имя из hosts-extra.yaml уже есть в base (hosts.yaml) — fail
-##     - Мержит base + extra → `_merged`
-##   - Derive: из всех `_merged` генерирует `_derived_policies` и `_derived_roles`
-##   - Policy/role conflict check: имена из `vault_policies_extra` / `vault_roles_extra`
-##     не должны пересекаться с derived + manual (hosts.yaml) — иначе fail
-##   - Финальный merge → `vault_policies_final` / `vault_roles_final`
-## - Drift cleanup (policies) — удаляет из Vault политики, которых нет в финальном списке (кроме default/root)
-## - Sync policies — .hcl файл на сервер → kubectl cp в контейнер → `vault policy write`
-## - Drift cleanup (roles) — удаляет из Vault роли, которых нет в финальном списке
-## - Sync roles — `vault write auth/kubernetes/role/...` (SA + namespace + policies)
-## - Verification — выводит итоговые списки из Vault
-## ---
 
 ## gitlab. Официальный helm
 ## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
@@ -532,6 +512,36 @@
 - установка + обновление (конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-git-ops-install.yaml`
   - Ставится: ESO + argo-proj, argo-application
+
+## ---------
+## ---------
+## ---------
+
+## ---------
+## ---VAULT, логика синхронизации политик (`vault-policy-sync.yaml`)
+## ---------
+##
+## - Vault ready — проверяет, что Vault не sealed (`vault status`)
+## - Merge + validate (`tasks-eso-merge.yaml`). Подход: сначала мержим, потом валидируем:
+##   - Валидация `type` у секретов из XXX_extra (до merge)
+##   - Merge per-component: base + extra = `_merged` (vault/traefik/haproxy/longhorn/gitlab/argocd/argocd-git-ops)
+##   - Проверка уникальности `external_secret_name` и `target_secret_name` в каждом `_merged`
+##     - Ловит дубли внутри base, внутри extra и пересечения base/extra — всё одной проверкой
+##   - Cross-component: argocd vs argocd_git_ops (единственный случай — один namespace `argocd`)
+##     - fail если `external_secret_name` или `target_secret_name` пересекаются между ними
+##   - Из всех `_merged` генерирует `_derived_policies` и `_derived_roles`
+##   - Финальный merge: `vault_policies_final` = derived + manual + extra
+##   - Финальная проверка уникальности `vault_policies_final` / `vault_roles_final` — fail если дубль
+## - Удаляет из Vault политики, которых нет в финальном списке (кроме default/root)
+## - Добавляет/Обновляет политики. `vault policy write ...`
+## - Удаляет из Vault роли, которых нет в финальном списке
+## - Добавляет/Обновляет роли. `vault write auth/kubernetes/role/...` (SA + namespace + policies)
+## ---
+
+## ---------
+kubectl annotate es --all force-sync=$(date +%s) --overwrite -A
+kubectl annotate es --all force-sync=$(date +%s) --overwrite -n <имя_namespace>
+
 
 ## ---------
 ## ---ArgoCD - git-ops, какие секреты должны быть в VAULT
