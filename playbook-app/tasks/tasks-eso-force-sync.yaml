@@ -1,0 +1,62 @@
+# =============================================================================
+# ESO Force Sync
+# =============================================================================
+# Forces ExternalSecret reconciliation by setting the force-sync annotation.
+#
+# Optional input variables:
+#   eso_sync_namespace  — target namespace (default: "")
+#   eso_sync_es_name    — specific ExternalSecret name (default: "")
+#
+# Behaviour:
+#   namespace + es_name  → annotate that single ExternalSecret
+#   namespace only       → annotate --all in that namespace
+#   nothing passed       → annotate --all in every managed namespace (loop)
+#
+# Requires:
+#   master_manager_fact  — set by tasks-set-master-manager.yaml
+#   *_namespace vars     — vault_namespace, traefik_namespace, etc. from hosts.yaml
+# =============================================================================
+
+- name: "[eso-force-sync] Sync specific ExternalSecret"
+  command: >
+    kubectl annotate externalsecret {{ eso_sync_es_name }}
+    -n {{ eso_sync_namespace }}
+    force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
+  when:
+    - eso_sync_namespace | default('') != ''
+    - eso_sync_es_name | default('') != ''
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-force-sync] Sync all ExternalSecrets in namespace"
+  command: >
+    kubectl annotate externalsecret --all
+    -n {{ eso_sync_namespace }}
+    force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
+  when:
+    - eso_sync_namespace | default('') != ''
+    - eso_sync_es_name | default('') == ''
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-force-sync] Sync all ExternalSecrets in all managed namespaces"
+  command: >
+    kubectl annotate externalsecret --all
+    -n {{ item }}
+    force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
+  loop:
+    - "{{ vault_namespace }}"
+    - "{{ traefik_namespace }}"
+    - "{{ haproxy_namespace }}"
+    - "{{ longhorn_namespace }}"
+    - "{{ gitlab_namespace }}"
+    - "{{ argocd_namespace }}"
+  when: eso_sync_namespace | default('') == ''
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]

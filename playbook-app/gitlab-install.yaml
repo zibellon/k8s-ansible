@@ -294,10 +294,10 @@
     # =========================================================================
 
     - name: "[gitlab-wait-eso] Force sync initial secrets"
-      command: >
-        kubectl annotate externalsecret {{ item }}
-        -n {{ gitlab_namespace }}
-        force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ gitlab_namespace }}"
+        eso_sync_es_name: "{{ item }}"
       loop: >-
         {{
           gitlab_eso.secrets
@@ -305,9 +305,6 @@
           | map(attribute='external_secret_name')
           | list
         }}
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
       tags: [install]
 
     - name: "[gitlab-wait-eso] Wait for PostgreSQL secret"
@@ -632,10 +629,10 @@
     # =========================================================================
 
     - name: "[gitlab-wait-eso] Force sync MinIO access key secrets"
-      command: >
-        kubectl annotate externalsecret {{ item }}
-        -n {{ gitlab_namespace }}
-        force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ gitlab_namespace }}"
+        eso_sync_es_name: "{{ item }}"
       loop: >-
         {{
           gitlab_eso.secrets
@@ -643,9 +640,6 @@
           | map(attribute='external_secret_name')
           | list
         }}
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
       tags: [install]
 
     - name: "[gitlab-wait-eso] Wait for registry secret with access_key"

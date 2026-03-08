@@ -1,0 +1,101 @@
+# =============================================================================
+# ESO Force Sync
+# =============================================================================
+# Forces re-sync of ExternalSecrets by setting the force-sync annotation.
+# Each tag corresponds to a single namespace. Run without --tags to sync all.
+#
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-app/eso-force-sync.yaml
+#   ansible-playbook -i hosts.yaml playbook-app/eso-force-sync.yaml --tags gitlab
+#   ansible-playbook -i hosts.yaml playbook-app/eso-force-sync.yaml --tags vault
+#   ansible-playbook -i hosts.yaml playbook-app/eso-force-sync.yaml --tags traefik
+#   ansible-playbook -i hosts.yaml playbook-app/eso-force-sync.yaml --tags haproxy
+#   ansible-playbook -i hosts.yaml playbook-app/eso-force-sync.yaml --tags longhorn
+#   ansible-playbook -i hosts.yaml playbook-app/eso-force-sync.yaml --tags argocd
+#
+# Tags:
+#   vault    → namespace: vault_namespace
+#   traefik  → namespace: traefik_namespace
+#   haproxy  → namespace: haproxy_namespace
+#   longhorn → namespace: longhorn_namespace
+#   gitlab   → namespace: gitlab_namespace
+#   argocd   → namespace: argocd_namespace (covers argocd + argocd_git_ops)
+# =============================================================================
+
+- name: ESO Force Sync
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[eso-force-sync-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "eso-force-sync-pre-check"
+      tags: [always]
+
+    # =========================================================================
+    # VAULT
+    # =========================================================================
+
+    - name: "[eso-force-sync] vault"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ vault_namespace }}"
+        eso_sync_es_name: ""
+      tags: [vault]
+
+    # =========================================================================
+    # TRAEFIK
+    # =========================================================================
+
+    - name: "[eso-force-sync] traefik"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ traefik_namespace }}"
+        eso_sync_es_name: ""
+      tags: [traefik]
+
+    # =========================================================================
+    # HAPROXY
+    # =========================================================================
+
+    - name: "[eso-force-sync] haproxy"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ haproxy_namespace }}"
+        eso_sync_es_name: ""
+      tags: [haproxy]
+
+    # =========================================================================
+    # LONGHORN
+    # =========================================================================
+
+    - name: "[eso-force-sync] longhorn"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ longhorn_namespace }}"
+        eso_sync_es_name: ""
+      tags: [longhorn]
+
+    # =========================================================================
+    # GITLAB
+    # =========================================================================
+
+    - name: "[eso-force-sync] gitlab"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ gitlab_namespace }}"
+        eso_sync_es_name: ""
+      tags: [gitlab]
+
+    # =========================================================================
+    # ARGOCD (covers argocd + argocd_git_ops — same namespace)
+    # =========================================================================
+
+    - name: "[eso-force-sync] argocd"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        eso_sync_namespace: "{{ argocd_namespace }}"
+        eso_sync_es_name: ""
+      tags: [argocd]

@@ -539,9 +539,13 @@
 ## ---
 
 ## ---------
-kubectl annotate es --all force-sync=$(date +%s) --overwrite -A
-kubectl annotate es --all force-sync=$(date +%s) --overwrite -n <имя_namespace>
+## ---ESO, насильная синхронизация ExternalSecrets
+## ---------
+# Все namespaces
+`ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml`
 
+# Только gitlab
+`ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml --tags gitlab`
 
 ## ---------
 ## ---ArgoCD - git-ops, какие секреты должны быть в VAULT
