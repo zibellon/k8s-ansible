@@ -592,15 +592,17 @@ Vault пустой — закладываем правильные имена с
       2. 4 политкии = postgres, redis, nats, common
    6. Синхронизировать vault-policy-sync
    7. Проверить, что в VAULT все политики и все роли создались успешно
-   8. Вернуться в git-ops репозиторий
-   9. Создать SA + SecretStore + 4 ExternalSecret (postgres, redis, nats, common)
-   10. Залить эти изменения и дождаться синхронизации
-   11. Проверить, что все SecretStore + ExternalSecret + k8s.Secret = успешно созданы и готовы
-   12. Запустить Postgres, redis, nats
+   8. Сгенерировать все необходимые секреты (login, pass, url и так далее) и положить их в VAULT по правильным путям
+      1. Правильные пути - те, которые были указаны в policy + role
+   9.  Вернуться в git-ops репозиторий
+   10. Создать SA + SecretStore + 4 ExternalSecret (postgres, redis, nats, common)
+   11. Залить эти изменения и дождаться синхронизации
+   12. Проверить, что все SecretStore + ExternalSecret + k8s.Secret = успешно созданы и готовы
+   13. Запустить Postgres, redis, nats
        1.  Все ENV креды - берутся из секретов, которые были созданы через ESO
-   13. Запустить back + front + cron
+   14. Запустить back + front + cron
        1.  Все ENV креды - берутся из секретов, которые были созданы через ESO
-   14. Готово
+   15. Готово
 4.  Ротация creds (РУЧНОЙ РЕЖИМ)
     1.  поменять что-то в vault
     2.  Если надо, поменять в mount-volue (напрмиер - postgres, нужно выполнить команду внутри контейннера)
