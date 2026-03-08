@@ -544,7 +544,8 @@
 # Все namespaces
 `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml`
 
-# Только gitlab
+# Только определенный namespace. Например: gitlab
+# Доступные namespace: все, для которых есть eso_vault_integration_XXX (Пример - hosts.yaml)
 `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml --tags gitlab`
 
 ## ---------
@@ -572,6 +573,39 @@ Vault пустой — закладываем правильные имена с
 
 Для helm_repo_oci просто добавить в Vault поле enableOCI: "true" — тогда оно появится в Secret, ArgoCD включит OCI. Для helm_repo — не добавлять, ArgoCD будет считать enableOCI = false.
 
+## ---------
+## ---Argocd, добавление нового приложения
+## ---------
+1. Вводные данные
+   1. Весь кластер настроен, все работает исправно
+2. Что нужно
+   1. Новый проект: my-casino-app
+   2. Компонены: Postygres, redis, Nats, back, front, cron
+   3. Одно окружение: prod
+3. Последовательность действий
+   1. Через паттерн app-of-apps - создать AppProject + Application
+   2. В git, создать новую директорию, где будут лежать все манифесты для этого проекта и контура (infra/.../my-casino-app/prod)
+   3. Создать Chart.yaml + values.yaml + templates/namespace.yaml
+   4. Запустить + дождаться синхронизации
+   5. В файле `hosts-extra.yaml` - добавить необходимые политики для vault + ESO
+      1. 1 role
+      2. 4 политкии = postgres, redis, nats, common
+   6. Синхронизировать vault-policy-sync
+   7. Проверить, что в VAULT все политики и все роли создались успешно
+   8. Вернуться в git-ops репозиторий
+   9. Создать SA + SecretStore + 4 ExternalSecret (postgres, redis, nats, common)
+   10. Залить эти изменения и дождаться синхронизации
+   11. Проверить, что все SecretStore + ExternalSecret + k8s.Secret = успешно созданы и готовы
+   12. Запустить Postgres, redis, nats
+       1.  Все ENV креды - берутся из секретов, которые были созданы через ESO
+   13. Запустить back + front + cron
+       1.  Все ENV креды - берутся из секретов, которые были созданы через ESO
+   14. Готово
+4.  Ротация creds (РУЧНОЙ РЕЖИМ)
+    1.  поменять что-то в vault
+    2.  Если надо, поменять в mount-volue (напрмиер - postgres, нужно выполнить команду внутри контейннера)
+    3.  выполнить через ArgoCD-ui = sync + force + replace
+    4.  Готово
 
 ## ---------
 ## ---Secrets-Rotation
