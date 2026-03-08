@@ -19,145 +19,130 @@ all:
   vars:
     # Временные S3-секреты для Longhorn disaster recovery (без Vault/ESO)
     # Используются playbook-ами longhorn-s3-restore-create.yaml / longhorn-s3-restore-delete.yaml
-    longhorn_s3_restore_secrets: []
     # Пример:
-    # longhorn_s3_restore_secrets:
-    #   - name: "longhorn-s3-backup-creds"
-    #     data:
-    #       AWS_ACCESS_KEY_ID: "my-access-key"
-    #       AWS_SECRET_ACCESS_KEY: "my-secret-key"
-    #       AWS_ENDPOINTS: "https://s3.example.com"
-    #       AWS_REGION: "us-east-1"
+    longhorn_s3_restore_secrets:
+      - name: "longhorn-s3-backup-creds"
+        data:
+          AWS_ACCESS_KEY_ID: "my-access-key"
+          AWS_SECRET_ACCESS_KEY: "my-secret-key"
+          AWS_ENDPOINTS: "https://s3.example.com"
+          AWS_REGION: "us-east-1"
 
     # Переопределение списка ClusterIssuer (заменяет список из hosts.yaml целиком)
-    # cert_manager_cluster_issuers:
-    #   - name: "acme-prod"
-    #     email: "admin@example.com"
-    #     server: "https://acme-v02.api.letsencrypt.org/directory"
-    #     privateKeySecretName: "cluster-issuer-acme-prod-account-key"
-    #     solvers:
-    #       - ingressClass: "traefik-lb"
-    #         ingressAnnotations:
-    #           "kubernetes.io/ingress.class": "traefik-lb"
-    #           "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-    #         podLabels:
-    #           app.kubernetes.io/name: acme-solver
-    #           app.kubernetes.io/instance: traefik-lb
-    #           app.kubernetes.io/component: acme-http01-solver
-    #           app.kubernetes.io/managed-by: cert-manager
-    #   - name: "cluster-issuer-acme-staging"
-    #     email: "admin@example.com"
-    #     server: "https://acme-staging-v02.api.letsencrypt.org/directory"
-    #     privateKeySecretName: "cluster-issuer-acme-staging-account-key"
-    #     solvers:
-    #       - ingressClass: "traefik-lb"
-    #         ingressAnnotations:
-    #           "kubernetes.io/ingress.class": "traefik-lb"
-    #           "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-    #         podLabels:
-    #           app.kubernetes.io/name: acme-solver
-    #           app.kubernetes.io/instance: traefik-lb
-    #           app.kubernetes.io/component: acme-http01-solver
-    #           app.kubernetes.io/managed-by: cert-manager
+    cert_manager_cluster_issuers:
+      - name: "acme-prod"
+        email: "admin@example.com"
+        server: "https://acme-v02.api.letsencrypt.org/directory"
+        privateKeySecretName: "cluster-issuer-acme-prod-account-key"
+        solvers:
+          - ingressClass: "traefik-lb"
+            ingressAnnotations:
+              "kubernetes.io/ingress.class": "traefik-lb"
+              "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podLabels:
+              app.kubernetes.io/name: acme-solver
+              app.kubernetes.io/instance: traefik-lb
+              app.kubernetes.io/component: acme-http01-solver
+              app.kubernetes.io/managed-by: cert-manager
+      - name: "cluster-issuer-acme-staging"
+        email: "admin@example.com"
+        server: "https://acme-staging-v02.api.letsencrypt.org/directory"
+        privateKeySecretName: "cluster-issuer-acme-staging-account-key"
+        solvers:
+          - ingressClass: "traefik-lb"
+            ingressAnnotations:
+              "kubernetes.io/ingress.class": "traefik-lb"
+              "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podLabels:
+              app.kubernetes.io/name: acme-solver
+              app.kubernetes.io/instance: traefik-lb
+              app.kubernetes.io/component: acme-http01-solver
+              app.kubernetes.io/managed-by: cert-manager
 
     # Дополнительные политики Vault (не связанные с ESO интеграциями)
-    vault_policies_extra: []
     # Пример:
-    # vault_policies_extra:
-    #   - name: my-custom-policy
-    #     paths:
-    #       - path: secret/data/my-app/*
-    #         capabilities: [read, list]
-    #       - path: secret/metadata/my-app/*
-    #         capabilities: [read, list]
+    vault_policies_extra:
+      - name: my-custom-policy
+        paths:
+          - path: secret/data/my-app/*
+            capabilities: [read, list]
+          - path: secret/metadata/my-app/*
+            capabilities: [read, list]
 
     # Дополнительные роли Vault (не связанные с ESO интеграциями)
-    vault_roles_extra: []
     # Пример:
-    # vault_roles_extra:
-    #   - name: my-app-role
-    #     namespace: my-app
-    #     sa_name: my-app-sa
-    #     policies:
-    #       - my-custom-policy
+    vault_roles_extra:
+      - name: my-app-role
+        namespace: my-app
+        sa_name: my-app-sa
+        policies:
+          - my-custom-policy
 
     # Дополнительные ExternalSecrets для Vault self
-    eso_vault_integration_vault_extra:
-      secrets: []
     # Пример:
-    # eso_vault_integration_vault_extra:
-    #   secrets:
-    #     - external_secret_name: "eso-vault-custom"
-    #       target_secret_name: "eso-vault-custom"
-    #       vault_path: "/vault/custom/creds"
-    #       refresh_interval: "1m"
-    #       type: "default"
-    #       # is_need_eso: false  # vault-only: не создавать ExternalSecret и Vault-политику для этого секрета
-    #                             # vault_path по-прежнему доступен в плейбуках (default: true)
+    eso_vault_integration_vault_extra:
+      secrets:
+        - external_secret_name: "eso-vault-custom"
+          target_secret_name: "eso-vault-custom"
+          vault_path: "/vault/custom/creds"
+          refresh_interval: "1m"
+          type: "default"
+          # is_need_eso: false  # vault-only: не создавать ExternalSecret и Vault-политику для этого секрета
+                                # vault_path по-прежнему доступен в плейбуках (default: true)
 
     # Дополнительные ExternalSecrets для Traefik
-    eso_vault_integration_traefik_extra:
-      secrets: []
     # Пример:
-    # eso_vault_integration_traefik_extra:
-    #   secrets:
-    #     - external_secret_name: "traefik-custom-cert"
-    #       target_secret_name: "traefik-custom-cert"
-    #       vault_path: "/traefik/custom/creds"
-    #       refresh_interval: "1m"
-    #       type: "default"
+    eso_vault_integration_traefik_extra:
+      secrets:
+        - external_secret_name: "traefik-custom-cert"
+          target_secret_name: "traefik-custom-cert"
+          vault_path: "/traefik/custom/creds"
+          refresh_interval: "1m"
+          type: "default"
 
     # Дополнительные ExternalSecrets для HAProxy
-    eso_vault_integration_haproxy_extra:
-      secrets: []
     # Пример:
-    # eso_vault_integration_haproxy_extra:
-    #   secrets:
-    #     - external_secret_name: "haproxy-custom-secret"
-    #       target_secret_name: "haproxy-custom-secret"
-    #       vault_path: "/haproxy/custom/creds"
-    #       refresh_interval: "1m"
-    #       type: "default"
+    eso_vault_integration_haproxy_extra:
+      secrets:
+        - external_secret_name: "haproxy-custom-secret"
+          target_secret_name: "haproxy-custom-secret"
+          vault_path: "/haproxy/custom/creds"
+          refresh_interval: "1m"
+          type: "default"
 
     # Дополнительные ExternalSecrets для Longhorn (S3-backup credentials)
-    eso_vault_integration_longhorn_extra:
-      secrets: []
     # Пример:
-    # eso_vault_integration_longhorn_extra:
-    #   secrets:
-    #     - external_secret_name: "s3-backup"
-    #       target_secret_name: "longhorn-s3-backup-creds"
-    #       vault_path: "/longhorn-system/s3-backup"
-    #       refresh_interval: "1m"
-    #       type: "default"
+    eso_vault_integration_longhorn_extra:
+      secrets:
+        - external_secret_name: "s3-backup"
+          target_secret_name: "longhorn-s3-backup-creds"
+          vault_path: "/longhorn-system/s3-backup"
+          refresh_interval: "1m"
+          type: "default"
 
     # Дополнительные ExternalSecrets для GitLab
-    eso_vault_integration_gitlab_extra:
-      secrets: []
     # Пример (type: "default" для обычных секретов без ESO-шаблона):
-    # eso_vault_integration_gitlab_extra:
-    #   secrets:
-    #     - external_secret_name: "eso-gitlab-custom"
-    #       target_secret_name: "eso-gitlab-custom"
-    #       vault_path: "/gitlab/custom/creds"
-    #       refresh_interval: "1m"
-    #       type: "default"
+    eso_vault_integration_gitlab_extra:
+      secrets:
+        - external_secret_name: "eso-gitlab-custom"
+          target_secret_name: "eso-gitlab-custom"
+          vault_path: "/gitlab/custom/creds"
+          refresh_interval: "1m"
+          type: "default"
 
     # Дополнительные ExternalSecrets для ArgoCD
     # Допустимые типы: "default", "git_ops_repo_pattern", "git_ops_repo_direct"
-    eso_vault_integration_argocd_extra:
-      secrets: []
     # Пример:
-    # eso_vault_integration_argocd_extra:
-    #   secrets:
-    #
-    #     # ── type: default ──────────────────────────────────────────────────────
-    #     # Произвольный секрет (dataFrom extract), без ArgoCD-специфичных labels
-    #     - external_secret_name: "eso-argocd-custom"
-    #       target_secret_name: "eso-argocd-custom"
-    #       vault_path: "/argocd/custom/creds"
-    #       refresh_interval: "1m"
-    #       type: "default"
+    eso_vault_integration_argocd_extra:
+      secrets:
+    
+        # ── type: default ──────────────────────────────────────────────────────
+        # Произвольный секрет (dataFrom extract), без ArgoCD-специфичных labels
+        - external_secret_name: "eso-argocd-custom"
+          target_secret_name: "eso-argocd-custom"
+          vault_path: "/argocd/custom/creds"
+          refresh_interval: "1m"
+          type: "default"
 
     # Дополнительные ExternalSecrets для ArgoCD Git-Ops (git repo credentials)
     # Обрабатываются argocd-git-ops/pre chart (SA: eso-argocd-git-ops, namespace: argocd)
@@ -168,65 +153,93 @@ all:
     # default      — произвольный секрет, без ArgoCD-label
     #
     # Vault-ключи (имена совпадают с полями ArgoCD Secret напрямую):
-    #   git SSH:       type="git", url, sshPrivateKey
-    #   git userpass:  type="git", url, username, password
-    #   helm repo:     type="helm", name, url, username*, password*  (* не добавлять если публичный)
-    #   helm OCI:      type="helm", name, url, username*, password*, enableOCI="true"
-    eso_vault_integration_argocd_git_ops_extra:
-      secrets: []
+    # git SSH (argocd_secret_type: repo-creds или repository)
+    #   - type: "git"
+    #   - url: "ssh://..." или "https://..."
+    #   - sshPrivateKey: "-----BEGIN..."
+    # git userpass (argocd_secret_type: repo-creds или repository)
+    #   - type: "git"
+    #   - url: "https://..."
+    #   - username: "..."
+    #   - password: "..."
+    # helm repo (argocd_secret_type: repository)
+    #   - type: "helm"
+    #   - name: "traefik"
+    #   - url: "https://traefik.github.io/charts"
+    #   - username: "..." (не добавлять если публичный)
+    #   - password: "..." (не добавлять если публичный)
+    # helm OCI (argocd_secret_type: repository)
+    #   - те же поля что helm repo + enableOCI: "true"
+    #   - Для helm_repo_oci просто добавить в Vault поле enableOCI: "true" — тогда оно появится в Secret, ArgoCD включит OCI. Для helm_repo — не добавлять, ArgoCD будет считать enableOCI = false.
     # Пример (все доступные типы):
-    # eso_vault_integration_argocd_git_ops_extra:
-    #   secrets:
-    #
-    #     # ── type: git_ops_repo_pattern ────────────────────────────────────────────────
-    #     # label: repo-creds — credential template для всех репо по URL-префиксу
-    #     # Vault path must contain: type, url, sshPrivateKey (или username + password)
-    #     - external_secret_name: "eso-git-ops-repo-creds-gitlab"
-    #       target_secret_name: "eso-git-ops-repo-creds-gitlab"
-    #       vault_path: "/argocd/git-ops/repo-creds-gitlab/creds"
-    #       refresh_interval: "1m"
-    #       type: "git_ops_repo_pattern"
-    #
-    #     # ── type: git_ops_repo_direct (git SSH) ───────────────────────────────────────
-    #     # label: repository — конкретный репозиторий
-    #     # Vault path must contain: type, url, sshPrivateKey
-    #     - external_secret_name: "eso-git-ops-my-repo-ssh"
-    #       target_secret_name: "eso-git-ops-my-repo-ssh"
-    #       vault_path: "/argocd/git-ops/my-repo-ssh/creds"
-    #       refresh_interval: "1m"
-    #       type: "git_ops_repo_direct"
-    #
-    #     # ── type: git_ops_repo_direct (git userpass) ─────────────────────────────────
-    #     # label: repository — конкретный репозиторий
-    #     # Vault path must contain: type, url, username, password
-    #     - external_secret_name: "eso-git-ops-my-repo-https"
-    #       target_secret_name: "eso-git-ops-my-repo-https"
-    #       vault_path: "/argocd/git-ops/my-repo-https/creds"
-    #       refresh_interval: "1m"
-    #       type: "git_ops_repo_direct"
-    #
-    #     # ── type: git_ops_repo_direct (helm repo) ────────────────────────────────────
-    #     # label: repository — helm chart repository
-    #     # Vault path must contain: type, name, url, username*, password*
-    #     - external_secret_name: "eso-git-ops-helm-argo"
-    #       target_secret_name: "eso-git-ops-helm-argo"
-    #       vault_path: "/argocd/git-ops/helm-argo/creds"
-    #       refresh_interval: "1m"
-    #       type: "git_ops_repo_direct"
-    #
-    #     # ── type: git_ops_repo_direct (helm OCI) ─────────────────────────────────────
-    #     # label: repository — OCI-реестр как источник Helm-чартов
-    #     # Vault path must contain: type, name, url, username*, password*, enableOCI="true"
-    #     - external_secret_name: "eso-git-ops-helm-oci-registry"
-    #       target_secret_name: "eso-git-ops-helm-oci-registry"
-    #       vault_path: "/argocd/git-ops/helm-oci-registry/creds"
-    #       refresh_interval: "1m"
-    #       type: "git_ops_repo_direct"
+    eso_vault_integration_argocd_git_ops_extra:
+      secrets:
+        # ── type: git_ops_repo_pattern ─────────────────────────────────────────
+        # SSH-ключ, label: repo-creds (credential template для URL-префикса)
+        - external_secret_name: "eso-argocd-git-ops-repo-pattern-ssh"
+          target_secret_name: "eso-argocd-git-ops-repo-pattern-ssh"
+          vault_path: "/argocd/git-ops/repo-pattern-ssh/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_pattern"
+    
+        # ── type: git_ops_repo_direct ──────────────────────────────────────────
+        # SSH-ключ, label: repository (конкретный репозиторий)
+        - external_secret_name: "eso-argocd-git-ops-repo-direct-ssh"
+          target_secret_name: "eso-argocd-git-ops-repo-direct-ssh"
+          vault_path: "/argocd/git-ops/repo-direct-ssh/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_direct"
+    
+        # ── type: git_ops_repo_direct ────────────────────────────────
+        # Username+password, label: repository (конкретный репозиторий)
+        - external_secret_name: "eso-argocd-git-ops-repo-direct-userpass"
+          target_secret_name: "eso-argocd-git-ops-repo-direct-userpass"
+          vault_path: "/argocd/git-ops/repo-direct-userpass/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_direct"
+    
+        # ── type: git_ops_repo_pattern ───────────────────────────────
+        # Username+password, label: repo-creds (credential template для URL-префикса)
+        - external_secret_name: "eso-argocd-git-ops-repo-pattern-userpass"
+          target_secret_name: "eso-argocd-git-ops-repo-pattern-userpass"
+          vault_path: "/argocd/git-ops/repo-pattern-userpass/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_pattern"
+    
+        # ── type: git_ops_repo_pattern ───────────────────────────────────────────────────
+        # Helm chart repository, label: repo-creds (credential template для URL-префикса)
+        - external_secret_name: "eso-argocd-git-ops-repo-pattern-helm-repo"
+          target_secret_name: "eso-argocd-git-ops-repo-pattern-helm-repo"
+          vault_path: "/argocd/git-ops/repo-pattern-helm-repo/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_pattern"
+
+        # ── type: git_ops_repo_direct ───────────────────────────────────────────────────
+        # Helm chart repository, label: repository
+        - external_secret_name: "eso-argocd-git-ops-repo-direct-helm-repo"
+          target_secret_name: "eso-argocd-git-ops-repo-direct-helm-repo"
+          vault_path: "/argocd/git-ops/repo-direct-helm-repo/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_direct"
+    
+        # ── type: git_ops_repo_pattern ───────────────────────────────────────────────
+        # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
+        - external_secret_name: "eso-argocd-git-ops-repo-pattern-helm-oci"
+          target_secret_name: "eso-argocd-git-ops-repo-pattern-helm-oci"
+          vault_path: "/argocd/git-ops/repo-pattern-helm-oci/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_pattern"
+
+        # ── type: git_ops_repo_direct ───────────────────────────────────────────────
+        # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
+        - external_secret_name: "eso-argocd-git-ops-repo-direct-helm-oci"
+          target_secret_name: "eso-argocd-git-ops-repo-direct-helm-oci"
+          vault_path: "/argocd/git-ops/repo-direct-helm-oci/creds"
+          refresh_interval: "1m"
+          type: "git_ops_repo_direct"
 
     # ArgoCD ConfigMaps — расширение кастомными ключами
     # Каждая переменная независима: можно переопределить только нужную в hosts-extra.yaml
-    # Заполнить ssh_known_hosts после установки GitLab:
-    #   kubectl exec -n argocd deploy/argocd-repo-server -- ssh-keyscan -p 3714 gitlab-gitlab-shell.gitlab.svc.cluster.local
     argocd_cm_ssh_known_hosts_extra: []
     argocd_cm_extra: {}
     argocd_cm_cmd_params_extra: {}
@@ -244,50 +257,50 @@ all:
     #   policy.default: "role:readonly"
 
     # Переопределение ArgoCD git-ops приложений (заменяет argocd_git_ops_apps из hosts.yaml целиком)
-    # argocd_git_ops_apps:
-    #   - name: "root-app-of-apps"
-    #     project:
-    #       sourceRepos: ["*"]
-    #       sourceNamespaces: ["*"]
-    #       destinations:
-    #         - name: "*"
-    #           namespace: "*"
-    #           server: "*"
-    #       clusterResourceBlacklist:
-    #         - group: "*"
-    #           kind: "*"
-    #       namespaceResourceBlacklist:
-    #         - group: "argoproj.io"
-    #           kind: "AppProject"
-    #         - group: "argoproj.io"
-    #           kind: "Application"
-    #       clusterResourceWhitelist:
-    #         - group: ""
-    #           kind: "Namespace"
-    #       namespaceResourceWhitelist:
-    #         - group: "apps"
-    #           kind: "Deployment"
-    #         - group: "apps"
-    #           kind: "StatefulSet"
-    #       orphanedResources:
-    #         warn: false
-    #       roles:
-    #         - name: read-only
-    #           description: "Read-only privileges"
-    #           policies:
-    #             - "p, proj:root-app-of-apps:read-only, applications, get, root-app-of-apps/*, allow"
-    #           groups:
-    #             - my-oidc-group
-    #     apps:
-    #       - name: "root-app-of-apps"
-    #         repoURL: "ssh://git@gitlab-gitlab-shell.gitlab.svc.cluster.local:3714/server/git-ops.git"
-    #         targetRevision: "master"
-    #         path: "argocd-system"
-    #         destinationServer: "https://kubernetes.default.svc"
-    #         revisionHistoryLimit: 3
-    #         retry:
-    #           limit: 5
-    #           backoff:
-    #             duration: "20s"
-    #             factor: 1
-    #             maxDuration: "30s"
+    argocd_git_ops_apps:
+      - name: "root-app-of-apps"
+        project:
+          sourceRepos: ["*"]
+          sourceNamespaces: ["*"]
+          destinations:
+            - name: "*"
+              namespace: "*"
+              server: "*"
+          clusterResourceBlacklist:
+            - group: "*"
+              kind: "*"
+          namespaceResourceBlacklist:
+            - group: "argoproj.io"
+              kind: "AppProject"
+            - group: "argoproj.io"
+              kind: "Application"
+          clusterResourceWhitelist:
+            - group: ""
+              kind: "Namespace"
+          namespaceResourceWhitelist:
+            - group: "apps"
+              kind: "Deployment"
+            - group: "apps"
+              kind: "StatefulSet"
+          orphanedResources:
+            warn: false
+          roles:
+            - name: read-only
+              description: "Read-only privileges"
+              policies:
+                - "p, proj:root-app-of-apps:read-only, applications, get, root-app-of-apps/*, allow"
+              groups:
+                - my-oidc-group
+        apps:
+          - name: "root-app-of-apps"
+            repoURL: "ssh://git@gitlab-gitlab-shell.gitlab.svc.cluster.local:3714/server/git-ops.git"
+            targetRevision: "master"
+            path: "argocd-system"
+            destinationServer: "https://kubernetes.default.svc"
+            revisionHistoryLimit: 3
+            retry:
+              limit: 5
+              backoff:
+                duration: "20s"
+                factor: 1
+                maxDuration: "30s"

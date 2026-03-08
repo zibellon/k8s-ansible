@@ -570,8 +570,7 @@ Vault пустой — закладываем правильные имена с
    5. password: "..." (не добавлять если публичный)
 4. helm OCI (argocd_secret_type: repository)
    1. те же поля что helm repo + enableOCI: "true"
-
-Для helm_repo_oci просто добавить в Vault поле enableOCI: "true" — тогда оно появится в Secret, ArgoCD включит OCI. Для helm_repo — не добавлять, ArgoCD будет считать enableOCI = false.
+   2. Для helm_repo_oci просто добавить в Vault поле enableOCI: "true" — тогда оно появится в Secret, ArgoCD включит OCI. Для helm_repo — не добавлять, ArgoCD будет считать enableOCI = false.
 
 ## ---------
 ## ---Argocd, добавление нового приложения
