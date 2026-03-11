@@ -5,11 +5,12 @@
 # (from hosts-extra.yaml), then derives Vault policies and roles.
 #
 # Called explicitly by:
-#   - vault-install.yaml       (before tasks-vault-policy-sync.yaml)
-#   - vault-policy-sync.yaml   (before tasks-vault-policy-sync.yaml)
-#   - longhorn-install.yaml    (to get eso_vault_integration_longhorn_merged)
-#   - gitlab-install.yaml      (to get eso_vault_integration_gitlab_merged)
-#   - argocd-git-ops-install.yaml (to get _merged objects)
+#   - vault-install.yaml              (before tasks-vault-policy-sync.yaml)
+#   - vault-policy-sync.yaml          (before tasks-vault-policy-sync.yaml)
+#   - longhorn-install.yaml           (to get eso_vault_integration_longhorn_merged)
+#   - gitlab-install.yaml             (to get eso_vault_integration_gitlab_merged)
+#   - gitlab-runner-install.yaml      (to get eso_vault_integration_gitlab_runner_merged)
+#   - argocd-git-ops-install.yaml     (to get _merged objects)
 #
 # Requires variables (from hosts.yaml):
 #   - eso_vault_integration_vault
@@ -17,6 +18,7 @@
 #   - eso_vault_integration_haproxy
 #   - eso_vault_integration_longhorn
 #   - eso_vault_integration_gitlab
+#   - eso_vault_integration_gitlab_runner
 #   - eso_vault_integration_argocd
 #   - eso_vault_integration_argocd_git_ops
 #   - eso_vault_integration_vault_extra             (default: {secrets: []})
@@ -24,6 +26,7 @@
 #   - eso_vault_integration_haproxy_extra           (default: {secrets: []})
 #   - eso_vault_integration_longhorn_extra          (default: {secrets: []})
 #   - eso_vault_integration_gitlab_extra            (default: {secrets: []})
+#   - eso_vault_integration_gitlab_runner_extra     (default: {secrets: []})
 #   - eso_vault_integration_argocd_extra            (default: {secrets: []})
 #   - eso_vault_integration_argocd_git_ops_extra    (default: {secrets: []})
 #   - vault_policies (array)
@@ -37,6 +40,7 @@
 #   - eso_vault_integration_haproxy_merged
 #   - eso_vault_integration_longhorn_merged
 #   - eso_vault_integration_gitlab_merged
+#   - eso_vault_integration_gitlab_runner_merged
 #   - eso_vault_integration_argocd_merged
 #   - eso_vault_integration_argocd_git_ops_merged
 #   - _derived_policies
@@ -51,7 +55,7 @@
 # STAGE 1: Type validation for extra secrets
 # -------------------------------------------------------------------------
 
-- name: "[eso-merge] Validate type=default for extra secrets (vault/traefik/haproxy/longhorn/gitlab)"
+- name: "[eso-merge] Validate type=default for extra secrets (vault/traefik/haproxy/longhorn/gitlab/gitlab_runner)"
   fail:
     msg: >-
       Secret '{{ item.1.external_secret_name }}' in eso_vault_integration_{{ item.0.component }}_extra
@@ -68,6 +72,7 @@
       - { component: haproxy, secrets: "{{ eso_vault_integration_haproxy_extra.secrets | default([]) }}" }
       - { component: longhorn, secrets: "{{ eso_vault_integration_longhorn_extra.secrets | default([]) }}" }
       - { component: gitlab, secrets: "{{ eso_vault_integration_gitlab_extra.secrets | default([]) }}" }
+      - { component: gitlab_runner, secrets: "{{ eso_vault_integration_gitlab_runner_extra.secrets | default([]) }}" }
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -155,6 +160,18 @@
   run_once: true
   tags: [always]
 
+- name: "[eso-merge] Merge eso_vault_integration_gitlab_runner + extra"
+  set_fact:
+    eso_vault_integration_gitlab_runner_merged: >-
+      {{ eso_vault_integration_gitlab_runner | combine({
+           'namespace': gitlab_runner_namespace,
+           'secrets': eso_vault_integration_gitlab_runner.secrets + (eso_vault_integration_gitlab_runner_extra.secrets | default([]))
+         })
+      }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[eso-merge] Merge eso_vault_integration_argocd + extra"
   set_fact:
     eso_vault_integration_argocd_merged: >-
@@ -191,6 +208,7 @@
       - "{{ eso_vault_integration_haproxy_merged }}"
       - "{{ eso_vault_integration_longhorn_merged }}"
       - "{{ eso_vault_integration_gitlab_merged }}"
+      - "{{ eso_vault_integration_gitlab_runner_merged }}"
       - "{{ eso_vault_integration_argocd_merged }}"
       - "{{ eso_vault_integration_argocd_git_ops_merged }}"
   delegate_to: "{{ master_manager_fact }}"
@@ -374,7 +392,7 @@
 - name: "[eso-merge] Show merge summary"
   debug:
     msg:
-      - "Merged integrations: vault={{ eso_vault_integration_vault_merged.secrets | length }} secrets, traefik={{ eso_vault_integration_traefik_merged.secrets | length }} secrets, haproxy={{ eso_vault_integration_haproxy_merged.secrets | length }} secrets, longhorn={{ eso_vault_integration_longhorn_merged.secrets | length }} secrets, gitlab={{ eso_vault_integration_gitlab_merged.secrets | length }} secrets, argocd={{ eso_vault_integration_argocd_merged.secrets | length }} secrets, argocd-git-ops={{ eso_vault_integration_argocd_git_ops_merged.secrets | length }} secrets"
+      - "Merged integrations: vault={{ eso_vault_integration_vault_merged.secrets | length }} secrets, traefik={{ eso_vault_integration_traefik_merged.secrets | length }} secrets, haproxy={{ eso_vault_integration_haproxy_merged.secrets | length }} secrets, longhorn={{ eso_vault_integration_longhorn_merged.secrets | length }} secrets, gitlab={{ eso_vault_integration_gitlab_merged.secrets | length }} secrets, gitlab-runner={{ eso_vault_integration_gitlab_runner_merged.secrets | length }} secrets, argocd={{ eso_vault_integration_argocd_merged.secrets | length }} secrets, argocd-git-ops={{ eso_vault_integration_argocd_git_ops_merged.secrets | length }} secrets"
       - "Derived: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
       - "Manual (vault_policies/vault_roles): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
       - "Extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"

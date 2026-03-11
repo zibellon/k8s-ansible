@@ -49,7 +49,7 @@
 - name: "[{{ label_name }}] Sync all ExternalSecrets in all managed namespaces"
   command: >
     kubectl annotate externalsecret --all
-    -n {{ item }}
+    -n {{ eso_ns_item }}
     force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
   loop:
     - "{{ vault_namespace }}"
@@ -58,6 +58,8 @@
     - "{{ longhorn_namespace }}"
     - "{{ gitlab_namespace }}"
     - "{{ argocd_namespace }}"
+  loop_control:
+    loop_var: eso_ns_item
   when: eso_sync_namespace | default('') == ''
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"

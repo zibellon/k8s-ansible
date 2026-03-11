@@ -112,6 +112,10 @@
 ##
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/cluster-init.yaml --limit k8s-manager-1`
 
+# ---------
+# ---JOIN
+# ---------
+
 # Присоединение worker-node
 ## Добавить в `hosts-extra.yaml` нового worker
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
@@ -143,43 +147,6 @@
   - Загрузка сертификатов в k8s.secrets
   - получение токена
   - вызов команды `kubeadm join ...`
-
-# ---------
-# ---HELPERS
-# ---------
-
-# Шифрование ETCD. Ротация ключей
-## api-server, на каждой control-plane будет перезапущен 3 раза (так сказано в официальной документации)
-## Это не самый быстрый процесс
-## Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
-## Этот процесс спровоцирует полную остановку api-server
-##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/etcd-key-rotate.yaml`
-
-# SANS (api-server). Обновление имен (SANS) в сертификатах
-## На каждой control-plane будет создан новый api-server.crt
-## Каждый текущий api-server - будет перезапущен один раз
-## Перезапуск - последовательный (по одному за раз)
-##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/apiserver-sans-update.yaml`
-
-# Обслуживание сервера (cordon + drain) и возврат в работу
-##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
-  - Вывод ноды на обслуживание
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-off.yaml --limit k8s-worker-3`
-  - Вернуть ноду в работу
-
-# Удаление node
-## Отключение node от кластера
-## Перед этим надо выполнить = `Вывод Node на обслуживание`
-##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-remove.yaml --limit k8s-worker-4`
-
-# Очистка сервера, от всех компонентов k8s
-1. `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/server-clean.yaml --limit k8s-worker-4`
-   1. Выполнение команды  `kubeadm reset --force`
-   2. Удаление директорий для k8s
 
 # ---------
 # ---VAULT + ESO
@@ -394,7 +361,7 @@
 ## `--tags pre, install, post`
 ## ---
 ##
-- установка + конфигурация + синхронизация политик. Два отдельных playbook
+- установка + конфигурация + синхронизация политик. Три отдельных playbook
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
   - Ставится: vault-0 (StatefulSet)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-configure.yaml`
@@ -425,9 +392,9 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
-## Важно про компоненты
-## - gitlab-exporter - hardcoded 1 в шаблоне (в самом официальном helm)
-## - gitaly - StatefulSet, количество реплик определяется через global.gitaly.internal.names. По дефолту = 1. RollingUpdate + StatefulSet = убить, а потом создать
+## Важно_1: про компоненты
+## - `gitlab-exporter` - hardcoded 1 в шаблоне (в самом официальном helm)
+## - `gitaly` - StatefulSet, количество реплик определяется через global.gitaly.internal.names. По дефолту = 1. RollingUpdate + StatefulSet = убить, а потом создать
 ##   - Но если их больше чем 1 - там какая-то возня начинается с Praefect (репликация git-данных между узлами)
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
@@ -441,6 +408,25 @@
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-configure.yaml`
   - конфигурация. Отдельный playbook
+
+## GitlabRunner. официальный helm
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Есть дополнительный файл для `vault + ESO`
+## ---
+## Важно_1: тут производится именно установка helm-chart, без конфигур
+## Порядок действий для установки
+## - Зайти в GitLab и создать `instance-runner` + получить его токен
+## - Сохранить токен в VAULT, по правильному пути в переменную `token`
+## - Попраить конфиг (`hosts.yaml` + `hosts-extra.yaml`). Там полный toml файл
+## - установить
+## - То есть: Регистрация раннера на GitLab - производится в ручном режиме
+## ---
+## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+## `--tags pre, install`
+## 
+- установка + обновление (версия + конфиг)
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-runner-install.yaml`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -513,9 +499,46 @@
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-git-ops-install.yaml`
   - Ставится: ESO + argo-proj, argo-application
 
-## ---------
-## ---------
-## ---------
+## ---------------
+## ---------------
+## ---------------
+
+# ---------
+# ---HELPERS
+# ---------
+
+# Шифрование ETCD. Ротация ключей
+## api-server, на каждой control-plane будет перезапущен 3 раза (так сказано в официальной документации)
+## Это не самый быстрый процесс
+## Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
+## Этот процесс спровоцирует полную остановку api-server
+##
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/etcd-key-rotate.yaml`
+
+# SANS (api-server). Обновление имен (SANS) в сертификатах
+## На каждой control-plane будет создан новый api-server.crt
+## Каждый текущий api-server - будет перезапущен один раз
+## Перезапуск - последовательный (по одному за раз)
+##
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/apiserver-sans-update.yaml`
+
+# Обслуживание сервера (cordon + drain) и возврат в работу
+##
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
+  - Вывод ноды на обслуживание
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-off.yaml --limit k8s-worker-3`
+  - Вернуть ноду в работу
+
+# Удаление node
+## Отключение node от кластера
+## Перед этим надо выполнить = `Вывод Node на обслуживание`
+##
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-remove.yaml --limit k8s-worker-4`
+
+# Очистка сервера, от всех компонентов k8s
+1. `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/server-clean.yaml --limit k8s-worker-4`
+   1. Выполнение команды  `kubeadm reset --force`
+   2. Удаление директорий для k8s
 
 ## ---------
 ## ---VAULT, логика синхронизации политик (`vault-policy-sync.yaml`)
@@ -618,3 +641,4 @@ Vault пустой — закладываем правильные имена с
 ## ...
 ## ...
 ## ---
+

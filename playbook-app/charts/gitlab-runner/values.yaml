@@ -1,0 +1,78 @@
+# =============================================================================
+# GitLab Runner Helm Chart - values.yaml
+# Official chart: gitlab/gitlab-runner
+# =============================================================================
+# gitlabUrl and runnerToken/secret are set via Ansible at install time.
+# =============================================================================
+
+# GitLab instance URL (set via Ansible)
+gitlabUrl: ""
+
+# Number of concurrent jobs
+concurrent: 10
+
+# Check interval for new jobs (seconds)
+checkInterval: 30
+
+# Prevent runner deletion on pod termination (rolling updates)
+unregisterRunners: false
+
+# RBAC settings - chart creates SA, Role, RoleBinding
+rbac:
+  create: true
+  clusterWideAccess: false
+
+# ServiceAccount created by the chart (matches config.toml service_account)
+serviceAccount:
+  create: true
+  name: "gitlab-runner"
+
+# Runner authentication token (from ESO-synced Secret)
+# Secret must have key: runner-token
+runners:
+  secret: "eso-gitlab-runner-token"
+
+  # S3 cache credentials (from ESO-synced Secret)
+  # Secret must have keys: accesskey / secretkey
+  cache:
+    secretName: "eso-gitlab-runner-minio-cache-helm"
+
+  # Full runner config.toml template
+  config: |
+    [[runners]]
+      ...
+
+# Standard Kubernetes labels for the runner pod
+podLabels:
+  app.kubernetes.io/name: "gitlab-runner"
+  app.kubernetes.io/component: "runner"
+  app.kubernetes.io/part-of: "gitlab"
+  app.kubernetes.io/managed-by: "helm"
+
+# Deploy runner pods only on worker nodes
+nodeSelector:
+  node-role.kubernetes.io/worker: ""
+
+# Pod security context - matches manual deployment
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  fsGroup: 65533
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+
+# Resources
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi

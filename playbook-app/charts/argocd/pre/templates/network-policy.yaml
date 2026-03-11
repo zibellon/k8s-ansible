@@ -89,6 +89,16 @@ spec:
       ports:
         - protocol: TCP
           port: 8080 # actual pod port
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gitlabRunner.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab-runner-job
+      ports:
+        - protocol: TCP
+          port: 8080
   egress:
     - ports:
         - protocol: TCP
@@ -289,6 +299,31 @@ spec:
       ports:
         - protocol: TCP
           port: 8089
+
+---
+# Allow gitlab-runner job pods egress to argocd-server (cross-namespace, owned by argocd chart)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ .Values.namespace }}-allow-gitlab-runner-job"
+  namespace: {{ .Values.gitlabRunner.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gitlab-runner-job
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-server
+      ports:
+        - protocol: TCP
+          port: 8080
 
 ---
 # GitLab shell <- ArgoCD repo-server

@@ -63,14 +63,12 @@
         secret_minio_registry: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_registry') | first).target_secret_name }}"
         secret_gitlab_registry_minio_connection: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_registry_minio_connection') | first).target_secret_name }}"
         secret_gitlab_minio_connection: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_minio_connection') | first).target_secret_name }}"
-        secret_minio_runner_cache: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).target_secret_name }}"
         secret_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).target_secret_name }}"
         # Vault paths
         vault_path_postgresql: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'postgresql') | first).vault_path }}"
         vault_path_redis: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'redis') | first).vault_path }}"
         vault_path_minio_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_root') | first).vault_path }}"
         vault_path_minio_registry: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_registry') | first).vault_path }}"
-        vault_path_minio_runner_cache: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).vault_path }}"
         vault_path_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -553,7 +551,6 @@
         - gitlab-uploads
         - gitlab-packages
         - gitlab-backups
-        - runner-cache
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -595,43 +592,6 @@
       run_once: true
       tags: [install]
 
-    # Create access keys for runner-cache
-    - name: "[gitlab-minio-setup] Check if runner-cache access_key exists in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ gitlab_eso.kv_engine_path }}{{ vault_path_minio_runner_cache }} 2>/dev/null \
-          | jq -r '.data.data.access_key // empty'
-      register: runner_cache_access_key_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-minio-setup] Create access key for runner-cache"
-      command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }}
-        --name 'runner-cache-key' --json
-      register: runner_cache_accesskey_result
-      when: runner_cache_access_key_check.stdout == ""
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-minio-setup] Parse and store runner-cache access key in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ gitlab_eso.kv_engine_path }}{{ vault_path_minio_runner_cache }}
-        access_key={{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}
-        secret_key={{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}
-        bucket_name=runner-cache
-      when: runner_cache_access_key_check.stdout == ""
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
     # =========================================================================
     # STEP 8: WAIT FOR MINIO ACCESS KEYS TO SYNC
     # =========================================================================
@@ -645,7 +605,7 @@
       loop: >-
         {{
           gitlab_eso.secrets
-          | selectattr('type', 'in', ['minio_registry', 'minio_runner_cache', 'gitlab_registry_minio_connection', 'gitlab_minio_connection'])
+          | selectattr('type', 'in', ['minio_registry', 'gitlab_registry_minio_connection', 'gitlab_minio_connection'])
           | map(attribute='external_secret_name')
           | list
         }}
@@ -963,7 +923,6 @@
           - "  Redis: {{ gitlab_eso.kv_engine_path }}{{ vault_path_redis }}"
           - "  MinIO root: {{ gitlab_eso.kv_engine_path }}{{ vault_path_minio_root }}"
           - "  MinIO registry: {{ gitlab_eso.kv_engine_path }}{{ vault_path_minio_registry }}"
-          - "  MinIO runner-cache: {{ gitlab_eso.kv_engine_path }}{{ vault_path_minio_runner_cache }}"
           - ""
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."

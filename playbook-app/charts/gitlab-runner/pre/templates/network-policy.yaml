@@ -1,0 +1,318 @@
+# =============================================================================
+# GITLAB RUNNER NETWORK POLICIES
+# =============================================================================
+
+# =============================================================================
+# BASE POLICIES (ns-gitlab-runner namespace)
+# =============================================================================
+
+---
+# Default deny all traffic in runner namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# GITLAB RUNNER POD POLICIES
+# =============================================================================
+
+---
+# GitLab Runner pod: egress to GitLab API, MinIO cache, kube-apiserver, external
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gitlab-runner
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.gitlab_runner.name }}
+      app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
+  policyTypes:
+    - Egress
+  egress:
+    # To GitLab webservice (API polling)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+          podSelector:
+            matchLabels:
+              app: webservice
+              release: {{ .Values.gitlab.releaseName }}
+      ports:
+        - protocol: TCP
+          port: 8181
+    # To GitLab MinIO (runner cache read/write)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    # To GitLab Shell (internal SSH for git operations)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab
+              app: gitlab-shell
+      ports:
+        - protocol: TCP
+          port: {{ .Values.gitlab.sshPortInternal }}
+    # To kube-apiserver (kubernetes executor spawns job pods)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # External HTTPS/HTTP (pulling images, package managers)
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+# =============================================================================
+# JOB POD POLICIES
+# =============================================================================
+
+---
+# Job pods spawned by runner: build work
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-job-pod
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
+      app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From same namespace job pods (dind sidecar communication)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
+      ports:
+        - protocol: TCP
+          port: 2375
+  egress:
+    # To GitLab webservice (git clone over HTTP)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+          podSelector:
+            matchLabels:
+              app: webservice
+              release: {{ .Values.gitlab.releaseName }}
+      ports:
+        - protocol: TCP
+          port: 8181
+    # To GitLab MinIO (cache read/write)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    # To GitLab Shell (internal SSH for git operations)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab
+              app: gitlab-shell
+      ports:
+        - protocol: TCP
+          port: {{ .Values.gitlab.sshPortInternal }}
+    # To same namespace job pods (dind sidecar communication)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
+      ports:
+        - protocol: TCP
+          port: 2375
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # External HTTPS/HTTP (pulling images, package managers, registry push/pull)
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+# =============================================================================
+# CROSS-NAMESPACE POLICIES (in gitlab namespace)
+# =============================================================================
+
+---
+# Allow runner namespace → GitLab webservice (API polling + git clone)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-gitlab-webservice
+  namespace: {{ .Values.gitlab.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: webservice
+      release: {{ .Values.gitlab.releaseName }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # From runner pod
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
+      ports:
+        - protocol: TCP
+          port: 8181
+    # From job pods
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
+      ports:
+        - protocol: TCP
+          port: 8181
+
+---
+# Allow runner namespace → GitLab MinIO (cache read/write)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-gitlab-minio
+  namespace: {{ .Values.gitlab.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gitlab-minio
+  policyTypes:
+    - Ingress
+  ingress:
+    # From runner pod
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
+      ports:
+        - protocol: TCP
+          port: 9000
+    # From job pods
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
+      ports:
+        - protocol: TCP
+          port: 9000
+
+---
+# Allow runner namespace → GitLab Shell (internal SSH)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-gitlab-shell
+  namespace: {{ .Values.gitlab.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gitlab
+      app: gitlab-shell
+  policyTypes:
+    - Ingress
+  ingress:
+    # From runner pod
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.gitlab.sshPortInternal }}
+    # From job pods
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.gitlab.sshPortInternal }}

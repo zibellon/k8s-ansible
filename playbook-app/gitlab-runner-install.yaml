@@ -1,0 +1,426 @@
+# =============================================================================
+# Install GitLab Runner (Official Helm Chart)
+# Steps:
+#   1. gitlab-runner/pre: ESO resources (SA, SecretStore, ExternalSecrets) + NetworkPolicies
+#   2. MinIO runner-cache: create bucket + access key, store in Vault
+#   3. Runner token: must be placed in Vault manually before running playbook
+#      (GitLab UI → Admin → CI/CD → Runners → Create runner → copy token → vault kv put ...)
+#   4. ESO sync: force-sync + wait for secrets
+#   5. gitlab-runner: official gitlab/gitlab-runner chart
+#   6. Verification
+#
+# Usage (tags):
+#   ansible-playbook gitlab-runner-install.yaml              # full install
+#   ansible-playbook gitlab-runner-install.yaml --tags pre   # only pre (ESO + NetworkPolicy)
+#   ansible-playbook gitlab-runner-install.yaml --tags install
+#
+# Prerequisites:
+#   - Vault must be installed and unsealed
+#   - Vault policies must be synced (vault-policy-sync.yaml)
+#   - External Secrets Operator must be installed
+#   - GitLab must be installed and running (gitlab-install.yaml)
+#   - Runner token must be created in GitLab UI and stored in Vault manually
+# =============================================================================
+
+---
+- name: Install GitLab Runner (Helm)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[gitlab-runner-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "gitlab-runner-pre-check"
+      tags: [always]
+
+    - name: "[gitlab-runner-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        label_name: "gitlab-runner-pre-check"
+        namespace_value: "{{ gitlab_runner_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations
+    # =========================================================================
+
+    - name: "[gitlab-runner-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
+
+    - name: "[gitlab-runner-init] Set gitlab_runner_eso from merged integration"
+      set_fact:
+        gitlab_runner_eso: "{{ eso_vault_integration_gitlab_runner_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-runner-init] Set gitlab_eso from merged integration"
+      set_fact:
+        gitlab_eso: "{{ eso_vault_integration_gitlab_merged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-runner-init] Find secret names and vault paths by type"
+      set_fact:
+        secret_runner_token: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'runner_token') | first).target_secret_name }}"
+        vault_path_runner_token: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'runner_token') | first).vault_path }}"
+        secret_minio_cache: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).target_secret_name }}"
+        vault_path_minio_cache: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).vault_path }}"
+        secret_minio_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_root') | first).target_secret_name }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: INSTALL PRE (ESO Resources + NetworkPolicies)
+    # =========================================================================
+
+    - name: "[gitlab-runner-pre] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "gitlab-runner-pre"
+        chart_name: "gitlab-runner-pre"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/gitlab-runner/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/gitlab-runner/pre"
+      tags: [pre]
+
+    - name: "[gitlab-runner-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/gitlab-runner/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ gitlab_runner_namespace }}
+          clusterDomain: {{ dns_domain }}
+          vault:
+            namespace: {{ vault_namespace }}
+          externalSecrets:
+            namespace: {{ external_secrets_namespace }}
+          runnerEso:
+            saName: {{ gitlab_runner_eso.sa_name }}
+            roleName: {{ gitlab_runner_eso.role_name }}
+            secretStoreName: {{ gitlab_runner_eso.secret_store_name }}
+            kvEnginePath: {{ gitlab_runner_eso.kv_engine_path }}
+            isNeedEso: {{ gitlab_runner_eso.is_need_eso | default(true) }}
+            secrets: {{ gitlab_runner_eso.secrets | to_json }}
+          esoResourcesConfig:
+            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
+            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
+            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
+          gitlab:
+            namespace: {{ gitlab_namespace }}
+            releaseName: gitlab
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[gitlab-runner-pre] Install via Helm"
+      command: >
+        helm upgrade --install gitlab-runner-pre {{ remote_charts_dir }}/gitlab-runner/pre
+        --namespace {{ gitlab_runner_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/gitlab-runner/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ gitlab_runner_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: MINIO RUNNER-CACHE SETUP (bucket + access key)
+    # =========================================================================
+
+    - name: "[gitlab-runner-minio] Get MinIO pod name"
+      command: >
+        kubectl get pods -n {{ gitlab_namespace }}
+        -l app.kubernetes.io/name=gitlab-minio
+        -o jsonpath='{.items[0].metadata.name}'
+      register: runner_minio_pod_name
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Get MinIO root username from secret"
+      shell: |
+        kubectl get secret {{ secret_minio_root }} -n {{ gitlab_namespace }} \
+          -o jsonpath='{.data.username}' | base64 -d
+      register: runner_minio_root_user
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Get MinIO root password from secret"
+      shell: |
+        kubectl get secret {{ secret_minio_root }} -n {{ gitlab_namespace }} \
+          -o jsonpath='{.data.password}' | base64 -d
+      register: runner_minio_root_password
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Configure mc alias"
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
+        mc alias set myminio http://localhost:9000
+        '{{ runner_minio_root_user.stdout }}'
+        '{{ runner_minio_root_password.stdout }}'
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Create runner-cache bucket"
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
+        mc mb myminio/runner-cache --ignore-existing
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Check if runner-cache access_key exists in Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ gitlab_runner_eso.kv_engine_path }}{{ vault_path_minio_cache }} 2>/dev/null \
+          | jq -r '.data.data.access_key // empty'
+      register: runner_cache_access_key_check
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Create access key for runner-cache"
+      command: >
+        kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
+        mc admin accesskey create myminio {{ runner_minio_root_user.stdout }}
+        --name 'runner-cache-key' --json
+      register: runner_cache_accesskey_result
+      when: runner_cache_access_key_check.stdout == ""
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Store runner-cache access key in Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ gitlab_runner_eso.kv_engine_path }}{{ vault_path_minio_cache }}
+        access_key={{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}
+        secret_key={{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}
+        bucket_name=runner-cache
+      when: runner_cache_access_key_check.stdout == ""
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: VERIFY RUNNER TOKEN EXISTS IN VAULT (token set manually by DevOps)
+    # =========================================================================
+
+    - name: "[gitlab-runner-token] Verify runner token exists in Vault"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -field=token \
+          {{ gitlab_runner_eso.kv_engine_path }}{{ vault_path_runner_token }}
+      register: vault_token_check
+      failed_when: vault_token_check.rc != 0
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # STEP 4: WAIT FOR ESO TO SYNC SECRETS (runner token + minio cache)
+    # =========================================================================
+
+    - name: "[gitlab-runner-wait-eso] Force sync runner secrets"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        label_name: "gitlab-runner-wait-eso"
+        eso_sync_namespace: "{{ gitlab_runner_namespace }}"
+        eso_sync_es_name: "{{ item }}"
+      loop: >-
+        {{
+          gitlab_runner_eso.secrets
+          | map(attribute='external_secret_name')
+          | list
+        }}
+      tags: [install]
+
+    - name: "[gitlab-runner-wait-eso] Wait for runner token secret"
+      command: kubectl get secret {{ secret_runner_token }} -n {{ gitlab_runner_namespace }}
+      register: runner_token_secret_wait
+      until: runner_token_secret_wait.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-wait-eso] Wait for MinIO cache secret"
+      command: kubectl get secret {{ secret_minio_cache }} -n {{ gitlab_runner_namespace }}
+      register: minio_cache_secret_wait
+      until: minio_cache_secret_wait.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # STEP 5: INSTALL GITLAB RUNNER (Official Helm Chart)
+    # =========================================================================
+
+    - name: "[gitlab-runner-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/gitlab-runner/values-override.yaml"
+        mode: "0644"
+        content: |
+          gitlabUrl: {{ gitlab_runner_gitlab_url }}
+          replicas: {{ gitlab_runner_replicas }}
+          concurrent: {{ gitlab_runner_concurrent }}
+          checkInterval: {{ gitlab_runner_check_interval }}
+          unregisterRunners: {{ gitlab_runner_unregister_runners }}
+
+          runners:
+            secret: "{{ secret_runner_token }}"
+            cache:
+              secretName: "{{ secret_minio_cache }}"
+            config: |
+              {{ gitlab_runner_config | indent(14, first=False) }}
+
+          rbac:
+            create: true
+            clusterWideAccess: false
+
+          serviceAccount:
+            create: true
+            name: "gitlab-runner"
+
+          podLabels:
+            app.kubernetes.io/name: "gitlab-runner"
+            app.kubernetes.io/component: "runner"
+            app.kubernetes.io/part-of: "gitlab"
+            app.kubernetes.io/managed-by: "helm"
+
+          nodeSelector:
+            node-role.kubernetes.io/worker: ""
+
+          podSecurityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            fsGroup: 65533
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+
+          resources:
+            requests:
+              memory: {{ gitlab_runner_memory_request }}
+              cpu: {{ gitlab_runner_cpu_request }}
+            limits:
+              memory: {{ gitlab_runner_memory_limit }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-install] Add Helm repository"
+      include_tasks: tasks/tasks-add-helm-repo.yaml
+      vars:
+        label_name: "gitlab-runner-install"
+        helm_repo_name: "gitlab"
+        helm_repo_url: "https://charts.gitlab.io"
+      tags: [install]
+
+    - name: "[gitlab-runner-install] Install via Helm"
+      command: >
+        helm upgrade --install gitlab-runner gitlab/gitlab-runner
+        --namespace {{ gitlab_runner_namespace }}
+        --values {{ remote_charts_dir }}/gitlab-runner/values-override.yaml
+        --version {{ gitlab_runner_chart_version }}
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ gitlab_runner_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-runner-install] Wait for rollout to be ready"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "gitlab-runner-install"
+        rollout_namespace: "{{ gitlab_runner_namespace }}"
+        rollout_timeout: "{{ gitlab_runner_rollout_timeout }}"
+        rollout_resources:
+          - deployment/gitlab-runner
+      tags: [install]
+
+    # =========================================================================
+    # STEP 6: VERIFICATION
+    # =========================================================================
+
+    - name: "[gitlab-runner-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ gitlab_runner_namespace }}"
+        label_name: "gitlab-runner-verify"
+      tags: [always]
+
+    - name: "[gitlab-runner-verify] Get runner pods status"
+      command: kubectl get pods -n {{ gitlab_runner_namespace }} -o wide
+      register: runner_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-runner-verify] Print runner pods status"
+      debug:
+        msg: "{{ runner_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-runner-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "GITLAB RUNNER INSTALLATION COMPLETE"
+          - "=============================================="
+          - "Namespace:       {{ gitlab_runner_namespace }}"
+          - "GitLab URL:      https://{{ gitlab_ui_domain }}"
+          - "Runner chart:    gitlab/gitlab-runner {{ gitlab_runner_chart_version }}"
+          - "Executor:        kubernetes"
+          - "Cache:           S3 (gitlab-minio.{{ gitlab_namespace }}.svc.{{ dns_domain }}:9000)"
+          - ""
+          - "Runner token secret:     {{ secret_runner_token }}"
+          - "MinIO cache secret:      {{ secret_minio_cache }}"
+          - ""
+          - "Verify registration in GitLab:"
+          - "  Admin → CI/CD → Runners"
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-runner-verify] Installation complete"
+      debug:
+        msg: "gitlab-runner-pre + gitlab-runner: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
