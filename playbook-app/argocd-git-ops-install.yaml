@@ -37,12 +37,6 @@
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
 
-    - name: "[argocd-git-ops-init] Set argocd_git_ops_eso from merged integration"
-      set_fact:
-        argocd_git_ops_eso: "{{ eso_vault_integration_argocd_git_ops_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
 
     # =========================================================================
     # STEP 1: ARGOCD-GIT-OPS/PRE (ESO: ServiceAccount, SecretStore, ExternalSecrets)
@@ -63,16 +57,14 @@
         mode: "0600"
         content: |
           namespace: {{ argocd_namespace }}
-          clusterDomain: {{ dns_domain }}
-          vault:
-            namespace: {{ vault_namespace }}
           eso:
-            saName: {{ argocd_git_ops_eso.sa_name }}
-            roleName: {{ argocd_git_ops_eso.role_name }}
-            secretStoreName: {{ argocd_git_ops_eso.secret_store_name }}
-            kvEnginePath: {{ argocd_git_ops_eso.kv_engine_path }}
-            isNeedEso: {{ argocd_git_ops_eso.is_need_eso | default(true) }}
-            secrets: {{ argocd_git_ops_eso.secrets | to_json }}
+            vaultServerUrl: {{ vault_internal_url }}
+            saName: {{ eso_vault_integration_argocd_git_ops.sa_name }}
+            roleName: {{ eso_vault_integration_argocd_git_ops.role_name }}
+            secretStoreName: {{ eso_vault_integration_argocd_git_ops.secret_store_name }}
+            kvEnginePath: {{ eso_vault_integration_argocd_git_ops.kv_engine_path }}
+            isNeedEso: {{ eso_vault_integration_argocd_git_ops.is_need_eso | default(true) }}
+            secrets: {{ eso_vault_integration_argocd_git_ops_secrets_merged | to_json }}
           esoResourcesConfig:
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}

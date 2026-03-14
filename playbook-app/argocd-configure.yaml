@@ -33,17 +33,10 @@
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
 
-    - name: "[argocd-configure-init] Set argocd_eso from merged integration"
-      set_fact:
-        argocd_eso: "{{ eso_vault_integration_argocd_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
     - name: "[argocd-configure-init] Resolve vault_path for admin credentials"
       set_fact:
         vault_path_argocd_admin: >-
-          {{ (argocd_eso.secrets | selectattr('type', 'equalto', 'argocd_root') | first).vault_path }}
+          {{ (eso_vault_integration_argocd_secrets_merged | selectattr('type', 'equalto', 'argocd_root') | first).vault_path }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -57,7 +50,7 @@
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -field=password \
-          {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }} 2>/dev/null || true
+          {{ eso_vault_integration_argocd.kv_engine_path }}{{ vault_path_argocd_admin }} 2>/dev/null || true
       register: vault_password_result
       failed_when: false
       changed_when: false
@@ -174,7 +167,7 @@
     - name: "[argocd-admin-password] Save active password to Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }}
+        vault kv put {{ eso_vault_integration_argocd.kv_engine_path }}{{ vault_path_argocd_admin }}
         username=admin
         password={{ active_admin_password }}
       when: admin_password_source == "k8s_secret"
@@ -202,7 +195,7 @@
           - "ArgoCD Web UI: https://{{ argocd_ui_domain }}"
           - ""
           - "Admin credentials stored in Vault:"
-          - "  Path: {{ argocd_eso.kv_engine_path }}{{ vault_path_argocd_admin }}"
+          - "  Path: {{ eso_vault_integration_argocd.kv_engine_path }}{{ vault_path_argocd_admin }}"
           - "  Fields: username, password"
           - ""
           - "Password source: {{ admin_password_source }}"

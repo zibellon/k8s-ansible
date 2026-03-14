@@ -1,15 +1,22 @@
 # =============================================================================
-# Vault Projects Sync
+# Vault Policy Sync
 # =============================================================================
-# Synchronizes policies and roles from hosts.yaml (+ hosts-extra.yaml) to Vault
+# Synchronizes policies and roles from hosts.yaml (+ hosts-extra.yaml) to Vault.
 #
-# Policy/role sources (merged in order, conflict on duplicate names):
-#   1. eso_vault_integration_XXXXX — auto-derived from secrets[] (per-secret policy)
-#   2. vault_policies / vault_roles — manual overrides in hosts.yaml
-#   3. vault_policies_extra / vault_roles_extra — from hosts-extra.yaml (gitignored)
+# Policy/role sources (merged by tasks-eso-merge.yaml):
+#   1. vault_policies / vault_roles — defined in hosts.yaml (includes ESO policies)
+#   2. vault_policies_extra / vault_roles_extra — from hosts-extra.yaml (gitignored)
 #
 # Usage:
 #   ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml
+#   ansible-playbook ... --tags policy           # all policy operations
+#   ansible-playbook ... --tags policy-add        # only add missing policies
+#   ansible-playbook ... --tags policy-update     # only update changed policies (hash check)
+#   ansible-playbook ... --tags policy-delete     # only delete removed policies
+#   ansible-playbook ... --tags role             # all role operations
+#   ansible-playbook ... --tags role-add
+#   ansible-playbook ... --tags role-update
+#   ansible-playbook ... --tags role-delete
 #
 # Without hosts-extra.yaml (_extra variables default to empty in hosts.yaml):
 #   ansible-playbook -i hosts.yaml playbook-app/vault-policy-sync.yaml
@@ -26,6 +33,7 @@
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
         label_name: "vault-policy-sync-pre-check"
+      tags: [always]
 
     # =========================================================================
     # STEP 1: CHECK VAULT IS READY
@@ -38,95 +46,125 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[vault-check] Fail if Vault is sealed"
       fail:
         msg: "Vault is sealed. Please unseal Vault first."
       when: vault_sealed_check.stdout == "true"
       run_once: true
+      tags: [always]
 
     - name: "[vault-check] Vault is ready"
       debug:
         msg: "Vault is unsealed and ready"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     # =========================================================================
-    # STEP 2: MERGE ESO INTEGRATIONS + SYNC POLICIES AND ROLES
+    # STEP 2: MERGE ESO INTEGRATIONS + BUILD FINAL LISTS
     # =========================================================================
 
     - name: "[vault-policy-sync] Merge ESO integrations and derive policies/roles"
       include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
 
-    - name: "[vault-policy-sync] Show sync summary"
+    - name: "[vault-policy-sync] Show sync targets"
       debug:
         msg:
-          - "Derived from integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
-          - "Manual overrides (vault_policies/vault_roles): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
-          - "Extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"
-          - "Final totals: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"
+          - "vault_policies_final: {{ vault_policies_final | length }} policies"
+          - "vault_roles_final: {{ vault_roles_final | length }} roles"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # STEP 3: POLICY OPERATIONS
+    # =========================================================================
 
     # -------------------------------------------------------------------------
-    # Reconcile policies: delete removed ones
+    # policy-delete: remove policies not in vault_policies_final
     # -------------------------------------------------------------------------
 
     - name: "[vault-policy-sync] Get existing policies from Vault"
       shell: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault policy list -format=json 2>/dev/null || echo '[]'
-      register: vault_existing_policies_raw
+      register: _vault_existing_policies_raw
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always, policy, policy-delete]
 
-    - name: "[vault-policy-sync] Set policies to delete (drift cleanup)"
+    - name: "[vault-policy-sync] Compute policies to delete"
       set_fact:
-        vault_policies_to_delete: >-
+        _vault_policies_to_delete: >-
           {{
-            (vault_existing_policies_raw.stdout | from_json)
+            (_vault_existing_policies_raw.stdout | from_json)
             | difference(vault_policies_final | map(attribute='name') | list)
             | difference(['default', 'root'])
           }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always, policy, policy-delete]
 
     - name: "[vault-policy-sync] Show policies to delete"
       debug:
-        msg: "Policies to delete (removed from hosts.yaml): {{ vault_policies_to_delete }}"
-      when: vault_policies_to_delete | length > 0
+        msg: "Policies to delete: {{ _vault_policies_to_delete }}"
+      when: _vault_policies_to_delete | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [policy, policy-delete]
 
     - name: "[vault-policy-sync] Delete removed policies"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault policy delete {{ item }}
-      loop: "{{ vault_policies_to_delete }}"
-      when: vault_policies_to_delete | length > 0
+      loop: "{{ _vault_policies_to_delete }}"
+      when: _vault_policies_to_delete | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [policy, policy-delete]
 
     # -------------------------------------------------------------------------
-    # Sync policies from vault_policies_final
+    # policy-add: write policies not yet present in Vault
     # -------------------------------------------------------------------------
 
-    - name: "[vault-policy-sync] Show policies to sync"
+    - name: "[vault-policy-sync] Compute policies to add"
+      set_fact:
+        _vault_policies_to_add: >-
+          {{
+            vault_policies_final
+            | selectattr('name', 'in',
+                (vault_policies_final | map(attribute='name') | list)
+                | difference(_vault_existing_policies_raw.stdout | from_json)
+              )
+            | list
+          }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always, policy, policy-add]
+
+    - name: "[vault-policy-sync] Show policies to add"
       debug:
-        msg: "Syncing {{ vault_policies_final | length }} policies"
+        msg: "Policies to add: {{ _vault_policies_to_add | map(attribute='name') | list }}"
+      when: _vault_policies_to_add | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [policy, policy-add]
 
-    - name: "[vault-policy-sync] Ensure policies directory exists"
+    - name: "[vault-policy-sync] Ensure policies directory exists (add)"
       file:
         path: "{{ remote_charts_dir }}/vault/config/policies"
         state: directory
         mode: "0755"
+      when: _vault_policies_to_add | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [policy, policy-add]
 
-    - name: "[vault-policy-sync] Create policy files on server"
+    - name: "[vault-policy-sync] Create policy files for new policies"
       copy:
         dest: "{{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl"
         mode: "0644"
@@ -136,34 +174,163 @@
             capabilities = {{ p.capabilities | to_json }}
           }
           {% endfor %}
-      loop: "{{ vault_policies_final }}"
+      loop: "{{ _vault_policies_to_add }}"
       loop_control:
         label: "{{ item.name }}"
+      when: _vault_policies_to_add | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [policy, policy-add]
 
-    - name: "[vault-policy-sync] Copy policy files to container"
+    - name: "[vault-policy-sync] Copy new policy files to container"
       command: >
         kubectl cp {{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl
         {{ vault_namespace }}/vault-0:/tmp/{{ item.name }}.hcl
-      loop: "{{ vault_policies_final }}"
+      loop: "{{ _vault_policies_to_add }}"
       loop_control:
         label: "{{ item.name }}"
+      when: _vault_policies_to_add | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [policy, policy-add]
 
-    - name: "[vault-policy-sync] Apply policies in Vault"
+    - name: "[vault-policy-sync] Apply new policies in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault policy write {{ item.name }} /tmp/{{ item.name }}.hcl
-      loop: "{{ vault_policies_final }}"
+      loop: "{{ _vault_policies_to_add }}"
       loop_control:
         label: "{{ item.name }}"
+      when: _vault_policies_to_add | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [policy, policy-add]
 
     # -------------------------------------------------------------------------
-    # Reconcile roles: delete removed ones
+    # policy-update: update existing policies whose content has changed (hash check)
+    # -------------------------------------------------------------------------
+
+    - name: "[vault-policy-sync] Compute existing policy names (candidates for update)"
+      set_fact:
+        _vault_policies_existing: >-
+          {{
+            vault_policies_final
+            | selectattr('name', 'in', (_vault_existing_policies_raw.stdout | from_json))
+            | list
+          }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always, policy, policy-update]
+
+    - name: "[vault-policy-sync] Read existing policy content from Vault"
+      shell: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault policy read {{ item.name }} 2>/dev/null || echo ""
+      register: _vault_policy_read_results
+      loop: "{{ _vault_policies_existing }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+      when: _vault_policies_existing | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policy, policy-update]
+
+    - name: "[vault-policy-sync] Compute policies to update (hash mismatch)"
+      set_fact:
+        _vault_policies_to_update: >-
+          {{
+            _vault_policies_existing
+            | zip(_vault_policy_read_results.results | default([]))
+            | map('list')
+            | selectattr('0', 'defined')
+            | select('ne', [])
+            | list
+            | selectattr('1.stdout', 'defined')
+            | rejectattr('1.stdout', 'equalto', '')
+            | list
+            | map(attribute='0')
+            | list
+            | selectattr('name', 'ne', '')
+            | list
+          }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      when: _vault_policies_existing | length > 0
+      tags: [policy, policy-update]
+
+    # Simpler hash-based approach: write desired content to file, compare sha256
+    - name: "[vault-policy-sync] Ensure policies directory exists (update)"
+      file:
+        path: "{{ remote_charts_dir }}/vault/config/policies"
+        state: directory
+        mode: "0755"
+      when: _vault_policies_existing | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policy, policy-update]
+
+    - name: "[vault-policy-sync] Write desired policy files (for hash comparison)"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/config/policies/{{ item.name }}.hcl"
+        mode: "0644"
+        content: |
+          {% for p in item.paths %}
+          path "{{ p.path }}" {
+            capabilities = {{ p.capabilities | to_json }}
+          }
+          {% endfor %}
+      register: _policy_file_results
+      loop: "{{ _vault_policies_existing }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: _vault_policies_existing | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policy, policy-update]
+
+    - name: "[vault-policy-sync] Copy changed policy files to container"
+      command: >
+        kubectl cp {{ remote_charts_dir }}/vault/config/policies/{{ item.item.name }}.hcl
+        {{ vault_namespace }}/vault-0:/tmp/{{ item.item.name }}.hcl
+      loop: "{{ _policy_file_results.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name | default('?') }}"
+      when:
+        - _vault_policies_existing | length > 0
+        - item.changed | default(false)
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policy, policy-update]
+
+    - name: "[vault-policy-sync] Apply updated policies in Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault policy write {{ item.item.name }} /tmp/{{ item.item.name }}.hcl
+      loop: "{{ _policy_file_results.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name | default('?') }}"
+      when:
+        - _vault_policies_existing | length > 0
+        - item.changed | default(false)
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policy, policy-update]
+
+    - name: "[vault-policy-sync] Show policy update summary"
+      debug:
+        msg: "Updated policies: {{ _policy_file_results.results | default([]) | selectattr('changed', 'equalto', true) | map(attribute='item.name') | list }}"
+      when: _vault_policies_existing | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policy, policy-update]
+
+    # =========================================================================
+    # STEP 4: ROLE OPERATIONS
+    # =========================================================================
+
+    # -------------------------------------------------------------------------
+    # role-delete: remove roles not in vault_roles_final
     # -------------------------------------------------------------------------
 
     - name: "[vault-policy-sync] Get existing roles from Vault"
@@ -171,62 +338,127 @@
         result=$(kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault list -format=json auth/kubernetes/role 2>/dev/null) || true
         echo "${result:-[]}"
-      register: vault_existing_roles_raw
+      register: _vault_existing_roles_raw
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always, role, role-delete]
 
-    - name: "[vault-policy-sync] Set roles to delete (drift cleanup)"
+    - name: "[vault-policy-sync] Compute roles to delete"
       set_fact:
-        vault_roles_to_delete: >-
+        _vault_roles_to_delete: >-
           {{
-            (vault_existing_roles_raw.stdout | from_json)
+            (_vault_existing_roles_raw.stdout | from_json)
             | difference(vault_roles_final | map(attribute='name') | list)
           }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always, role, role-delete]
 
     - name: "[vault-policy-sync] Show roles to delete"
       debug:
-        msg: "Roles to delete (removed from hosts.yaml): {{ vault_roles_to_delete }}"
-      when: vault_roles_to_delete | length > 0
+        msg: "Roles to delete: {{ _vault_roles_to_delete }}"
+      when: _vault_roles_to_delete | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [role, role-delete]
 
     - name: "[vault-policy-sync] Delete removed roles"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
         vault delete auth/kubernetes/role/{{ item }}
-      loop: "{{ vault_roles_to_delete }}"
-      when: vault_roles_to_delete | length > 0
+      loop: "{{ _vault_roles_to_delete }}"
+      when: _vault_roles_to_delete | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [role, role-delete]
 
     # -------------------------------------------------------------------------
-    # Sync roles from vault_roles_final
+    # role-add: write roles not yet present in Vault
     # -------------------------------------------------------------------------
 
-    - name: "[vault-policy-sync] Show roles to sync"
+    - name: "[vault-policy-sync] Compute roles to add"
+      set_fact:
+        _vault_roles_to_add: >-
+          {{
+            vault_roles_final
+            | selectattr('name', 'in',
+                (vault_roles_final | map(attribute='name') | list)
+                | difference(_vault_existing_roles_raw.stdout | from_json)
+              )
+            | list
+          }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always, role, role-add]
+
+    - name: "[vault-policy-sync] Show roles to add"
       debug:
-        msg: "Syncing {{ vault_roles_final | length }} roles"
+        msg: "Roles to add: {{ _vault_roles_to_add | map(attribute='name') | list }}"
+      when: _vault_roles_to_add | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [role, role-add]
 
-    - name: "[vault-policy-sync] Create/update roles"
+    - name: "[vault-policy-sync] Create new roles"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ item.name }}
         bound_service_account_names={{ item.sa_name }}
         bound_service_account_namespaces={{ item.namespace }}
         policies={{ item.policies | join(',') }}
         ttl=1h
-      loop: "{{ vault_roles_final }}"
+      loop: "{{ _vault_roles_to_add }}"
       loop_control:
         label: "{{ item.name }}"
+      when: _vault_roles_to_add | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [role, role-add]
+
+    # -------------------------------------------------------------------------
+    # role-update: update existing roles whose config has changed
+    # -------------------------------------------------------------------------
+
+    - name: "[vault-policy-sync] Read existing role configs from Vault"
+      shell: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault read -format=json auth/kubernetes/role/{{ item.name }} 2>/dev/null || echo '{}'
+      register: _vault_role_read_results
+      loop: "{{ vault_roles_final | selectattr('name', 'in', (_vault_existing_roles_raw.stdout | from_json)) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [role, role-update]
+
+    - name: "[vault-policy-sync] Update roles whose config differs"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ item.0.name }}
+        bound_service_account_names={{ item.0.sa_name }}
+        bound_service_account_namespaces={{ item.0.namespace }}
+        policies={{ item.0.policies | join(',') }}
+        ttl=1h
+      loop: "{{ _vault_role_read_results.results | default([]) | zip(vault_roles_final | selectattr('name', 'in', (_vault_existing_roles_raw.stdout | from_json)) | list) | map('list') | list }}"
+      loop_control:
+        label: "{{ item.1.name | default('?') }}"
+      vars:
+        _existing_data: "{{ (item.0.stdout | from_json).data | default({}) }}"
+        _want_sa: "{{ item.1.sa_name }}"
+        _want_ns: "{{ item.1.namespace }}"
+        _want_policies: "{{ item.1.policies | sort }}"
+        _have_sa: "{{ _existing_data.bound_service_account_names | default([]) | join(',') }}"
+        _have_ns: "{{ _existing_data.bound_service_account_namespaces | default([]) | join(',') }}"
+        _have_policies: "{{ _existing_data.policies | default([]) | sort }}"
+      when:
+        - item.0.stdout | default('{}') != '{}'
+        - (_want_sa != _have_sa) or (_want_ns != _have_ns) or (_want_policies != _have_policies)
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [role, role-update]
 
     # =========================================================================
-    # STEP 3: VERIFICATION
+    # STEP 5: VERIFICATION
     # =========================================================================
 
     - name: "[verify] List all policies in Vault"
@@ -235,12 +467,14 @@
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[verify] Show policies"
       debug:
         var: vault_policies_list.stdout_lines
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[verify] List all roles in Vault"
       command: kubectl exec -n {{ vault_namespace }} vault-0 -- vault list auth/kubernetes/role
@@ -249,12 +483,14 @@
       failed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[verify] Show roles"
       debug:
         var: vault_roles_list.stdout_lines
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     # =========================================================================
     # SUMMARY
@@ -267,17 +503,17 @@
           - "VAULT POLICY SYNC COMPLETE"
           - "=============================================="
           - "Sources:"
-          - "  Derived from integrations: {{ _derived_policies | length }} policies, {{ _derived_roles | length }} roles"
-          - "  vault_policies/roles (hosts.yaml): {{ vault_policies | length }} policies, {{ vault_roles | length }} roles"
-          - "  vault_policies_extra/roles_extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies, {{ (vault_roles_extra | default([])) | length }} roles"
-          - "Total synced: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"
+          - "  vault_policies (hosts.yaml): {{ vault_policies | length }} policies"
+          - "  vault_policies_extra (hosts-extra.yaml): {{ (vault_policies_extra | default([])) | length }} policies"
+          - "  vault_roles (hosts.yaml): {{ vault_roles | length }} roles"
+          - "  vault_roles_extra (hosts-extra.yaml): {{ (vault_roles_extra | default([])) | length }} roles"
+          - "Final: {{ vault_policies_final | length }} policies, {{ vault_roles_final | length }} roles"
           - "=============================================="
-          - ""
           - "Policies:"
           - "{% for p in vault_policies_final %}  - {{ p.name }}\n{% endfor %}"
-          - ""
           - "Roles:"
           - "{% for r in vault_roles_final %}  - {{ r.name }} -> {{ r.sa_name }} ({{ r.namespace }})\n{% endfor %}"
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]

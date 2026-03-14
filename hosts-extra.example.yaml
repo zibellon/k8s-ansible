@@ -8,10 +8,11 @@
 #   ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml
 #
 # Правила именования:
-#   - Имена политик/ролей НЕ должны совпадать с именами, выводимыми из
-#     eso_vault_integration_XXXXX или vault_policies/vault_roles в hosts.yaml.
-#   - external_secret_name и target_secret_name в _extra НЕ должны совпадать
-#     с уже определёнными в hosts.yaml для того же компонента.
+#   - Имена политик/ролей НЕ должны совпадать с именами в vault_policies/vault_roles в hosts.yaml.
+#   - external_secret_name и target_secret_name в *_secrets_extra НЕ должны совпадать
+#     с уже определёнными в *_secrets в hosts.yaml для того же компонента.
+#   - Расширить можно только массив секретов (*_secrets_extra).
+#     Конфигурацию SecretStore (eso_vault_integration_XXX) изменить нельзя.
 #   - При конфликте имён playbook упадёт с ошибкой.
 # =============================================================================
 
@@ -78,71 +79,62 @@ all:
         policies:
           - my-custom-policy
 
-    # Дополнительные ExternalSecrets для Vault self
-    # Пример:
-    eso_vault_integration_vault_extra:
-      secrets:
-        - external_secret_name: "eso-vault-custom"
-          target_secret_name: "eso-vault-custom"
-          vault_path: "/vault/custom/creds"
-          refresh_interval: "1m"
-          type: "default"
-          # is_need_eso: false  # vault-only: не создавать ExternalSecret и Vault-политику для этого секрета
-                                # vault_path по-прежнему доступен в плейбуках (default: true)
-
     # Дополнительные ExternalSecrets для Traefik
     # Пример:
-    eso_vault_integration_traefik_extra:
-      secrets:
-        - external_secret_name: "traefik-custom-cert"
-          target_secret_name: "traefik-custom-cert"
-          vault_path: "/traefik/custom/creds"
-          refresh_interval: "1m"
-          type: "default"
+    eso_vault_integration_traefik_secrets_extra:
+      - external_secret_name: "traefik-custom-cert"
+        target_secret_name: "traefik-custom-cert"
+        vault_path: "/traefik/custom/creds"
+        refresh_interval: "1m"
+        type: "default"
 
     # Дополнительные ExternalSecrets для HAProxy
     # Пример:
-    eso_vault_integration_haproxy_extra:
-      secrets:
-        - external_secret_name: "haproxy-custom-secret"
-          target_secret_name: "haproxy-custom-secret"
-          vault_path: "/haproxy/custom/creds"
-          refresh_interval: "1m"
-          type: "default"
+    eso_vault_integration_haproxy_secrets_extra:
+      - external_secret_name: "haproxy-custom-secret"
+        target_secret_name: "haproxy-custom-secret"
+        vault_path: "/haproxy/custom/creds"
+        refresh_interval: "1m"
+        type: "default"
 
     # Дополнительные ExternalSecrets для Longhorn (S3-backup credentials)
     # Пример:
-    eso_vault_integration_longhorn_extra:
-      secrets:
-        - external_secret_name: "s3-backup"
-          target_secret_name: "longhorn-s3-backup-creds"
-          vault_path: "/longhorn-system/s3-backup"
-          refresh_interval: "1m"
-          type: "default"
+    eso_vault_integration_longhorn_secrets_extra:
+      - external_secret_name: "s3-backup"
+        target_secret_name: "longhorn-s3-backup-creds"
+        vault_path: "/longhorn/s3-backup"
+        refresh_interval: "1m"
+        type: "default"
 
     # Дополнительные ExternalSecrets для GitLab
     # Пример (type: "default" для обычных секретов без ESO-шаблона):
-    eso_vault_integration_gitlab_extra:
-      secrets:
-        - external_secret_name: "eso-gitlab-custom"
-          target_secret_name: "eso-gitlab-custom"
-          vault_path: "/gitlab/custom/creds"
-          refresh_interval: "1m"
-          type: "default"
+    eso_vault_integration_gitlab_secrets_extra:
+      - external_secret_name: "eso-gitlab-custom"
+        target_secret_name: "eso-gitlab-custom"
+        vault_path: "/gitlab/custom/creds"
+        refresh_interval: "1m"
+        type: "default"
+
+    # Дополнительные ExternalSecrets для GitLab Runner
+    # Пример:
+    eso_vault_integration_gitlab_runner_secrets_extra:
+      - external_secret_name: "eso-gitlab-runner-custom"
+        target_secret_name: "eso-gitlab-runner-custom"
+        vault_path: "/gitlab-runner/custom/creds"
+        refresh_interval: "1m"
+        type: "default"
 
     # Дополнительные ExternalSecrets для ArgoCD
     # Допустимые типы: "default", "git_ops_repo_pattern", "git_ops_repo_direct"
     # Пример:
-    eso_vault_integration_argocd_extra:
-      secrets:
-    
-        # ── type: default ──────────────────────────────────────────────────────
-        # Произвольный секрет (dataFrom extract), без ArgoCD-специфичных labels
-        - external_secret_name: "eso-argocd-custom"
-          target_secret_name: "eso-argocd-custom"
-          vault_path: "/argocd/custom/creds"
-          refresh_interval: "1m"
-          type: "default"
+    eso_vault_integration_argocd_secrets_extra:
+      # ── type: default ──────────────────────────────────────────────────────
+      # Произвольный секрет (dataFrom extract), без ArgoCD-специфичных labels
+      - external_secret_name: "eso-argocd-custom"
+        target_secret_name: "eso-argocd-custom"
+        vault_path: "/argocd/custom/creds"
+        refresh_interval: "1m"
+        type: "default"
 
     # Дополнительные ExternalSecrets для ArgoCD Git-Ops (git repo credentials)
     # Обрабатываются argocd-git-ops/pre chart (SA: eso-argocd-git-ops, namespace: argocd)
@@ -170,73 +162,71 @@ all:
     #   - password: "..." (не добавлять если публичный)
     # helm OCI (argocd_secret_type: repository)
     #   - те же поля что helm repo + enableOCI: "true"
-    #   - Для helm_repo_oci просто добавить в Vault поле enableOCI: "true" — тогда оно появится в Secret, ArgoCD включит OCI. Для helm_repo — не добавлять, ArgoCD будет считать enableOCI = false.
     # Пример (все доступные типы):
-    eso_vault_integration_argocd_git_ops_extra:
-      secrets:
-        # ── type: git_ops_repo_pattern ─────────────────────────────────────────
-        # SSH-ключ, label: repo-creds (credential template для URL-префикса)
-        - external_secret_name: "eso-argocd-git-ops-repo-pattern-ssh"
-          target_secret_name: "eso-argocd-git-ops-repo-pattern-ssh"
-          vault_path: "/argocd/git-ops/repo-pattern-ssh/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_pattern"
-    
-        # ── type: git_ops_repo_direct ──────────────────────────────────────────
-        # SSH-ключ, label: repository (конкретный репозиторий)
-        - external_secret_name: "eso-argocd-git-ops-repo-direct-ssh"
-          target_secret_name: "eso-argocd-git-ops-repo-direct-ssh"
-          vault_path: "/argocd/git-ops/repo-direct-ssh/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_direct"
-    
-        # ── type: git_ops_repo_direct ────────────────────────────────
-        # Username+password, label: repository (конкретный репозиторий)
-        - external_secret_name: "eso-argocd-git-ops-repo-direct-userpass"
-          target_secret_name: "eso-argocd-git-ops-repo-direct-userpass"
-          vault_path: "/argocd/git-ops/repo-direct-userpass/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_direct"
-    
-        # ── type: git_ops_repo_pattern ───────────────────────────────
-        # Username+password, label: repo-creds (credential template для URL-префикса)
-        - external_secret_name: "eso-argocd-git-ops-repo-pattern-userpass"
-          target_secret_name: "eso-argocd-git-ops-repo-pattern-userpass"
-          vault_path: "/argocd/git-ops/repo-pattern-userpass/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_pattern"
-    
-        # ── type: git_ops_repo_pattern ───────────────────────────────────────────────────
-        # Helm chart repository, label: repo-creds (credential template для URL-префикса)
-        - external_secret_name: "eso-argocd-git-ops-repo-pattern-helm-repo"
-          target_secret_name: "eso-argocd-git-ops-repo-pattern-helm-repo"
-          vault_path: "/argocd/git-ops/repo-pattern-helm-repo/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_pattern"
+    eso_vault_integration_argocd_git_ops_secrets_extra:
+      # ── type: git_ops_repo_pattern ─────────────────────────────────────────
+      # SSH-ключ, label: repo-creds (credential template для URL-префикса)
+      - external_secret_name: "eso-argocd-git-ops-repo-pattern-ssh"
+        target_secret_name: "eso-argocd-git-ops-repo-pattern-ssh"
+        vault_path: "/argocd/git-ops/repo-pattern-ssh/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_pattern"
 
-        # ── type: git_ops_repo_direct ───────────────────────────────────────────────────
-        # Helm chart repository, label: repository
-        - external_secret_name: "eso-argocd-git-ops-repo-direct-helm-repo"
-          target_secret_name: "eso-argocd-git-ops-repo-direct-helm-repo"
-          vault_path: "/argocd/git-ops/repo-direct-helm-repo/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_direct"
-    
-        # ── type: git_ops_repo_pattern ───────────────────────────────────────────────
-        # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
-        - external_secret_name: "eso-argocd-git-ops-repo-pattern-helm-oci"
-          target_secret_name: "eso-argocd-git-ops-repo-pattern-helm-oci"
-          vault_path: "/argocd/git-ops/repo-pattern-helm-oci/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_pattern"
+      # ── type: git_ops_repo_direct ──────────────────────────────────────────
+      # SSH-ключ, label: repository (конкретный репозиторий)
+      - external_secret_name: "eso-argocd-git-ops-repo-direct-ssh"
+        target_secret_name: "eso-argocd-git-ops-repo-direct-ssh"
+        vault_path: "/argocd/git-ops/repo-direct-ssh/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_direct"
 
-        # ── type: git_ops_repo_direct ───────────────────────────────────────────────
-        # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
-        - external_secret_name: "eso-argocd-git-ops-repo-direct-helm-oci"
-          target_secret_name: "eso-argocd-git-ops-repo-direct-helm-oci"
-          vault_path: "/argocd/git-ops/repo-direct-helm-oci/creds"
-          refresh_interval: "1m"
-          type: "git_ops_repo_direct"
+      # ── type: git_ops_repo_direct ────────────────────────────────
+      # Username+password, label: repository (конкретный репозиторий)
+      - external_secret_name: "eso-argocd-git-ops-repo-direct-userpass"
+        target_secret_name: "eso-argocd-git-ops-repo-direct-userpass"
+        vault_path: "/argocd/git-ops/repo-direct-userpass/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_direct"
+
+      # ── type: git_ops_repo_pattern ───────────────────────────────
+      # Username+password, label: repo-creds (credential template для URL-префикса)
+      - external_secret_name: "eso-argocd-git-ops-repo-pattern-userpass"
+        target_secret_name: "eso-argocd-git-ops-repo-pattern-userpass"
+        vault_path: "/argocd/git-ops/repo-pattern-userpass/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_pattern"
+
+      # ── type: git_ops_repo_pattern ───────────────────────────────────────────────────
+      # Helm chart repository, label: repo-creds (credential template для URL-префикса)
+      - external_secret_name: "eso-argocd-git-ops-repo-pattern-helm-repo"
+        target_secret_name: "eso-argocd-git-ops-repo-pattern-helm-repo"
+        vault_path: "/argocd/git-ops/repo-pattern-helm-repo/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_pattern"
+
+      # ── type: git_ops_repo_direct ───────────────────────────────────────────────────
+      # Helm chart repository, label: repository
+      - external_secret_name: "eso-argocd-git-ops-repo-direct-helm-repo"
+        target_secret_name: "eso-argocd-git-ops-repo-direct-helm-repo"
+        vault_path: "/argocd/git-ops/repo-direct-helm-repo/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_direct"
+
+      # ── type: git_ops_repo_pattern ───────────────────────────────────────────────
+      # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
+      - external_secret_name: "eso-argocd-git-ops-repo-pattern-helm-oci"
+        target_secret_name: "eso-argocd-git-ops-repo-pattern-helm-oci"
+        vault_path: "/argocd/git-ops/repo-pattern-helm-oci/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_pattern"
+
+      # ── type: git_ops_repo_direct ───────────────────────────────────────────────
+      # OCI-реестр как источник Helm-чартов (enableOCI: "true"), label: repository
+      - external_secret_name: "eso-argocd-git-ops-repo-direct-helm-oci"
+        target_secret_name: "eso-argocd-git-ops-repo-direct-helm-oci"
+        vault_path: "/argocd/git-ops/repo-direct-helm-oci/creds"
+        refresh_interval: "1m"
+        type: "git_ops_repo_direct"
 
     # ArgoCD ConfigMaps — расширение кастомными ключами
     # Каждая переменная независима: можно переопределить только нужную в hosts-extra.yaml

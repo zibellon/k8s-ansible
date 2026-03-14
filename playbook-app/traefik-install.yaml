@@ -40,12 +40,6 @@
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
 
-    - name: "[traefik-install-init] Set traefik_eso from merged integration"
-      set_fact:
-        traefik_eso: "{{ eso_vault_integration_traefik_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
 
     - name: "[traefik-init] Resolve dashboard ClusterIssuer"
       set_fact:
@@ -113,16 +107,14 @@
         mode: "0644"
         content: |
           namespace: {{ traefik_namespace }}
-          clusterDomain: {{ dns_domain }}
-          vault:
-            namespace: {{ vault_namespace }}
           eso:
-            saName: {{ traefik_eso.sa_name }}
-            roleName: {{ traefik_eso.role_name }}
-            secretStoreName: {{ traefik_eso.secret_store_name }}
-            kvEnginePath: {{ traefik_eso.kv_engine_path }}
-            isNeedEso: {{ traefik_eso.is_need_eso | default(true) }}
-            secrets: {{ traefik_eso.secrets | to_json }}
+            vaultServerUrl: {{ vault_internal_url }}
+            saName: {{ eso_vault_integration_traefik.sa_name }}
+            roleName: {{ eso_vault_integration_traefik.role_name }}
+            secretStoreName: {{ eso_vault_integration_traefik.secret_store_name }}
+            kvEnginePath: {{ eso_vault_integration_traefik.kv_engine_path }}
+            isNeedEso: {{ eso_vault_integration_traefik.is_need_eso | default(true) }}
+            secrets: {{ eso_vault_integration_traefik_secrets_merged | to_json }}
           esoResourcesConfig:
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}

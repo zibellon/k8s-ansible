@@ -40,12 +40,6 @@
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
 
-    - name: "[longhorn-install-init] Set longhorn_eso from merged integration"
-      set_fact:
-        longhorn_eso: "{{ eso_vault_integration_longhorn_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
 
     # =========================================================================
     # STEP 1: LONGHORN/PRE (NetworkPolicies, ESO)
@@ -113,18 +107,16 @@
         mode: "0644"
         content: |
           namespace: {{ longhorn_namespace }}
-          clusterDomain: {{ dns_domain }}
           traefik:
             namespace: {{ traefik_namespace }}
-          vault:
-            namespace: {{ vault_namespace }}
           eso:
-            saName: {{ longhorn_eso.sa_name }}
-            roleName: {{ longhorn_eso.role_name }}
-            secretStoreName: {{ longhorn_eso.secret_store_name }}
-            kvEnginePath: {{ longhorn_eso.kv_engine_path }}
-            isNeedEso: {{ longhorn_eso.is_need_eso | default(true) }}
-            secrets: {{ longhorn_eso.secrets | to_json }}
+            vaultServerUrl: {{ vault_internal_url }}
+            saName: {{ eso_vault_integration_longhorn.sa_name }}
+            roleName: {{ eso_vault_integration_longhorn.role_name }}
+            secretStoreName: {{ eso_vault_integration_longhorn.secret_store_name }}
+            kvEnginePath: {{ eso_vault_integration_longhorn.kv_engine_path }}
+            isNeedEso: {{ eso_vault_integration_longhorn.is_need_eso | default(true) }}
+            secrets: {{ eso_vault_integration_longhorn_secrets_merged | to_json }}
           esoResourcesConfig:
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}

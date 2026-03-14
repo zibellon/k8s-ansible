@@ -50,27 +50,13 @@
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
 
-    - name: "[gitlab-runner-init] Set gitlab_runner_eso from merged integration"
-      set_fact:
-        gitlab_runner_eso: "{{ eso_vault_integration_gitlab_runner_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-runner-init] Set gitlab_eso from merged integration"
-      set_fact:
-        gitlab_eso: "{{ eso_vault_integration_gitlab_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
     - name: "[gitlab-runner-init] Find secret names and vault paths by type"
       set_fact:
-        secret_runner_token: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'runner_token') | first).target_secret_name }}"
-        vault_path_runner_token: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'runner_token') | first).vault_path }}"
-        secret_minio_cache: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).target_secret_name }}"
-        vault_path_minio_cache: "{{ (gitlab_runner_eso.secrets | selectattr('type', 'equalto', 'minio_runner_cache') | first).vault_path }}"
-        secret_minio_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'minio_root') | first).target_secret_name }}"
+        secret_runner_token: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'runner_token') | first).target_secret_name }}"
+        vault_path_runner_token: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'runner_token') | first).vault_path }}"
+        secret_minio_cache: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'minio_runner_cache') | first).target_secret_name }}"
+        vault_path_minio_cache: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'minio_runner_cache') | first).vault_path }}"
+        secret_minio_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_root') | first).target_secret_name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -94,18 +80,16 @@
         mode: "0644"
         content: |
           namespace: {{ gitlab_runner_namespace }}
-          clusterDomain: {{ dns_domain }}
-          vault:
-            namespace: {{ vault_namespace }}
           externalSecrets:
             namespace: {{ external_secrets_namespace }}
           runnerEso:
-            saName: {{ gitlab_runner_eso.sa_name }}
-            roleName: {{ gitlab_runner_eso.role_name }}
-            secretStoreName: {{ gitlab_runner_eso.secret_store_name }}
-            kvEnginePath: {{ gitlab_runner_eso.kv_engine_path }}
-            isNeedEso: {{ gitlab_runner_eso.is_need_eso | default(true) }}
-            secrets: {{ gitlab_runner_eso.secrets | to_json }}
+            vaultServerUrl: {{ vault_internal_url }}
+            saName: {{ eso_vault_integration_gitlab_runner.sa_name }}
+            roleName: {{ eso_vault_integration_gitlab_runner.role_name }}
+            secretStoreName: {{ eso_vault_integration_gitlab_runner.secret_store_name }}
+            kvEnginePath: {{ eso_vault_integration_gitlab_runner.kv_engine_path }}
+            isNeedEso: {{ eso_vault_integration_gitlab_runner.is_need_eso | default(true) }}
+            secrets: {{ eso_vault_integration_gitlab_runner_secrets_merged | to_json }}
           esoResourcesConfig:
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
@@ -193,7 +177,7 @@
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -format=json \
-          {{ gitlab_runner_eso.kv_engine_path }}{{ vault_path_minio_cache }} 2>/dev/null \
+          {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }} 2>/dev/null \
           | jq -r '.data.data.access_key // empty'
       register: runner_cache_access_key_check
       failed_when: false
@@ -216,7 +200,7 @@
     - name: "[gitlab-runner-minio] Store runner-cache access key in Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ gitlab_runner_eso.kv_engine_path }}{{ vault_path_minio_cache }}
+        vault kv put {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}
         access_key={{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}
         secret_key={{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}
         bucket_name=runner-cache
@@ -233,7 +217,7 @@
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -field=token \
-          {{ gitlab_runner_eso.kv_engine_path }}{{ vault_path_runner_token }}
+          {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}
       register: vault_token_check
       failed_when: vault_token_check.rc != 0
       changed_when: false
@@ -253,7 +237,7 @@
         eso_sync_es_name: "{{ item }}"
       loop: >-
         {{
-          gitlab_runner_eso.secrets
+          eso_vault_integration_gitlab_runner_secrets_merged
           | map(attribute='external_secret_name')
           | list
         }}

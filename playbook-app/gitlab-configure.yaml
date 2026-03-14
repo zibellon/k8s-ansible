@@ -34,17 +34,10 @@
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
 
-    - name: "[gitlab-configure-init] Set gitlab_eso from merged integration"
-      set_fact:
-        gitlab_eso: "{{ eso_vault_integration_gitlab_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
     - name: "[gitlab-configure-init] Find secret names and vault paths by type"
       set_fact:
-        secret_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).target_secret_name }}"
-        vault_path_gitlab_root: "{{ (gitlab_eso.secrets | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
+        secret_gitlab_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_root') | first).target_secret_name }}"
+        vault_path_gitlab_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -58,7 +51,7 @@
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -format=json \
-          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null \
+          {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null \
           | jq -r '.data.data.password // empty'
       register: vault_password_result
       failed_when: false
@@ -156,7 +149,7 @@
     - name: "[gitlab-root-password] Save active password to Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
+        vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}
         username=root
         password={{ active_root_password }}
       when: root_password_source == "k8s_secret"
@@ -180,7 +173,7 @@
       shell: |
         kubectl exec -n {{ vault_namespace }} vault-0 -- \
           vault kv get -field=token \
-          {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null || true
+          {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }} 2>/dev/null || true
       register: vault_pat_result
       failed_when: false
       changed_when: false
@@ -226,7 +219,7 @@
     - name: "[gitlab-root-pat] Save new PAT to Vault"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv patch {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}
+        vault kv patch {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}
         token={{ new_pat_result.stdout | trim }}
       when:
         - pat_needs_rotation | bool
@@ -261,7 +254,7 @@
           - "GitLab Web UI: https://{{ gitlab_ui_domain }}"
           - ""
           - "Root credentials stored in Vault:"
-          - "  Path: {{ gitlab_eso.kv_engine_path }}{{ vault_path_gitlab_root }}"
+          - "  Path: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
           - "  Fields: username, password, token"
           - ""
           - "Password source: {{ root_password_source }}"

@@ -39,12 +39,6 @@
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
 
-    - name: "[argocd-install-init] Set argocd_eso from merged integration"
-      set_fact:
-        argocd_eso: "{{ eso_vault_integration_argocd_merged }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
 
     # =========================================================================
     # INIT: Resolve ClusterIssuer + ACME solver pod labels
@@ -126,16 +120,14 @@
           gitlabRunnerJob:
             name: {{ gitlab_runner_job_label_name }}
             component: {{ gitlab_runner_job_label_component }}
-          clusterDomain: {{ dns_domain }}
-          vault:
-            namespace: {{ vault_namespace }}
           eso:
-            saName: {{ argocd_eso.sa_name }}
-            roleName: {{ argocd_eso.role_name }}
-            secretStoreName: {{ argocd_eso.secret_store_name }}
-            kvEnginePath: {{ argocd_eso.kv_engine_path }}
-            isNeedEso: {{ argocd_eso.is_need_eso | default(true) }}
-            secrets: {{ argocd_eso.secrets | to_json }}
+            vaultServerUrl: {{ vault_internal_url }}
+            saName: {{ eso_vault_integration_argocd.sa_name }}
+            roleName: {{ eso_vault_integration_argocd.role_name }}
+            secretStoreName: {{ eso_vault_integration_argocd.secret_store_name }}
+            kvEnginePath: {{ eso_vault_integration_argocd.kv_engine_path }}
+            isNeedEso: {{ eso_vault_integration_argocd.is_need_eso | default(true) }}
+            secrets: {{ eso_vault_integration_argocd_secrets_merged | to_json }}
           esoResourcesConfig:
             secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
             externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
