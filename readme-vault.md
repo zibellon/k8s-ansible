@@ -95,7 +95,7 @@
 8. Проверка на уникальность: название k8s.secret OR название externalSecret
    1. В рамках одного namespace - нельзя создать два ExternalSecret или k8s.Secret с одинаковым названием
 
-## логика - SYNC
+## VAULT-POLICY-SYNC (как работает)
 1. Можно запустить через --tags
    1. policy-add - только добавить новые политики
    2. policy-update - только обновить текущие
@@ -110,3 +110,19 @@
    4. Добавляем все новые Role
    5. Обновляем текущие Role
    6. удаляем те, которых нет в ansible
+
+# Логика, запуска нового проекта (продукта)
+1. Вся система работат исправно, все настроено
+2. Надо запустить новый проект: my-wallet-app
+   1. У этого проекта будет 3 окружения: prod, dev, shared
+   2. каждое окружение === отдельный namespace
+3. Правила разделения секретов в VAULT
+   1. делаим по namespace
+   2. да, можно разделить как угодно, хоть hash использовать
+   3. Но по изначальным правилам: prefix === namespace
+4. В каждом namespace - будет свой: SA + SecretStore + ExternalSecret
+   1. shared: 1 SA + 1 SecretStore + 1 ExternalSecret
+   2. dev: 1 SA + 1 SecretStore + 2 ExternalSecret
+   3. prod: 1 SA + 1 SecretStore + 2 ExternalSecret
+5. Политики VAULT
+   1. 1 role === 1 SA + 1 namespace
