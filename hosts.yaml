@@ -515,6 +515,28 @@ all:
     gitlab_storage_rollout_timeout: "300s"
 
     # ------
+    # ZITADEL (Identity & Access Management)
+    # ------
+    zitadel_namespace: "zitadel"
+    zitadel_chart_version: "8.12.0"
+    zitadel_domain: ""
+    zitadel_tls_secret_name: "cert-zitadel"
+    zitadel_cluster_issuer_name: "acme-prod"
+    zitadel_ingress_class_name: "traefik-lb"
+    zitadel_http_enabled: false
+    zitadel_vpn_only_enabled: false
+    # PostgreSQL
+    zitadel_postgresql_image: "postgres:16-alpine"
+    zitadel_postgresql_storage_class: "lh-major-multi-best-effort"
+    zitadel_postgresql_storage_size: "10Gi"
+    # Timeouts
+    zitadel_helm_timeout: "10m"
+    zitadel_pre_helm_timeout: "5m"
+    zitadel_storage_helm_timeout: "5m"
+    zitadel_rollout_timeout: "300s"
+    zitadel_storage_rollout_timeout: "300s"
+
+    # ------
     # GitLab Runner
     # ------
     gitlab_runner_namespace: "gitlab-runner"
@@ -734,6 +756,27 @@ all:
     eso_vault_integration_gitlab_runner_secrets_extra: []
 
     # ---------
+    # ZITADEL (postgresql + masterkey)
+    # ---------
+    eso_vault_integration_zitadel:
+      sa_name: "eso-main"
+      role_name: "zitadel.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_zitadel_secrets:
+      - external_secret_name: "eso-zitadel-postgresql"
+        target_secret_name: "eso-zitadel-postgresql"
+        vault_path: "/zitadel/postgresql/creds"
+        type: "postgresql"
+      - external_secret_name: "eso-zitadel-masterkey"
+        target_secret_name: "eso-zitadel-masterkey"
+        vault_path: "/zitadel/masterkey"
+        type: "masterkey"
+
+    eso_vault_integration_zitadel_secrets_extra: []
+
+    # ---------
     # ArgoCD (SSH repo-creds)
     # ---------
     eso_vault_integration_argocd:
@@ -817,6 +860,15 @@ all:
           - path: eso-secret/metadata/gitlab-runner/*
             capabilities: [read, list]
       # ---------
+      # ESO: ZITADEL
+      # ---------
+      - name: zitadel.eso-main
+        paths:
+          - path: eso-secret/data/zitadel/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/zitadel/*
+            capabilities: [read, list]
+      # ---------
       # ESO: ArgoCD
       # ---------
       - name: argocd.eso-main
@@ -897,6 +949,14 @@ all:
         sa_name: eso-main
         policies:
           - gitlab-runner.eso-main
+      # ---------
+      # ESO: ZITADEL
+      # ---------
+      - name: zitadel.eso-main
+        namespace: zitadel
+        sa_name: eso-main
+        policies:
+          - zitadel.eso-main
       # ---------
       # ESO: ArgoCD
       # ---------

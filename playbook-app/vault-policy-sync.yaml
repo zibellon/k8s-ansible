@@ -222,44 +222,7 @@
       run_once: true
       tags: [always, policy, policy-update]
 
-    - name: "[vault-policy-sync] Read existing policy content from Vault"
-      shell: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault policy read {{ item.name }} 2>/dev/null || echo ""
-      register: _vault_policy_read_results
-      loop: "{{ _vault_policies_existing }}"
-      loop_control:
-        label: "{{ item.name }}"
-      changed_when: false
-      when: _vault_policies_existing | length > 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [policy, policy-update]
-
-    - name: "[vault-policy-sync] Compute policies to update (hash mismatch)"
-      set_fact:
-        _vault_policies_to_update: >-
-          {{
-            _vault_policies_existing
-            | zip(_vault_policy_read_results.results | default([]))
-            | map('list')
-            | selectattr('0', 'defined')
-            | select('ne', [])
-            | list
-            | selectattr('1.stdout', 'defined')
-            | rejectattr('1.stdout', 'equalto', '')
-            | list
-            | map(attribute='0')
-            | list
-            | selectattr('name', 'ne', '')
-            | list
-          }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      when: _vault_policies_existing | length > 0
-      tags: [policy, policy-update]
-
-    # Simpler hash-based approach: write desired content to file, compare sha256
+    # Hash-based approach: write desired content to file, compare sha256
     - name: "[vault-policy-sync] Ensure policies directory exists (update)"
       file:
         path: "{{ remote_charts_dir }}/vault/config/policies"
@@ -434,10 +397,10 @@
 
     - name: "[vault-policy-sync] Update roles whose config differs"
       command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ item.0.name }}
-        bound_service_account_names={{ item.0.sa_name }}
-        bound_service_account_namespaces={{ item.0.namespace }}
-        policies={{ item.0.policies | join(',') }}
+        kubectl exec -n {{ vault_namespace }} vault-0 -- vault write auth/kubernetes/role/{{ item.1.name }}
+        bound_service_account_names={{ item.1.sa_name }}
+        bound_service_account_namespaces={{ item.1.namespace }}
+        policies={{ item.1.policies | join(',') }}
         ttl=1h
       loop: "{{ _vault_role_read_results.results | default([]) | zip(vault_roles_final | selectattr('name', 'in', (_vault_existing_roles_raw.stdout | from_json)) | list) | map('list') | list }}"
       loop_control:

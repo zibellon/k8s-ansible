@@ -18,6 +18,7 @@
 #   - argocd-git-ops-install.yaml
 #   - argocd-configure.yaml
 #   - gitlab-configure.yaml
+#   - zitadel-install.yaml
 #
 # Requires variables (from hosts.yaml):
 #   - vault_policies          (array: name + paths)
@@ -36,6 +37,7 @@
 #   - eso_vault_integration_longhorn_secrets_merged
 #   - eso_vault_integration_gitlab_secrets_merged
 #   - eso_vault_integration_gitlab_runner_secrets_merged
+#   - eso_vault_integration_zitadel_secrets_merged
 #   - eso_vault_integration_argocd_secrets_merged
 #   - eso_vault_integration_argocd_git_ops_secrets_merged
 # =============================================================================
@@ -87,7 +89,28 @@
   tags: [always]
 
 # -------------------------------------------------------------------------
-# STAGE 3: Validate types in *_secrets_extra arrays
+# STAGE 3: Validate all role policies exist in vault_policies_final
+# -------------------------------------------------------------------------
+
+- name: "[eso-merge] Validate ALL role policies exist in vault_policies_final"
+  fail:
+    msg: >-
+      Role '{{ item.name }}' references policy '{{ _missing | first }}'
+      that is NOT defined in vault_policies_final.
+      Define this policy in vault_policies (hosts.yaml) or vault_policies_extra (hosts-extra.yaml).
+  vars:
+    _policy_names: "{{ vault_policies_final | map(attribute='name') | list }}"
+    _missing: "{{ item.policies | default([]) | difference(_policy_names) }}"
+  when: _missing | length > 0
+  loop: "{{ vault_roles_final }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# -------------------------------------------------------------------------
+# STAGE 4: Validate types in *_secrets_extra arrays
 # -------------------------------------------------------------------------
 # Only "default" type allowed in extras for traefik/haproxy/longhorn/gitlab/gitlab_runner
 # "default", "git_ops_repo_pattern", "git_ops_repo_direct" allowed for argocd extras
@@ -114,6 +137,8 @@
         secrets: "{{ eso_vault_integration_gitlab_secrets_extra | default([]) }}"
       - component: gitlab_runner
         secrets: "{{ eso_vault_integration_gitlab_runner_secrets_extra | default([]) }}"
+      - component: zitadel
+        secrets: "{{ eso_vault_integration_zitadel_secrets_extra | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -140,7 +165,7 @@
   tags: [always]
 
 # -------------------------------------------------------------------------
-# STAGE 4: Merge per-component secrets (base + extra)
+# STAGE 5: Merge per-component secrets (base + extra)
 # -------------------------------------------------------------------------
 
 - name: "[eso-merge] Merge traefik secrets"
@@ -188,6 +213,15 @@
   run_once: true
   tags: [always]
 
+- name: "[eso-merge] Merge zitadel secrets"
+  set_fact:
+    eso_vault_integration_zitadel_secrets_merged: >-
+      {{ eso_vault_integration_zitadel_secrets
+         + (eso_vault_integration_zitadel_secrets_extra | default([])) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[eso-merge] Merge argocd secrets"
   set_fact:
     eso_vault_integration_argocd_secrets_merged: >-
@@ -207,7 +241,7 @@
   tags: [always]
 
 # -------------------------------------------------------------------------
-# STAGE 5: Validate uniqueness of merged secrets per component
+# STAGE 6: Validate uniqueness of merged secrets per component
 # -------------------------------------------------------------------------
 # Both external_secret_name and target_secret_name must be unique per component.
 # Checking merged (base+extra) catches duplicates within base, within extra,
@@ -232,6 +266,8 @@
       secrets: "{{ eso_vault_integration_gitlab_secrets_merged }}"
     - component: gitlab_runner
       secrets: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
+    - component: zitadel
+      secrets: "{{ eso_vault_integration_zitadel_secrets_merged }}"
     - component: argocd
       secrets: "{{ eso_vault_integration_argocd_secrets_merged }}"
     - component: argocd_git_ops
@@ -261,6 +297,8 @@
       secrets: "{{ eso_vault_integration_gitlab_secrets_merged }}"
     - component: gitlab_runner
       secrets: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
+    - component: zitadel
+      secrets: "{{ eso_vault_integration_zitadel_secrets_merged }}"
     - component: argocd
       secrets: "{{ eso_vault_integration_argocd_secrets_merged }}"
     - component: argocd_git_ops
@@ -307,11 +345,12 @@
   tags: [always]
 
 # -------------------------------------------------------------------------
-# STAGE 6: Validate ESO SecretStore configs against vault_roles_final
+# STAGE 7: Validate ESO SecretStore configs against vault_roles_final
 # -------------------------------------------------------------------------
 # ESO creates NOTHING in Vault. This only verifies that:
 #   1. The role referenced by each SecretStore exists in vault_roles_final
-#   2. All policies attached to that role exist in vault_policies_final
+#   2. namespace + sa_name of SecretStore match the role definition
+#   3. All policies attached to that role exist in vault_policies_final
 # If validation fails → playbook aborts with a descriptive error.
 
 - name: "[eso-merge] Build list of SecretStore configs for validation"
@@ -327,6 +366,8 @@
         store: "{{ eso_vault_integration_gitlab }}"
       - component: gitlab_runner
         store: "{{ eso_vault_integration_gitlab_runner }}"
+      - component: zitadel
+        store: "{{ eso_vault_integration_zitadel }}"
       - component: argocd
         store: "{{ eso_vault_integration_argocd }}"
       - component: argocd_git_ops
@@ -346,6 +387,26 @@
   when:
     - item.store.is_need_eso | default(true)
     - item.store.role_name not in _role_names
+  loop: "{{ _eso_secret_stores }}"
+  loop_control:
+    label: "{{ item.component }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[eso-merge] Validate SecretStore namespace+sa_name matches role in vault_roles_final"
+  fail:
+    msg: >-
+      ESO SecretStore for '{{ item.component }}' references role '{{ item.store.role_name }}'
+      but namespace or sa_name does not match.
+      Expected: namespace={{ item.store.namespace }}, sa_name={{ item.store.sa_name }}
+      Found in role: namespace={{ _role.namespace | default('MISSING') }}, sa_name={{ _role.sa_name | default('MISSING') }}
+  vars:
+    _role: "{{ vault_roles_final | selectattr('name', 'equalto', item.store.role_name) | list | first | default({}) }}"
+  when:
+    - item.store.is_need_eso | default(true)
+    - item.store.role_name in (vault_roles_final | map(attribute='name') | list)
+    - (_role.namespace | default('') != item.store.namespace) or (_role.sa_name | default('') != item.store.sa_name)
   loop: "{{ _eso_secret_stores }}"
   loop_control:
     label: "{{ item.component }}"
@@ -389,6 +450,7 @@
       - "longhorn secrets: {{ eso_vault_integration_longhorn_secrets_merged | length }}"
       - "gitlab secrets: {{ eso_vault_integration_gitlab_secrets_merged | length }}"
       - "gitlab-runner secrets: {{ eso_vault_integration_gitlab_runner_secrets_merged | length }}"
+      - "zitadel secrets: {{ eso_vault_integration_zitadel_secrets_merged | length }}"
       - "argocd secrets: {{ eso_vault_integration_argocd_secrets_merged | length }}"
       - "argocd-git-ops secrets: {{ eso_vault_integration_argocd_git_ops_secrets_merged | length }}"
   delegate_to: "{{ master_manager_fact }}"
