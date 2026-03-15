@@ -280,31 +280,13 @@
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-hubble-install.yaml`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
 
-## olm. yaml -> helm
-## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/olm-v0-install.yaml`
+## olm
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
-## ---
-##
-- установка
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/olm-v0-install.yaml`
-  - Ставится: немного компонентов
-- обновление (версия + конфиг)
-  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/crds.yaml
-  - Положить сожержимое в `playbook-app/charts/olm-v0/crds/crds.yaml`
-  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml
-  - Положить сожержимое в `playbook-app/charts/olm-v0/templates/olm-v0-install.yaml`
-  - Перенести содержимое namespace в `playbook-app/charts/olm-v0/namespaces.yaml` и удалить из оригинала
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/olm-v0-install.yaml`
+## NOT_READY
 
-## medik8s. Установка идет через kubectl apply -f ...
+## medik8s
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
-## ---
-##
-- установка
-  - `ansible-playbook -i hosts.yaml playbook-app/medik8s-install.yaml`
+## NOT_READY
 
 ## longhorn. Официальный helm
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -354,7 +336,6 @@
 ## Есть volume -> требуется Longhorn
 ## Ожидание готовности deployment/daemonset - `kubectl wait --for=jsonpath='{.status.phase}'=Running`
 ## Потому что проверка внутри пода: смотрит на готовность самого VAULT (что он инициализирован), а не просто на работоспособность контейнера
-## Есть дополнительный файл для `vault + ESO`
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
@@ -409,7 +390,7 @@
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-configure.yaml`
   - конфигурация. Отдельный playbook
 
-## GitlabRunner. официальный helm
+## Gitlab-Runner. официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
@@ -492,7 +473,7 @@
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
-## `--tags pre, install`
+## `--tags pre, install, post`
 ## ---
 ##
 - установка + обновление (конфиг)
@@ -541,35 +522,14 @@
    2. Удаление директорий для k8s
 
 ## ---------
-## ---VAULT, логика синхронизации политик (`vault-policy-sync.yaml`)
+## ---ESO, force синхронизация ExternalSecrets
 ## ---------
-##
-## - Vault ready — проверяет, что Vault не sealed (`vault status`)
-## - Merge + validate (`tasks-eso-merge.yaml`). Подход: сначала мержим, потом валидируем:
-##   - Валидация `type` у секретов из XXX_extra (до merge)
-##   - Merge per-component: base + extra = `_merged` (vault/traefik/haproxy/longhorn/gitlab/argocd/argocd-git-ops)
-##   - Проверка уникальности `external_secret_name` и `target_secret_name` в каждом `_merged`
-##     - Ловит дубли внутри base, внутри extra и пересечения base/extra — всё одной проверкой
-##   - Cross-component: argocd vs argocd_git_ops (единственный случай — один namespace `argocd`)
-##     - fail если `external_secret_name` или `target_secret_name` пересекаются между ними
-##   - Из всех `_merged` генерирует `_derived_policies` и `_derived_roles`
-##   - Финальный merge: `vault_policies_final` = derived + manual + extra
-##   - Финальная проверка уникальности `vault_policies_final` / `vault_roles_final` — fail если дубль
-## - Удаляет из Vault политики, которых нет в финальном списке (кроме default/root)
-## - Добавляет/Обновляет политики. `vault policy write ...`
-## - Удаляет из Vault роли, которых нет в финальном списке
-## - Добавляет/Обновляет роли. `vault write auth/kubernetes/role/...` (SA + namespace + policies)
-## ---
+## Все namespaces
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml`
 
-## ---------
-## ---ESO, насильная синхронизация ExternalSecrets
-## ---------
-# Все namespaces
-`ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml`
-
-# Только определенный namespace. Например: gitlab
-# Доступные namespace: все, для которых есть eso_vault_integration_XXX (Пример - hosts.yaml)
-`ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml --tags gitlab`
+## Только определенный namespace. Например: gitlab
+## Доступные namespace: все, для которых есть eso_vault_integration_XXX (Пример - hosts.yaml)
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml --tags gitlab`
 
 ## ---------
 ## ---ArgoCD - git-ops, какие секреты должны быть в VAULT
@@ -605,31 +565,64 @@ Vault пустой — закладываем правильные имена с
    2. Компонены: Postygres, redis, Nats, back, front, cron
    3. Одно окружение: prod
 3. Последовательность действий
-   1. Через паттерн app-of-apps - создать AppProject + Application
-   2. В git, создать новую директорию, где будут лежать все манифесты для этого проекта и контура (infra/.../my-casino-app/prod)
-   3. Создать Chart.yaml + values.yaml + templates/namespace.yaml
-   4. Запустить + дождаться синхронизации
-   5. В файле `hosts-extra.yaml` - добавить необходимые политики для vault + ESO
-      1. 1 role
-      2. 4 политкии = postgres, redis, nats, common
-   6. Синхронизировать vault-policy-sync
-   7. Проверить, что в VAULT все политики и все роли создались успешно
-   8. Сгенерировать все необходимые секреты (login, pass, url и так далее) и положить их в VAULT по правильным путям
+   1. Настрйока VAULT (Эта часть делается через Ansible)
+      1. В файле `hosts-extra.yaml` - добавить необходимые политики для vault
+         1. 1 role
+         2. 1 политика. Для чтения всего содержимого по пути (kv_engine/.../my-casino-app-prod/*)
+      2. Синхронизировать vault-policy-sync (можно с тагами - policy-add, role-add. так как это только новые политики)
+      3. Проверить, что в VAULT все политики и все роли создались успешно
+   2. Настройка приложения - через AppOfApps
+   3. Через паттерн app-of-apps - создать AppProject + Application
+   4. В git, создать новую директорию, где будут лежать все манифесты для этого проекта + контур (infra/.../my-casino-app/prod)
+   5. Создать Chart.yaml + values.yaml + templates/namespace.yaml
+   6. Запустить + дождаться синхронизации
+   7. Сгенерировать все необходимые секреты (login, pass, url и так далее) и положить их в VAULT по правильным путям
       1. Правильные пути - те, которые были указаны в policy + role
-   9.  Вернуться в git-ops репозиторий
-   10. Создать SA + SecretStore + 4 ExternalSecret (postgres, redis, nats, common)
-   11. Залить эти изменения и дождаться синхронизации
-   12. Проверить, что все SecretStore + ExternalSecret + k8s.Secret = успешно созданы и готовы
-   13. Запустить Postgres, redis, nats
+   8.  Вернуться в git-ops репозиторий
+   9.  Создать SA + SecretStore + 4 ExternalSecret (postgres, redis, nats, common)
+   10. Залить эти изменения и дождаться синхронизации
+   11. Проверить, что все SecretStore + ExternalSecret + k8s.Secret = успешно созданы и готовы
+   12. Запустить Postgres, redis, nats
        1.  Все ENV креды - берутся из секретов, которые были созданы через ESO
-   14. Запустить back + front + cron
+   13. Запустить back + front + cron
        1.  Все ENV креды - берутся из секретов, которые были созданы через ESO
-   15. Готово
+   14. Готово
 4.  Ротация creds (РУЧНОЙ РЕЖИМ)
     1.  поменять что-то в vault
     2.  Если надо, поменять в mount-volue (напрмиер - postgres, нужно выполнить команду внутри контейннера)
     3.  выполнить через ArgoCD-ui = sync + force + replace
     4.  Готово
+
+## ---------
+## ---ЕЩЕ НЕ ГОТОВО
+## ---------
+
+## olm. yaml -> helm
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/olm-v0-install.yaml`
+## ---
+## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+##
+- установка
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/olm-v0-install.yaml`
+  - Ставится: немного компонентов
+- обновление (версия + конфиг)
+  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/crds.yaml
+  - Положить сожержимое в `playbook-app/charts/olm-v0/crds/crds.yaml`
+  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml
+  - Положить сожержимое в `playbook-app/charts/olm-v0/templates/olm-v0-install.yaml`
+  - Перенести содержимое namespace в `playbook-app/charts/olm-v0/namespaces.yaml` и удалить из оригинала
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/olm-v0-install.yaml`
+
+## medik8s. Установка идет через kubectl apply -f ...
+## ---
+## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
+##
+- установка
+  - `ansible-playbook -i hosts.yaml playbook-app/medik8s-install.yaml`
+
 
 ## ---------
 ## ---Secrets-Rotation
