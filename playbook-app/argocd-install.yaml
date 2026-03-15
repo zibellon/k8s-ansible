@@ -2,12 +2,14 @@
 # Install ArgoCD via local Helm charts
 # Steps:
 #   1. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
-#   2. argocd/install: ArgoCD manifests + Ingress + default AppProject
+#   2. argocd/install: CRDs + ArgoCD manifests
+#   3. argocd/post: Ingress (UI + RPC) + default AppProject
 #
 # Usage (tags):
 #   ansible-playbook argocd-install.yaml              # full install
 #   ansible-playbook argocd-install.yaml --tags pre   # only pre (NetworkPolicies + ESO)
 #   ansible-playbook argocd-install.yaml --tags install
+#   ansible-playbook argocd-install.yaml --tags post  # only post (Ingress + AppProject)
 #
 # NOTE: Admin password management → argocd-configure.yaml
 # =============================================================================
@@ -168,7 +170,7 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 2: ARGOCD/INSTALL (ArgoCD manifests + Ingress + AppProject)
+    # STEP 2: ARGOCD/INSTALL (CRDs + ArgoCD manifests)
     # =========================================================================
 
     - name: "[argocd-install] Copy install chart to remote"
@@ -203,18 +205,6 @@
         mode: "0600"
         content: |
           namespace: {{ argocd_namespace }}
-          ingress:
-            uiDomain: {{ argocd_ui_domain }}
-            rpcDomain: {{ argocd_rpc_domain }}
-            ingressClass: {{ argocd_ingress_class_name }}
-            entrypoint: {{ traefik_websecure_entrypoint }}
-            clusterIssuer: {{ argocd_cluster_issuer_name }}
-            uiSecretName: {{ argocd_ui_https_secret_name }}
-            rpcSecretName: {{ argocd_rpc_https_secret_name }}
-            vpnOnlyEnabled: {{ argocd_vpn_only_enabled }}
-            httpEnabled: {{ argocd_http_enabled }}
-          traefik:
-            namespace: {{ traefik_namespace }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -236,7 +226,7 @@
       tags: [install]
 
     # =========================================================================
-    # VERIFICATION
+    # WAIT FOR ARGOCD TO BE READY
     # =========================================================================
 
     - name: "[argocd-install] Wait for rollouts"
@@ -254,6 +244,55 @@
           - deployment/argocd-repo-server
           - deployment/argocd-server
       tags: [install]
+
+    # =========================================================================
+    # STEP 3: ARGOCD/POST (Ingress UI + RPC + default AppProject)
+    # =========================================================================
+
+    - name: "[argocd-post] Copy post chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-post"
+        chart_name: "post"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/argocd/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd/post"
+      tags: [post]
+
+    - name: "[argocd-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/argocd/post/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ argocd_namespace }}
+          ingress:
+            uiDomain: {{ argocd_ui_domain }}
+            rpcDomain: {{ argocd_rpc_domain }}
+            ingressClass: {{ argocd_ingress_class_name }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            clusterIssuer: {{ argocd_cluster_issuer_name }}
+            uiSecretName: {{ argocd_ui_https_secret_name }}
+            rpcSecretName: {{ argocd_rpc_https_secret_name }}
+            vpnOnlyEnabled: {{ argocd_vpn_only_enabled }}
+            httpEnabled: {{ argocd_http_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[argocd-post] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install argocd-post {{ remote_charts_dir }}/argocd/post
+        --namespace {{ argocd_namespace }}
+        --values {{ remote_charts_dir }}/argocd/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ argocd_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
 
     # =========================================================================
     # VERIFICATION
@@ -299,7 +338,7 @@
     - name: "[argocd-verify] Installation complete"
       debug:
         msg:
-          - "argocd-pre + argocd: OK"
+          - "argocd-pre + argocd + argocd-post: OK"
           - "Run argocd-configure.yaml to save admin password to Vault."
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
