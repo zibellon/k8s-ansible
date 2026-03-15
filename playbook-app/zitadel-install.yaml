@@ -1,0 +1,535 @@
+# =============================================================================
+# Install ZITADEL (Identity & Access Management, Production Helm Chart)
+# Steps:
+#   1. zitadel/pre: Vault initial secrets + ESO resources (NetworkPolicies, ServiceAccount, SecretStore, ExternalSecrets)
+#   2. zitadel: PostgreSQL + ZITADEL (official chart)
+#   3. zitadel/post: Ingress (Traefik, h2c)
+#
+# Usage (tags):
+#   ansible-playbook zitadel-install.yaml              # full install
+#   ansible-playbook zitadel-install.yaml --tags pre   # only pre (Vault secrets + ESO resources)
+#   ansible-playbook zitadel-install.yaml --tags install
+#   ansible-playbook zitadel-install.yaml --tags post  # only post (Ingress)
+#
+# Prerequisites:
+#   - Vault must be installed and unsealed
+#   - Vault policies and roles must be synced (vault-policy-sync.yaml)
+#   - External Secrets Operator must be installed
+#   - Longhorn must be installed (storage)
+#
+# NOTE: ZITADEL masterkey is generated once and stored in Vault.
+#       It is immutable — do NOT regenerate after first install.
+# =============================================================================
+
+---
+- name: Install ZITADEL (Production Helm)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[zitadel-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "zitadel-pre-check"
+      tags: [always]
+
+    - name: "[zitadel-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        label_name: "zitadel-pre-check"
+        namespace_value: "{{ zitadel_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations and resolve ZITADEL config
+    # =========================================================================
+
+    - name: "[zitadel-install-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
+
+    - name: "[zitadel-install-init] Find secret names and vault paths by type"
+      set_fact:
+        secret_postgresql: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'postgresql') | first).target_secret_name }}"
+        secret_masterkey: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'masterkey') | first).target_secret_name }}"
+        vault_path_postgresql: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'postgresql') | first).vault_path }}"
+        vault_path_masterkey: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'masterkey') | first).vault_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Resolve ClusterIssuer + ACME solver pod labels
+    # =========================================================================
+
+    - name: "[zitadel-install-init] Resolve ZITADEL ClusterIssuer"
+      set_fact:
+        _zitadel_issuer: >-
+          {{ cert_manager_cluster_issuers
+             | selectattr('name', 'equalto', zitadel_cluster_issuer_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-install-init] Validate ZITADEL ClusterIssuer exists"
+      assert:
+        that: _zitadel_issuer is not none
+        fail_msg: >-
+          zitadel_cluster_issuer_name='{{ zitadel_cluster_issuer_name }}'
+          not found in cert_manager_cluster_issuers
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-install-init] Resolve ACME solver by ingressClass"
+      set_fact:
+        _zitadel_solver: >-
+          {{ _zitadel_issuer.solvers
+             | selectattr('ingressClass', 'equalto', zitadel_ingress_class_name)
+             | list | first | default(none) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-install-init] Validate ACME solver exists"
+      assert:
+        that: _zitadel_solver is not none
+        fail_msg: >-
+          No solver with ingressClass='{{ zitadel_ingress_class_name }}'
+          found in ClusterIssuer '{{ zitadel_cluster_issuer_name }}'
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-install-init] Set ACME solver pod labels"
+      set_fact:
+        zitadel_acme_solver_pod_labels: "{{ _zitadel_solver.podLabels }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: INSTALL PRE (ESO Resources, NetworkPolicies)
+    # =========================================================================
+
+    - name: "[zitadel-pre] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "zitadel-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/zitadel/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/zitadel/pre"
+      tags: [pre]
+
+    - name: "[zitadel-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/zitadel/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ zitadel_namespace }}
+          externalSecrets:
+            namespace: {{ external_secrets_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+            instanceName: traefik-{{ traefik_namespace }}
+          zitadelEso:
+            vaultServerUrl: {{ vault_internal_url }}
+            saName: {{ eso_vault_integration_zitadel.sa_name }}
+            roleName: {{ eso_vault_integration_zitadel.role_name }}
+            secretStoreName: {{ eso_vault_integration_zitadel.secret_store_name }}
+            kvEnginePath: {{ eso_vault_integration_zitadel.kv_engine_path }}
+            isNeedEso: {{ eso_vault_integration_zitadel.is_need_eso | default(true) }}
+            secrets: {{ eso_vault_integration_zitadel_secrets_merged | to_json }}
+          esoResourcesConfig:
+            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
+            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
+            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
+          acmeSolverLabels: {{ zitadel_acme_solver_pod_labels | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[zitadel-pre] Install via Helm"
+      command: >
+        helm upgrade --install zitadel-pre {{ remote_charts_dir }}/zitadel/pre
+        --namespace {{ zitadel_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/zitadel/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ zitadel_pre_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: GENERATE AND STORE INITIAL SECRETS IN VAULT
+    # =========================================================================
+
+    # ----- PostgreSQL credentials -----
+    - name: "[zitadel-vault-secrets] Check if PostgreSQL secret exists"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_postgresql }} 2>/dev/null
+      register: postgresql_secret_check
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-vault-secrets] Generate PostgreSQL password"
+      set_fact:
+        generated_postgresql_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: postgresql_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-vault-secrets] Store PostgreSQL credentials in Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_postgresql }}
+        username=zitadel
+        password={{ generated_postgresql_password }}
+      when: postgresql_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # ----- ZITADEL masterkey (32 ASCII bytes, immutable) -----
+    - name: "[zitadel-vault-secrets] Check if masterkey secret exists"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_masterkey }} 2>/dev/null
+      register: masterkey_secret_check
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-vault-secrets] Generate masterkey (32 ASCII bytes)"
+      set_fact:
+        # IMPORTANT: masterkey must be exactly 32 ASCII bytes — do NOT change after first install
+        generated_masterkey: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: masterkey_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-vault-secrets] Store masterkey in Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_masterkey }}
+        masterkey={{ generated_masterkey }}
+      when: masterkey_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: WAIT FOR INITIAL SECRETS TO SYNC
+    # =========================================================================
+
+    - name: "[zitadel-wait-eso] Force sync initial secrets"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        label_name: "zitadel-wait-eso"
+        eso_sync_namespace: "{{ zitadel_namespace }}"
+        eso_sync_es_name: "{{ item }}"
+      loop: >-
+        {{
+          eso_vault_integration_zitadel_secrets_merged
+          | selectattr('type', 'in', ['postgresql', 'masterkey'])
+          | map(attribute='external_secret_name')
+          | list
+        }}
+      tags: [install]
+
+    - name: "[zitadel-wait-eso] Wait for PostgreSQL secret"
+      command: kubectl get secret {{ secret_postgresql }} -n {{ zitadel_namespace }}
+      register: postgresql_secret_wait
+      until: postgresql_secret_wait.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-wait-eso] Wait for masterkey secret"
+      command: kubectl get secret {{ secret_masterkey }} -n {{ zitadel_namespace }}
+      register: masterkey_secret_wait
+      until: masterkey_secret_wait.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # STEP 4: INSTALL POSTGRESQL
+    # =========================================================================
+
+    - name: "[zitadel-postgresql] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "zitadel-postgresql"
+        chart_name: "postgresql"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/zitadel/postgresql/"
+        chart_remote_dest: "{{ remote_charts_dir }}/zitadel/postgresql"
+      tags: [install]
+
+    - name: "[zitadel-postgresql] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/zitadel/postgresql/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ zitadel_namespace }}
+          image: {{ zitadel_postgresql_image }}
+          storageClass: {{ zitadel_postgresql_storage_class }}
+          storageSize: {{ zitadel_postgresql_storage_size }}
+          credentialsSecretName: {{ secret_postgresql }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-postgresql] Install via Helm"
+      command: >
+        helm upgrade --install zitadel-postgresql {{ remote_charts_dir }}/zitadel/postgresql
+        --namespace {{ zitadel_namespace }}
+        --values {{ remote_charts_dir }}/zitadel/postgresql/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ zitadel_storage_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-postgresql] Wait for rollout to be ready"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "zitadel-postgresql"
+        rollout_namespace: "{{ zitadel_namespace }}"
+        rollout_timeout: "{{ zitadel_storage_rollout_timeout }}"
+        rollout_resources:
+          - deployment/zitadel-postgresql
+      tags: [install]
+
+    # =========================================================================
+    # STEP 5: INSTALL ZITADEL
+    # =========================================================================
+
+    - name: "[zitadel] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/zitadel/zitadel-values-override.yaml"
+        mode: "0644"
+        content: |
+          replicaCount: 1
+
+          zitadel:
+            # masterkey secret (32 ASCII bytes, immutable) — managed by ESO from Vault
+            masterkeySecretName: {{ secret_masterkey }}
+            masterkeySecretKeyName: masterkey
+
+            configmapConfig:
+              ExternalDomain: {{ zitadel_domain }}
+              ExternalPort: 443
+              ExternalSecure: true
+
+              TLS:
+                Enabled: false
+
+              Database:
+                Postgres:
+                  Host: zitadel-postgresql
+                  Port: 5432
+                  Database: zitadel
+                  MaxOpenConns: 20
+                  MaxIdleConns: 10
+                  ConnMaxLifetime: "30m"
+                  Admin:
+                    Username: zitadel
+                    SSL:
+                      Mode: disable
+                  User:
+                    Username: zitadel
+                    SSL:
+                      Mode: disable
+
+          env:
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ secret_postgresql }}
+                  key: password
+            - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ secret_postgresql }}
+                  key: password
+
+          service:
+            type: ClusterIP
+            port: 8080
+            annotations:
+              traefik.ingress.kubernetes.io/service.serversscheme: h2c
+
+          ingress:
+            enabled: false
+
+          autoscaling:
+            enabled: false
+
+          pdb:
+            enabled: false
+
+          initJob:
+            additionalArgs:
+              - "--init-projections=true"
+
+          setupJob:
+            additionalArgs:
+              - "--masterkeyFile=/etc/zitadel/masterkey"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel] Add Helm repository"
+      include_tasks: tasks/tasks-add-helm-repo.yaml
+      vars:
+        label_name: "zitadel"
+        helm_repo_name: "zitadel"
+        helm_repo_url: "https://charts.zitadel.com"
+      tags: [install]
+
+    - name: "[zitadel] Install via Helm"
+      command: >
+        helm upgrade --install zitadel zitadel/zitadel
+        --namespace {{ zitadel_namespace }}
+        --values {{ remote_charts_dir }}/zitadel/zitadel-values-override.yaml
+        --version {{ zitadel_chart_version }}
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ zitadel_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel] Wait for rollout to be ready"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "zitadel"
+        rollout_namespace: "{{ zitadel_namespace }}"
+        rollout_timeout: "{{ zitadel_rollout_timeout }}"
+        rollout_resources:
+          - deployment/zitadel
+      tags: [install]
+
+    # =========================================================================
+    # STEP 6: INSTALL POST CHART (Ingress via Traefik)
+    # =========================================================================
+
+    - name: "[zitadel-post] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "zitadel-post"
+        chart_name: "post"
+        chart_local_src: "{{ inventory_dir }}/playbook-app/charts/zitadel/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/zitadel/post"
+      tags: [post]
+
+    - name: "[zitadel-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/zitadel/post/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ zitadel_namespace }}
+          ingress:
+            ingressClass: {{ zitadel_ingress_class_name }}
+            entrypoint: {{ traefik_websecure_entrypoint }}
+            domain: {{ zitadel_domain }}
+            clusterIssuer: {{ zitadel_cluster_issuer_name }}
+            tlsSecretName: {{ zitadel_tls_secret_name }}
+            vpnOnlyEnabled: {{ zitadel_vpn_only_enabled }}
+            httpEnabled: {{ zitadel_http_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[zitadel-post] Install via Helm"
+      command: >
+        helm upgrade --install zitadel-post {{ remote_charts_dir }}/zitadel/post
+        --namespace {{ zitadel_namespace }}
+        --values {{ remote_charts_dir }}/zitadel/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ zitadel_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[zitadel-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ zitadel_namespace }}"
+        label_name: "zitadel-verify"
+      tags: [always]
+
+    - name: "[zitadel-verify] Get pods status"
+      command: kubectl get pods -n {{ zitadel_namespace }} -o wide
+      register: zitadel_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-verify] Print pods status"
+      debug:
+        msg: "{{ zitadel_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "ZITADEL INSTALLATION COMPLETE"
+          - "=============================================="
+          - "ZITADEL UI: https://{{ zitadel_domain }}"
+          - ""
+          - "Credentials stored in Vault:"
+          - "  PostgreSQL: {{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_postgresql }}"
+          - "  Masterkey:  {{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_masterkey }}"
+          - ""
+          - "IMPORTANT: The masterkey is immutable."
+          - "  Do NOT regenerate it after first install."
+          - "  Back it up from Vault immediately."
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-verify] Installation complete"
+      debug:
+        msg: "zitadel-pre + zitadel-postgresql + zitadel + zitadel-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

@@ -1,0 +1,74 @@
+{{- if not .Values.ingress.httpEnabled }}
+# =============================================================================
+# CERTIFICATE FOR ZITADEL (cert-manager)
+# =============================================================================
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.ingress.tlsSecretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.ingress.tlsSecretName }}
+  dnsNames:
+    - "{{ .Values.ingress.domain }}"
+  issuerRef:
+    name: {{ .Values.ingress.clusterIssuer }}
+    kind: ClusterIssuer
+---
+# =============================================================================
+# INGRESSROUTE FOR ZITADEL UI — HTTPS (Traefik)
+# Backend speaks h2c (HTTP/2 cleartext) on port 8080.
+# =============================================================================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ingress-zitadel-ui-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    - {{ .Values.ingress.entrypoint }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.ingress.domain }}`)
+      priority: 10
+      {{- if .Values.ingress.vpnOnlyEnabled }}
+      middlewares:
+        - name: vpn-only
+          namespace: {{ .Values.traefik.namespace }}
+      {{- end }}
+      services:
+        - name: zitadel
+          port: 8080
+          scheme: h2c
+  tls:
+    secretName: {{ .Values.ingress.tlsSecretName }}
+{{- else }}
+# =============================================================================
+# INGRESSROUTE FOR ZITADEL UI — HTTP (Traefik)
+# =============================================================================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ingress-zitadel-ui-http
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.ingress.domain }}`)
+      priority: 10
+      {{- if .Values.ingress.vpnOnlyEnabled }}
+      middlewares:
+        - name: vpn-only
+          namespace: {{ .Values.traefik.namespace }}
+      {{- end }}
+      services:
+        - name: zitadel
+          port: 8080
+          scheme: h2c
+{{- end }}

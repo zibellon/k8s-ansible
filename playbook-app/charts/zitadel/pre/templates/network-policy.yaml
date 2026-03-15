@@ -1,0 +1,196 @@
+# =============================================================================
+# ZITADEL NETWORK POLICIES - HARDENED
+# =============================================================================
+
+# =============================================================================
+# BASE POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in zitadel namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# STORAGE POLICIES (PostgreSQL)
+# =============================================================================
+
+---
+# PostgreSQL: ingress from ZITADEL app pods (setup job, main deployment)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgresql
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zitadel-postgresql
+      app.kubernetes.io/instance: zitadel-postgresql-{{ .Values.namespace }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # From ZITADEL main deployment
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: zitadel
+      ports:
+        - protocol: TCP
+          port: 5432
+    # From ZITADEL setup job
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: setup
+      ports:
+        - protocol: TCP
+          port: 5432
+
+# =============================================================================
+# ZITADEL APPLICATION POLICIES
+# =============================================================================
+
+---
+# ZITADEL: ingress from Traefik (HTTP/2 cleartext h2c on port 8080)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-zitadel
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zitadel
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # To PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: zitadel-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # To external HTTPS (email providers, OIDC discovery, etc.)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# ACME solver: ingress from Traefik (cert-manager HTTP-01 challenge)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels: {{ .Values.acmeSolverLabels | toYaml | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# TRAEFIK NAMESPACE POLICY (allow egress from Traefik to ZITADEL)
+# =============================================================================
+
+---
+# Allow Traefik to reach ZITADEL (h2c port 8080) and ACME solver
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-traefik
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    # To ZITADEL app (h2c)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: zitadel
+      ports:
+        - protocol: TCP
+          port: 8080
+    # To ACME solver
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels: {{ .Values.acmeSolverLabels | toYaml | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8089

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zitadel-postgresql
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: zitadel-postgresql
+    app.kubernetes.io/instance: zitadel-postgresql-{{ .Values.namespace }}
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: zitadel
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zitadel-postgresql
+      app.kubernetes.io/instance: zitadel-postgresql-{{ .Values.namespace }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zitadel-postgresql
+        app.kubernetes.io/instance: zitadel-postgresql-{{ .Values.namespace }}
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: zitadel
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: postgresql
+          image: {{ .Values.image }}
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentialsSecretName }}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentialsSecretName }}
+                  key: password
+            - name: POSTGRES_DB
+              value: zitadel
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgresql
+              containerPort: 5432
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: zitadel-postgresql
