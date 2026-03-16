@@ -152,7 +152,7 @@
 # ---VAULT + ESO
 # ---------
 ## Есть список компонентов, которые используют VAULT + ESO
-## `traefik`, `haproxy`,  `longhorn`, `vault`, `gitlab`, `argocd`, `argocd-git-ops`
+## `traefik`, `haproxy`,  `longhorn`, `gitlab`, `argocd`, `argocd-git-ops`
 ## При удалении компонента через `kubectl delete ...` - удаляются ресурсы k8s
 ## НО: записи в vault не удаляются. Их нужно удалять руками
 ## Проблемная ситуация:
@@ -184,14 +184,12 @@
 ##
 - установка
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml`
-  - Что ставится: cilium, host-network-policy, kube-system-network-policy
 - обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml`
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-restart.yaml`
 
 ## metrics-server. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Чтобы работала команда `kubectl top ...`
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
@@ -214,7 +212,6 @@
 ## 
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cert-manager-install.yaml`
-  - Что ставится: cert-manager, network-policy
 
 ## ExternalSecret. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -227,7 +224,6 @@
 ##
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/external-secrets-install.yaml`
-  - Ставится: cert-controller, secrets-webhook, core
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/external-secrets-restart.yaml`
 
@@ -236,7 +232,7 @@
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/traefik-install.yaml`
-## Есть дополнительный файл для `vault + ESO`
+## Есть работа с `vault + ESO`
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
@@ -245,7 +241,6 @@
 ##
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-install.yaml`
-  - Ставится: traefik, network-policy, ingress (dashboard)
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-restart.yaml`
 
@@ -253,7 +248,7 @@
 ## Автоматически подхватывает конфиг, который генерируется через CRD
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/haproxy-install.yaml`
-## Есть дополнительный файл для `vault + ESO`
+## Есть работа с `vault + ESO`
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
@@ -262,7 +257,6 @@
 ##
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/haproxy-install.yaml`
-  - Ставится: haproxy-ingress, network-policy
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/haproxy-restart.yaml`
 
@@ -296,24 +290,10 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/longhorn-install.yaml`
 ## Есть создание секретов для БЭКАПА в S3 -> использует CRD от ESO (Но секреты сразу работать не будут, так как они появляются в VAULT, позже)
-## Есть дополнительный файл для `vault + ESO`
+## Есть работа с `vault + ESO`
 ## ---
-## Важно_1. Для создания секретов для работы с backup - их нужно определить `hosts-extra.yaml` (пример в `hosts-extra.yaml.example`)
-## После определния они будут использоваться при установке `longhorn-install.yaml` + `vault-install.yaml` + `vault-policy-sync.yaml`
-## ---
-## Важно_2. Восстановдение VAULT
-## Ситуация: был кластер с vault + longhorn, есть backup, нужно восстановиться из бэкапа
-## Бэкап лежит на S3 (все доступы есть), но правило такое: все секреты в кластере только через vault + ESO. Что делать ?
-## Чтобы восстановить vault - нужно скачать бэкап через longhorn, чтобы скачать backup - нужно создать k8s: Secret (s3-creds)
-## План действий
-## - в `hosts-extra.yaml` определить все секреты для восстановления бэкапов (их может быть несколько). переменная: `longhorn_s3_restore_secrets`
-## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-create.yaml`. Это создаст секреты в k8s
-## - Чтобы восстановить PV + PVC = нужен namespace. Namespace - для VAULT
-## - Запуск Vault, только одну стадию: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml --tags pre`
-## - Зайти в longhorn-ui, использовать секреты для скачивания и восстановления backups, восстановить volume для VAULT
-## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-delete.yaml`. Это удалит секреты из k8s
-## - запустить vault с восстановленным состоянием
-## - сразу же подрубится ESO (из пункта 1 - Важно_1)
+## Важно_1. Для создания секретов для работы с backup - их нужно определить в `hosts-extra.yaml` (пример в `hosts-extra.yaml.example`)
+## После определния они будут использоваться при установке `longhorn-install.yaml` + `vault-policy-sync.yaml`
 ## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
@@ -358,10 +338,11 @@
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
-## В файле `hosts.yaml` + `hosts-extra.yaml` есть отдельная структура для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
+## В файле `hosts.yaml` + `hosts-extra.yaml` есть отдельная структуры для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
+## Пример: `./readme-vault.md`
 ## Вызов синхронизации VAULT: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
 ## План, при добавлении чего-то в VAULT
-## 1. добавить в `hosts-extra.yaml` новые данные (policy + role + sa + namespoace + secret_path)
+## 1. добавить в `hosts-extra.yaml` новые данные (policy + role)
 ## 2. Вызвать синхронизацию
 ## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: Namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
 ## ВАЖНО: синхронизация полностью синхронизирует структуру в VAULT (добавить, обновить, удалить)
@@ -530,6 +511,26 @@
 ## Только определенный namespace. Например: gitlab
 ## Доступные namespace: все, для которых есть eso_vault_integration_XXX (Пример - hosts.yaml)
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml --tags gitlab`
+
+## ---------
+## ---Longhorn + Restore (from backup)
+## ---------
+## Ситуация: был кластер с longhorn + AllSystemComponents, есть backup, нужно восстановиться из бэкапа
+## Бэкап лежит на S3 (все доступы есть). Правило такое: все секреты в кластере только через vault + ESO
+## А чтобы запустить VAULT (Где лежат секреты)  - нужно восстановить его volume из бэкапа
+## Чтобы восстановить что-то из бэкапа - нужно скачать бэкап через longhorn
+## чтобы скачать backup - нужно создать k8s: Secret (s3-creds)
+## Получается: Замкнуты круг. Что делать ?
+## ---
+## План действий
+## - в `hosts-extra.yaml` определить все секреты для восстановления бэкапов (их может быть несколько). Переменная: `longhorn_s3_restore_secrets`
+## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-create.yaml`. Это создаст секреты в k8s
+## - Чтобы восстановить PV + PVC = нужен namespace.
+## - Чтобы создать namespace - нужно для каждого системного компонента вызвать его установку + `--tags pre`
+## - Это создаст namespace + какие-то части для работы компонента (NetworkPolicy + ESO)
+## - Зайти в longhorn-ui, использовать секреты для скачивания и восстановления backups, восстановить volume для каждого компонента
+## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-delete.yaml`. Это удалит секреты из k8s
+## - запустить производить запуск каждого компонента, с восстановленным состоянием
 
 ## ---------
 ## ---ArgoCD - git-ops, какие секреты должны быть в VAULT
