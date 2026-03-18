@@ -117,7 +117,7 @@
    1. У этого проекта будет 3 окружения: prod, dev, shared
    2. каждое окружение === отдельный namespace
 3. Правила разделения секретов в VAULT
-   1. делаим по namespace
+   1. Делим по namespace
    2. да, можно разделить как угодно, хоть hash использовать
    3. Но по изначальным правилам: prefix === namespace
 4. В каждом namespace - будет свой: SA + SecretStore + ExternalSecret
@@ -125,4 +125,17 @@
    2. dev: 1 SA + 1 SecretStore + 2 ExternalSecret
    3. prod: 1 SA + 1 SecretStore + 2 ExternalSecret
 5. Политики VAULT
-   1. 1 role === 1 SA + 1 namespace
+   1. 1 role === 1 SA + 1 namespace + NNN policy
+6. Сначала, надо подготовить vault
+   1. Знаем, какие нужны namespace - их 3 штуки
+   2. Добавляем политики в массив = vault_policies_extra
+   3. Добавляем роли в массив = vault_roles_extra
+   4. Вызываем синронизацию политик VAULT - только с --tags ADD
+   5. все, vault готов
+7. Vault + значения секретов
+   1. По нужным путям, для каждого namespace - кладем в vault секреты (postgres, redis, и так далее ...)
+8. Теперь gitops
+   1. все подготовили в ArgoCD + gitops (AppProject + 3 Application)
+   2. Заливаем Namespace + SA + SecretStore + ExternalSecret
+   3. Ждем синхронизацию
+   4. Запускаем остальные компоненты с использованием секретов, которые были созданы через ESO
