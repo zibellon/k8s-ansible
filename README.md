@@ -535,26 +535,36 @@
 ## ---------
 ## ---ArgoCD - git-ops, какие секреты должны быть в VAULT
 ## ---------
-Vault пустой — закладываем правильные имена сразу, без миграции. Ключи совпадают с именами полей ArgoCD Secret напрямую:
+## Правило_1: ВСЕ ключи из vault - кладутся в секрет в k8s.secret
+## Правило_2: существует всего два ТИПА секретов
+## - git_ops_repo_pattern === `argocd.argoproj.io/secret-type: repo-creds`
+## - git_ops_repo_direct === `argocd.argoproj.io/secret-type: repository`
+## 
+## Примеры
 
-1. git SSH (argocd_secret_type: repo-creds или repository)
+1. git SSH
    1. type: "git"
    2. url: "ssh://..." или "https://..."
    3. sshPrivateKey: "-----BEGIN..."
-2. git userpass (argocd_secret_type: repo-creds или repository)
+2. git userpass
    1. type: "git"
    2. url: "https://..."
    3. username: "..."
    4. password: "..."
-3. helm repo (argocd_secret_type: repository)
+3. helm repo
    1. type: "helm"
    2. name: "traefik"
    3. url: "https://traefik.github.io/charts"
    4. username: "..." (не добавлять если публичный)
    5. password: "..." (не добавлять если публичный)
-4. helm OCI (argocd_secret_type: repository)
-   1. те же поля что helm repo + enableOCI: "true"
-   2. Для helm_repo_oci просто добавить в Vault поле enableOCI: "true" — тогда оно появится в Secret, ArgoCD включит OCI. Для helm_repo — не добавлять, ArgoCD будет считать enableOCI = false.
+4. helm OCI
+   1. type: "helm"
+   2. enableOCI: "true"
+      1. Для helm_repo — не добавлять, ArgoCD будет считать enableOCI = false
+   3. name: "traefik"
+   4. url: "https://traefik.github.io/charts"
+   5. username: "..." (не добавлять если публичный)
+   6. password: "..." (не добавлять если публичный)
 
 ## ---------
 ## ---Argocd, добавление нового приложения
