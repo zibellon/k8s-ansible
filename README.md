@@ -634,6 +634,10 @@
 - установка
   - `ansible-playbook -i hosts.yaml playbook-app/medik8s-install.yaml`
 
+## Zitadel. официальный helm
+## ---
+## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## ---
 
 ## ---------
 ## ---Secrets-Rotation
