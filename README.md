@@ -119,6 +119,7 @@
 # Присоединение worker-node
 ## Добавить в `hosts-extra.yaml` нового worker
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
+## Если уже был установлен и настроен Longhorn - смотрим `longhorn/tags-sync`
 ##
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-install.yaml --limit k8s-worker-1`
   - Инициализация ноды
@@ -128,6 +129,7 @@
 # Присоединение manager-node
 ## Добавить в `hosts-extra.yaml` нового manager
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
+## Если уже был установлен и настроен Longhorn - смотрим `longhorn/tags-sync`
 ## Обновить SANS для api-server
 ## Обновить haproxy-apiserver-lb
 ##
@@ -295,6 +297,9 @@
 ## Важно_1. Для создания секретов для работы с backup - их нужно определить в `hosts-extra.yaml` (пример в `hosts-extra.yaml.example`)
 ## После определния они будут использоваться при установке `longhorn-install.yaml` + `vault-policy-sync.yaml`
 ## ---
+## Важно_2. node-tags - для их автоматической установки на Nodes теперь используется отдельный playbook (аналогично - vault-policy-sync)
+## Синхронизация node-tags вызывается отдельно. То есть: после установки longhorn, после добавления node, после изменения node-tags в ansible-hosts
+## ---
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
 ## `--tags pre, install, post`
@@ -303,6 +308,8 @@
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-install.yaml`
   - Ставится: longhorn, network-policy, ingress (longhorn-ui)
+  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-tags-sync.yaml`
+  - синхронизация всех node-tags. Именно у CRD объекта = nodes.longhorn.io
 
 ## ---
 ## Теперь, можно запускать что-то, что требует volume (PVC)

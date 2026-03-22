@@ -1,0 +1,70 @@
+---
+# =============================================================================
+# Sync Longhorn node tags for all cluster nodes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml -i hosts-extra.yaml \
+#     playbook-app/longhorn-tags-sync.yaml
+#
+# Requires: Longhorn to be installed (nodes.longhorn.io CRD must exist)
+# Source of truth: longhorn_node_tags per host in hosts-extra.yaml
+# =============================================================================
+
+- name: Sync Longhorn node tags
+  hosts: all
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: "[longhorn-tags-sync] Pre-check"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "longhorn-tags-sync"
+
+    - name: "[longhorn-tags-sync] Set tag facts for {{ new_hostname }}"
+      set_fact:
+        _lh_tags_desired: "{{ longhorn_node_tags | default([]) }}"
+        _lh_tags_set: "{{ longhorn_node_tags is defined and longhorn_node_tags | length > 0 }}"
+
+    - name: "[longhorn-tags-sync] Check if nodes.longhorn.io exists for {{ new_hostname }}"
+      command: >-
+        kubectl get nodes.longhorn.io {{ new_hostname }}
+        -n longhorn-system --ignore-not-found -o name
+      delegate_to: "{{ master_manager_fact }}"
+      register: longhorn_node_crd_check
+      changed_when: false
+      failed_when: false
+
+    - name: "[longhorn-tags-sync] Fail if tags defined but CRD not found for {{ new_hostname }}"
+      fail:
+        msg: >-
+          longhorn_node_tags is set for {{ new_hostname }} but
+          nodes.longhorn.io/{{ new_hostname }} not found in longhorn-system.
+          Is Longhorn installed?
+      when: _lh_tags_set and longhorn_node_crd_check.stdout == ""
+
+    - name: "[longhorn-tags-sync] Patch spec.tags for {{ new_hostname }}"
+      command: >-
+        kubectl patch nodes.longhorn.io {{ new_hostname }}
+        -n longhorn-system --type=merge
+        -p '{"spec":{"tags":{{ _lh_tags_desired | to_json }}}}'
+      delegate_to: "{{ master_manager_fact }}"
+      when: longhorn_node_crd_check.stdout != ""
+      register: longhorn_patch_result
+      changed_when: "'no change' not in longhorn_patch_result.stdout"
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+    - name: "[longhorn-tags-sync] Get all Longhorn nodes"
+      command: kubectl get nodes.longhorn.io -A -o yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      register: longhorn_nodes_result
+      changed_when: false
+
+    - name: "[longhorn-tags-sync] Print Longhorn nodes state"
+      debug:
+        msg: "{{ longhorn_nodes_result.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
