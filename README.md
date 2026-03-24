@@ -476,7 +476,9 @@
 # ---HELPERS
 # ---------
 
+# ---
 # Шифрование ETCD. Ротация ключей
+# ---
 ## api-server, на каждой control-plane будет перезапущен 3 раза (так сказано в официальной документации)
 ## Это не самый быстрый процесс
 ## Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
@@ -484,34 +486,43 @@
 ##
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/etcd-key-rotate.yaml`
 
+# ---
 # SANS (api-server). Обновление имен (SANS) в сертификатах
+# ---
 ## На каждой control-plane будет создан новый api-server.crt
 ## Каждый текущий api-server - будет перезапущен один раз
 ## Перезапуск - последовательный (по одному за раз)
 ##
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/apiserver-sans-update.yaml`
 
+# ---
 # Обслуживание сервера (cordon + drain) и возврат в работу
+# ---
 ##
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
   - Вывод ноды на обслуживание
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-off.yaml --limit k8s-worker-3`
   - Вернуть ноду в работу
 
+# ---
 # Удаление node
+# ---
 ## Отключение node от кластера
 ## Перед этим надо выполнить = `Вывод Node на обслуживание`
 ##
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-remove.yaml --limit k8s-worker-4`
 
+# ---
 # Очистка сервера, от всех компонентов k8s
+# ---
+##
 1. `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/server-clean.yaml --limit k8s-worker-4`
    1. Выполнение команды  `kubeadm reset --force`
    2. Удаление директорий для k8s
 
-## ---------
-## ---ESO, force синхронизация ExternalSecrets
-## ---------
+# ---
+# ESO, force синхронизация ExternalSecrets
+# ---
 ## Все namespaces
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml`
 
@@ -519,9 +530,9 @@
 ## Доступные namespace: все, для которых есть eso_vault_integration_XXX (Пример - hosts.yaml)
 - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml --tags gitlab`
 
-## ---------
-## ---Longhorn + Restore (from backup)
-## ---------
+# ---
+# Longhorn + Restore (from backup)
+# ---
 ## Ситуация: был кластер с longhorn + all-system-components, есть backup, нужно восстановиться из бэкапа
 ## Бэкап лежит на S3 (все доступы есть). Правило такое: все секреты в кластере только через vault + ESO
 ## А чтобы запустить VAULT (Где лежат секреты) - нужно восстановить его volume из бэкапа
@@ -539,9 +550,9 @@
 ## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-delete.yaml`. Это удалит секреты из k8s
 ## - запустить производить запуск каждого компонента, с восстановленным состоянием
 
-## ---------
-## ---ArgoCD - git-ops, какие секреты должны быть в VAULT
-## ---------
+# ---
+# ArgoCD - git-ops, какие секреты должны быть в VAULT
+# ---
 ## Правило_1: ВСЕ ключи из vault - кладутся в секрет в k8s.secret
 ## Правило_2: существует всего два ТИПА секретов
 ## - git_ops_repo_pattern === `argocd.argoproj.io/secret-type: repo-creds`
@@ -573,9 +584,10 @@
    5. username: "..." (не добавлять если публичный)
    6. password: "..." (не добавлять если публичный)
 
-## ---------
-## ---Argocd, добавление нового приложения
-## ---------
+# ---
+# Argocd, добавление нового приложения
+# ---
+##
 1. Вводные данные
    1. Весь кластер настроен, все работает исправно
 2. Что нужно
@@ -611,9 +623,9 @@
     3.  выполнить через ArgoCD-ui = sync + force + replace
     4.  Готово
 
-## ---------
-## ---ЕЩЕ НЕ ГОТОВО
-## ---------
+# ---------
+# ЕЩЕ НЕ ГОТОВО
+# ---------
 
 ## olm. yaml -> helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`

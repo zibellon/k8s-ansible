@@ -7,7 +7,7 @@
 - zitadel
 - gitlab
 - gitlab-runner
-- argocd + argocd-git-ops
+- argocd
 - argocd-git-ops
 
 # какая структура variables
@@ -59,7 +59,7 @@
    3. path - на какой путь распространяется
    4. actions - какие действия доступны
 2. vault-role
-   1. На данный момент, используем только один вариант - kubernetes-token-auth
+   1. На данный момент, используем только один вариант: kubernetes-token-auth
    2. состоит из: name, SA, namespace, policy-list
    3. name - уникальное, в рамках всего VAULT
 3. SecretStore
