@@ -264,6 +264,28 @@ all:
     cilium_hubble_ui_http_enabled: false
     cilium_hubble_ui_cluster_issuer_name: "acme-prod"
     cilium_hubble_ui_ingress_class_name: "traefik-lb"
+    cilium_healthz_bind_addr: "0.0.0.0:10256"
+    # DaemonSet tolerations (cilium agent - ДОЛЖЕН работать на ВСЕХ нодах)
+    cilium_tolerations:
+      - operator: "Exists"
+    # cilium-envoy DaemonSet tolerations (ДОЛЖЕН работать на ВСЕХ нодах)
+    cilium_envoy_tolerations:
+      - operator: "Exists"
+    # Operator tolerations (Deployment) - воспроизводит Helm-дефолт
+    cilium_operator_tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+      - key: "node.cloudprovider.kubernetes.io/uninitialized"
+        operator: "Exists"
+    # Hubble Relay tolerations (Deployment)
+    cilium_hubble_relay_tolerations: []
+    # Hubble UI tolerations (Deployment)
+    cilium_hubble_ui_tolerations: []
+    # Helm timeouts
     cilium_helm_timeout: "5m"
     cilium_config_helm_timeout: "2m"
     cilium_post_config_helm_timeout: "2m"
@@ -275,6 +297,9 @@ all:
     # ------
     metrics_server_version: "3.13.0"
     metrics_server_namespace: "metrics-server"
+    # Deployment tolerations
+    metrics_server_tolerations: []
+    # Helm timeouts
     metrics_server_helm_timeout: "5m"
     metrics_server_rollout_timeout: "120s"
 
@@ -283,9 +308,12 @@ all:
     # ------
     cert_manager_version: "1.19.2"
     cert_manager_namespace: "cert-manager"
-    cert_manager_helm_timeout: "5m"
-    cert_manager_config_helm_timeout: "2m"
-    cert_manager_rollout_timeout: "180s"
+    # Tolerations (Deployments)
+    cert_manager_tolerations: []
+    cert_manager_cainjector_tolerations: []
+    cert_manager_webhook_tolerations: []
+    # Job tolerations
+    cert_manager_startupapicheck_tolerations: []
     cert_manager_cluster_issuers:
       - name: "acme-prod"
         email: "some-email-123@gmail.com"
@@ -301,14 +329,21 @@ all:
               app.kubernetes.io/instance: traefik-lb
               app.kubernetes.io/component: acme-http01-solver
               app.kubernetes.io/managed-by: cert-manager
+    # Helm timeouts
+    cert_manager_helm_timeout: "5m"
+    cert_manager_config_helm_timeout: "2m"
+    cert_manager_rollout_timeout: "180s"
 
     # ------
     # External Secrets Operator
     # ------
     external_secrets_namespace: "external-secrets"
+    external_secrets_repository: "ghcr.io/external-secrets/external-secrets"
     external_secrets_version: "v1.2.1"
-    external_secrets_helm_timeout: "5m"
-    external_secrets_rollout_timeout: "300s"
+    # Tolerations (Deployments)
+    external_secrets_tolerations: []
+    external_secrets_webhook_tolerations: []
+    external_secrets_cert_controller_tolerations: []
     # ESO controller flags
     eso_controller_config:
       client_burst: 200
@@ -320,6 +355,9 @@ all:
       secret_store_refresh_interval: 60   # int (секунды); SecretStoreSpec.refreshInterval
       external_secret_refresh_interval: "1m"  # string (Golang Duration); ExternalSecretSpec.refreshInterval (default, per-secret override через refresh_interval)
       external_secret_refresh_policy: "Periodic"  # ExternalSecretSpec.refreshPolicy
+    # Helm timeouts
+    external_secrets_helm_timeout: "5m"
+    external_secrets_rollout_timeout: "300s"
 
     # ------
     # Traefik
@@ -338,6 +376,9 @@ all:
     traefik_dashboard_http_enabled: false
     traefik_dashboard_cluster_issuer_name: "acme-prod"
     traefik_dashboard_ingress_class_name: "traefik-lb"
+    # Tolerations (DaemonSet)
+    traefik_tolerations: []
+    # Helm timeouts
     traefik_helm_timeout: "5m"
     traefik_rollout_timeout: "300s"
 
@@ -348,6 +389,9 @@ all:
     haproxy_namespace: "haproxy-lb"
     haproxy_daemonset_name: "haproxy-lb"
     haproxy_ingress_class: "haproxy-lb"
+    # Tolerations (DaemonSet)
+    haproxy_tolerations: []
+    # Helm timeouts
     haproxy_helm_timeout: "5m"
     haproxy_config_helm_timeout: "2m"
     haproxy_rollout_timeout: "300s"
@@ -388,11 +432,31 @@ all:
     longhorn_ui_http_enabled: false
     longhorn_ui_cluster_issuer_name: "acme-prod"
     longhorn_ui_ingress_class_name: "traefik-lb"
+    longhorn_default_class_replica_count: 2
+    longhorn_ui_replicas: 1
+    longhorn_ui_affinity: {}
+    # Tolerations (user-deployed components)
+    longhorn_manager_tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+    longhorn_driver_tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+    longhorn_ui_tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+    # Tolerations (system-managed: Instance Manager, CSI Driver, Engine Image)
+    # Format: "key1=value1:NoSchedule; key2:NoExecute" — special string, NOT a list
+    longhorn_system_taint_toleration: "node-role.kubernetes.io/control-plane:NoSchedule"
+    longhorn_storage_classes: []
+    # Helm timeouts
     longhorn_helm_timeout: "5m"
     longhorn_config_helm_timeout: "2m"
     longhorn_manager_rollout_timeout: "300s"
     longhorn_ui_rollout_timeout: "120s"
-    longhorn_storage_classes: []
 
     # ------
     # Vault (HashiCorp)
@@ -409,6 +473,7 @@ all:
     # ------
     vault_namespace: "vault"
     vault_image_tag: "1.21.2"
+    vault_image_repository: "hashicorp/vault"
     vault_internal_url: "http://vault.vault.svc.cluster.local:8200"
     vault_ui_domain: "vault-k8s-v2.drawapp.ru"
     vault_ui_https_secret_name: "cert-vault-ui"
@@ -431,13 +496,28 @@ all:
     vault_kv_engines:
       - "secret"
       - "eso-secret"
-    # ------
+    # Tolerations (StatefulSet)
+    vault_tolerations: []
+    vault_resources: {}
+    vault_node_selector: {}
+    vault_affinity: ""
+    vault_standalone_config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "raft" {
+        path = "/vault/data"
+      }
+    # Helm timeouts
     vault_helm_timeout: "5m"
     vault_config_helm_timeout: "2m"
     vault_rollout_timeout: "300s"
     
     # ------
-    # GitLab (Production Helm)
+    # GitLab
     # ------
     gitlab_namespace: "gitlab"
     gitlab_chart_version: "8.11.8"  # GitLab 17.11
@@ -484,21 +564,42 @@ all:
     gitlab_minio_s3_region: "us-east-1"
     gitlab_minio_s3_path_style: true
 
+    # GitLab Registry
+    gitlab_registry_tolerations: []
+
     # GitLab Webservice
     gitlab_webservice_memory_request: "2Gi"
     gitlab_webservice_cpu_request: "250m"
     gitlab_webservice_memory_limit: "4Gi"
+    gitlab_webservice_tolerations: []
 
     # GitLab Sidekiq
     gitlab_sidekiq_memory_request: "1Gi"
     gitlab_sidekiq_cpu_request: "250m"
     gitlab_sidekiq_memory_limit: "3Gi"
+    gitlab_sidekiq_tolerations: []
+
+    # GitLab Shell
+    gitlab_gitlab_shell_tolerations: []
 
     # GitLab Gitaly
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lh-major-single-best-effort"
+    gitlab_gitaly_tolerations: []
 
-    # ------
+    # GitLab Exporter
+    gitlab_gitlab_exporter_tolerations: []
+
+    # GitLab Pages
+    gitlab_pages_tolerations: []
+
+    # GitLab Toolbox
+    gitlab_toolbox_tolerations: []
+
+    # GitLab Migrations
+    gitlab_migrations_tolerations: []
+
+    # Helm timeouts
     gitlab_helm_timeout: "15m"
     gitlab_pre_helm_timeout: "5m"
     gitlab_storage_helm_timeout: "5m"
@@ -533,10 +634,10 @@ all:
     # ------
     gitlab_runner_namespace: "gitlab-runner"
     gitlab_runner_chart_version: "0.78.0"  # gitlab-runner 17.11
-    gitlab_runner_helm_timeout: "5m"
-    gitlab_runner_rollout_timeout: "180s"
     # Internal GitLab URL (webservice via cluster DNS, bypasses external ingress)
     gitlab_runner_gitlab_url: "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
+    # Tolerations (Deployment)
+    gitlab_runner_tolerations: []
     gitlab_runner_replicas: 3
     gitlab_runner_concurrent: 10
     gitlab_runner_check_interval: 30
@@ -587,6 +688,9 @@ all:
             name = "docker:29.3.0-dind"
             alias = "docker-my-dind"
             environment = ["HEALTHCHECK_TCP_PORT=2375"]
+    # Helm timeouts
+    gitlab_runner_helm_timeout: "5m"
+    gitlab_runner_rollout_timeout: "180s"
 
     # ------
     # ArgoCD
@@ -622,7 +726,9 @@ all:
     argocd_cm_rbac_extra: {}
     argocd_cm_ssh_known_hosts_extra: []
     argocd_cm_tls_certs_extra: {}
-    # ------
+    # Tolerations (все ArgoCD workloads)
+    argocd_tolerations: []
+    # Helm timeouts
     argocd_helm_timeout: "5m"
     argocd_components_rollout_timeout: "120s"
 

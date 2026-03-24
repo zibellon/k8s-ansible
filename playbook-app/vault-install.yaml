@@ -155,30 +155,22 @@
           server:
             enabled: true
             image:
-              repository: hashicorp/vault
+              repository: {{ vault_image_repository }}
               tag: {{ vault_image_tag }}
 
             standalone:
               enabled: true
               config: |
-                ui = true
-                listener "tcp" {
-                  tls_disable = 1
-                  address = "[::]:8200"
-                  cluster_address = "[::]:8201"
-                }
-                storage "raft" {
-                  path = "/vault/data"
-                }
-
+                {{ vault_standalone_config | indent(16, first=False) }}
             dataStorage:
               enabled: true
               size: {{ vault_storage_size }}
               storageClass: {{ vault_storage_class }}
 
-            resources: {}
-            nodeSelector: {}
-            affinity: ""
+            resources: {{ vault_resources | to_json }}
+            nodeSelector: {{ vault_node_selector | to_json }}
+            affinity: "{{ vault_affinity }}"
+            tolerations: {{ vault_tolerations | to_json }}
 
           ui:
             enabled: true

@@ -177,12 +177,20 @@
             removeSnapshotsDuringFilesystemTrim: true
             nodeDownPodDeletionPolicy: "do-nothing"
             nodeDrainPolicy: "block-for-eviction"
+            taintToleration: "{{ longhorn_system_taint_toleration }}"
           # StorageClass settings
           persistence:
-            defaultClassReplicaCount: 2
+            defaultClassReplicaCount: {{ longhorn_default_class_replica_count }}
+          longhornManager:
+            log:
+              format: json
+            tolerations: {{ longhorn_manager_tolerations | to_json }}
+          longhornDriver:
+            tolerations: {{ longhorn_driver_tolerations | to_json }}
           longhornUI:
-            replicas: 1
-            affinity: {}
+            replicas: {{ longhorn_ui_replicas }}
+            affinity: {{ longhorn_ui_affinity | to_json }}
+            tolerations: {{ longhorn_ui_tolerations | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
