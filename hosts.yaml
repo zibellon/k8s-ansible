@@ -268,6 +268,7 @@ all:
     # DaemonSet tolerations (cilium agent - ДОЛЖЕН работать на ВСЕХ нодах)
     cilium_tolerations:
       - operator: "Exists"
+    cilium_node_selector: {}
     # cilium-envoy DaemonSet tolerations (ДОЛЖЕН работать на ВСЕХ нодах)
     cilium_envoy_tolerations:
       - operator: "Exists"
@@ -281,10 +282,13 @@ all:
         operator: "Exists"
       - key: "node.cloudprovider.kubernetes.io/uninitialized"
         operator: "Exists"
+    cilium_operator_node_selector: {}
     # Hubble Relay tolerations (Deployment)
     cilium_hubble_relay_tolerations: []
+    cilium_hubble_relay_node_selector: {}
     # Hubble UI tolerations (Deployment)
     cilium_hubble_ui_tolerations: []
+    cilium_hubble_ui_node_selector: {}
     # Helm timeouts
     cilium_helm_timeout: "5m"
     cilium_config_helm_timeout: "2m"
@@ -299,6 +303,7 @@ all:
     metrics_server_namespace: "metrics-server"
     # Deployment tolerations
     metrics_server_tolerations: []
+    metrics_server_node_selector: {}
     # Helm timeouts
     metrics_server_helm_timeout: "5m"
     metrics_server_rollout_timeout: "120s"
@@ -310,10 +315,15 @@ all:
     cert_manager_namespace: "cert-manager"
     # Tolerations (Deployments)
     cert_manager_tolerations: []
+    cert_manager_node_selector: {}
     cert_manager_cainjector_tolerations: []
+    cert_manager_cainjector_node_selector: {}
     cert_manager_webhook_tolerations: []
+    cert_manager_webhook_node_selector: {}
     # Job tolerations
     cert_manager_startupapicheck_tolerations: []
+    cert_manager_startupapicheck_node_selector: {}
+    # Cluster issuers
     cert_manager_cluster_issuers:
       - name: "acme-prod"
         email: "some-email-123@gmail.com"
@@ -342,8 +352,11 @@ all:
     external_secrets_version: "v1.2.1"
     # Tolerations (Deployments)
     external_secrets_tolerations: []
+    external_secrets_node_selector: {}
     external_secrets_webhook_tolerations: []
+    external_secrets_webhook_node_selector: {}
     external_secrets_cert_controller_tolerations: []
+    external_secrets_cert_controller_node_selector: {}
     # ESO controller flags
     eso_controller_config:
       client_burst: 200
@@ -378,6 +391,7 @@ all:
     traefik_dashboard_ingress_class_name: "traefik-lb"
     # Tolerations (DaemonSet)
     traefik_tolerations: []
+    traefik_node_selector: {}
     # Helm timeouts
     traefik_helm_timeout: "5m"
     traefik_rollout_timeout: "300s"
@@ -391,6 +405,7 @@ all:
     haproxy_ingress_class: "haproxy-lb"
     # Tolerations (DaemonSet)
     haproxy_tolerations: []
+    haproxy_node_selector: {}
     # Helm timeouts
     haproxy_helm_timeout: "5m"
     haproxy_config_helm_timeout: "2m"
@@ -440,17 +455,22 @@ all:
       - key: "node-role.kubernetes.io/control-plane"
         operator: "Exists"
         effect: "NoSchedule"
+    longhorn_manager_node_selector: {}
     longhorn_driver_tolerations:
       - key: "node-role.kubernetes.io/control-plane"
         operator: "Exists"
         effect: "NoSchedule"
+    longhorn_driver_node_selector: {}
     longhorn_ui_tolerations:
       - key: "node-role.kubernetes.io/control-plane"
         operator: "Exists"
         effect: "NoSchedule"
+    longhorn_ui_node_selector: {}
     # Tolerations (system-managed: Instance Manager, CSI Driver, Engine Image)
     # Format: "key1=value1:NoSchedule; key2:NoExecute" — special string, NOT a list
     longhorn_system_taint_toleration: "node-role.kubernetes.io/control-plane:NoSchedule"
+    # Format: "label-key1:label-value1; label-key2:label-value2;" — special string, NOT a list
+    longhorn_system_managed_components_node_selector: ""
     longhorn_storage_classes: []
     # Helm timeouts
     longhorn_helm_timeout: "5m"
@@ -565,38 +585,47 @@ all:
 
     # GitLab Registry
     gitlab_registry_tolerations: []
+    gitlab_registry_node_selector: {}
 
     # GitLab Webservice
     gitlab_webservice_memory_request: "2Gi"
     gitlab_webservice_cpu_request: "250m"
     gitlab_webservice_memory_limit: "4Gi"
     gitlab_webservice_tolerations: []
+    gitlab_webservice_node_selector: {}
 
     # GitLab Sidekiq
     gitlab_sidekiq_memory_request: "1Gi"
     gitlab_sidekiq_cpu_request: "250m"
     gitlab_sidekiq_memory_limit: "3Gi"
     gitlab_sidekiq_tolerations: []
+    gitlab_sidekiq_node_selector: {}
 
     # GitLab Shell
     gitlab_gitlab_shell_tolerations: []
+    gitlab_gitlab_shell_node_selector: {}
 
     # GitLab Gitaly
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lh-major-single-best-effort"
     gitlab_gitaly_tolerations: []
+    gitlab_gitaly_node_selector: {}
 
     # GitLab Exporter
     gitlab_gitlab_exporter_tolerations: []
+    gitlab_gitlab_exporter_node_selector: {}
 
     # GitLab Pages
     gitlab_pages_tolerations: []
+    gitlab_pages_node_selector: {}
 
     # GitLab Toolbox
     gitlab_toolbox_tolerations: []
+    gitlab_toolbox_node_selector: {}
 
     # GitLab Migrations
     gitlab_migrations_tolerations: []
+    gitlab_migrations_node_selector: {}
 
     # Helm timeouts
     gitlab_helm_timeout: "15m"
@@ -621,6 +650,11 @@ all:
     zitadel_postgresql_image: "postgres:16-alpine"
     zitadel_postgresql_storage_class: "lh-major-multi-best-effort"
     zitadel_postgresql_storage_size: "10Gi"
+    # ---
+    zitadel_resources: {}
+    zitadel_node_selector: {}
+    zitadel_tolerations: []
+    zitadel_affinity: {}
     # Timeouts
     zitadel_helm_timeout: "10m"
     zitadel_pre_helm_timeout: "5m"
@@ -637,8 +671,7 @@ all:
     gitlab_runner_gitlab_url: "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
     # Tolerations (Deployment)
     gitlab_runner_tolerations: []
-    gitlab_runner_node_selector:
-      node-role.kubernetes.io/worker: ""
+    gitlab_runner_node_selector: {}
     gitlab_runner_replicas: 3
     gitlab_runner_concurrent: 10
     gitlab_runner_check_interval: 30
@@ -729,6 +762,7 @@ all:
     argocd_cm_tls_certs_extra: {}
     # Tolerations (все ArgoCD workloads)
     argocd_tolerations: []
+    argocd_node_selector: {}
     # Helm timeouts
     argocd_helm_timeout: "5m"
     argocd_components_rollout_timeout: "120s"
