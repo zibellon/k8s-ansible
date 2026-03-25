@@ -257,7 +257,6 @@ all:
     cilium_version: "1.19.1"
     cilium_namespace: "cilium"
     cilium_mask_size: 21 # Cilium IPAM settings (pods per node)
-    cilium_operator_replicas: 1 # number of replicas for cilium-operator (should be 1 for single-node cluster)
     cilium_hubble_ui_domain: "cilium-hubble-ui-k8s-v2.drawapp.ru" # Hubble UI domain
     cilium_hubble_ui_vpn_only_enabled: false
     cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui"
@@ -269,26 +268,31 @@ all:
     cilium_tolerations:
       - operator: "Exists"
     cilium_node_selector: {}
+    cilium_resources: {}
     # cilium-envoy DaemonSet tolerations (ДОЛЖЕН работать на ВСЕХ нодах)
     cilium_envoy_tolerations:
       - operator: "Exists"
+    cilium_envoy_node_selector: {}
+    cilium_envoy_resources: {}
     # Operator tolerations (Deployment) - воспроизводит Helm-дефолт
     cilium_operator_tolerations:
-      - key: "node-role.kubernetes.io/control-plane"
-        operator: "Exists"
-      - key: "node-role.kubernetes.io/master"
-        operator: "Exists"
-      - key: "node.kubernetes.io/not-ready"
-        operator: "Exists"
-      - key: "node.cloudprovider.kubernetes.io/uninitialized"
-        operator: "Exists"
+      - operator: "Exists"
     cilium_operator_node_selector: {}
+    cilium_operator_resources: {}
+    cilium_operator_replicas: 1
     # Hubble Relay tolerations (Deployment)
     cilium_hubble_relay_tolerations: []
     cilium_hubble_relay_node_selector: {}
+    cilium_hubble_relay_resources: {}
+    cilium_hubble_relay_replicas: 1
+    cilium_hubble_relay_affinity: {}
     # Hubble UI tolerations (Deployment)
     cilium_hubble_ui_tolerations: []
     cilium_hubble_ui_node_selector: {}
+    cilium_hubble_ui_replicas: 1
+    cilium_hubble_ui_affinity: {}
+    cilium_hubble_ui_backend_resources: {}
+    cilium_hubble_ui_frontend_resources: {}
     # Helm timeouts
     cilium_helm_timeout: "5m"
     cilium_config_helm_timeout: "2m"
@@ -301,9 +305,12 @@ all:
     # ------
     metrics_server_version: "3.13.0"
     metrics_server_namespace: "metrics-server"
-    # Deployment tolerations
+    # ---
+    metrics_server_replica_count: 1
     metrics_server_tolerations: []
     metrics_server_node_selector: {}
+    metrics_server_affinity: {}
+    metrics_server_resources: {}
     # Helm timeouts
     metrics_server_helm_timeout: "5m"
     metrics_server_rollout_timeout: "120s"
@@ -316,13 +323,27 @@ all:
     # Tolerations (Deployments)
     cert_manager_tolerations: []
     cert_manager_node_selector: {}
+    cert_manager_affinity: {}
+    cert_manager_replica_count: 1
+    cert_manager_resources: {}
+    # ---
     cert_manager_cainjector_tolerations: []
     cert_manager_cainjector_node_selector: {}
+    cert_manager_cainjector_affinity: {}
+    cert_manager_cainjector_replica_count: 1
+    cert_manager_cainjector_resources: {}
+    # ---
     cert_manager_webhook_tolerations: []
     cert_manager_webhook_node_selector: {}
+    cert_manager_webhook_affinity: {}
+    cert_manager_webhook_replica_count: 1
+    cert_manager_webhook_resources: {}
+    # ---
     # Job tolerations
     cert_manager_startupapicheck_tolerations: []
     cert_manager_startupapicheck_node_selector: {}
+    cert_manager_startupapicheck_affinity: {}
+    cert_manager_startupapicheck_resources: {}
     # Cluster issuers
     cert_manager_cluster_issuers:
       - name: "acme-prod"
@@ -353,10 +374,21 @@ all:
     # Tolerations (Deployments)
     external_secrets_tolerations: []
     external_secrets_node_selector: {}
+    external_secrets_affinity: {}
+    external_secrets_replica_count: 1
+    external_secrets_resources: {}
+    # ---
     external_secrets_webhook_tolerations: []
     external_secrets_webhook_node_selector: {}
+    external_secrets_webhook_affinity: {}
+    external_secrets_webhook_replica_count: 1
+    external_secrets_webhook_resources: {}
+    # ---
     external_secrets_cert_controller_tolerations: []
     external_secrets_cert_controller_node_selector: {}
+    external_secrets_cert_controller_affinity: {}
+    external_secrets_cert_controller_replica_count: 1
+    external_secrets_cert_controller_resources: {}
     # ESO controller flags
     eso_controller_config:
       client_burst: 200
@@ -392,6 +424,7 @@ all:
     # Tolerations (DaemonSet)
     traefik_tolerations: []
     traefik_node_selector: {}
+    traefik_resources: {}
     # Helm timeouts
     traefik_helm_timeout: "5m"
     traefik_rollout_timeout: "300s"
@@ -406,6 +439,7 @@ all:
     # Tolerations (DaemonSet)
     haproxy_tolerations: []
     haproxy_node_selector: {}
+    haproxy_resources: {}
     # Helm timeouts
     haproxy_helm_timeout: "5m"
     haproxy_config_helm_timeout: "2m"
@@ -448,29 +482,28 @@ all:
     longhorn_ui_cluster_issuer_name: "acme-prod"
     longhorn_ui_ingress_class_name: "traefik-lb"
     longhorn_default_class_replica_count: 2
-    longhorn_ui_replicas: 1
-    longhorn_ui_affinity: {}
-    # Tolerations (user-deployed components)
-    longhorn_manager_tolerations:
-      - key: "node-role.kubernetes.io/control-plane"
-        operator: "Exists"
-        effect: "NoSchedule"
-    longhorn_manager_node_selector: {}
-    longhorn_driver_tolerations:
-      - key: "node-role.kubernetes.io/control-plane"
-        operator: "Exists"
-        effect: "NoSchedule"
-    longhorn_driver_node_selector: {}
-    longhorn_ui_tolerations:
-      - key: "node-role.kubernetes.io/control-plane"
-        operator: "Exists"
-        effect: "NoSchedule"
-    longhorn_ui_node_selector: {}
+    # ---
     # Tolerations (system-managed: Instance Manager, CSI Driver, Engine Image)
     # Format: "key1=value1:NoSchedule; key2:NoExecute" — special string, NOT a list
-    longhorn_system_taint_toleration: "node-role.kubernetes.io/control-plane:NoSchedule"
+    longhorn_system_managed_components_taint_toleration: "node-role.kubernetes.io/control-plane:NoSchedule"
     # Format: "label-key1:label-value1; label-key2:label-value2;" — special string, NOT a list
     longhorn_system_managed_components_node_selector: ""
+    # ---
+    # Tolerations (user-deployed components)
+    longhorn_manager_tolerations:
+      - operator: "Exists"
+    longhorn_manager_node_selector: {}
+    longhorn_manager_resources: {}
+    # ---
+    longhorn_driver_tolerations:
+      - operator: "Exists"
+    longhorn_driver_node_selector: {}
+    # ---
+    longhorn_ui_replicas: 1
+    longhorn_ui_affinity: {}
+    longhorn_ui_tolerations: []
+    longhorn_ui_node_selector: {}
+    # ---
     longhorn_storage_classes: []
     # Helm timeouts
     longhorn_helm_timeout: "5m"
@@ -516,10 +549,6 @@ all:
     vault_kv_engines:
       - "secret"
       - "eso-secret"
-    vault_tolerations: []
-    vault_resources: {}
-    vault_node_selector: {}
-    vault_affinity: {}
     vault_standalone_config: |
       ui = true
       listener "tcp" {
@@ -530,6 +559,11 @@ all:
       storage "raft" {
         path = "/vault/data"
       }
+    # ---
+    vault_tolerations: []
+    vault_resources: {}
+    vault_node_selector: {}
+    vault_affinity: {}
     # Helm timeouts
     vault_helm_timeout: "5m"
     vault_config_helm_timeout: "2m"
@@ -586,46 +620,59 @@ all:
     # GitLab Registry
     gitlab_registry_tolerations: []
     gitlab_registry_node_selector: {}
+    gitlab_registry_resources: {}
 
     # GitLab Webservice
-    gitlab_webservice_memory_request: "2Gi"
-    gitlab_webservice_cpu_request: "250m"
-    gitlab_webservice_memory_limit: "4Gi"
     gitlab_webservice_tolerations: []
     gitlab_webservice_node_selector: {}
+    gitlab_webservice_resources:
+      requests:
+        memory: "2Gi"
+        cpu: "250m"
+      limits:
+        memory: "4Gi"
 
     # GitLab Sidekiq
-    gitlab_sidekiq_memory_request: "1Gi"
-    gitlab_sidekiq_cpu_request: "250m"
-    gitlab_sidekiq_memory_limit: "3Gi"
     gitlab_sidekiq_tolerations: []
     gitlab_sidekiq_node_selector: {}
+    gitlab_sidekiq_resources:
+      requests:
+        memory: "1Gi"
+        cpu: "250m"
+      limits:
+        memory: "3Gi"
 
     # GitLab Shell
     gitlab_gitlab_shell_tolerations: []
     gitlab_gitlab_shell_node_selector: {}
+    gitlab_gitlab_shell_resources: {}
 
     # GitLab Gitaly
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lh-major-single-best-effort"
     gitlab_gitaly_tolerations: []
     gitlab_gitaly_node_selector: {}
+    gitlab_gitaly_resources: {}
 
     # GitLab Exporter
     gitlab_gitlab_exporter_tolerations: []
     gitlab_gitlab_exporter_node_selector: {}
+    gitlab_gitlab_exporter_resources: {}
 
     # GitLab Pages
     gitlab_pages_tolerations: []
     gitlab_pages_node_selector: {}
+    gitlab_pages_resources: {}
 
     # GitLab Toolbox
     gitlab_toolbox_tolerations: []
     gitlab_toolbox_node_selector: {}
+    gitlab_toolbox_resources: {}
 
     # GitLab Migrations
     gitlab_migrations_tolerations: []
     gitlab_migrations_node_selector: {}
+    gitlab_migrations_resources: {}
 
     # Helm timeouts
     gitlab_helm_timeout: "15m"
@@ -672,6 +719,9 @@ all:
     # Tolerations (Deployment)
     gitlab_runner_tolerations: []
     gitlab_runner_node_selector: {}
+    gitlab_runner_resources: {}
+    gitlab_runner_affinity: {}
+    # ---
     gitlab_runner_replicas: 3
     gitlab_runner_concurrent: 10
     gitlab_runner_check_interval: 30
