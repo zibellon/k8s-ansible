@@ -54,19 +54,54 @@
 
 ## Немного терминов и правил
 1. vault-policy
-   1. состоит из: name, path, actions
-   2. название, уникальное в рамках всего VAULT
-   3. path - на какой путь распространяется
+   1. состоит из
+      1. name
+      2. path
+      3. actions
+   2. название = уникальное в рамках всего VAULT
+   3. path - на какой путь распространяется правило
    4. actions - какие действия доступны
 2. vault-role
    1. На данный момент, используем только один вариант: kubernetes-token-auth
-   2. состоит из: name, SA, namespace, policy-list
+   2. состоит из
+      1. name
+      2. SA
+      3. namespace
+      4. policy-list
    3. name - уникальное, в рамках всего VAULT
 3. SecretStore
    1. CRD (от externalSecretsOperator)
    2. Отвечает за подключение к VAULT (какой SA использовать, какой role, какой URL)
    3. В каждом NS - может быть несолько таких штук
    4. Например: argocd + argocd-git-ops (два отдельныйх SecretStore + SA, но NS = один)
+4. ExternalSecret
+   1. CRD (от externalSecretsOperator)
+   2. Отвечает за = Из какого пути VAULT достать секреты, в каком формате, куда в k8s.secret их положить
+   3. Для подключения к VAULT - использует SecretStore (CRD)
+   4. В каждом NS = много таких штук
+
+## Пример_1
+## Нужно добавит новые k8s.secrets для компонентов в NS = gitlab
+1. Добавить новые элементы в массив = eso_vault_integration_gitlab_secrets_extra
+2. Вызвать: gitlab-install --tags pre
+3. Подождать синхронизации
+4. После этого буду работать новые ExternalSecret
+
+## Пример_2
+## Нужно добавит новые k8s.secrets для компонентов в NS = gitlab + их нужно достать из вообще других путей в VAULT
+1. Добавить новые политики в vault_policies_extra
+2. Добавить новую роль (например - gitlab.eso-extra) в vault_roles_extra
+   1. namespace: gitlab
+   2. sa_name: eso-main
+   3. policies = вот тут указать новую политику (которая была добавлена выше)
+3. Вызвать vault-policy-sync
+   1. Будет создана новая политика (Для доступа куда-то там)
+   2. Будет создана новая роль. Такой SA, из Такого NS = имеет такие доступы (на основе политик)
+4. Это обновит политики и права внутри vault. Чтобы SA + NS + Role (gitlab) = смогли читать что-то из экзатических путей VAULT
+5. Добавить новые элементы в массив = eso_vault_integration_gitlab_secrets_extra
+6. Вызвать: gitlab-install --tags pre
+7. Подождать синхронизации
+8. После этого буду работать новые ExternalSecret
 
 # merge-eso. Как работает
 1. Соединяет политики (два массива) = vault_policies + vault_policies_extra
@@ -77,7 +112,7 @@
 4. Првоерка на дубликаты
    1. по полю = name
    2. Если есть дубликаты = ошибка
-5. Проверка, что ВСЕ политики из вложенного массива политик (в каждом элементе role) - есть в массиве с политиками (vault_policies + vault_policies_extra)
+5. Проверка, что ВСЕ политики из вложенного массива политик (в каждом элементе role), есть в массиве с политиками (vault_policies + vault_policies_extra)
    1. Если чего-то нет - ошибка
 6. Проверка, что для всех объектов eso_vault_integration_traefik_XXX - есть нужная роль в vault
    1. проверка именно на роль
@@ -88,10 +123,9 @@
    3. То есть: Если добавить новую интеграцию для нового компонента или поменять что-то в текущей (Напрмиер SA_name) и не поменять в массиве с политиками: то будет ошибка, до запуска
 7. Соединяет массивы для создания ESO - externalSecret (только их можно расширить)
    1. Соединяет по два массива для каждого компонента
-   2. например traefik
-      1. eso_vault_integration_traefik
-      2. eso_vault_integration_traefik_secrets
-      3. eso_vault_integration_traefik_secrets_extra
+   2. например traefik - будут соединены
+      1. eso_vault_integration_traefik_secrets
+      2. eso_vault_integration_traefik_secrets_extra
 8. Проверка на уникальность: название k8s.secret OR название externalSecret
    1. В рамках одного namespace - нельзя создать два ExternalSecret или k8s.Secret с одинаковым названием
 
@@ -113,24 +147,24 @@
 
 # Логика, запуска нового проекта (продукта)
 1. Вся система работат исправно, все настроено
-2. Надо запустить новый проект: my-wallet-app
+2. Надо запустить новый проект: `my-wallet-app`
    1. У этого проекта будет 3 окружения: prod, dev, shared
    2. каждое окружение === отдельный namespace
 3. Правила разделения секретов в VAULT
    1. Делим по namespace
-   2. да, можно разделить как угодно, хоть hash использовать
+   2. Можно разделить как угодно, хоть hash использовать
    3. Но по изначальным правилам: prefix === namespace
-4. В каждом namespace - будет свой: SA + SecretStore + ExternalSecret
+4. В каждом namespace будет свой: SA + SecretStore + ExternalSecret
    1. shared: 1 SA + 1 SecretStore + 1 ExternalSecret
    2. dev: 1 SA + 1 SecretStore + 2 ExternalSecret
    3. prod: 1 SA + 1 SecretStore + 2 ExternalSecret
 5. Политики VAULT
-   1. 1 role === 1 SA + 1 namespace + NNN policy
+   1. 1 role === 1 SA + 1 namespace + N policy
 6. Сначала, надо подготовить vault
    1. Знаем, какие нужны namespace - их 3 штуки
    2. Добавляем политики в массив = vault_policies_extra
    3. Добавляем роли в массив = vault_roles_extra
-   4. Вызываем синронизацию политик VAULT - только с --tags ADD
+   4. Вызываем синронизацию политик VAULT. только с --tags ADD
    5. все, vault готов
 7. Vault + значения секретов
    1. По нужным путям, для каждого namespace - кладем в vault секреты (postgres, redis, и так далее ...)
@@ -139,3 +173,4 @@
    2. Заливаем Namespace + SA + SecretStore + ExternalSecret
    3. Ждем синхронизацию
    4. Запускаем остальные компоненты с использованием секретов, которые были созданы через ESO
+9. Вы великолепны
