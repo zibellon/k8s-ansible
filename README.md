@@ -305,7 +305,7 @@
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-install.yaml`
   - Ставится: longhorn, network-policy, ingress (longhorn-ui)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-tags-sync.yaml`
-  - синхронизация всех node-tags. Именно у CRD объекта = nodes.longhorn.io
+  - синхронизация всех node-tags. Именно у CRD объекта: nodes.longhorn.io
 
 ## ---
 ## Теперь, можно запускать что-то, что требует volume (PVC)
@@ -323,6 +323,10 @@
 ## Параметры в `hosts.yaml` + `hosts-extra.yaml`
 ## ---
 ## `--tags pre, install, post`
+## ---
+## `vault-policy-sync --tags `
+## `policy, policy-add, policy-delete`
+## `role, role-add, role-delete`
 ## ---
 ##
 - установка + конфигурация + синхронизация политик. Три отдельных playbook
