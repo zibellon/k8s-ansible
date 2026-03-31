@@ -3,13 +3,13 @@
 
 # Какие tags на Nodes надо расставить, чтобы storage-class работали корректно
 ## Указание tags - через longhorn-UI
-`lh-major-volume` | `lh-minor-volume` | `lh-manager` | `lh-worker`
+`lh-major` | `lh-minor` | `lh-manager` | `lh-worker`
 
 ## Комбинации tags
-- `lh-major-volume` - Worker / Manager (Например для Portainer)
-- `lh-major-volume,lh-manager` - Manger (Например - ...)
-- `lh-major-volume,lh-worker` - Worker (Например - GitLab, Все основне проекты и ТД)
-- `lh-minor-volume,lh-worker` - Worker (Например - VPN)
+- `lh-major` - Worker / Manager (Например для Portainer)
+- `lh-major,lh-manager` - Manger (Например - ...)
+- `lh-major,lh-worker` - Worker (Например - GitLab, Все основне проекты и ТД)
+- `lh-minor,lh-worker` - Worker (Например - VPN)
 
 ## В storageClass - можно (и даже нужно) указать TAGS для выбора node | disk
 diskSelector: "ssd,fast"

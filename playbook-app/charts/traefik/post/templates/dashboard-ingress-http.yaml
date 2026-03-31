@@ -1,0 +1,31 @@
+# =============================================================================
+# TRAEFIK DASHBOARD INGRESS - HTTP
+# =============================================================================
+
+{{- if .Values.dashboard.httpEnable }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-traefik-dashboard-http
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.entryPoints.web }}"
+    {{- if .Values.dashboard.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  rules:
+    - host: {{ .Values.dashboard.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.dashboard.serviceName }}
+                port:
+                  number: 8080
+{{- end }}

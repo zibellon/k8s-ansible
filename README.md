@@ -3,10 +3,6 @@
    1. Пример до: cluster-init.yaml
    2. Пример после: manager-join.yaml, worker-join.yaml, etcd-key-rotate.yaml
 
-
-# Как вызывать что-то по частям
---tags pre,install
-
 # Конфигурация файла `hosts.yaml` + `hosts-extra.yaml`
 1. Сервера
    1. managers
@@ -86,7 +82,7 @@
   - и отвечает за доступ к kube-api
   - То есть: пока-что он не запустится -> доступа к kube-api НЕТ -> через helm ничего создать нельзя
 
-# Важно по VAULT + ESO
+# Важно про VAULT + ESO
 ## Во все конфиги ESO (SecretStore + ExternalSecret) добавен параметр is_need_eso: true | false
 ## Зачем: Это контроль - нужно ли создавать объекты ESO + vault-policy
 ## Например: есть GitLab.root (user + pass), их надо обязаиельно положить в vault. Но они не нужны как k8s-secret
