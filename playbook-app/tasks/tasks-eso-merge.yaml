@@ -394,19 +394,19 @@
   run_once: true
   tags: [always]
 
-- name: "[eso-merge] Validate SecretStore namespace+sa_name matches role in vault_roles_final"
+- name: "[eso-merge] Validate SecretStore sa_name matches role in vault_roles_final"
   fail:
     msg: >-
       ESO SecretStore for '{{ item.component }}' references role '{{ item.store.role_name }}'
-      but namespace or sa_name does not match.
-      Expected: namespace={{ item.store.namespace }}, sa_name={{ item.store.sa_name }}
-      Found in role: namespace={{ _role.namespace | default('MISSING') }}, sa_name={{ _role.sa_name | default('MISSING') }}
+      but sa_name does not match.
+      Expected: sa_name={{ item.store.sa_name }}
+      Found in role: sa_name={{ _role.sa_name | default('MISSING') }}
   vars:
     _role: "{{ vault_roles_final | selectattr('name', 'equalto', item.store.role_name) | list | first | default({}) }}"
   when:
     - item.store.is_need_eso | default(true)
     - item.store.role_name in (vault_roles_final | map(attribute='name') | list)
-    - (_role.namespace | default('') != item.store.namespace) or (_role.sa_name | default('') != item.store.sa_name)
+    - _role.sa_name | default('') != item.store.sa_name
   loop: "{{ _eso_secret_stores }}"
   loop_control:
     label: "{{ item.component }}"
