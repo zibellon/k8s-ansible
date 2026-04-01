@@ -71,16 +71,13 @@
 - argocd
 
 # Важно про `haproxy-apiserver-lb`
-## В конфиге указаны ip адреса всех maanger-node + балансировка между ними
-## Запускается как static-pod на каждой node в кластере
-## Чтобы спровоцировать перезапуск
-- Или обновить спецификацию Pod.yaml. kubelet - автоматически ее подцепит (отслеживает директорию со static-pod) и сделает перезапуск
-- Или обновить конфиг, что в свою очередь спровоцирует обновление Pod.yaml
-  - В аннотация указано: checksum/config: "{{ haproxy_config_content | hash('sha256') }}"
-  - Это функционал ansible
-  - Почему нельзя использовать helm ? Потому-что эот Pod запускается как static-pod
-  - и отвечает за доступ к kube-api
-  - То есть: пока-что он не запустится -> доступа к kube-api НЕТ -> через helm ничего создать нельзя
+## В конфиге указаны ip адреса всех manager-node + балансировка между ними
+## Запускается как `linux systemd service` (apt install haproxy) на каждой node в кластере
+## Версия пакета зафиксирована в hosts.yaml (haproxy_apiserver_lb_package_version) и заморожена через apt-mark hold
+## Чтобы обновить конфиг на всех нодах (например при добавлении нового manager):
+- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/haproxy-apiserver-lb-update.yaml`
+  - Обновляет /etc/haproxy/haproxy.cfg и делает `systemctl reload haproxy` последовательно (serial: 1)
+  - reload — graceful, без разрыва TCP соединений
 
 # Важно про VAULT + ESO
 ## Во все конфиги ESO (SecretStore + ExternalSecret) добавен параметр is_need_eso: true | false

@@ -1,0 +1,77 @@
+# =============================================================================
+# Generate HAProxy config
+# =============================================================================
+# Creates:
+#   - /etc/haproxy/haproxy.cfg
+#
+# Required variables (from hosts.yaml):
+#   - haproxy_apiserver_lb_host
+#   - haproxy_apiserver_lb_port
+#   - haproxy_apiserver_lb_healthz_port
+#   - api_server_advertise_address (per-host)
+#
+# Sets facts:
+#   - manager_ips (list of IPs for HAProxy backend)
+#   - haproxy_config_result (copy module result)
+# =============================================================================
+
+# =========================================================================
+# BUILD MANAGER IPS LIST
+# On managers: 127.0.0.1 first (local API server), then other managers
+# On workers: only remote manager IPs
+# =========================================================================
+- name: Build list of manager IPs for HAProxy backend
+  set_fact:
+    manager_ips: >-
+      {{
+        (['127.0.0.1'] if inventory_hostname in groups['managers'] else [])
+        +
+        (groups['managers'] | map('extract', hostvars, 'api_server_advertise_address') | list)
+      }}
+
+- name: Print manager IPs
+  debug:
+    msg: "Manager IPs for HAProxy backend: {{ manager_ips }}"
+
+# =========================================================================
+# HAPROXY CONFIG
+# =========================================================================
+- name: Create HAProxy config file
+  copy:
+    dest: /etc/haproxy/haproxy.cfg
+    mode: "0644"
+    content: |
+      global
+          log stdout format raw local0
+          maxconn 2100
+
+      defaults
+          log     global
+          mode    tcp
+          option  tcplog
+          option  dontlognull
+          timeout connect 5s
+          timeout client  30s
+          timeout server  30s
+          retries 3
+
+      # Health check endpoint for liveness probe
+      frontend healthz
+          bind *:{{ haproxy_apiserver_lb_healthz_port }}
+          mode http
+          monitor-uri /healthz
+
+      # Kubernetes API frontend
+      frontend kubernetes-api
+          bind {{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}
+          default_backend kubernetes-masters
+
+      # Backend with control-plane nodes
+      backend kubernetes-masters
+          option tcp-check
+          balance roundrobin
+          default-server inter 5s fall 3 rise 2
+          {% for ip in manager_ips %}
+          server manager-{{ loop.index }} {{ ip }}:6443 check
+          {% endfor %}
+  register: haproxy_config_result
