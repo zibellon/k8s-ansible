@@ -1,0 +1,31 @@
+# =============================================================================
+# INGRESS FOR MINIO API — HTTP (Traefik)
+# =============================================================================
+
+{{- if .Values.minio.httpEnable }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-gitlab-minio-api-http
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.minio.entryPoints.web }}"
+    {{- if .Values.minio.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.minio.ingressClass }}
+  rules:
+    - host: {{ .Values.minio.apiDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitlab-minio
+                port:
+                  number: 9000
+{{- end }}

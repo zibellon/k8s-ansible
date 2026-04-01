@@ -1,6 +1,9 @@
 # =============================================================================
-# CERTIFICATE FOR GITLAB UI (cert-manager)
+# INGRESS FOR GITLAB UI — HTTPS (Traefik)
 # =============================================================================
+
+{{- if .Values.gitlab.httpsEnable }}
+---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -13,11 +16,8 @@ spec:
   issuerRef:
     name: {{ .Values.gitlab.clusterIssuer }}
     kind: ClusterIssuer
+
 ---
-{{- if not .Values.gitlab.httpEnabled }}
-# =============================================================================
-# INGRESS FOR GITLAB UI — HTTPS (Traefik)
-# =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -25,7 +25,7 @@ metadata:
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.gitlab.entrypoint }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.gitlab.entryPoints.websecure }}"
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- if .Values.gitlab.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
@@ -36,34 +36,6 @@ spec:
     - hosts:
         - {{ .Values.gitlab.domain }}
       secretName: {{ .Values.gitlab.uiSecretName }}
-  rules:
-    - host: {{ .Values.gitlab.domain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gitlab-webservice-default
-                port:
-                  number: 8181
-{{- else }}
-# =============================================================================
-# INGRESS FOR GITLAB UI — HTTP (Traefik)
-# =============================================================================
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ingress-gitlab-ui-http
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "web"
-    {{- if .Values.gitlab.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.gitlab.ingressClass }}
   rules:
     - host: {{ .Values.gitlab.domain }}
       http:

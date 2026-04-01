@@ -628,16 +628,16 @@
             edition: ce
             hosts:
               domain: {{ gitlab_base_domain }}
-              https: {{ gitlab_http_enabled | ternary('false', 'true') }}
+              https: {{ gitlab_external_https | ternary('true', 'false') }}
               gitlab:
                 name: {{ gitlab_ui_domain }}
-                https: {{ gitlab_http_enabled | ternary('false', 'true') }}
+                https: {{ gitlab_external_https | ternary('true', 'false') }}
               registry:
                 name: {{ gitlab_registry_domain }}
-                https: {{ gitlab_http_enabled | ternary('false', 'true') }}
+                https: {{ gitlab_external_https | ternary('true', 'false') }}
               pages:
                 name: {{ gitlab_pages_domain }}
-                https: {{ gitlab_http_enabled | ternary('false', 'true') }}
+                https: {{ gitlab_external_https | ternary('true', 'false') }}
             ingress:
               enabled: false
               configureCertmanager: false
@@ -848,7 +848,9 @@
           sshPortExternal: {{ gitlab_ssh_port_external }}
           gitlab:
             ingressClass: {{ gitlab_ingress_class_name }}
-            entrypoint: {{ traefik_websecure_entrypoint }}
+            entryPoints:
+              web: {{ traefik_web_entrypoint }}
+              websecure: {{ traefik_websecure_entrypoint }}
             domain: {{ gitlab_ui_domain }}
             registryDomain: {{ gitlab_registry_domain }}
             pagesDomain: {{ gitlab_pages_domain }}
@@ -857,19 +859,23 @@
             registrySecretName: {{ gitlab_registry_https_secret_name }}
             pagesSecretName: {{ gitlab_pages_https_secret_name }}
             vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
-            httpEnabled: {{ gitlab_http_enabled }}
+            httpEnable: {{ gitlab_ingress_http_enable }}
+            httpsEnable: {{ gitlab_ingress_https_enable }}
           traefik:
             namespace: {{ traefik_namespace }}
           minio:
             ingressClass: {{ gitlab_ingress_class_name }}
-            entrypoint: {{ traefik_websecure_entrypoint }}
+            entryPoints:
+              web: {{ traefik_web_entrypoint }}
+              websecure: {{ traefik_websecure_entrypoint }}
             consoleDomain: {{ gitlab_minio_console_domain }}
             apiDomain: {{ gitlab_minio_api_domain }}
             clusterIssuer: {{ gitlab_cluster_issuer_name }}
             consoleSecretName: {{ gitlab_minio_console_https_secret_name }}
             apiSecretName: {{ gitlab_minio_api_https_secret_name }}
             vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
-            httpEnabled: {{ gitlab_minio_http_enabled }}
+            httpEnable: {{ gitlab_minio_ingress_http_enable }}
+            httpsEnable: {{ gitlab_minio_ingress_https_enable }}
           haproxy:
             namespace: {{ haproxy_namespace }}
             ingressClass: {{ haproxy_ingress_class }}

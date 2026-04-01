@@ -1,6 +1,9 @@
 # =============================================================================
-# CERTIFICATE FOR MINIO CONSOLE (cert-manager)
+# INGRESS FOR MINIO CONSOLE — HTTPS (Traefik)
 # =============================================================================
+
+{{- if .Values.minio.httpsEnable }}
+---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -13,11 +16,8 @@ spec:
   issuerRef:
     name: {{ .Values.minio.clusterIssuer }}
     kind: ClusterIssuer
+
 ---
-{{- if not .Values.minio.httpEnabled }}
-# =============================================================================
-# INGRESS FOR MINIO CONSOLE — HTTPS (Traefik)
-# =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -25,7 +25,7 @@ metadata:
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.minio.entrypoint }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.minio.entryPoints.websecure }}"
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- if .Values.minio.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
@@ -36,34 +36,6 @@ spec:
     - hosts:
         - {{ .Values.minio.consoleDomain }}
       secretName: {{ .Values.minio.consoleSecretName }}
-  rules:
-    - host: {{ .Values.minio.consoleDomain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gitlab-minio
-                port:
-                  number: 9001
-{{- else }}
-# =============================================================================
-# INGRESS FOR MINIO CONSOLE — HTTP (Traefik)
-# =============================================================================
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ingress-gitlab-minio-console-http
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "web"
-    {{- if .Values.minio.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.minio.ingressClass }}
   rules:
     - host: {{ .Values.minio.consoleDomain }}
       http:

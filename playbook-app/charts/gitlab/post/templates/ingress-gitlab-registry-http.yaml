@@ -1,0 +1,31 @@
+# =============================================================================
+# INGRESS FOR GITLAB REGISTRY — HTTP (Traefik)
+# =============================================================================
+
+{{- if .Values.gitlab.httpEnable }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-gitlab-registry-http
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.gitlab.entryPoints.web }}"
+    {{- if .Values.gitlab.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.gitlab.ingressClass }}
+  rules:
+    - host: {{ .Values.gitlab.registryDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitlab-registry
+                port:
+                  number: 5000
+{{- end }}
