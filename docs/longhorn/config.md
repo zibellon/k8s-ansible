@@ -349,3 +349,30 @@ kubectl -n longhorn-system delete replicas.longhorn.io pvc-b8023696-662b-40a1-88
 
 ## Как получить список longhorn-nodes
 kubectl -n longhorn-system get nodes.longhorn.io -o wide
+
+
+# что-то очень интересное
+
+# 1. CA из ValidatingWebhookConfiguration (что ожидает kube-apiserver)
+kubectl get validatingwebhookconfiguration longhorn-webhook-validator \
+  -o jsonpath='{.webhooks[0].clientConfig.caBundle}' | base64 -d | \
+  openssl x509 -noout -fingerprint -sha256
+# 2. CA из секрета (что есть в кластере)
+kubectl get secret -n longhorn-system longhorn-webhook-ca \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d | \
+  openssl x509 -noout -fingerprint -sha256
+# 3. Cert который реально отдаёт webhook сервер
+echo | openssl s_client -connect 10.131.29.191:9502 2>/dev/null | \
+  openssl x509 -noout -issuer -fingerprint -sha256
+
+
+kubectl delete secret -n longhorn-system longhorn-webhook-tls longhorn-webhook-ca
+kubectl rollout restart daemonset/longhorn-manager -n longhorn-system
+kubectl rollout status daemonset/longhorn-manager -n longhorn-system
+
+# Сохрани CA из ValidatingWebhookConfiguration
+kubectl get validatingwebhookconfiguration longhorn-webhook-validator \
+  -o jsonpath='{.webhooks[0].clientConfig.caBundle}' | base64 -d > /tmp/webhook-ca.crt
+# Проверь TLS верификацию как это делает kube-apiserver
+echo | openssl s_client -connect 10.131.29.191:9502 \
+  -CAfile /tmp/webhook-ca.crt 2>&1 | grep -E "Verify return|error"
