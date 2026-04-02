@@ -66,7 +66,6 @@
 # Важно про `namespace`
 ## Сменить namespace МОЖНО для любых компонентов
 ## Сменить namespace НЕЛЬЗЯ для некоторых компонентов. Так указано в официальной документации
-- olm
 - longhorn-system
 - argocd
 
@@ -268,10 +267,6 @@
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-hubble-install.yaml`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
-
-## olm
-## ---
-## NOT_READY
 
 ## medik8s
 ## ---
@@ -623,24 +618,6 @@
 # ---------
 # ЕЩЕ НЕ ГОТОВО
 # ---------
-
-## olm. yaml -> helm
-## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/olm-v0-install.yaml`
-## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
-## ---
-##
-- установка
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/olm-v0-install.yaml`
-  - Ставится: немного компонентов
-- обновление (версия + конфиг)
-  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/crds.yaml
-  - Положить сожержимое в `playbook-app/charts/olm-v0/crds/crds.yaml`
-  - Скачать новый yaml. https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml
-  - Положить сожержимое в `playbook-app/charts/olm-v0/templates/olm-v0-install.yaml`
-  - Перенести содержимое namespace в `playbook-app/charts/olm-v0/namespaces.yaml` и удалить из оригинала
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/olm-v0-install.yaml`
 
 ## medik8s. Установка идет через kubectl apply -f ...
 ## ---

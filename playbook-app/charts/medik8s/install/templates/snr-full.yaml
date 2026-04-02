@@ -1,0 +1,965 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    control-plane: controller-manager
+    self-node-remediation-operator: ""
+  name: self-node-remediation
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  labels:
+    self-node-remediation-operator: ""
+  name: selfnoderemediationconfigs.self-node-remediation.medik8s.io
+spec:
+  group: self-node-remediation.medik8s.io
+  names:
+    kind: SelfNodeRemediationConfig
+    listKind: SelfNodeRemediationConfigList
+    plural: selfnoderemediationconfigs
+    shortNames:
+    - snrc
+    - snrconfig
+    singular: selfnoderemediationconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SelfNodeRemediationConfig is the Schema for the selfnoderemediationconfigs
+          API in which a user can configure the self node remediation agents
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SelfNodeRemediationConfigSpec defines the desired state of
+              SelfNodeRemediationConfig
+            properties:
+              apiCheckInterval:
+                default: 15s
+                description: |-
+                  The frequency for api-server connectivity check.
+                  Valid time units are "ms", "s", "m", "h".
+                  the frequency for api-server connectivity check
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+              apiServerTimeout:
+                default: 5s
+                description: |-
+                  Timeout for each api-connectivity check.
+                  Valid time units are "ms", "s", "m", "h".
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+              customDsTolerations:
+                description: CustomDsTolerations allows to add custom tolerations
+                  snr agents that are running on the ds in order to support remediation
+                  for different types of nodes.
+                items:
+                  description: |-
+                    The pod this Toleration is attached to tolerates any taint that matches
+                    the triple <key,value,effect> using the matching operator <operator>.
+                  properties:
+                    effect:
+                      description: |-
+                        Effect indicates the taint effect to match. Empty means match all taint effects.
+                        When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                      type: string
+                    key:
+                      description: |-
+                        Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                        If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                      type: string
+                    operator:
+                      description: |-
+                        Operator represents a key's relationship to the value.
+                        Valid operators are Exists and Equal. Defaults to Equal.
+                        Exists is equivalent to wildcard for value, so that a pod can
+                        tolerate all taints of a particular category.
+                      type: string
+                    tolerationSeconds:
+                      description: |-
+                        TolerationSeconds represents the period of time the toleration (which must be
+                        of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                        it is not set, which means tolerate the taint forever (do not evict). Zero and
+                        negative values will be treated as 0 (evict immediately) by the system.
+                      format: int64
+                      type: integer
+                    value:
+                      description: |-
+                        Value is the taint value the toleration matches to.
+                        If the operator is Exists, the value should be empty, otherwise just a regular string.
+                      type: string
+                  type: object
+                type: array
+              endpointHealthCheckUrl:
+                description: |-
+                  EndpointHealthCheckUrl is an url that self node remediation agents which run on control-plane node will try to access when they can't contact their peers.
+                  This is a part of self diagnostics which will decide whether the node should be remediated or not.
+                  It will be ignored when empty (which is the default).
+                type: string
+              hostPort:
+                default: 30001
+                description: HostPort is used for internal communication between SNR
+                  agents.
+                minimum: 1
+                type: integer
+              isSoftwareRebootEnabled:
+                default: true
+                description: |-
+                  IsSoftwareRebootEnabled indicates whether self node remediation agent will do software reboot,
+                  if the watchdog device can not be used or will use watchdog only,
+                  without a fallback to software reboot.
+                type: boolean
+              maxApiErrorThreshold:
+                default: 3
+                description: After this threshold, the node will start contacting
+                  its peers.
+                minimum: 1
+                type: integer
+              minPeersForRemediation:
+                default: 1
+                description: "Minimum number of peer workers/control nodes to attempt
+                  to contact before deciding if node is unhealthy or not\n\tif set
+                  to zero, no other peers will be required to be present for remediation
+                  action to occur when this\n\tnode has lost API server access.  If
+                  an insufficient number of peers are found, we will not attempt to
+                  ask\n\tany peer nodes (if present) whether they see that the current
+                  node has been marked unhealthy with a\n\tSelfNodeRemediation CR"
+                minimum: 0
+                type: integer
+              peerApiServerTimeout:
+                default: 5s
+                description: |-
+                  The timeout for api-server connectivity check.
+                  Valid time units are "ms", "s", "m", "h".
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+              peerDialTimeout:
+                default: 5s
+                description: |-
+                  Timeout for establishing connection to peer.
+                  Valid time units are "ms", "s", "m", "h".
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+              peerRequestTimeout:
+                default: 7s
+                description: |-
+                  Timeout for each peer request.
+                  Valid time units are "ms", "s", "m", "h".
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+              peerUpdateInterval:
+                default: 15m
+                description: |-
+                  The frequency for updating peers.
+                  Valid time units are "ms", "s", "m", "h".
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+              safeTimeToAssumeNodeRebootedSeconds:
+                description: |-
+                  SafeTimeToAssumeNodeRebootedSeconds is the time after which the healthy self node remediation
+                  agents will assume the unhealthy node has been rebooted, and it is safe to recover affected workloads.
+                  This is extremely important as starting replacement Pods while they are still running on the failed
+                  node will likely lead to data corruption and violation of run-once semantics.
+                  In an effort to prevent this, the operator ignores values lower than a minimum calculated from the
+                  ApiCheckInterval, ApiServerTimeout, MaxApiErrorThreshold, PeerDialTimeout, and PeerRequestTimeout fields,
+                  and the unhealthy node's individual watchdog timeout.
+                type: integer
+              watchdogFilePath:
+                default: /dev/watchdog
+                description: WatchdogFilePath is the watchdog file path that should
+                  be available on each node, e.g. /dev/watchdog.
+                type: string
+            type: object
+          status:
+            description: SelfNodeRemediationConfigStatus defines the observed state
+              of SelfNodeRemediationConfig
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  labels:
+    self-node-remediation-operator: ""
+  name: selfnoderemediations.self-node-remediation.medik8s.io
+spec:
+  group: self-node-remediation.medik8s.io
+  names:
+    kind: SelfNodeRemediation
+    listKind: SelfNodeRemediationList
+    plural: selfnoderemediations
+    shortNames:
+    - snr
+    - snremediation
+    singular: selfnoderemediation
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SelfNodeRemediation is the Schema for the selfnoderemediations
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SelfNodeRemediationSpec defines the desired state of SelfNodeRemediation
+            properties:
+              remediationStrategy:
+                default: Automatic
+                description: |-
+                  RemediationStrategy is the remediation method for unhealthy nodes.
+                  Currently, it could be either "Automatic", "OutOfServiceTaint" or "ResourceDeletion".
+                  ResourceDeletion will iterate over all pods and VolumeAttachment related to the unhealthy node and delete them.
+                  OutOfServiceTaint will add the out-of-service taint which is a new well-known taint "node.kubernetes.io/out-of-service"
+                  that enables automatic deletion of pv-attached pods on failed nodes, "out-of-service" taint is only supported on clusters with k8s version 1.26+ or OCP/OKD version 4.13+.
+                  Automatic will choose the most appropriate strategy during runtime.
+                enum:
+                - Automatic
+                - ResourceDeletion
+                - OutOfServiceTaint
+                type: string
+            type: object
+          status:
+            description: SelfNodeRemediationStatus defines the observed state of SelfNodeRemediation
+            properties:
+              conditions:
+                description: |-
+                  Represents the observations of a SelfNodeRemediation's current state.
+                  Known .status.conditions.type are: "Processing"
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastError:
+                description: |-
+                  LastError captures the last error that occurred during remediation.
+                  If no error occurred it would be empty
+                type: string
+              phase:
+                description: |-
+                  Phase represents the current phase of remediation,
+                  One of: TBD
+                type: string
+              timeAssumedRebooted:
+                description: TimeAssumedRebooted is the time by then the unhealthy
+                  node assumed to be rebooted
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  labels:
+    self-node-remediation-operator: ""
+  name: selfnoderemediationtemplates.self-node-remediation.medik8s.io
+spec:
+  group: self-node-remediation.medik8s.io
+  names:
+    kind: SelfNodeRemediationTemplate
+    listKind: SelfNodeRemediationTemplateList
+    plural: selfnoderemediationtemplates
+    shortNames:
+    - snrt
+    - snremediationtemplate
+    - snrtemplate
+    singular: selfnoderemediationtemplate
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SelfNodeRemediationTemplate is the Schema for the selfnoderemediationtemplates
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SelfNodeRemediationTemplateSpec defines the desired state
+              of SelfNodeRemediationTemplate
+            properties:
+              template:
+                description: Template defines the desired state of SelfNodeRemediationTemplate
+                properties:
+                  spec:
+                    description: SelfNodeRemediationSpec defines the desired state
+                      of SelfNodeRemediation
+                    properties:
+                      remediationStrategy:
+                        default: Automatic
+                        description: |-
+                          RemediationStrategy is the remediation method for unhealthy nodes.
+                          Currently, it could be either "Automatic", "OutOfServiceTaint" or "ResourceDeletion".
+                          ResourceDeletion will iterate over all pods and VolumeAttachment related to the unhealthy node and delete them.
+                          OutOfServiceTaint will add the out-of-service taint which is a new well-known taint "node.kubernetes.io/out-of-service"
+                          that enables automatic deletion of pv-attached pods on failed nodes, "out-of-service" taint is only supported on clusters with k8s version 1.26+ or OCP/OKD version 4.13+.
+                          Automatic will choose the most appropriate strategy during runtime.
+                        enum:
+                        - Automatic
+                        - ResourceDeletion
+                        - OutOfServiceTaint
+                        type: string
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+          status:
+            description: SelfNodeRemediationTemplateStatus defines the observed state
+              of SelfNodeRemediationTemplate
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-controller-manager
+  namespace: self-node-remediation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-leader-election-role
+  namespace: self-node-remediation
+rules:
+- apiGroups:
+  - ""
+  - coordination.k8s.io
+  resources:
+  - configmaps
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    rbac.ext-remediation/aggregate-to-ext-remediation: "true"
+    self-node-remediation-operator: ""
+  name: self-node-remediation-ext-remediation
+rules:
+- apiGroups:
+  - self-node-remediation.medik8s.io
+  resources:
+  - selfnoderemediationtemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - self-node-remediation.medik8s.io
+  resources:
+  - selfnoderemediations
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - machine.openshift.io
+  resources:
+  - machines
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - machine.openshift.io
+  resources:
+  - machines/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - security.openshift.io
+  resourceNames:
+  - privileged
+  resources:
+  - securitycontextconstraints
+  verbs:
+  - use
+- apiGroups:
+  - self-node-remediation.medik8s.io
+  resources:
+  - selfnoderemediationconfigs
+  - selfnoderemediations
+  - selfnoderemediationtemplates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - self-node-remediation.medik8s.io
+  resources:
+  - selfnoderemediationconfigs/finalizers
+  - selfnoderemediations/finalizers
+  - selfnoderemediationtemplates/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - self-node-remediation.medik8s.io
+  resources:
+  - selfnoderemediationconfigs/status
+  - selfnoderemediations/status
+  - selfnoderemediationtemplates/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - volumeattachments
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-proxy-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-leader-election-rolebinding
+  namespace: self-node-remediation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: self-node-remediation-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: self-node-remediation-controller-manager
+  namespace: self-node-remediation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: self-node-remediation-manager-role
+subjects:
+- kind: ServiceAccount
+  name: self-node-remediation-controller-manager
+  namespace: self-node-remediation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-proxy-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: self-node-remediation-proxy-role
+subjects:
+- kind: ServiceAccount
+  name: self-node-remediation-controller-manager
+  namespace: self-node-remediation
+---
+apiVersion: v1
+data:
+  controller_manager_config.yaml: |
+    apiVersion: controller-runtime.sigs.k8s.io/v1alpha1
+    kind: ControllerManagerConfig
+    health:
+      healthProbeBindAddress: :8081
+    metrics:
+      bindAddress: 127.0.0.1:8080
+    webhook:
+      port: 9443
+    leaderElection:
+      leaderElect: true
+      resourceName: 547f6cb6.medik8s.io
+kind: ConfigMap
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-manager-config
+  namespace: self-node-remediation
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    control-plane: controller-manager
+    self-node-remediation-operator: ""
+  name: self-node-remediation-controller-manager-metrics-service
+  namespace: self-node-remediation
+spec:
+  ports:
+  - name: https
+    port: 8443
+    targetPort: https
+  selector:
+    control-plane: controller-manager
+    self-node-remediation-operator: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-webhook-service
+  namespace: self-node-remediation
+spec:
+  ports:
+  - port: 443
+    targetPort: 9443
+  selector:
+    control-plane: controller-manager
+    self-node-remediation-operator: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    control-plane: controller-manager
+    self-node-remediation-operator: ""
+  name: self-node-remediation-controller-manager
+  namespace: self-node-remediation
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      self-node-remediation-operator: ""
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        control-plane: controller-manager
+        self-node-remediation-operator: ""
+    spec:
+      containers:
+      - args:
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=127.0.0.1:8080
+        - --leader-elect
+        - --is-manager
+        command:
+        - /manager
+        env:
+        - name: MY_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: SELF_NODE_REMEDIATION_IMAGE
+          value: ${IMG}
+        - name: DEPLOYMENT_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        image: quay.io/medik8s/self-node-remediation-operator:latest
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 20m
+            memory: 110Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+      - args:
+        - --secure-listen-address=0.0.0.0:8443
+        - --http2-disable
+        - --upstream=http://127.0.0.1:8080/
+        - --logtostderr=true
+        - --v=0
+        image: quay.io/brancz/kube-rbac-proxy:v0.15.0
+        name: kube-rbac-proxy
+        ports:
+        - containerPort: 8443
+          name: https
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 5m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      priorityClassName: system-cluster-critical
+      securityContext:
+        runAsNonRoot: false
+      serviceAccountName: self-node-remediation-controller-manager
+      terminationGracePeriodSeconds: 10
+      topologySpreadConstraints:
+      - labelSelector:
+          matchLabels:
+            control-plane: controller-manager
+            self-node-remediation-operator: ""
+        maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: self-node-remediation-webhook-service
+      namespace: self-node-remediation
+      path: /mutate-self-node-remediation-medik8s-io-v1alpha1-selfnoderemediationtemplate
+  failurePolicy: Fail
+  name: mselfnoderemediationtemplate.kb.io
+  rules:
+  - apiGroups:
+    - self-node-remediation.medik8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - selfnoderemediationtemplates
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: self-node-remediation-validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: self-node-remediation-webhook-service
+      namespace: self-node-remediation
+      path: /validate-self-node-remediation-medik8s-io-v1alpha1-selfnoderemediation
+  failurePolicy: Ignore
+  name: vselfnoderemediation.kb.io
+  rules:
+  - apiGroups:
+    - self-node-remediation.medik8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - selfnoderemediations
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: self-node-remediation-webhook-service
+      namespace: self-node-remediation
+      path: /validate-self-node-remediation-medik8s-io-v1alpha1-selfnoderemediationconfig
+  failurePolicy: Fail
+  name: vselfnoderemediationconfig.kb.io
+  rules:
+  - apiGroups:
+    - self-node-remediation.medik8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - selfnoderemediationconfigs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: self-node-remediation-webhook-service
+      namespace: self-node-remediation
+      path: /validate-self-node-remediation-medik8s-io-v1alpha1-selfnoderemediationtemplate
+  failurePolicy: Fail
+  name: vselfnoderemediationtemplate.kb.io
+  rules:
+  - apiGroups:
+    - self-node-remediation.medik8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - selfnoderemediationtemplates
+  sideEffects: None
