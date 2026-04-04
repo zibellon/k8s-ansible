@@ -3,21 +3,24 @@
    1. Пример до: cluster-init.yaml
    2. Пример после: manager-join.yaml, worker-join.yaml, etcd-key-rotate.yaml
 
-# Конфигурация файла `hosts.yaml` + `hosts-extra.yaml`
+# Конфигурация: `hosts-vars/` + `hosts-vars-override/`
 1. Сервера
    1. managers
-      1. Добавить все сервера, с которыми будет производится работа
+      1. Добавить все сервера в `hosts-vars-override/hosts.yaml`
       2. ОБЯЗАТЕЛЬНО! Указать сервер, который является главным manager (master-manager) - `is_master: true`
    2. workers
-      1. Добавить все сервера, с которыми будет производится работа
+      1. Добавить все сервера в `hosts-vars-override/hosts.yaml`
 
-# Подготовка к конфигураци
+# Подготовка к конфигурации
 
-## Создать файл: `hosts-extra.yaml`
-1. указать node-groups: managers, workers
-2. Переопределить необходимые параметры (Все параметры есть в `hosts.yaml`)
+## Создать директорию: `hosts-vars-override/`
+```bash
+mkdir hosts-vars-override/
+```
+Положить в неё файлы с реальными хостами и переопределениями переменных.
+Все доступные переменные — в `hosts-vars/`.
 
-## Выполнить команду: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-info.yaml`
+## Выполнить команду: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
 ## Покажит основную информацию по всем node
 
 # Подготовка_1
@@ -41,7 +44,7 @@
        valid_lft forever preferred_lft forever
 
 # Подготовка_2
-## занести внутренний `ip` в `hosts-extra.yaml`
+## занести внутренний `ip` в `hosts-vars-override/`
 ## его надо будет разрешить в `cilium-host-firewall`, чтобы можно было делать join
 ## есть два варианта
 1. сначала ВСЕ join -> потом install cilium
@@ -59,7 +62,7 @@
    6. Как решать
    7. Добавить новый сервер в hosts.yaml
    8. Обновить cilium-host-firewall
-      1. Вызвать `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml --tags post`
+      1. Вызвать `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags post`
    9.  Это автоматически добавит в `cilium-host-firewall` новые ip адреса и обновит политику на сервере
    10. После этого делать: `... join ...`
 
@@ -74,7 +77,7 @@
 ## Запускается как `linux systemd service` (apt install haproxy) на каждой node в кластере
 ## Версия пакета зафиксирована в hosts.yaml (haproxy_apiserver_lb_package_version) и заморожена через apt-mark hold
 ## Чтобы обновить конфиг на всех нодах (например при добавлении нового manager):
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/haproxy-apiserver-lb-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
   - Обновляет /etc/haproxy/haproxy.cfg и делает `systemctl reload haproxy` последовательно (serial: 1)
   - reload — graceful, без разрыва TCP соединений
 
@@ -94,50 +97,50 @@
 ## Если вызывать без `--limit` - инициализация производится на всех Node сразу
 ## Если вызвать с `--limit` - инициализация произойдет только на указанной node
 ##
-- Без лимита: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-install.yaml`
-- С лимитом: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-install.yaml --limit k8s-manager-1`
+- Без лимита: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml`
+- С лимитом: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml --limit k8s-manager-1`
 
 # Инициализация кластера (в первый раз)
 ## Инициализация кластера
 ## Именно команда: `kubeadm init ...`
 ## `--limit XXX` - обязательно надо указывать
 ##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/cluster-init.yaml --limit k8s-manager-1`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/cluster-init.yaml --limit k8s-manager-1`
 
 # ---------
 # ---JOIN
 # ---------
 
 # Присоединение worker-node
-## Добавить в `hosts-extra.yaml` нового worker
+## Добавить в `hosts-vars-override/` нового worker
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
 ## Если уже был установлен и настроен Longhorn - смотрим `longhorn/tags-sync`
 ##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-install.yaml --limit k8s-worker-1`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml --limit k8s-worker-1`
   - Инициализация ноды
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/worker-join.yaml --limit k8s-worker-1`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/worker-join.yaml --limit k8s-worker-1`
   - Получение токена и вызов команды `kubeadm join ...`
 
 # Присоединение manager-node
-## Добавить в `hosts-extra.yaml` нового manager
+## Добавить в `hosts-vars-override/` нового manager
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
 ## Если уже был установлен и настроен Longhorn - смотрим `longhorn/tags-sync`
 ## Обновить SANS для api-server
 ## Обновить haproxy-apiserver-lb
 ##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/apiserver-sans-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/apiserver-sans-update.yaml`
   - Это обновит CANS в сертификатах для api-server (добавит туда нового manager-ip)
   - Вызывать нужно БЕЗ `--limit`. Конфиг - нужно обновить на ВСЕХ текущих managers
   - Обновит - только текущие managers
   - Перезапуск api-server - производится последовательно, для каждого managers
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/haproxy-apiserver-lb-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
   - Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
   - Обновление производится по одному за раз, через playbook.serial: 1
   - То есть: перезапуск производится последовательно, для обеспечения HA доступности
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-install.yaml --limit k8s-manager-2`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml --limit k8s-manager-2`
   - Инициализация ноды
   - Указываем `--limit` - так как это добавление конкретной Node
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/manager-join.yaml --limit k8s-manager-2`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/manager-join.yaml --limit k8s-manager-2`
   - Загрузка сертификатов в k8s.secrets
   - получение токена
   - вызов команды `kubeadm join ...`
@@ -171,27 +174,27 @@
 ## Если такое произошло: Ctrl+C (Остановить процесс) + запустить заново
 ## Причина: когда cilium берет под контроль сеть на node - все соединения обрываются (в том числе и SSH)
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ##
 - установка
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml`
 - обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-install.yaml`
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-restart.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-restart.yaml`
 
 ## metrics-server. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install`
 ## ---
 ##
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/metrics-server-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/metrics-server-install.yaml`
 
 ## cert-manager. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -199,27 +202,27 @@
 ## ---
 ## Важно_1: Сейчас, через этот ansible - можно настроить только ClusterIssuer (Переменная: cert_manager_cluster_issuers)
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ## 
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cert-manager-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cert-manager-install.yaml`
 
 ## ExternalSecret. Официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/external-secrets-install.yaml`
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install`
 ## ---
 ##
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/external-secrets-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/external-secrets-install.yaml`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/external-secrets-restart.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/external-secrets-restart.yaml`
 
 ## traefik (ingress-1). Официальный helm
 ## Параметры (конфиг) для работы - в cli (как аргументы при запуске)
@@ -228,15 +231,15 @@
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/traefik-install.yaml`
 ## Есть работа с `vault + ESO`
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ##
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/traefik-install.yaml`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/traefik-restart.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/traefik-restart.yaml`
 
 ## haproxy (ingress-2). Официальный helm
 ## Автоматически подхватывает конфиг, который генерируется через CRD
@@ -244,28 +247,28 @@
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/haproxy-install.yaml`
 ## Есть работа с `vault + ESO`
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ##
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/haproxy-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/haproxy-install.yaml`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/haproxy-restart.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/haproxy-restart.yaml`
 
 ## cilium-hubble (относится к cilium). yaml -> helm
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Это просто дополнительная конфигурация
 ## Тут не запускается никаких контейнеров
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install`
 ## ---
 ##
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/cilium-hubble-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-hubble-install.yaml`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
 
 ## medik8s
@@ -282,21 +285,21 @@
 ## Есть создание секретов для БЭКАПА в S3 -> использует CRD от ESO (Но секреты сразу работать не будут, так как они появляются в VAULT, позже)
 ## Есть работа с `vault + ESO`
 ## ---
-## Важно_1. Для создания секретов для работы с backup - их нужно определить в `hosts-extra.yaml` (пример в `hosts-extra.yaml.example`)
+## Важно_1. Для создания секретов для работы с backup - их нужно определить в `hosts-vars-override/` (пример в `hosts-vars-override/.example`)
 ## После определния они будут использоваться при установке `longhorn-install.yaml` + `vault-policy-sync.yaml`
 ## ---
 ## Важно_2. node-tags - для их автоматической установки на Nodes теперь используется отдельный playbook (аналогично - vault-policy-sync)
 ## Синхронизация node-tags вызывается отдельно. То есть: после установки longhorn, после добавления node, после изменения node-tags в ansible-hosts
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ## 
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/longhorn-install.yaml`
   - Ставится: longhorn, network-policy, ingress (longhorn-ui)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/longhorn-tags-sync.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/longhorn-tags-sync.yaml`
   - синхронизация всех node-tags. Именно у CRD объекта: nodes.longhorn.io
 
 ## ---
@@ -312,7 +315,7 @@
 ## Ожидание готовности deployment/daemonset - `kubectl wait --for=jsonpath='{.status.phase}'=Running`
 ## Потому что проверка внутри пода: смотрит на готовность самого VAULT (что он инициализирован), а не просто на работоспособность контейнера
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
@@ -322,26 +325,26 @@
 ## ---
 ##
 - установка + конфигурация + синхронизация политик. Три отдельных playbook
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml`
   - Ставится: vault-0 (StatefulSet)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-configure.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-configure.yaml`
   - конфигурация (unseal-keys, сохранить на manager и так далее)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-policy-sync.yaml`
   - Синхронизация политик
 - обновление (версия, конфиг)
   - Устанавливается через официальный HELM, но через исходники с Github
   - Их нужно скачать и нужные положить в директорию с установкой vault (описано выше)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml`
 - Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-restart.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-restart.yaml`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
-## В файле `hosts.yaml` + `hosts-extra.yaml` есть отдельная структуры для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
+## В файле `hosts-vars/` + `hosts-vars-override/` есть отдельная структуры для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
 ## Пример: `./readme-vault.md`
-## Вызов синхронизации VAULT: `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/vault-policy-sync.yaml`
+## Вызов синхронизации VAULT: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-policy-sync.yaml`
 ## План, при добавлении чего-то в VAULT
-## 1. добавить в `hosts-extra.yaml` новые данные (policy + role)
+## 1. добавить в `hosts-vars-override/` новые данные (policy + role)
 ## 2. Вызвать синхронизацию
 ## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: Namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
 ## ВАЖНО: синхронизация полностью синхронизирует структуру в VAULT (добавить, обновить, удалить)
@@ -358,16 +361,16 @@
 ## - `gitaly` - StatefulSet, количество реплик определяется через global.gitaly.internal.names. По дефолту = 1. RollingUpdate + StatefulSet = убить, а потом создать
 ##   - Но если их больше чем 1 - там какая-то возня начинается с Praefect (репликация git-данных между узлами)
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ## 
 - установка + обновление (версия + конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-install.yaml`
   - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-configure.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-configure.yaml`
   - конфигурация. Отдельный playbook
 
 ## Gitlab-Runner. официальный helm
@@ -379,15 +382,15 @@
 ## Порядок действий для установки
 ## - Зайти в GitLab и создать `instance-runner` + получить его токен
 ## - Сохранить токен в VAULT, по правильному пути в переменную `token`
-## - Попраить конфиг (`hosts.yaml` + `hosts-extra.yaml`). Там полный toml файл
+## - Попраить конфиг (`hosts-vars/` + `hosts-vars-override/`). Там полный toml файл
 ## - установить gitlab-runner (helm)
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install`
 ## 
 - установка + обновление (версия + конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/gitlab-runner-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-runner-install.yaml`
 
 ## argocd. yaml -> helm
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -397,18 +400,18 @@
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
 ## Важно_1: нужно выполнить команду `ssh-keyscan` на те git-репозитории, которые планируется использовать для argocd
-## Добавить их публичные ключи в `hosts-extra.yaml (argocd_cm_ssh_known_hosts_extra)`. Это массив из строк
+## Добавить их публичные ключи в `hosts-vars-override/ (argocd_cm_ssh_known_hosts_extra)`. Это массив из строк
 ## Без этого, argocd не сможет к ним подключиться (недоверенный host)
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ##
 - установка + конфигурация
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-configure.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-configure.yaml`
   - Конфигурация
 - обновление (версия)
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
@@ -417,13 +420,13 @@
     - `playbook-app/charts/argocd/install/crds/crds.yaml` - только CRD (там примерно 24к строк)
     - `playbook-app/charts/argocd/install/templates/argocd.yaml` - все, кроме CRD и configmaps
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
-  - Версия не указывается в `hosts.yaml` | `hosts-extra.yaml` -> так как версия будет в `*.yaml`
+  - Версия не указывается в `hosts-vars/` | `hosts-vars-override/` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/arocd/...`
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-install.yaml`
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-restart.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml`
 - обновление (конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-install.yaml`
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-restart.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml`
 
 ## argocd-git-ops. yaml -> helm
 ## Установка всех необходимых ресурсов k8s - для git-ops паттерна
@@ -443,7 +446,7 @@
 ## чтобы избежать такой путаницы: 1 (repo_url + ESO.secret + vault.secret + k8s.secret)
 ## ---
 ## Важно_4: последовательность установки
-## - настроить необходимые конфиги для argo-cd-git-ops (`hosts-extra.yaml`)
+## - настроить необходимые конфиги для argo-cd-git-ops (`hosts-vars-override/`)
 ## - `argocd_git_ops_apps` (какие проекты и приложения нужно создать)
 ## - `eso_vault_integration_argocd_git_ops_extra`
 ## - секреты типа: `git_ops_repo_pattern`/`git_ops_repo_direct`/`git_ops_repo_direct_userpass`/`git_ops_repo_pattern_userpass`/`helm_repo`/`helm_repo_oci`
@@ -451,13 +454,13 @@
 ## - Создать ssh-keys (private + public) + положить их в vault (ESO - создаст из них k8s.secret)
 ## - Создать репозитории (URL которых указаны в `argocd_git_ops_apps`) + добавить к ним deploy-keys (чтобы argocd - имел к ним доступ)
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
 ##
 - установка + обновление (конфиг)
-  - `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/argocd-git-ops-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-git-ops-install.yaml`
   - Ставится: ESO + argo-proj, argo-application
 
 ## ---------------
@@ -476,7 +479,7 @@
 ## Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
 ## Этот процесс спровоцирует полную остановку api-server
 ##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/etcd-key-rotate.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/etcd-key-rotate.yaml`
 
 # ---
 # SANS (api-server). Обновление имен (SANS) в сертификатах
@@ -485,15 +488,15 @@
 ## Каждый текущий api-server - будет перезапущен один раз
 ## Перезапуск - последовательный (по одному за раз)
 ##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/apiserver-sans-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/apiserver-sans-update.yaml`
 
 # ---
 # Обслуживание сервера (cordon + drain) и возврат в работу
 # ---
 ##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-on.yaml --limit k8s-worker-3`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-drain-on.yaml --limit k8s-worker-3`
   - Вывод ноды на обслуживание
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-drain-off.yaml --limit k8s-worker-3`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-drain-off.yaml --limit k8s-worker-3`
   - Вернуть ноду в работу
 
 # ---
@@ -502,13 +505,13 @@
 ## Отключение node от кластера
 ## Перед этим надо выполнить = `Вывод Node на обслуживание`
 ##
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/node-remove.yaml --limit k8s-worker-4`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-remove.yaml --limit k8s-worker-4`
 
 # ---
 # Очистка сервера, от всех компонентов k8s
 # ---
 ##
-1. `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-system/server-clean.yaml --limit k8s-worker-4`
+1. `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/server-clean.yaml --limit k8s-worker-4`
    1. Выполнение команды  `kubeadm reset --force`
    2. Удаление директорий для k8s
 
@@ -516,11 +519,11 @@
 # ESO, force синхронизация ExternalSecrets
 # ---
 ## Все namespaces
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/eso-force-sync.yaml`
 
 ## Только определенный namespace. Например: gitlab
 ## Доступные namespace: все, для которых есть eso_vault_integration_XXX (Пример - hosts.yaml)
-- `ansible-playbook -i hosts.yaml -i hosts-extra.yaml playbook-app/eso-force-sync.yaml --tags gitlab`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/eso-force-sync.yaml --tags gitlab`
 
 # ---
 # Longhorn + Restore (from backup)
@@ -533,13 +536,13 @@
 ## Получается: Замкнуты круг. Что делать ?
 ## ---
 ## План действий
-## - в `hosts-extra.yaml` определить все секреты для восстановления бэкапов (их может быть несколько). Переменная: `longhorn_s3_restore_secrets`
-## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-create.yaml`. Это создаст секреты в k8s
+## - в `hosts-vars-override/` определить все секреты для восстановления бэкапов (их может быть несколько). Переменная: `longhorn_s3_restore_secrets`
+## - запуск `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ longhorn-s3-restore-create.yaml`. Это создаст секреты в k8s
 ## - Чтобы восстановить PV + PVC = нужен namespace.
 ## - Чтобы создать namespace - нужно для каждого системного компонента вызвать его установку + `--tags pre`
 ## - Это создаст namespace + какие-то части для работы компонента (NetworkPolicy + ESO)
 ## - Зайти в longhorn-ui, использовать секреты для скачивания и восстановления backups, восстановить volume для каждого компонента
-## - запуск `ansible-playbook -i hosts.yaml -i hosts-extra.yaml longhorn-s3-restore-delete.yaml`. Это удалит секреты из k8s
+## - запуск `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ longhorn-s3-restore-delete.yaml`. Это удалит секреты из k8s
 ## - запустить производить запуск каждого компонента, с восстановленным состоянием
 
 # ---
@@ -588,7 +591,7 @@
    3. Одно окружение: prod
 3. Последовательность действий
    1. Настрйока VAULT (Эта часть делается через Ansible)
-      1. В файле `hosts-extra.yaml` - добавить необходимые политики для vault
+      1. В файле `hosts-vars-override/` - добавить необходимые политики для vault
          1. 1 role
          2. 1 политика. Для чтения всего содержимого по пути (kv_engine/.../my-casino-app-prod/*)
       2. Синхронизировать vault-policy-sync (можно с тагами - policy-add, role-add. так как это только новые политики)
@@ -621,15 +624,15 @@
 
 ## medik8s. Установка идет через kubectl apply -f ...
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ##
 - установка
-  - `ansible-playbook -i hosts.yaml playbook-app/medik8s-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/medik8s-install.yaml`
 
 ## Zitadel. официальный helm
 ## ---
-## Параметры в `hosts.yaml` + `hosts-extra.yaml`
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 
 ## ---------

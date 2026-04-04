@@ -1,0 +1,68 @@
+all:
+  vars:
+    # ------
+    # GitLab Runner
+    # ------
+    gitlab_runner_namespace: "gitlab-runner"
+    gitlab_runner_chart_version: "0.78.0"  # gitlab-runner 17.11
+    # Internal GitLab URL (webservice via cluster DNS, bypasses external ingress)
+    gitlab_runner_gitlab_url: "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
+    # Tolerations (Deployment)
+    gitlab_runner_tolerations: []
+    gitlab_runner_node_selector: {}
+    gitlab_runner_resources: {}
+    gitlab_runner_affinity: {}
+    # ---
+    gitlab_runner_replicas: 3
+    gitlab_runner_concurrent: 10
+    gitlab_runner_check_interval: 30
+    gitlab_runner_memory_request: "256Mi"
+    gitlab_runner_cpu_request: "100m"
+    gitlab_runner_memory_limit: "512Mi"
+    # Prevent runner from being deleted from GitLab on pod termination
+    # (preStop lifecycle hook is disabled, runner goes "offline" gracefully)
+    gitlab_runner_unregister_runners: false
+    gitlab_runner_label_name: "gitlab-runner"
+    gitlab_runner_label_component: "runner"
+    gitlab_runner_job_label_name: "gitlab-runner-job"
+    gitlab_runner_job_label_component: "job"
+    gitlab_runner_config: |
+      [[runners]]
+        executor = "kubernetes"
+        shell = "bash"
+        environment = ["DOCKER_TLS_CERTDIR=", "DOCKER_HOST=tcp://docker-my-dind:2375"]
+
+        [runners.cache]
+          Type = "s3"
+          Shared = false
+
+          [runners.cache.s3]
+            ServerAddress = "gitlab-minio.{{ gitlab_namespace }}.svc.{{ dns_domain }}:9000"
+            Insecure = false
+            BucketName = "runner-cache"
+            BucketLocation = "{{ gitlab_minio_s3_region }}"
+            PathStyle = true
+
+        [runners.kubernetes]
+          namespace = "{{ gitlab_runner_namespace }}"
+          service_account = "gitlab-runner"
+          image = "docker:29.3.0"
+          privileged = true
+          allow_privilege_escalation = true
+
+          [runners.kubernetes.node_selector]
+            "node-role.kubernetes.io/worker" = ""
+
+          [runners.kubernetes.pod_labels]
+            "app.kubernetes.io/name"       = "gitlab-runner-job"
+            "app.kubernetes.io/component"  = "job"
+            "app.kubernetes.io/part-of"    = "gitlab"
+            "app.kubernetes.io/managed-by" = "gitlab-runner"
+
+          [[runners.kubernetes.services]]
+            name = "docker:29.3.0-dind"
+            alias = "docker-my-dind"
+            environment = ["HEALTHCHECK_TCP_PORT=2375"]
+    # Helm timeouts
+    gitlab_runner_helm_timeout: "5m"
+    gitlab_runner_rollout_timeout: "180s"

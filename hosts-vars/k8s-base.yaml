@@ -1,0 +1,206 @@
+all:
+  vars:
+    # LLVM/Clang version for Cilium eBPF
+    llvm_version: 20
+
+    # Kubernetes version (MAJOR.MINOR only, without patch)
+    k8s_version: "1.34"
+
+    # Kubernetes full version for kubeadm (with patch)
+    k8s_full_version: "v1.34.0"
+
+    # Kubeadm config path (used by init-cluster and update-apiserver-sans)
+    kubeadm_config_path: "/etc/kubernetes/kubeadm-config.yaml"
+
+    # Containerd version
+    containerd_version: "2.2.1"
+
+    # Force regenerate containerd config (set to true to update config after containerd upgrade)
+    force_containerd_config_regenerate: false
+
+    # runc version
+    runc_version: "1.4.0"
+
+    # CNI plugins version
+    cni_plugins_version: "1.9.0"
+
+    # Helm version
+    helm_version: "3.19.2"
+
+    # k9s version
+    k9s_version: "0.50.18"
+
+    # Cluster networking
+    service_subnet: "10.128.0.0/12"
+    pod_subnet: "10.64.0.0/10"
+    dns_domain: "cluster.local"
+    node_port_start: 1
+    node_port_end: 50000
+
+    # kube-controller-manager settings
+    node_monitor_grace_period: "30s" # default: 40s (for faster node failure detection)
+
+    # Node drain settings
+    node_drain_timeout: "10m"
+
+    # Watchdog (softdog) for medik8s
+    softdog_timeout: 30 # seconds before reboot if not pinged
+
+    # APT repository packages (required for adding k8s repo)
+    apt_repo_package_list:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gpg
+
+    # Kubernetes packages
+    k8s_package_list:
+      - kubelet
+      - kubeadm
+      - kubectl
+
+    # Kubernetes base kernel modules
+    k8s_module_list:
+      - overlay
+      - br_netfilter
+
+    # Kubernetes sysctl parameters (all must be = 1)
+    k8s_sysctl_list:
+      - net.bridge.bridge-nf-call-iptables
+      - net.bridge.bridge-nf-call-ip6tables
+      - net.ipv4.ip_forward
+
+    # Longhorn kernel modules
+    longhorn_modules:
+      - iscsi_tcp
+      - dm_crypt
+
+    # Longhorn required packages
+    longhorn_packages:
+      - open-iscsi
+      - nfs-common
+      - cryptsetup
+      - dmsetup
+
+    # Cilium kernel modules (ALL are critical)
+    cilium_modules:
+      - cls_bpf
+      - sch_ingress
+      - udp_tunnel
+      - ip6_udp_tunnel
+      - geneve
+      - vxlan
+      - algif_hash
+      - af_alg
+      - sch_fq
+      - ip_set
+      - ip_set_hash_ip
+      - xt_set
+      - xt_comment
+      - xt_TPROXY
+      - xt_CT
+      - xt_mark
+      - xt_socket
+      - xfrm_algo
+      - xfrm_user
+      - esp4
+      - esp6
+      - ipcomp
+      - ipcomp6
+      - xfrm4_tunnel
+      - xfrm6_tunnel
+      - tunnel4
+      - tunnel6
+
+    # ------
+    # HAProxy API Server LB (linux service)
+    # ------
+    haproxy_apiserver_lb_package_version: "3.3"
+    haproxy_apiserver_lb_host: "127.0.0.1"
+    haproxy_apiserver_lb_port: 16443
+    haproxy_apiserver_lb_healthz_port: 16444
+
+    # ETCD encryption at rest
+    etcd_encryption_resources:
+      - secrets
+      - configmaps
+    etcd_encryption_config_path: "/etc/kubernetes/pki/encryption-config.yaml"
+    # ETCD key rotation state files
+    etcd_rotation_state_dir: "/etc/kubernetes/pki"
+    etcd_rotation_state_step1: "{{ etcd_rotation_state_dir }}/rotation-state-step1.yaml"
+    etcd_rotation_state_step2: "{{ etcd_rotation_state_dir }}/rotation-state-step2.yaml"
+    etcd_rotation_state_step4: "{{ etcd_rotation_state_dir }}/rotation-state-step4.yaml"
+
+    # Kubelet logging
+    kubelet_container_log_max_size: "100Mi"
+    kubelet_container_log_max_files: 5
+
+    # CrashLoopBackOff max backoff (1s - 300s) (default 300s = 5min)
+    kubelet_crashloop_max_backoff: "2m"
+
+    # ------
+    # Kubelet Image Garbage Collection
+    # Очистка неиспользуемых Docker/containerd images
+    # Docs: https://kubernetes.io/docs/concepts/cluster-administration/kubelet-garbage-collection/
+    # ------
+    # Процент использования диска, при котором НАЧИНАЕТСЯ очистка images (default: 85)
+    kubelet_image_gc_high_threshold: 85
+    # Процент использования диска, до которого очищать images (default: 80)
+    kubelet_image_gc_low_threshold: 75
+    # Минимальное время с последнего использования image перед удалением (default: 2m)
+    kubelet_image_minimum_gc_age: "5m"
+
+    # ------
+    # Kubelet Eviction — Soft Thresholds
+    # Отложенное удаление pods с grace period (SIGTERM)
+    # Срабатывает раньше hard, даёт время на graceful shutdown
+    # ------
+    # Включить soft eviction (default: false в kubernetes)
+    kubelet_eviction_soft_enabled: true
+    # Минимум свободной RAM для soft eviction (default: не установлен)
+    kubelet_eviction_soft_memory_available: "1Gi"
+    # Минимум свободного места на root filesystem (default: не установлен)
+    kubelet_eviction_soft_nodefs_available: "15%"
+    # Минимум свободного места для images (default: не установлен)
+    kubelet_eviction_soft_imagefs_available: "15%"
+
+    # ------
+    # Kubelet Eviction — Soft Grace Periods
+    # Время ожидания перед началом eviction (если ресурс не восстановился)
+    # ------
+    # Grace period для memory.available
+    kubelet_eviction_soft_grace_period_memory: "2m"
+    # Grace period для nodefs.available
+    kubelet_eviction_soft_grace_period_nodefs: "2m"
+    # Grace period для imagefs.available
+    kubelet_eviction_soft_grace_period_imagefs: "2m"
+
+    # ------
+    # Kubelet Eviction — Hard Thresholds
+    # Немедленное удаление pods при критической нехватке ресурсов (SIGKILL)
+    # Docs: https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/
+    # ------
+    # Включить hard eviction (default: true в kubernetes)
+    kubelet_eviction_hard_enabled: true
+    # Минимум свободной RAM, иначе eviction pods (default: 100Mi)
+    kubelet_eviction_hard_memory_available: "500Mi"
+    # Минимум свободного места на root filesystem (default: 10%)
+    kubelet_eviction_hard_nodefs_available: "10%"
+    # Минимум свободных inodes на root filesystem (default: 5%)
+    kubelet_eviction_hard_nodefs_inodes_free: "5%"
+    # Минимум свободного места для images (default: 15%)
+    kubelet_eviction_hard_imagefs_available: "10%"
+    # Минимум свободных PID, защита от fork bomb (default: не установлен)
+    kubelet_eviction_hard_pid_available: "1000"
+
+    # VPN IPs for vpn-only middleware
+    vpn_ips:
+      - "1.2.3.4/32"
+
+    # ------
+    # CRDs wait configuration (shared for all apps)
+    # ------
+    crds_wait:
+      timeout: "60s"
+      retries: 15
+      delay: 5

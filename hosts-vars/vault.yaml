@@ -1,0 +1,234 @@
+all:
+  vars:
+    # ------
+    # Vault (HashiCorp)
+    # 1 namespace = 1 SA + 1 SecretStore (для ESO)
+    # sa_name - это название ServiceAccount (который будет создан в этом namespace)
+    # role_name - это название Role (Внутри Vault - auth/kubernetes/role/${role_name})
+    # secret_store_name - это название SecretStore (который будет создан в этом namespace)
+    # ---
+    # secrets - это массив ExternalSecret (который будет создан в этом namespace)
+    # name - это название ExternalSecret
+    # target_secret - это название секрета в Kubernetes (который будет создан в этом namespace)
+    # vault_path - это full path в Vault
+    # refresh_interval - опциональное переопределение интервала (иначе используется eso_resources_config.external_secret_refresh_interval)
+    # ------
+    vault_namespace: "vault"
+    vault_image_tag: "1.21.2"
+    vault_image_repository: "hashicorp/vault"
+    vault_internal_url: "http://vault.vault.svc.cluster.local:8200"
+    vault_ui_domain: "vault-k8s-v2.drawapp.ru"
+    vault_ui_https_secret_name: "cert-vault-ui"
+    vault_ui_vpn_only_enabled: false
+    vault_ui_http_enable: false
+    vault_ui_https_enable: true
+    vault_ui_cluster_issuer_name: "acme-prod"
+    vault_ui_ingress_class_name: "traefik-lb"
+    vault_storage_class: "lh-major-single-best-effort"
+    vault_storage_size: "2Gi"
+    # Vault unseal
+    vault_key_shares: 3
+    vault_key_threshold: 2
+    vault_auto_unseal_schedule: "*/5 * * * *"  # CronJob schedule for auto-unseal
+    vault_creds_host_path: "/etc/kubernetes/vault-unseal.json"  # Path to credentials file on control-plane nodes
+    vault_creds_init_tmp_path: "/etc/kubernetes/vault-creds-init-tmp.json"  # Temp file for interrupted init
+    vault_creds_rotate_tmp_path: "/etc/kubernetes/vault-creds-rotate-tmp.json"  # Temp file for interrupted rotate
+    # Vault Kubernetes Auth
+    vault_kubernetes_host: "https://kubernetes.default.svc:443"
+    # Vault KV engines to create (array of mount paths)
+    vault_kv_engines:
+      - "secret"
+      - "eso-secret"
+    vault_standalone_config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "raft" {
+        path = "/vault/data"
+      }
+    # ---
+    vault_tolerations: []
+    vault_resources: {}
+    vault_node_selector: {}
+    vault_affinity: {}
+    # Helm timeouts
+    vault_helm_timeout: "5m"
+    vault_config_helm_timeout: "2m"
+    vault_rollout_timeout: "300s"
+
+    # ---------
+    # VAULT POLICIES
+    # Политики для ESO SA + административные политики Vault
+    # ---------
+    vault_policies_extra: []
+    vault_policies:
+      # ---------
+      # ESO: Traefik
+      # ---------
+      - name: traefik.eso-main
+        paths:
+          - path: eso-secret/data/traefik/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/traefik/*
+            capabilities: [read, list]
+      # ---------
+      # ESO: HAProxy
+      # ---------
+      - name: haproxy.eso-main
+        paths:
+          - path: eso-secret/data/haproxy/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/haproxy/*
+            capabilities: [read, list]
+      # ---------
+      # ESO: Longhorn
+      # ---------
+      - name: longhorn.eso-main
+        paths:
+          - path: eso-secret/data/longhorn/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/longhorn/*
+            capabilities: [read, list]
+      # ---------
+      # ESO: GitLab
+      # ---------
+      - name: gitlab.eso-main
+        paths:
+          - path: eso-secret/data/gitlab/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/gitlab/*
+            capabilities: [read, list]
+      # ---------
+      # ESO: GitLab Runner
+      # ---------
+      - name: gitlab-runner.eso-main
+        paths:
+          - path: eso-secret/data/gitlab-runner/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/gitlab-runner/*
+            capabilities: [read, list]
+      # ---------
+      # ESO: ZITADEL
+      # ---------
+      - name: zitadel.eso-main
+        paths:
+          - path: eso-secret/data/zitadel/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/zitadel/*
+            capabilities: [read, list]
+      # ---------
+      # ESO: ArgoCD
+      # ---------
+      - name: argocd.eso-main
+        paths:
+          - path: eso-secret/data/argocd/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/argocd/*
+            capabilities: [read, list]
+      # ---------
+      # ESO: ArgoCD Git-Ops
+      # ---------
+      - name: argocd.eso-git-ops
+        paths:
+          - path: eso-secret/data/argocd/*
+            capabilities: [read, list]
+          - path: eso-secret/metadata/argocd/*
+            capabilities: [read, list]
+      # ---------
+      # Vault Admin (full access for vault-admin SA, used by Ansible for writing secrets)
+      # ---------
+      - name: vault-admin
+        paths:
+          - path: secret/data/*
+            capabilities: [create, read, update, delete, list]
+          - path: secret/metadata/*
+            capabilities: [create, read, update, delete, list]
+          - path: eso-secret/data/*
+            capabilities: [create, read, update, delete, list]
+          - path: eso-secret/metadata/*
+            capabilities: [create, read, update, delete, list]
+          - path: sys/policies/acl/*
+            capabilities: [create, read, update, delete, list]
+          - path: auth/*
+            capabilities: [create, read, update, delete, list]
+
+    # ---------
+    # VAULT ROLES
+    # ---------
+    vault_roles_extra: []
+    vault_roles:
+      # ---------
+      # ESO: Traefik
+      # ---------
+      - name: traefik.eso-main
+        namespace: traefik-lb
+        sa_name: eso-main
+        policies:
+          - traefik.eso-main
+      # ---------
+      # ESO: HAProxy
+      # ---------
+      - name: haproxy.eso-main
+        namespace: haproxy-lb
+        sa_name: eso-main
+        policies:
+          - haproxy.eso-main
+      # ---------
+      # ESO: Longhorn
+      # ---------
+      - name: longhorn.eso-main
+        namespace: longhorn-system
+        sa_name: eso-main
+        policies:
+          - longhorn.eso-main
+      # ---------
+      # ESO: GitLab
+      # ---------
+      - name: gitlab.eso-main
+        namespace: gitlab
+        sa_name: eso-main
+        policies:
+          - gitlab.eso-main
+      # ---------
+      # ESO: GitLab Runner
+      # ---------
+      - name: gitlab-runner.eso-main
+        namespace: gitlab-runner
+        sa_name: eso-main
+        policies:
+          - gitlab-runner.eso-main
+      # ---------
+      # ESO: ZITADEL
+      # ---------
+      - name: zitadel.eso-main
+        namespace: zitadel
+        sa_name: eso-main
+        policies:
+          - zitadel.eso-main
+      # ---------
+      # ESO: ArgoCD
+      # ---------
+      - name: argocd.eso-main
+        namespace: argocd
+        sa_name: eso-main
+        policies:
+          - argocd.eso-main
+      # ---------
+      # ESO: ArgoCD Git-Ops
+      # ---------
+      - name: argocd.eso-git-ops
+        namespace: argocd
+        sa_name: eso-git-ops
+        policies:
+          - argocd.eso-git-ops
+      # ---------
+      # Vault Admin (for writing secrets from Ansible)
+      # ---------
+      - name: vault-admin
+        namespace: vault
+        sa_name: vault-admin
+        policies:
+          - vault-admin

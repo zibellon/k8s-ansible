@@ -1,0 +1,162 @@
+all:
+  vars:
+    # ---------
+    # ESO VAULT INTEGRATIONS (per-component)
+    # Каждый объект = конфиг SecretStore (SA, role, store name, kv engine)
+    # Секреты — в отдельном массиве *_secrets (расширяемом через *_secrets_extra в hosts-vars-override/)
+    # eso_vault_integration_XXX — не расширяется через extra
+    # ---------
+
+    # ---------
+    # Traefik
+    # ---------
+    eso_vault_integration_traefik:
+      sa_name: "eso-main" # Название ServiceAccount в namespace traefik-lb
+      role_name: "traefik.eso-main" # {namespace}.{sa_name} Название Role в traefik-lb
+      secret_store_name: "eso-main.vault" # {sa_name}.{PROVIDER} Название SecretStore в namespace traefik-lb
+      kv_engine_path: "eso-secret" # Название KV Engine в Vault
+
+    eso_vault_integration_traefik_secrets: []
+    eso_vault_integration_traefik_secrets_extra: []
+
+    # ---------
+    # HAProxy
+    # ---------
+    eso_vault_integration_haproxy:
+      sa_name: "eso-main"
+      role_name: "haproxy.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_haproxy_secrets: []
+    eso_vault_integration_haproxy_secrets_extra: []
+
+    # ---------
+    # Longhorn (S3 backup credentials)
+    # ---------
+    eso_vault_integration_longhorn:
+      sa_name: "eso-main"
+      role_name: "longhorn.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_longhorn_secrets: []  # S3-backup secrets определяются в hosts-vars-override/ (eso_vault_integration_longhorn_secrets_extra)
+    eso_vault_integration_longhorn_secrets_extra: []
+
+    # ---------
+    # GitLab (all secrets: postgresql, redis, minio, gitlab root)
+    # ---------
+    eso_vault_integration_gitlab:
+      sa_name: "eso-main"
+      role_name: "gitlab.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_gitlab_secrets:
+      - external_secret_name: "eso-gitlab-postgresql"
+        target_secret_name: "eso-gitlab-postgresql"
+        vault_path: "/gitlab/postgresql/creds"
+        type: "postgresql"
+      - external_secret_name: "eso-gitlab-redis"
+        target_secret_name: "eso-gitlab-redis"
+        vault_path: "/gitlab/redis/creds"
+        type: "redis"
+      - external_secret_name: "eso-gitlab-minio-root"
+        target_secret_name: "eso-gitlab-minio-root"
+        vault_path: "/gitlab/minio/root"
+        type: "minio_root"
+      - external_secret_name: "eso-gitlab-minio-registry"
+        target_secret_name: "eso-gitlab-minio-registry"
+        vault_path: "/gitlab/minio/registry"
+        type: "minio_registry"
+      # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
+      - external_secret_name: "eso-gitlab-registry-minio-connection"
+        target_secret_name: "eso-gitlab-registry-minio-connection"
+        vault_path: "/gitlab/minio/registry"
+        type: "gitlab_registry_minio_connection"
+      # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
+      - external_secret_name: "eso-gitlab-minio-connection"
+        target_secret_name: "eso-gitlab-minio-connection"
+        vault_path: "/gitlab/minio/registry"
+        type: "gitlab_minio_connection"
+      - external_secret_name: "eso-gitlab-root"
+        target_secret_name: "eso-gitlab-root"
+        vault_path: "/gitlab/root/creds"
+        type: "gitlab_root"
+        is_need_eso: false  # vault-only: root creds stored in Vault, no k8s Secret needed
+
+    eso_vault_integration_gitlab_secrets_extra: []
+
+    # ---------
+    # GitLab Runner
+    # ---------
+    eso_vault_integration_gitlab_runner:
+      sa_name: "eso-main"
+      role_name: "gitlab-runner.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_gitlab_runner_secrets:
+      - external_secret_name: "eso-gitlab-runner-token"
+        target_secret_name: "eso-gitlab-runner-token"
+        vault_path: "/gitlab-runner/token"
+        type: "runner_token"
+      - external_secret_name: "eso-gitlab-runner-minio-cache"
+        target_secret_name: "eso-gitlab-runner-minio-cache"
+        vault_path: "/gitlab-runner/minio/cache"
+        type: "minio_runner_cache"
+
+    eso_vault_integration_gitlab_runner_secrets_extra: []
+
+    # ---------
+    # ZITADEL (postgresql + masterkey)
+    # ---------
+    eso_vault_integration_zitadel:
+      sa_name: "eso-main"
+      role_name: "zitadel.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_zitadel_secrets:
+      - external_secret_name: "eso-zitadel-postgresql"
+        target_secret_name: "eso-zitadel-postgresql"
+        vault_path: "/zitadel/postgresql/creds"
+        type: "postgresql"
+      - external_secret_name: "eso-zitadel-masterkey"
+        target_secret_name: "eso-zitadel-masterkey"
+        vault_path: "/zitadel/masterkey"
+        type: "masterkey"
+
+    eso_vault_integration_zitadel_secrets_extra: []
+
+    # ---------
+    # ArgoCD (SSH repo-creds)
+    # ---------
+    eso_vault_integration_argocd:
+      sa_name: "eso-main"
+      role_name: "argocd.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_argocd_secrets:
+      - external_secret_name: "eso-argocd-root"
+        target_secret_name: "eso-argocd-root"
+        vault_path: "/argocd/root/creds"
+        type: "argocd_root"
+        is_need_eso: false  # vault-only: root creds stored in Vault, no k8s Secret needed
+
+    eso_vault_integration_argocd_secrets_extra: []
+
+    # ---------
+    # ArgoCD Git-Ops ESO (SSH/HTTPS repo-creds, helm repos)
+    # Отдельный SA eso-argocd-git-ops в namespace argocd
+    # Развёртывается через argocd-git-ops/pre при установке argocd-git-ops-install.yaml
+    # ---------
+    eso_vault_integration_argocd_git_ops:
+      sa_name: "eso-git-ops"
+      role_name: "argocd.eso-git-ops"
+      secret_store_name: "eso-git-ops.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_argocd_git_ops_secrets: []
+    eso_vault_integration_argocd_git_ops_secrets_extra: []
