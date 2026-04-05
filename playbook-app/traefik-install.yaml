@@ -196,16 +196,17 @@
 
           ports:
             traefik:
-              port: 8080
+              port: {{ traefik_traefik_port }}
+              exposedPort: {{ traefik_traefik_port }}
               expose:
                 default: false
             web:
               asDefault: true
-              port: 80
-              nodePort: 80
+              port: {{ traefik_web_port }}
+              nodePort: {{ traefik_web_port }}
               expose:
                 default: true
-              exposedPort: 80
+              exposedPort: {{ traefik_web_port }}
               forwardedHeaders:
                 insecure: true
               proxyProtocol:
@@ -217,11 +218,11 @@
                   readTimeout: 600
             websecure:
               asDefault: true
-              port: 443
-              nodePort: 443
+              port: {{ traefik_websecure_port }}
+              nodePort: {{ traefik_websecure_port }}
               expose:
                 default: true
-              exposedPort: 443
+              exposedPort: {{ traefik_websecure_port }}
               http:
                 tls:
                   enabled: true
@@ -235,6 +236,8 @@
                   writeTimeout: 600
                   readTimeout: 600
             metrics:
+              port: {{ traefik_prometheus_port }}
+              exposedPort: {{ traefik_prometheus_port }}
               expose:
                 default: false
 
@@ -257,12 +260,20 @@
               enabled: true
               format: json
 
+          gateway:
+            enabled: false
+          gatewayClass:
+            enabled: false
+
           api:
             dashboard: true
 
           metrics:
+            addInternals: true
             prometheus:
               entryPoint: metrics
+              services:
+                enabled: true
 
           additionalArguments:
             - "--api.insecure=true"
@@ -298,8 +309,8 @@
                 ports:
                   - name: dashboard
                     protocol: TCP
-                    port: 8080
-                    targetPort: 8080
+                    port: {{ traefik_traefik_port }}
+                    targetPort: {{ traefik_traefik_port }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
