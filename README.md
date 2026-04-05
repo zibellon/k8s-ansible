@@ -14,16 +14,15 @@
 # Подготовка к конфигурации
 
 ## Создать директорию: `hosts-vars-override/`
-```bash
-mkdir hosts-vars-override/
-```
 Положить в неё файлы с реальными хостами и переопределениями переменных.
 Все доступные переменные — в `hosts-vars/`.
 
 ## Выполнить команду: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
 ## Покажит основную информацию по всем node
 
+# ------
 # Подготовка_1
+# ------
 ## Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx | eth_xxx)
 1. ip addr show
 2. Пример вывода - ниже
@@ -43,7 +42,9 @@ mkdir hosts-vars-override/
     inet6 fe80::d20d:bdff:fe92:681/64 scope link 
        valid_lft forever preferred_lft forever
 
+# ------
 # Подготовка_2
+# ------
 ## занести внутренний `ip` в `hosts-vars-override/`
 ## его надо будет разрешить в `cilium-host-firewall`, чтобы можно было делать join
 ## есть два варианта
@@ -66,13 +67,17 @@ mkdir hosts-vars-override/
    9.  Это автоматически добавит в `cilium-host-firewall` новые ip адреса и обновит политику на сервере
    10. После этого делать: `... join ...`
 
+# ------
 # Важно про `namespace`
+# ------
 ## Сменить namespace МОЖНО для любых компонентов
 ## Сменить namespace НЕЛЬЗЯ для некоторых компонентов. Так указано в официальной документации
 - longhorn-system
 - argocd
 
+# ------
 # Важно про `haproxy-apiserver-lb`
+# ------
 ## В конфиге указаны ip адреса всех manager-node + балансировка между ними
 ## Запускается как `linux systemd service` (apt install haproxy) на каждой node в кластере
 ## Версия пакета зафиксирована в hosts.yaml (haproxy_apiserver_lb_package_version) и заморожена через apt-mark hold
@@ -81,7 +86,9 @@ mkdir hosts-vars-override/
   - Обновляет /etc/haproxy/haproxy.cfg и делает `systemctl reload haproxy` последовательно (serial: 1)
   - reload — graceful, без разрыва TCP соединений
 
+# ------
 # Важно про VAULT + ESO
+# ------
 ## Во все конфиги ESO (SecretStore + ExternalSecret) добавен параметр is_need_eso: true | false
 ## Зачем: Это контроль - нужно ли создавать объекты ESO + vault-policy
 ## Например: есть GitLab.root (user + pass), их надо обязаиельно положить в vault. Но они не нужны как k8s-secret
