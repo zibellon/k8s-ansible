@@ -262,3 +262,6 @@ kubectl exec -it etcd-k8s-manager-1 -n kube-system -- etcdctl \
   --cert=/etc/kubernetes/pki/etcd/server.crt \
   --key=/etc/kubernetes/pki/etcd/server.key \
   member remove <MEMBER_ID>
+
+# Запустить тестовый контейнер
+kubectl run curl-test --rm -it --image=curlimages/curl --restart=Never -- sh
