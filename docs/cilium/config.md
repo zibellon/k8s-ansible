@@ -60,6 +60,8 @@
 # Проверить дропы пакетов
 kubectl exec -n kube-system -it $(kubectl get pods -n kube-system -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}') -- cilium monitor --type drop
 
+kubectl exec -n cilium -it $(kubectl get pods -n cilium -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}') -- cilium monitor --type drop
+
 # получить список ВСЕХ endpoints
 kubectl exec -n kube-system -it $(kubectl get pods -n kube-system -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}') -- cilium endpoint list
 
