@@ -378,7 +378,7 @@
   - Ставится: gitlab-minio, ingress (minio-api, minio-console-ui)
   - Ставится: gitlab, ingress (UI, git, pages, registry, ssh-tcp)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-configure.yaml`
-  - конфигурация. Отдельный playbook
+  - конфигурация (Достать пароль админа, положить его в vault, создать PersonalAccessToken для админа и положить его в vault)
 
 ## Gitlab-Runner. официальный helm
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -388,9 +388,12 @@
 ## То есть: Регистрация раннера на GitLab - производится в ручном режиме
 ## Порядок действий для установки
 ## - Зайти в GitLab и создать `instance-runner` + получить его токен
-## - Сохранить токен в VAULT, по правильному пути в переменную `token`
+## - Сохранить токен в VAULT (по правильному пути - указан в `ESO`) в переменную `token`
 ## - Попраить конфиг (`hosts-vars/` + `hosts-vars-override/`). Там полный toml файл
 ## - установить gitlab-runner (helm)
+## ---
+## Важно_2
+## - все данные для minio (s3-cache) = будут созданы автоматически
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
@@ -419,7 +422,7 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-configure.yaml`
-  - Конфигурация
+  - Конфигурация (сбросить права у default-project, достать пароль admin и положить его в Vault)
 - обновление (версия)
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на несколько файлов

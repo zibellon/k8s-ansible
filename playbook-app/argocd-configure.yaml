@@ -42,6 +42,40 @@
       tags: [always]
 
     # =========================================================================
+    # STEP 0: CONFIGURE DEFAULT APP PROJECT
+    # =========================================================================
+
+    - name: "[argocd-default-project] Create manifest file"
+      copy:
+        dest: "/tmp/argocd-default-appproject.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: default
+            namespace: {{ argocd_namespace }}
+          spec:
+            sourceRepos: []
+            sourceNamespaces: []
+            destinations: []
+            clusterResourceBlacklist:
+              - group: "*"
+                kind: "*"
+            namespaceResourceBlacklist:
+              - group: "*"
+                kind: "*"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-default-project] Apply manifest"
+      command: kubectl apply -f /tmp/argocd-default-appproject.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # =========================================================================
     # STEP 1: RESOLVE ADMIN PASSWORD
     # Priority: Vault password → k8s initial secret → fail if neither valid
     # =========================================================================

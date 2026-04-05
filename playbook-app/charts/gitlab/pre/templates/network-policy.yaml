@@ -131,6 +131,15 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    # From GitLab exporter
+    - from:
+        - podSelector:
+            matchLabels:
+              app: gitlab-exporter
+              release: {{ .Values.gitlab.releaseName }}
+      ports:
+        - protocol: TCP
+          port: 5432
 
 ---
 # Redis: ingress from GitLab components
@@ -188,6 +197,15 @@ spec:
         - podSelector:
             matchLabels:
               app: migrations
+              release: {{ .Values.gitlab.releaseName }}
+      ports:
+        - protocol: TCP
+          port: 6379
+    # From GitLab exporter
+    - from:
+        - podSelector:
+            matchLabels:
+              app: gitlab-exporter
               release: {{ .Values.gitlab.releaseName }}
       ports:
         - protocol: TCP
@@ -262,6 +280,38 @@ spec:
 # =============================================================================
 # GITLAB CORE POLICIES
 # =============================================================================
+
+---
+# GitLab exporter: egress to Redis and PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gitlab-exporter
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: gitlab-exporter
+      release: {{ .Values.gitlab.releaseName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab-redis
+              app.kubernetes.io/instance: gitlab-redis-{{ .Values.namespace }}
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab-postgresql
+              app.kubernetes.io/instance: gitlab-postgresql-{{ .Values.namespace }}
+      ports:
+        - protocol: TCP
+          port: 5432
 
 ---
 # GitLab webservice: ingress from Traefik, egress to storage and external
