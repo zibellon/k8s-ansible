@@ -173,6 +173,34 @@
     # STEP 2: ARGOCD/INSTALL (CRDs + ArgoCD manifests)
     # =========================================================================
 
+    - name: "[argocd-install-crds] Copy crds chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-install-crds"
+        chart_name: "crds"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/crds/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd/crds"
+      tags: [install]
+
+    - name: "[argocd-install-crds] Install argocd-crds via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[argocd-install-crds] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "argocd-install-crds"
+        crds_list:
+          - crd/applications.argoproj.io
+          - crd/applicationsets.argoproj.io
+          - crd/appprojects.argoproj.io
+      tags: [install]
+
+    # =========================================================================
+
     - name: "[argocd-install] Copy install chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -180,23 +208,6 @@
         chart_name: "install"
         chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/install/"
         chart_remote_dest: "{{ remote_charts_dir }}/argocd/install"
-      tags: [install]
-
-    - name: "[argocd-install] Install argocd-crds via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/argocd/install/crds/crds.yaml
-      failed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[argocd-install] Wait for CRDs"
-      include_tasks: tasks/tasks-wait-crds.yaml
-      vars:
-        label_name: "argocd-install"
-        crds_list:
-          - crd/applications.argoproj.io
-          - crd/applicationsets.argoproj.io
-          - crd/appprojects.argoproj.io
       tags: [install]
 
     - name: "[argocd-install] Create values file"
