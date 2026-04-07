@@ -499,6 +499,22 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-git-ops-install.yaml`
   - Ставится: ESO + argo-proj, argo-application
 
+## ---
+## prometheus-operator + prometheus. yaml -> helm
+## ---
+
+Alertmanager CRD
+└── alertmanagerConfiguration.name → alertmanager-root-config (root, один)
+    └── route: receiver=null (fallback)
+        ├── [auto-injected] namespace=mon → AlertmanagerConfig "alertmanager-root-config"
+        ├── [auto-injected] namespace=gitlab → AlertmanagerConfig "gitlab-alerts"
+        ├── [auto-injected] namespace=backend → AlertmanagerConfig "backend-alerts"
+        └── [auto-injected] namespace=... → любое количество
+
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/prometheus-operator-install.yaml`
+
+
+
 ## ---------------
 ## ---------------
 ## ---------------

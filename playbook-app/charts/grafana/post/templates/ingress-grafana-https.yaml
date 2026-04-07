@@ -1,0 +1,50 @@
+# =============================================================================
+# INGRESS FOR GRAFANA — HTTPS (Traefik)
+# =============================================================================
+
+{{- if .Values.grafanaIngress.httpsEnable }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.grafanaIngress.secretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.grafanaIngress.secretName }}
+  dnsNames:
+    - {{ .Values.grafanaIngress.domain }}
+  issuerRef:
+    name: {{ .Values.clusterIssuer }}
+    kind: ClusterIssuer
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.entryPoints.websecure }}"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  tls:
+    - hosts:
+        - {{ .Values.grafanaIngress.domain }}
+      secretName: {{ .Values.grafanaIngress.secretName }}
+  rules:
+    - host: {{ .Values.grafanaIngress.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: {{ .Values.grafana.port }}
+{{- end }}

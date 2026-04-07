@@ -19,6 +19,7 @@
 #   - argocd-configure.yaml
 #   - gitlab-configure.yaml
 #   - zitadel-install.yaml
+#   - grafana-install.yaml
 #
 # Requires variables (from hosts.yaml):
 #   - vault_policies          (array: name + paths)
@@ -40,6 +41,7 @@
 #   - eso_vault_integration_zitadel_secrets_merged
 #   - eso_vault_integration_argocd_secrets_merged
 #   - eso_vault_integration_argocd_git_ops_secrets_merged
+#   - eso_vault_integration_grafana_secrets_merged
 # =============================================================================
 
 # -------------------------------------------------------------------------
@@ -139,6 +141,8 @@
         secrets: "{{ eso_vault_integration_gitlab_runner_secrets_extra | default([]) }}"
       - component: zitadel
         secrets: "{{ eso_vault_integration_zitadel_secrets_extra | default([]) }}"
+      - component: grafana
+        secrets: "{{ eso_vault_integration_grafana_secrets_extra | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -240,6 +244,15 @@
   run_once: true
   tags: [always]
 
+- name: "[eso-merge] Merge grafana secrets"
+  set_fact:
+    eso_vault_integration_grafana_secrets_merged: >-
+      {{ eso_vault_integration_grafana_secrets
+         + (eso_vault_integration_grafana_secrets_extra | default([])) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 # -------------------------------------------------------------------------
 # STAGE 6: Validate uniqueness of merged secrets per component
 # -------------------------------------------------------------------------
@@ -272,6 +285,8 @@
       secrets: "{{ eso_vault_integration_argocd_secrets_merged }}"
     - component: argocd_git_ops
       secrets: "{{ eso_vault_integration_argocd_git_ops_secrets_merged }}"
+    - component: grafana
+      secrets: "{{ eso_vault_integration_grafana_secrets_merged }}"
   loop_control:
     label: "{{ item.component }}"
   delegate_to: "{{ master_manager_fact }}"
@@ -303,6 +318,8 @@
       secrets: "{{ eso_vault_integration_argocd_secrets_merged }}"
     - component: argocd_git_ops
       secrets: "{{ eso_vault_integration_argocd_git_ops_secrets_merged }}"
+    - component: grafana
+      secrets: "{{ eso_vault_integration_grafana_secrets_merged }}"
   loop_control:
     label: "{{ item.component }}"
   delegate_to: "{{ master_manager_fact }}"
@@ -372,6 +389,8 @@
         store: "{{ eso_vault_integration_argocd }}"
       - component: argocd_git_ops
         store: "{{ eso_vault_integration_argocd_git_ops }}"
+      - component: grafana
+        store: "{{ eso_vault_integration_grafana }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -453,6 +472,7 @@
       - "zitadel secrets: {{ eso_vault_integration_zitadel_secrets_merged | length }}"
       - "argocd secrets: {{ eso_vault_integration_argocd_secrets_merged | length }}"
       - "argocd-git-ops secrets: {{ eso_vault_integration_argocd_git_ops_secrets_merged | length }}"
+      - "grafana secrets: {{ eso_vault_integration_grafana_secrets_merged | length }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]

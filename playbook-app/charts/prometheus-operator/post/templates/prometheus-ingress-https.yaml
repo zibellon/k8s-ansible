@@ -1,0 +1,50 @@
+# =============================================================================
+# INGRESS FOR PROMETHEUS UI — HTTPS (Traefik)
+# =============================================================================
+
+{{- if .Values.prometheusIngress.httpsEnable }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.prometheusIngress.secretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.prometheusIngress.secretName }}
+  dnsNames:
+    - {{ .Values.prometheusIngress.domain }}
+  issuerRef:
+    name: {{ .Values.clusterIssuer }}
+    kind: ClusterIssuer
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-prometheus-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.entryPoints.websecure }}"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if .Values.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  tls:
+    - hosts:
+        - {{ .Values.prometheusIngress.domain }}
+      secretName: {{ .Values.prometheusIngress.secretName }}
+  rules:
+    - host: {{ .Values.prometheusIngress.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus-instance
+                port:
+                  number: 9090
+{{- end }}

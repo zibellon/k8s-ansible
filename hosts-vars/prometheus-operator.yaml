@@ -1,0 +1,183 @@
+all:
+  vars:
+    # -----------------
+    # Prometheus Operator
+    # -----------------
+    prometheus_operator_namespace: "mon"
+    prometheus_operator_tolerations: []
+    prometheus_operator_node_selector:
+      kubernetes.io/os: linux
+    prometheus_operator_resources:
+      limits:
+        cpu: 200m
+        memory: 200Mi
+      requests:
+        cpu: 100m
+        memory: 100Mi
+    # Helm timeouts
+    prometheus_operator_helm_timeout: "3m"
+    prometheus_operator_components_rollout_timeout: "60s"
+
+    # -----------------
+    # Prometheus Instance
+    # -----------------
+    # Ingress
+    prometheus_domain: "prom-k8s-v2.drawapp.ru"
+    prometheus_https_secret_name: "cert-prometheus"
+    prometheus_ingress_class: "traefik-lb"
+    prometheus_cluster_issuer: "acme-prod"
+    prometheus_vpn_only_enabled: false
+    prometheus_http_enable: false
+    prometheus_https_enable: true
+    # Helm timeouts
+    prometheus_helm_timeout: "5m"
+    prometheus_rollout_timeout: "300s"
+
+    # Full spec for kind: Prometheus CRD — passed as-is into .spec
+    prometheus_spec:
+      podMetadata:
+        labels:
+          app.kubernetes.io/name: prometheus
+          app.kubernetes.io/instance: prometheus-instance
+          app.kubernetes.io/version: "v3.7.2"
+          app.kubernetes.io/component: server
+          app.kubernetes.io/part-of: monitoring
+          app.kubernetes.io/managed-by: Helm
+      serviceAccountName: prometheus-instance
+      automountServiceAccountToken: true
+      image: "quay.io/prometheus/prometheus:v3.7.2"
+      imagePullPolicy: IfNotPresent
+      version: v3.7.2
+      replicas: 1
+      logLevel: info
+      logFormat: json
+      retention: "60d"
+      walCompression: true
+      enableAdminAPI: false
+      enableOTLPReceiver: false
+      listenLocal: false
+      hostNetwork: false
+      portName: http-web
+      externalUrl: "https://{{ prometheus_domain }}"
+      routePrefix: "/"
+      paused: false
+      # Read from ALL namespaces — empty selectors
+      serviceMonitorSelector: {}
+      serviceMonitorNamespaceSelector: {}
+      podMonitorSelector: {}
+      podMonitorNamespaceSelector: {}
+      probeSelector: {}
+      probeNamespaceSelector: {}
+      ruleSelector: {}
+      ruleNamespaceSelector: {}
+      scrapeConfigSelector: {}
+      scrapeConfigNamespaceSelector: {}
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: lh-major-single-best-effort
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+      tsdb:
+        outOfOrderTimeWindow: 0s
+      securityContext:
+        fsGroup: 2000
+        runAsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+      alerting:
+        alertmanagers:
+          - namespace: mon
+            name: alertmanager-instance
+            port: http-web
+
+    # -----------------
+    # Alertmanager Instance
+    # -----------------
+    # Ingress
+    alertmanager_domain: "alertmanager-k8s-v2.drawapp.ru"
+    alertmanager_https_secret_name: "cert-alertmanager"
+    alertmanager_http_enable: false
+    alertmanager_https_enable: true
+
+    # Full spec for kind: Alertmanager CRD — passed as-is into .spec
+    alertmanager_spec:
+      podMetadata:
+        labels:
+          app.kubernetes.io/name: alertmanager
+          app.kubernetes.io/instance: alertmanager-instance
+          app.kubernetes.io/component: alertmanager
+          app.kubernetes.io/part-of: monitoring
+          app.kubernetes.io/managed-by: Helm
+      image: "quay.io/prometheus/alertmanager:v0.28.1"
+      imagePullPolicy: IfNotPresent
+      version: v0.28.1
+      replicas: 1
+      logLevel: info
+      logFormat: json
+      portName: http-web
+      externalUrl: "https://{{ alertmanager_domain }}"
+      routePrefix: "/"
+      paused: false
+      # Reference to the root AlertmanagerConfig CRD
+      alertmanagerConfiguration:
+        name: alertmanager-root-config
+      # Read AlertmanagerConfig from ALL namespaces
+      alertmanagerConfigSelector: {}
+      alertmanagerConfigNamespaceSelector: {}
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: lh-major-single-best-effort
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+      securityContext:
+        fsGroup: 2000
+        runAsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+    # Root AlertmanagerConfig spec — passed as-is into .spec
+    # Defines the default (fallback) route with a "null" receiver that silently
+    # discards alerts that don't match any per-namespace AlertmanagerConfig route.
+    alertmanager_root_config_spec:
+      route:
+        receiver: "null"
+        groupBy:
+          - alertname
+          - namespace
+        groupWait: 30s
+        groupInterval: 5m
+        repeatInterval: 4h
+      receivers:
+        - name: "null"

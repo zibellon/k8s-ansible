@@ -1,0 +1,291 @@
+---
+# Default deny all traffic in prometheus-operator namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "deny-all"
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for all pods in prometheus-operator namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-dns-egress"
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Allow all traffic between pods within prometheus-operator namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-all-internal"
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+# =============================================================================
+# PROMETHEUS SCRAPING
+# =============================================================================
+
+---
+# Allow scraping of prometheus-operator metrics (port 8080)
+# Used by Prometheus instance (installed separately)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-for-monitoring"
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9090
+
+# =============================================================================
+# KUBE-APISERVER (operator watches/manages cluster resources)
+# =============================================================================
+
+---
+# Allow prometheus-operator egress to kube-apiserver
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-prometheus-operator"
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-operator
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443
+
+# =============================================================================
+# PROMETHEUS INSTANCE
+# =============================================================================
+
+---
+# Allow all traffic for the Prometheus instance pod:
+#   Ingress  — from Traefik (port 9090, UI)
+#   Ingress  — from Alertmanager (port 9090)
+#   Egress   — to kube-apiserver (port 6443, Kubernetes SD)
+#   Egress   — to Alertmanager (port 9093, push alerts + scrape /metrics)
+#   Egress   — to all namespaces unrestricted (metric scraping)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-prometheus"
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: prometheus-instance
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Traefik → Prometheus UI
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+      ports:
+        - protocol: TCP
+          port: 9090
+    # Alertmanager → Prometheus
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+              app.kubernetes.io/instance: alertmanager-instance
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # kube-apiserver (Kubernetes SD)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # Alertmanager — push alerts + scrape /metrics
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+              app.kubernetes.io/instance: alertmanager-instance
+      ports:
+        - protocol: TCP
+          port: 9093
+    # Scraping — all namespaces, all ports
+    - to:
+        - namespaceSelector: {}
+
+# =============================================================================
+# ALERTMANAGER INSTANCE
+# =============================================================================
+
+---
+# Allow all traffic for the Alertmanager instance pod:
+#   Ingress  — from Traefik (port 9093, UI)
+#   Ingress  — from Prometheus (port 9093, push alerts + scrape /metrics)
+#   Egress   — unrestricted (alertmanager sends notifications externally — webhook, email, etc.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-alertmanager"
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+      app.kubernetes.io/instance: alertmanager-instance
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Traefik → Alertmanager UI
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+      ports:
+        - protocol: TCP
+          port: 9093
+    # Prometheus → Alertmanager (push alerts + scrape /metrics)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/instance: prometheus-instance
+      ports:
+        - protocol: TCP
+          port: 9093
+  egress:
+    # Unrestricted — alertmanager must reach external endpoints (Slack, PagerDuty, etc.)
+    # Also covers egress to Prometheus:9090 within the same namespace.
+    - {}
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge)
+# =============================================================================
+
+---
+# Allow Traefik ingress to cert-manager ACME solver pod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- .Values.acmeSolverLabels | toYaml | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# TRAEFIK — egress to monitoring namespace
+# =============================================================================
+
+---
+# Allow Traefik egress to Prometheus + Alertmanager + ACME solver
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ .Values.namespace }}-allow-traefik"
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    # Prometheus UI
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/instance: prometheus-instance
+      ports:
+        - protocol: TCP
+          port: 9090
+    # Alertmanager UI
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+              app.kubernetes.io/instance: alertmanager-instance
+      ports:
+        - protocol: TCP
+          port: 9093
+    # ACME solver in mon (NS = mon)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- .Values.acmeSolverLabels | toYaml | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8089

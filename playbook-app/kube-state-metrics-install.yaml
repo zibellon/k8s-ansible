@@ -1,0 +1,212 @@
+# =============================================================================
+# Install kube-state-metrics via local Helm charts
+# Steps:
+#   1. pre:     NetworkPolicies
+#   2. install: ClusterRole + ClusterRoleBinding + Deployment + Service
+#   3. post:    (reserved, empty)
+#
+# Usage (tags):
+#   ansible-playbook kube-state-metrics-install.yaml              # full install
+#   ansible-playbook kube-state-metrics-install.yaml --tags pre   # only NetworkPolicies
+#   ansible-playbook kube-state-metrics-install.yaml --tags install
+#   ansible-playbook kube-state-metrics-install.yaml --tags post
+# =============================================================================
+
+- name: Install kube-state-metrics via local Helm chart
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[ksm-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "ksm-pre-check"
+      tags: [always]
+
+    - name: "[ksm-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        label_name: "ksm-pre-check"
+        namespace_value: "{{ kube_state_metrics_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (NetworkPolicies)
+    # =========================================================================
+
+    - name: "[ksm-pre] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "ksm-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/kube-state-metrics/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/kube-state-metrics/pre"
+      tags: [pre]
+
+    - name: "[ksm-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/kube-state-metrics/pre/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ kube_state_metrics_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[ksm-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install kube-state-metrics-pre {{ remote_charts_dir }}/kube-state-metrics/pre
+        --namespace {{ kube_state_metrics_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/kube-state-metrics/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ kube_state_metrics_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: INSTALL (ClusterRole + ClusterRoleBinding + Deployment + Service)
+    # =========================================================================
+
+    - name: "[ksm-install] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "ksm-install"
+        chart_name: "install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/kube-state-metrics/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/kube-state-metrics/install"
+      tags: [install]
+
+    - name: "[ksm-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/kube-state-metrics/install/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ kube_state_metrics_namespace }}
+          kube_state_metrics:
+            image:
+              name: {{ kube_state_metrics_image_name }}
+              tag: {{ kube_state_metrics_image_tag }}
+          tolerations: {{ kube_state_metrics_tolerations | to_json }}
+          nodeSelector: {{ kube_state_metrics_node_selector | to_json }}
+          resources: {{ kube_state_metrics_resources | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[ksm-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install kube-state-metrics {{ remote_charts_dir }}/kube-state-metrics/install
+        --namespace {{ kube_state_metrics_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/kube-state-metrics/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ kube_state_metrics_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[ksm-install] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "ksm-install"
+        rollout_namespace: "{{ kube_state_metrics_namespace }}"
+        rollout_timeout: "{{ kube_state_metrics_rollout_timeout }}"
+        rollout_resources:
+          - deployment/kube-state-metrics
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: POST (reserved)
+    # =========================================================================
+
+    - name: "[ksm-post] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "ksm-post"
+        chart_name: "post"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/kube-state-metrics/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/kube-state-metrics/post"
+      tags: [post]
+
+    - name: "[ksm-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/kube-state-metrics/post/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ kube_state_metrics_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[ksm-post] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install kube-state-metrics-post {{ remote_charts_dir }}/kube-state-metrics/post
+        --namespace {{ kube_state_metrics_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/kube-state-metrics/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ kube_state_metrics_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[ksm-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ kube_state_metrics_namespace }}"
+        label_name: "ksm-verify"
+      tags: [always]
+
+    - name: "[ksm-verify] Get pods status"
+      command: kubectl get pods -n {{ kube_state_metrics_namespace }} -o wide
+      register: ksm_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[ksm-verify] Print pods status"
+      debug:
+        msg: "{{ ksm_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[ksm-verify] Verify NetworkPolicies"
+      command: kubectl get networkpolicies -n {{ kube_state_metrics_namespace }}
+      register: np_verify
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[ksm-verify] Show NetworkPolicies"
+      debug:
+        var: np_verify.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[ksm-verify] Installation complete"
+      debug:
+        msg:
+          - "kube-state-metrics-pre + kube-state-metrics + kube-state-metrics-post: OK"
+          - "Namespace: {{ kube_state_metrics_namespace }}"
+          - "Image: {{ kube_state_metrics_image_name }}:{{ kube_state_metrics_image_tag }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
