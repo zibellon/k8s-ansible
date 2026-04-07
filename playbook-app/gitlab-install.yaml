@@ -71,52 +71,15 @@
     # INIT: Resolve ClusterIssuer + ACME solver pod labels
     # =========================================================================
 
-    - name: "[gitlab-install-init] Resolve GitLab ClusterIssuer"
-      set_fact:
-        _gitlab_ui_issuer: >-
-          {{ cert_manager_cluster_issuers
-             | selectattr('name', 'equalto', gitlab_cluster_issuer_name)
-             | list | first | default(none) }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-install-init] Validate GitLab ClusterIssuer exists"
-      assert:
-        that: _gitlab_ui_issuer is not none
-        fail_msg: >-
-          gitlab_cluster_issuer_name='{{ gitlab_cluster_issuer_name }}'
-          not found in cert_manager_cluster_issuers
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-install-init] Resolve ACME solver by ingressClass"
-      set_fact:
-        _gitlab_ui_solver: >-
-          {{ _gitlab_ui_issuer.solvers
-             | selectattr('ingressClass', 'equalto', gitlab_ingress_class_name)
-             | list | first | default(none) }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-install-init] Validate ACME solver exists"
-      assert:
-        that: _gitlab_ui_solver is not none
-        fail_msg: >-
-          No solver with ingressClass='{{ gitlab_ingress_class_name }}'
-          found in ClusterIssuer '{{ gitlab_cluster_issuer_name }}'
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-install-init] Set ACME solver pod labels"
-      set_fact:
-        gitlab_acme_solver_pod_labels: "{{ _gitlab_ui_solver.podLabels }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
+    - name: "[gitlab-install-init] Resolve ACME solver"
+      include_tasks: tasks/tasks-resolve-acme-solver.yaml
+      vars:
+        label_name: gitlab-install-init
+        cluster_issuer_name: "{{ gitlab_cluster_issuer_name }}"
+        ingress_class_name: "{{ gitlab_ingress_class_name }}"
+        acme_cluster_issuer_result_var: "gitlab_ui_acme_cluster_issuer"
+        acme_solver_result_var: "gitlab_ui_acme_solver"
+        acme_pod_labels_result_var: "gitlab_acme_solver_pod_labels"
 
     # =========================================================================
     # STEP 1: INSTALL PRE (ESO Resources, NetworkPolicies)

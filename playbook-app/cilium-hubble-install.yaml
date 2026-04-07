@@ -33,52 +33,15 @@
     # INIT: Resolve ClusterIssuer + ACME solver pod labels
     # =========================================================================
 
-    - name: "[cilium-hubble-init] Resolve Hubble UI ClusterIssuer"
-      set_fact:
-        _cilium_hubble_ui_issuer: >-
-          {{ cert_manager_cluster_issuers
-             | selectattr('name', 'equalto', cilium_hubble_ui_cluster_issuer_name)
-             | list | first | default(none) }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[cilium-hubble-init] Validate Hubble UI ClusterIssuer exists"
-      assert:
-        that: _cilium_hubble_ui_issuer is not none
-        fail_msg: >-
-          cilium_hubble_ui_cluster_issuer_name='{{ cilium_hubble_ui_cluster_issuer_name }}'
-          not found in cert_manager_cluster_issuers
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[cilium-hubble-init] Resolve ACME solver by ingressClass"
-      set_fact:
-        _cilium_hubble_ui_solver: >-
-          {{ _cilium_hubble_ui_issuer.solvers
-             | selectattr('ingressClass', 'equalto', cilium_hubble_ui_ingress_class_name)
-             | list | first | default(none) }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[cilium-hubble-init] Validate ACME solver exists"
-      assert:
-        that: _cilium_hubble_ui_solver is not none
-        fail_msg: >-
-          No solver with ingressClass='{{ cilium_hubble_ui_ingress_class_name }}'
-          found in ClusterIssuer '{{ cilium_hubble_ui_cluster_issuer_name }}'
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[cilium-hubble-init] Set ACME solver pod labels"
-      set_fact:
-        cilium_hubble_acme_solver_pod_labels: "{{ _cilium_hubble_ui_solver.podLabels }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
+    - name: "[cilium-hubble-init] Resolve ACME solver"
+      include_tasks: tasks/tasks-resolve-acme-solver.yaml
+      vars:
+        label_name: cilium-hubble-init
+        cluster_issuer_name: "{{ cilium_hubble_ui_cluster_issuer_name }}"
+        ingress_class_name: "{{ cilium_hubble_ui_ingress_class_name }}"
+        acme_cluster_issuer_result_var: "cilium_hubble_ui_acme_cluster_issuer"
+        acme_solver_result_var: "cilium_hubble_ui_acme_solver"
+        acme_pod_labels_result_var: "cilium_hubble_acme_solver_pod_labels"
 
     - name: "[cilium-hubble-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml

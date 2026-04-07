@@ -170,7 +170,9 @@
 # ---------
 # ---------
 
+## ---
 ## Cilium. Официальный helm
+## ---
 ## Если изменились конфиги = ConfigMap, Cilium их не подцепит автоматически
 ## Если посмотреть, что генерируется при `helm template ...` - у Deployment/DaemonSet нет checksum, на основе ConfigMap
 ## Можно сделать предположение, что для применения новых ConfigMap - надо сделать ручной restart
@@ -192,7 +194,9 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml`
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-restart.yaml`
 
+## ---
 ## metrics-server. Официальный helm
+## ---
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
@@ -203,7 +207,9 @@
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/metrics-server-install.yaml`
 
+## ---
 ## cert-manager. Официальный helm
+## ---
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/cert-manager-install.yaml`
 ## ---
@@ -217,7 +223,9 @@
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cert-manager-install.yaml`
 
+## ---
 ## ExternalSecret. Официальный helm
+## ---
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/external-secrets-install.yaml`
 ## ---
@@ -231,7 +239,9 @@
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/external-secrets-restart.yaml`
 
+## ---
 ## traefik (ingress-1). Официальный helm
+## ---
 ## Параметры (конфиг) для работы - в cli (как аргументы при запуске)
 ## Есть dashboard, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -248,7 +258,9 @@
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/traefik-restart.yaml`
 
+## ---
 ## haproxy (ingress-2). Официальный helm
+## ---
 ## Автоматически подхватывает конфиг, который генерируется через CRD
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/haproxy-install.yaml`
@@ -264,7 +276,9 @@
 - Есть дополнительный playbook, для перезапуска
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/haproxy-restart.yaml`
 
+## ---
 ## cilium-hubble (относится к cilium). yaml -> helm
+## ---
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Это просто дополнительная конфигурация
 ## Тут не запускается никаких контейнеров
@@ -282,7 +296,9 @@
 ## ---
 ## NOT_READY
 
+## ---
 ## longhorn. Официальный helm
+## ---
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Автоматически подхватывает конфиг. Обновили конфиг в `ConfigMap` -> сразу подхватил и начал использовать
 ## `namespace: longhorn-system`, МЕНЯТЬ НЕЛЬЗЯ. Так написано в документации
@@ -313,7 +329,9 @@
 ## Теперь, можно запускать что-то, что требует volume (PVC)
 ## ---
 
+## ---
 ## Vault. Официальный helm
+## ---
 ## ЕСТЬ проблема: официальный helm не работает из РФ (Региональная блокировка)
 ## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
 ## Скачать ZIP архив последнего релиза, достать все templates, Chart.yaml и values.yaml
@@ -357,7 +375,9 @@
 ## ВАЖНО: синхронизация полностью синхронизирует структуру в VAULT (добавить, обновить, удалить)
 ## ---
 
+## ---
 ## gitlab. Официальный helm
+## ---
 ## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
@@ -380,7 +400,9 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-configure.yaml`
   - конфигурация (Достать пароль админа, положить его в vault, создать PersonalAccessToken для админа и положить его в vault)
 
+## ---
 ## Gitlab-Runner. официальный helm
+## ---
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
@@ -402,7 +424,9 @@
 - установка + обновление (версия + конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-runner-install.yaml`
 
+## ---
 ## argocd. yaml -> helm
+## ---
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Нет автоматической обработки новых конфигов (Как у Cilium). То есть: После обновления конфигов - ручной restart
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/argocd-install.yaml`
@@ -438,7 +462,9 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml`
 
+## ---
 ## argocd-git-ops. yaml -> helm
+## ---
 ## Установка всех необходимых ресурсов k8s - для git-ops паттерна
 ## Тут нет запуска компонентов (Deployment, CronJob и так далее)
 ## Это создание ресурсов k8s (AppProject, Application)
