@@ -502,6 +502,8 @@
 ## ---
 ## prometheus-operator + prometheus. yaml -> helm
 ## ---
+## 
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-prometheus-operator-install.yaml`
 
 Alertmanager CRD
 └── alertmanagerConfiguration.name → alertmanager-root-config (root, один)
@@ -511,8 +513,23 @@ Alertmanager CRD
         ├── [auto-injected] namespace=backend → AlertmanagerConfig "backend-alerts"
         └── [auto-injected] namespace=... → любое количество
 
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/prometheus-operator-install.yaml`
+## ---
+## node-exporter. yaml -> helm
+## ---
+##
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-node-exporter-install.yaml`
 
+## ---
+## kube-state-metrics. yaml -> helm
+## ---
+##
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-kube-state-metrics.yaml`
+
+## ---
+## grafana. yaml -> helm
+## ---
+##
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/grafana.yaml`
 
 
 ## ---------------
