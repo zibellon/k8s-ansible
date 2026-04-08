@@ -188,11 +188,12 @@ spec:
         - name: kube-state-metrics
           image: "{{ .Values.kube_state_metrics.image.name }}:{{ .Values.kube_state_metrics.image.tag }}"
           imagePullPolicy: IfNotPresent
+          {{- if .Values.kube_state_metrics.args }}
           args:
-            - --port=8080
-            - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+            {{- toYaml .Values.kube_state_metrics.args | nindent 12 }}
+          {{- end }}
           ports:
-            - containerPort: 8080
+            - containerPort: {{ .Values.kube_state_metrics.port }}
               name: http
           securityContext:
             allowPrivilegeEscalation: false
@@ -220,5 +221,5 @@ spec:
   ports:
     - name: http
       protocol: TCP
-      port: 8080
+      port: {{ .Values.kube_state_metrics.port }}
       targetPort: http
