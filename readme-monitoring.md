@@ -274,7 +274,7 @@ gitlab_runner_api_request_duration_seconds_bucket{endpoint="request_job",runner=
 
 ---
 
-### ArgoCD (`argocd`)
+## ArgoCD (NS = `argocd`)
 
 1. argocd-metrics
    1. 8082 (название = metrics)
@@ -349,6 +349,17 @@ go_gc_cycles_automatic_gc_cycles_total 4
 # HELP go_gc_cycles_forced_gc_cycles_total Count of completed GC cycles forced by the application. Sourced from /gc/cycles/forced:gc-cycles.
 # TYPE go_gc_cycles_forced_gc_cycles_total counter
 ```
+
+## Alertmanager-Instance (NS = `mon`)
+
+1. 9093 - метрики тут
+
+~ $ curl -s http://10.135.118.237:9093/metrics | head -5
+# HELP alertmanager_alerts How many alerts by state.
+# TYPE alertmanager_alerts gauge
+alertmanager_alerts{state="active"} 0
+alertmanager_alerts{state="suppressed"} 0
+alertmanager_alerts{state="unprocessed"} 0
 
 ---
 
