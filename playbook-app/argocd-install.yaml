@@ -57,7 +57,37 @@
         acme_pod_labels_result_var: "argocd_acme_solver_pod_labels"
 
     # =========================================================================
-    # STEP 1: ARGOCD/PRE (NetworkPolicies + ESO resources)
+    # STEP 1: ARGOCD/INSTALL (CRDs + ArgoCD manifests)
+    # =========================================================================
+
+    - name: "[argocd-install-crds] Copy crds chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-install-crds"
+        chart_name: "crds"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/crds/"
+        chart_remote_dest: "{{ remote_charts_dir }}/argocd/crds"
+      tags: [crds]
+
+    - name: "[argocd-install-crds] Install argocd-crds via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [crds]
+
+    - name: "[argocd-install-crds] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "argocd-install-crds"
+        crds_list:
+          - crd/applications.argoproj.io
+          - crd/applicationsets.argoproj.io
+          - crd/appprojects.argoproj.io
+      tags: [crds]
+
+    # =========================================================================
+    # STEP 2: ARGOCD/PRE (NetworkPolicies + ESO resources)
     # =========================================================================
 
     - name: "[argocd-pre] Copy pre chart to remote"
@@ -134,35 +164,7 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 2: ARGOCD/INSTALL (CRDs + ArgoCD manifests)
-    # =========================================================================
-
-    - name: "[argocd-install-crds] Copy crds chart to remote"
-      include_tasks: tasks/tasks-copy-chart.yaml
-      vars:
-        label_name: "argocd-install-crds"
-        chart_name: "crds"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/crds/"
-        chart_remote_dest: "{{ remote_charts_dir }}/argocd/crds"
-      tags: [install]
-
-    - name: "[argocd-install-crds] Install argocd-crds via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
-      failed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[argocd-install-crds] Wait for CRDs"
-      include_tasks: tasks/tasks-wait-crds.yaml
-      vars:
-        label_name: "argocd-install-crds"
-        crds_list:
-          - crd/applications.argoproj.io
-          - crd/applicationsets.argoproj.io
-          - crd/appprojects.argoproj.io
-      tags: [install]
-
+    # STEP 3: ARGOCD/INSTALL (ArgoCD manifests)
     # =========================================================================
 
     - name: "[argocd-install] Copy install chart to remote"
@@ -256,6 +258,11 @@
             httpsEnable: {{ argocd_https_enable }}
           traefik:
             namespace: {{ traefik_namespace }}
+          serviceMonitor:
+            enabled: {{ argocd_service_monitor_enabled }}
+            interval: "{{ argocd_service_monitor_interval }}"
+            scrapeTimeout: "{{ argocd_service_monitor_scrape_timeout }}"
+            labels: {{ argocd_service_monitor_additional_labels | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [post]

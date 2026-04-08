@@ -652,6 +652,8 @@
                 bucket: gitlab-backups
             smtp:
               enabled: false
+            monitoring:
+              enabled: true
           nginx-ingress:
             enabled: false
           certmanager:
@@ -669,6 +671,9 @@
             resources: {{ gitlab_registry_resources | to_json }}
             metrics:
               enabled: true
+              serviceMonitor:
+                enabled: {{ gitlab_service_monitor_enabled }}
+                endpointConfig: {{ gitlab_service_monitor_endpoint_config | to_json }}
             hpa:
               minReplicas: 1
               maxReplicas: 1
@@ -694,9 +699,16 @@
               workerProcesses: 2
               workerTimeout: 180
               resources: {{ gitlab_webservice_resources | to_json }}
+              metrics:
+                serviceMonitor:
+                  enabled: {{ gitlab_service_monitor_enabled }}
+                  endpointConfig: {{ gitlab_service_monitor_endpoint_config | to_json }}
               workhorse:
                 metrics:
                   enabled: true
+                  serviceMonitor:
+                    enabled: {{ gitlab_service_monitor_enabled }}
+                    endpointConfig: {{ gitlab_service_monitor_endpoint_config | to_json }}
             sidekiq:
               tolerations: {{ gitlab_sidekiq_tolerations | to_json }}
               nodeSelector: {{ gitlab_sidekiq_node_selector | to_json }}
@@ -708,6 +720,11 @@
                   type: Recreate
               concurrency: 10
               resources: {{ gitlab_sidekiq_resources | to_json }}
+              metrics:
+                enabled: true
+                podMonitor:
+                  enabled: {{ gitlab_service_monitor_enabled }}
+                  endpointConfig: {{ gitlab_service_monitor_endpoint_config | to_json }}
             gitlab-shell:
               tolerations: {{ gitlab_gitlab_shell_tolerations | to_json }}
               nodeSelector: {{ gitlab_gitlab_shell_node_selector | to_json }}
@@ -725,6 +742,11 @@
               persistence:
                 size: {{ gitlab_gitaly_storage_size }}
                 storageClass: {{ gitlab_gitaly_storage_class }}
+              metrics:
+                enabled: true
+                serviceMonitor:
+                  enabled: {{ gitlab_service_monitor_enabled }}
+                  endpointConfig: {{ gitlab_service_monitor_endpoint_config | to_json }}
             gitlab-exporter:
               tolerations: {{ gitlab_gitlab_exporter_tolerations | to_json }}
               nodeSelector: {{ gitlab_gitlab_exporter_node_selector | to_json }}
@@ -732,6 +754,10 @@
               deployment:
                 strategy:
                   type: Recreate
+              metrics:
+                serviceMonitor:
+                  enabled: {{ gitlab_service_monitor_enabled }}
+                  endpointConfig: {{ gitlab_service_monitor_endpoint_config | to_json }}
             gitlab-pages:
               tolerations: {{ gitlab_pages_tolerations | to_json }}
               nodeSelector: {{ gitlab_pages_node_selector | to_json }}
@@ -742,6 +768,10 @@
               deployment:
                 strategy:
                   type: Recreate
+              metrics:
+                serviceMonitor:
+                  enabled: {{ gitlab_service_monitor_enabled }}
+                  endpointConfig: {{ gitlab_service_monitor_endpoint_config | to_json }}
             toolbox:
               enabled: true
               tolerations: {{ gitlab_toolbox_tolerations | to_json }}

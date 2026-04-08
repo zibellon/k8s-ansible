@@ -3,7 +3,7 @@
 # Steps:
 #   1. pre:     NetworkPolicies
 #   2. install: ClusterRole + ClusterRoleBinding + Deployment + Service
-#   3. post:    (reserved, empty)
+#   3. post:    ServiceMonitor (prometheus-operator)
 #
 # Usage (tags):
 #   ansible-playbook kube-state-metrics-install.yaml              # full install
@@ -146,6 +146,11 @@
         mode: "0600"
         content: |
           namespace: {{ kube_state_metrics_namespace }}
+          serviceMonitor:
+            enabled: {{ kube_state_metrics_service_monitor_enabled }}
+            interval: "{{ kube_state_metrics_service_monitor_interval }}"
+            scrapeTimeout: "{{ kube_state_metrics_service_monitor_scrape_timeout }}"
+            labels: {{ kube_state_metrics_service_monitor_additional_labels | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [post]
