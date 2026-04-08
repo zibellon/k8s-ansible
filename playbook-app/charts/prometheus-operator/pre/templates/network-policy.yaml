@@ -132,7 +132,7 @@ spec:
               kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
       ports:
         - protocol: TCP
-          port: 9090
+          port: {{ .Values.prometheus.port }}
     # Alertmanager → Prometheus
     - from:
         - podSelector:
@@ -141,24 +141,10 @@ spec:
               app.kubernetes.io/instance: alertmanager-instance
       ports:
         - protocol: TCP
-          port: 9090
+          port: {{ .Values.prometheus.port }}
   egress:
-    # kube-apiserver (Kubernetes SD)
-    - ports:
-        - protocol: TCP
-          port: 6443
-    # Alertmanager — push alerts + scrape /metrics
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: alertmanager
-              app.kubernetes.io/instance: alertmanager-instance
-      ports:
-        - protocol: TCP
-          port: 9093
-    # Scraping — all namespaces, all ports
-    - to:
-        - namespaceSelector: {}
+    # Unrestricted — Scarape ALL
+    - {}
 
 # =============================================================================
 # ALERTMANAGER INSTANCE
@@ -190,7 +176,7 @@ spec:
               kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
       ports:
         - protocol: TCP
-          port: 9093
+          port: {{ .Values.alertmanager.port }}
     # Prometheus → Alertmanager (push alerts + scrape /metrics)
     - from:
         - podSelector:
@@ -199,7 +185,7 @@ spec:
               app.kubernetes.io/instance: prometheus-instance
       ports:
         - protocol: TCP
-          port: 9093
+          port: {{ .Values.alertmanager.port }}
   egress:
     # Unrestricted — alertmanager must reach external endpoints (Slack, PagerDuty, etc.)
     # Also covers egress to Prometheus:9090 within the same namespace.
@@ -265,7 +251,7 @@ spec:
               app.kubernetes.io/instance: prometheus-instance
       ports:
         - protocol: TCP
-          port: 9090
+          port: {{ .Values.prometheus.port }}
     # Alertmanager UI
     - to:
         - namespaceSelector:
@@ -277,7 +263,7 @@ spec:
               app.kubernetes.io/instance: alertmanager-instance
       ports:
         - protocol: TCP
-          port: 9093
+          port: {{ .Values.alertmanager.port }}
     # ACME solver in mon (NS = mon)
     - to:
         - namespaceSelector:

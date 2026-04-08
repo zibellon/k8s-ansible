@@ -4,6 +4,8 @@ all:
     # Prometheus Operator
     # -----------------
     prometheus_operator_namespace: "mon"
+    prometheus_operator_ingress_class: "traefik-lb"
+    prometheus_operator_cluster_issuer: "acme-prod"
     prometheus_operator_tolerations: []
     prometheus_operator_node_selector:
       kubernetes.io/os: linux
@@ -23,12 +25,13 @@ all:
     # -----------------
     # Ingress
     prometheus_domain: "prom-k8s-v2.drawapp.ru"
+    prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
     prometheus_https_secret_name: "cert-prometheus"
-    prometheus_ingress_class: "traefik-lb"
-    prometheus_cluster_issuer: "acme-prod"
     prometheus_vpn_only_enabled: false
     prometheus_http_enable: false
     prometheus_https_enable: true
+    prometheus_port: 9090
+    prometheus_reloader_port: 8080
     # Helm timeouts
     prometheus_helm_timeout: "5m"
     prometheus_rollout_timeout: "300s"
@@ -58,7 +61,7 @@ all:
       listenLocal: false
       hostNetwork: false
       portName: http-web
-      externalUrl: "https://{{ prometheus_domain }}"
+      externalUrl: {{ prometheus_external_url }}
       routePrefix: "/"
       paused: false
       # Read from ALL namespaces — empty selectors
@@ -111,9 +114,14 @@ all:
     # -----------------
     # Ingress
     alertmanager_domain: "alertmanager-k8s-v2.drawapp.ru"
+    alertmanager_external_url: "https://alertmanager-k8s-v2.drawapp.ru"
     alertmanager_https_secret_name: "cert-alertmanager"
+    alertmanager_vpn_only_enabled: false
     alertmanager_http_enable: false
     alertmanager_https_enable: true
+    alertmanager_port: 9093
+    alertmanager_mesh_tcp_port: 9094
+    alertmanager_mesh_udp_port: 9094
 
     # Full spec for kind: Alertmanager CRD — passed as-is into .spec
     alertmanager_spec:
@@ -131,7 +139,7 @@ all:
       logLevel: info
       logFormat: json
       portName: http-web
-      externalUrl: "https://{{ alertmanager_domain }}"
+      externalUrl: {{ alertmanager_external_url }}
       routePrefix: "/"
       paused: false
       # Reference to the root AlertmanagerConfig CRD

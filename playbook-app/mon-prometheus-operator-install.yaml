@@ -43,8 +43,8 @@
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
         label_name: prometheus-operator-init
-        cluster_issuer_name: "{{ prometheus_cluster_issuer }}"
-        ingress_class_name: "{{ prometheus_ingress_class }}"
+        cluster_issuer_name: "{{ prometheus_operator_cluster_issuer }}"
+        ingress_class_name: "{{ prometheus_operator_ingress_class }}"
         acme_cluster_issuer_result_var: "prometheus_acme_cluster_issuer"
         acme_solver_result_var: "prometheus_acme_solver"
         acme_pod_labels_result_var: "prometheus_acme_solver_pod_labels"
@@ -73,6 +73,10 @@
             namespace: {{ traefik_namespace }}
             instanceName: traefik-{{ traefik_namespace }}
           acmeSolverLabels: {{ prometheus_acme_solver_pod_labels | to_json }}
+          prometheus:
+            port: {{ prometheus_port }}
+          alertmanager:
+            port: {{ alertmanager_port }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [pre]
@@ -201,6 +205,9 @@
         content: |
           namespace: {{ prometheus_operator_namespace }}
           prometheusSpec: {{ prometheus_spec | to_json }}
+          prometheus:
+            port: {{ prometheus_port }}
+            reloaderPort: {{ prometheus_reloader_port }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [prometheus]
@@ -251,6 +258,10 @@
           namespace: {{ prometheus_operator_namespace }}
           alertmanagerSpec: {{ alertmanager_spec | to_json }}
           alertmanagerRootConfigSpec: {{ alertmanager_root_config_spec | to_json }}
+          alertmanager:
+            port: {{ alertmanager_port }}
+            meshTcpPort: {{ alertmanager_mesh_tcp_port }}
+            meshUdpPort: {{ alertmanager_mesh_udp_port }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [alertmanager]
@@ -299,24 +310,29 @@
         mode: "0600"
         content: |
           namespace: {{ prometheus_operator_namespace }}
-          ingressClass: {{ prometheus_ingress_class }}
-          clusterIssuer: {{ prometheus_cluster_issuer }}
-          entryPoints:
-            web: {{ traefik_web_entrypoint }}
-            websecure: {{ traefik_websecure_entrypoint }}
-          vpnOnlyEnabled: {{ prometheus_vpn_only_enabled }}
+          ingressClass: {{ prometheus_operator_ingress_class }}
+          clusterIssuer: {{ prometheus_operator_cluster_issuer }}
           traefik:
             namespace: {{ traefik_namespace }}
-          prometheusIngress:
-            domain: {{ prometheus_domain }}
-            secretName: {{ prometheus_https_secret_name }}
-            httpEnable: {{ prometheus_http_enable }}
-            httpsEnable: {{ prometheus_https_enable }}
-          alertmanagerIngress:
-            domain: {{ alertmanager_domain }}
-            secretName: {{ alertmanager_https_secret_name }}
-            httpEnable: {{ alertmanager_http_enable }}
-            httpsEnable: {{ alertmanager_https_enable }}
+            entryPoints:
+              web: {{ traefik_web_entrypoint }}
+              websecure: {{ traefik_websecure_entrypoint }}
+          prometheus:
+            ingress:
+              domain: {{ prometheus_domain }}
+              secretName: {{ prometheus_https_secret_name }}
+              vpnOnlyEnabled: {{ prometheus_vpn_only_enabled }}
+              httpEnable: {{ prometheus_http_enable }}
+              httpsEnable: {{ prometheus_https_enable }}
+            port: {{ prometheus_port }}
+          alertmanager:
+            ingress:
+              domain: {{ alertmanager_domain }}
+              secretName: {{ alertmanager_https_secret_name }}
+              vpnOnlyEnabled: {{ alertmanager_vpn_only_enabled }}
+              httpEnable: {{ alertmanager_http_enable }}
+              httpsEnable: {{ alertmanager_https_enable }}
+            port: {{ alertmanager_port }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [post]

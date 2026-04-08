@@ -2,23 +2,23 @@
 # INGRESS FOR ALERTMANAGER UI — HTTP (Traefik)
 # =============================================================================
 
-{{- if .Values.alertmanagerIngress.httpEnable }}
+{{- if .Values.alertmanager.ingress.httpEnable }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-alertmanager-http
+  name: alertmanager-http
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
     traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.entryPoints.web }}"
-    {{- if .Values.vpnOnlyEnabled }}
+    {{- if .Values.alertmanager.ingress.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingressClass }}
   rules:
-    - host: {{ .Values.alertmanagerIngress.domain }}
+    - host: {{ .Values.alertmanager.ingress.domain }}
       http:
         paths:
           - path: /
@@ -27,5 +27,5 @@ spec:
               service:
                 name: alertmanager-instance
                 port:
-                  number: 9093
+                  number: {{ .Values.alertmanager.port }}
 {{- end }}

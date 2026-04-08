@@ -2,17 +2,17 @@
 # INGRESS FOR ALERTMANAGER UI — HTTPS (Traefik)
 # =============================================================================
 
-{{- if .Values.alertmanagerIngress.httpsEnable }}
+{{- if .Values.alertmanager.ingress.httpsEnable }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.alertmanagerIngress.secretName }}
+  name: {{ .Values.alertmanager.ingress.secretName }}
   namespace: {{ .Values.namespace }}
 spec:
-  secretName: {{ .Values.alertmanagerIngress.secretName }}
+  secretName: {{ .Values.alertmanager.ingress.secretName }}
   dnsNames:
-    - {{ .Values.alertmanagerIngress.domain }}
+    - {{ .Values.alertmanager.ingress.domain }}
   issuerRef:
     name: {{ .Values.clusterIssuer }}
     kind: ClusterIssuer
@@ -21,23 +21,23 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-alertmanager-https
+  name: alertmanager-https
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
     traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.entryPoints.websecure }}"
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.vpnOnlyEnabled }}
+    {{- if .Values.alertmanager.ingress.vpnOnlyEnabled }}
     traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingressClass }}
   tls:
     - hosts:
-        - {{ .Values.alertmanagerIngress.domain }}
-      secretName: {{ .Values.alertmanagerIngress.secretName }}
+        - {{ .Values.alertmanager.ingress.domain }}
+      secretName: {{ .Values.alertmanager.ingress.secretName }}
   rules:
-    - host: {{ .Values.alertmanagerIngress.domain }}
+    - host: {{ .Values.alertmanager.ingress.domain }}
       http:
         paths:
           - path: /
@@ -46,5 +46,5 @@ spec:
               service:
                 name: alertmanager-instance
                 port:
-                  number: 9093
+                  number: {{ .Values.alertmanager.port }}
 {{- end }}
