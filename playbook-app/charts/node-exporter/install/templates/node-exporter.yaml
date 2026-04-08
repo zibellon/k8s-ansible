@@ -44,22 +44,15 @@ spec:
         - name: node-exporter
           image: "{{ .Values.node_exporter.image.name }}:{{ .Values.node_exporter.image.tag }}"
           imagePullPolicy: IfNotPresent
+          {{- if .Values.node_exporter.args }}
           args:
-            - --path.procfs=/host/proc
-            - --path.sysfs=/host/sys
-            - --path.rootfs=/host/root
-            - --path.udev.data=/host/root/run/udev/data
-            - --web.listen-address=[$(HOST_IP)]:9100
-            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
-            - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+            {{- toYaml .Values.node_exporter.args | nindent 12 }}
+          {{- end }}
           securityContext:
             readOnlyRootFilesystem: true
-          env:
-            - name: HOST_IP
-              value: 0.0.0.0
           ports:
             - name: http-metrics
-              containerPort: 9100
+              containerPort: {{ .Values.node_exporter.port }}
               protocol: TCP
           {{- if .Values.resources }}
           resources:
@@ -103,7 +96,7 @@ spec:
   selector:
     app.kubernetes.io/name: node-exporter
   ports:
-    - port: 9100
-      targetPort: 9100
+    - port: {{ .Values.node_exporter.port }}
+      targetPort: {{ .Values.node_exporter.port }}
       protocol: TCP
       name: http-metrics
