@@ -450,8 +450,8 @@
 - обновление (версия)
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на несколько файлов
+    - `playbook-app/charts/argocd/crds/crds.yaml` - только CRD (там примерно 24к строк)
     - `playbook-app/charts/argocd/pre/templates/configmaps.yaml` - ссюда нужно перенести 7 ConfigMaps + сохранить возможности расширения через HELM
-    - `playbook-app/charts/argocd/install/crds/crds.yaml` - только CRD (там примерно 24к строк)
     - `playbook-app/charts/argocd/install/templates/argocd.yaml` - все, кроме CRD и configmaps
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
   - Версия не указывается в `hosts-vars/` | `hosts-vars-override/` -> так как версия будет в `*.yaml`
@@ -502,39 +502,64 @@
 ## ---
 ## prometheus-operator + prometheus. yaml -> helm
 ## ---
+## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/mon-prometheus-operator-install.yaml`
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## ---
+## Важно_1. Через указание --tags crds = можно установить только CRDs
+## ---
+## `--tags crds, pre, install, post`
+## ---
 ## 
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-prometheus-operator-install.yaml`
-
-Alertmanager CRD
-└── alertmanagerConfiguration.name → alertmanager-root-config (root, один)
-    └── route: receiver=null (fallback)
-        ├── [auto-injected] namespace=mon → AlertmanagerConfig "alertmanager-root-config"
-        ├── [auto-injected] namespace=gitlab → AlertmanagerConfig "gitlab-alerts"
-        ├── [auto-injected] namespace=backend → AlertmanagerConfig "backend-alerts"
-        └── [auto-injected] namespace=... → любое количество
+- установка
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-prometheus-operator-install.yaml`
+- обновление (версия)
+  - Скачать новый yaml. https://github.com/prometheus-operator/prometheus-operator/releases
+  - Разнести yaml на несколько файлов
+    - `playbook-app/charts/prometheus-operator/crds/crds.yaml` - сюда все CRD, (примерно 80_000 строк)
+    - `playbook-app/charts/prometheus-operator/install/templates/prometheus-operator.yaml` - вся установка (Deplyment, RBAC, Service)
+  - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
+  - Версия не указывается в `hosts-vars/` | `hosts-vars-override/` -> так как версия будет в `*.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-prometheus-operator-install.yaml`
 
 ## ---
 ## node-exporter. yaml -> helm
 ## ---
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## ---
+## `--tags pre, install`
+## ---
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-node-exporter-install.yaml`
+- установка
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-node-exporter-install.yaml`
 
 ## ---
 ## kube-state-metrics. yaml -> helm
 ## ---
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## ---
+## `--tags pre, install`
+## ---
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-kube-state-metrics.yaml`
+- установка
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-kube-state-metrics.yaml`
 
 ## ---
 ## grafana. yaml -> helm
 ## ---
+## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Есть дополнительный файл для `vault + ESO`
+## ---
+## `--tags pre, install, post`
+## ---
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/grafana.yaml`
+- установка
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/grafana.yaml`
 
-
-## ---------------
-## ---------------
-## ---------------
+## ---------------------
+## ---------------------
+## ---------------------
 
 # ---------
 # ---HELPERS
@@ -686,6 +711,17 @@ Alertmanager CRD
     2.  Если надо, поменять в mount-volue (напрмиер - postgres, нужно выполнить команду внутри контейннера)
     3.  выполнить через ArgoCD-ui = sync + force + replace
     4.  Готово
+
+# ---------
+# Alertmanager
+# ---------
+Alertmanager CRD
+└── alertmanagerConfiguration.name → alertmanager-root-config (root, один)
+    └── route: receiver=null (fallback)
+        ├── [auto-injected] namespace=mon → AlertmanagerConfig "alertmanager-root-config"
+        ├── [auto-injected] namespace=gitlab → AlertmanagerConfig "gitlab-alerts"
+        ├── [auto-injected] namespace=backend → AlertmanagerConfig "backend-alerts"
+        └── [auto-injected] namespace=... → любое количество
 
 # ---------
 # ЕЩЕ НЕ ГОТОВО

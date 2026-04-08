@@ -51,7 +51,53 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: PROMETHEUS-OPERATOR/PRE (NetworkPolicies)
+    # STEP 1: PROMETHEUS-OPERATOR/CRDS (CRDs)
+    # =========================================================================
+
+    - name: "[prometheus-operator-crds] Copy CRDs to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "prometheus-operator-crds"
+        chart_name: "crds"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/crds/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/crds"
+      tags: [crds]
+
+    - name: "[prometheus-operator-crds] Copy install chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "prometheus-operator-crds"
+        chart_name: "install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/install"
+      tags: [crds]
+
+    - name: "[prometheus-operator-crds] Install prometheus-operator CRDs via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/prometheus-operator/crds/crds.yaml
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [crds]
+
+    - name: "[prometheus-operator-crds] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "prometheus-operator-crds"
+        crds_list:
+          - crd/alertmanagerconfigs.monitoring.coreos.com
+          - crd/alertmanagers.monitoring.coreos.com
+          - crd/podmonitors.monitoring.coreos.com
+          - crd/probes.monitoring.coreos.com
+          - crd/prometheusagents.monitoring.coreos.com
+          - crd/prometheuses.monitoring.coreos.com
+          - crd/prometheusrules.monitoring.coreos.com
+          - crd/scrapeconfigs.monitoring.coreos.com
+          - crd/servicemonitors.monitoring.coreos.com
+          - crd/thanosrulers.monitoring.coreos.com
+      tags: [crds]
+
+    # =========================================================================
+    # STEP 2: PROMETHEUS-OPERATOR/PRE (NetworkPolicies)
     # =========================================================================
 
     - name: "[prometheus-operator-pre] Copy pre chart to remote"
@@ -97,50 +143,8 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 2: PROMETHEUS-OPERATOR/INSTALL (CRDs + operator manifests)
+    # STEP 3: PROMETHEUS-OPERATOR/INSTALL (operator manifests)
     # =========================================================================
-
-    - name: "[prometheus-operator-install] Copy CRDs to remote"
-      include_tasks: tasks/tasks-copy-chart.yaml
-      vars:
-        label_name: "prometheus-operator-install"
-        chart_name: "crds"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/crds/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/crds"
-      tags: [install]
-
-    - name: "[prometheus-operator-install] Copy install chart to remote"
-      include_tasks: tasks/tasks-copy-chart.yaml
-      vars:
-        label_name: "prometheus-operator-install"
-        chart_name: "install"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/install/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/install"
-      tags: [install]
-
-    - name: "[prometheus-operator-install] Install prometheus-operator CRDs via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/prometheus-operator/crds/crds.yaml
-      failed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[prometheus-operator-install] Wait for CRDs"
-      include_tasks: tasks/tasks-wait-crds.yaml
-      vars:
-        label_name: "prometheus-operator-install"
-        crds_list:
-          - crd/alertmanagerconfigs.monitoring.coreos.com
-          - crd/alertmanagers.monitoring.coreos.com
-          - crd/podmonitors.monitoring.coreos.com
-          - crd/probes.monitoring.coreos.com
-          - crd/prometheusagents.monitoring.coreos.com
-          - crd/prometheuses.monitoring.coreos.com
-          - crd/prometheusrules.monitoring.coreos.com
-          - crd/scrapeconfigs.monitoring.coreos.com
-          - crd/servicemonitors.monitoring.coreos.com
-          - crd/thanosrulers.monitoring.coreos.com
-      tags: [install]
 
     - name: "[prometheus-operator-install] Create values file"
       copy:
@@ -174,7 +178,7 @@
       tags: [install]
 
     # =========================================================================
-    # WAIT FOR PROMETHEUS-OPERATOR TO BE READY
+    # STEP 4: PROMETHEUS-OPERATOR/ROLLOUT (operator rollout)
     # =========================================================================
 
     - name: "[prometheus-operator-install] Wait for rollout"
