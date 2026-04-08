@@ -1,0 +1,120 @@
+# =============================================================================
+# PROMETHEUS INSTANCE — RBAC + CRD + Service
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-instance
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus-instance
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: true
+
+---
+# =============================================================================
+# RBAC — cluster-wide read access for scraping
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-instance
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus-instance
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources:
+      - endpointslices
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-instance
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus-instance
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-instance
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-instance
+    namespace: {{ .Values.namespace }}
+
+---
+# =============================================================================
+# PROMETHEUS CRD — spec passed entirely from values
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: prometheus-instance
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus-instance
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+spec:
+  {{- .Values.prometheusSpec | toYaml | nindent 2 }}
+
+---
+# =============================================================================
+# SERVICE — ClusterIP exposing Prometheus UI + config-reloader
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-instance
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus-instance
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-web
+      port: {{ .Values.prometheus.port }}
+      targetPort: {{ .Values.prometheus.port }}
+    - name: reloader-web
+      appProtocol: http
+      port: {{ .Values.prometheus.reloaderPort }}
+      targetPort: reloader-web
+  selector:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus-instance
+  publishNotReadyAddresses: false
+  sessionAffinity: None

@@ -1,0 +1,216 @@
+---
+# Default deny all traffic in grafana namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for all pods in grafana namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Grafana: ingress from Traefik (UI), egress to Prometheus + Alertmanager
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Traefik → Grafana UI
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.grafana.port }}
+  egress:
+    # Prometheus
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: {{ .Values.monitoring.prometheus.port }}
+    # Alertmanager
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+      ports:
+        - protocol: TCP
+          port: {{ .Values.monitoring.alertmanager.port }}
+    # External (HTTP/HTTPS)
+    - ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge)
+# =============================================================================
+
+---
+# Allow Traefik ingress to cert-manager ACME solver pod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- .Values.acmeSolverLabels | toYaml | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# TRAEFIK — egress to grafana namespace
+# =============================================================================
+
+---
+# Allow Traefik egress to Grafana UI + ACME solver
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ .Values.namespace }}-allow-traefik"
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    # Grafana UI
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: {{ .Values.grafana.port }}
+    # ACME solver in grafana namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- .Values.acmeSolverLabels | toYaml | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# MONITORING (mon) — ingress from grafana namespace
+# =============================================================================
+
+---
+# Allow Grafana ingress to Prometheus
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ .Values.namespace }}-allow-prometheus"
+  namespace: {{ .Values.monitoring.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: {{ .Values.monitoring.prometheus.port }}
+
+---
+# Allow Grafana ingress to Alertmanager
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ .Values.namespace }}-allow-alertmanager"
+  namespace: {{ .Values.monitoring.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: {{ .Values.monitoring.alertmanager.port }}

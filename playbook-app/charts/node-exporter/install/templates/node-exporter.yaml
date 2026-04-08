@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: node-exporter
+  namespace: "{{ .Values.namespace }}"
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: "{{ .Values.namespace }}"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: node-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: node-exporter
+        app.kubernetes.io/instance: node-exporter
+        app.kubernetes.io/component: metrics
+        app.kubernetes.io/part-of: monitoring
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+      serviceAccountName: node-exporter
+      {{- if .Values.tolerations }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: node-exporter
+          image: "{{ .Values.node_exporter.image.name }}:{{ .Values.node_exporter.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          {{- if .Values.node_exporter.args }}
+          args:
+            {{- toYaml .Values.node_exporter.args | nindent 12 }}
+          {{- end }}
+          securityContext:
+            readOnlyRootFilesystem: true
+          ports:
+            - name: http-metrics
+              containerPort: {{ .Values.node_exporter.port }}
+              protocol: TCP
+          {{- if .Values.resources }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              mountPropagation: HostToContainer
+              readOnly: true
+      hostNetwork: true
+      hostPID: true
+      hostIPC: false
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+  namespace: "{{ .Values.namespace }}"
+  labels:
+    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: node-exporter
+  ports:
+    - port: {{ .Values.node_exporter.port }}
+      targetPort: {{ .Values.node_exporter.port }}
+      protocol: TCP
+      name: http-metrics

@@ -1,0 +1,349 @@
+# =============================================================================
+# Install Grafana via local Helm charts
+# Steps:
+#   1. pre:     NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
+#   2. vault:   Generate and store admin credentials in Vault
+#   3. install: PVC + Deployment + Service
+#   4. post:    Ingress + Certificate
+#
+# Usage (tags):
+#   ansible-playbook grafana-install.yaml              # full install
+#   ansible-playbook grafana-install.yaml --tags pre   # only NetworkPolicies + ESO
+#   ansible-playbook grafana-install.yaml --tags install
+#   ansible-playbook grafana-install.yaml --tags post  # only Ingress
+# =============================================================================
+
+- name: Install Grafana via local Helm chart
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[grafana-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "grafana-pre-check"
+      tags: [always]
+
+    - name: "[grafana-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        label_name: "grafana-pre-check"
+        namespace_value: "{{ grafana_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations + resolve ACME solver labels
+    # =========================================================================
+
+    - name: "[grafana-init] Merge ESO integrations"
+      include_tasks: tasks/tasks-eso-merge.yaml
+      tags: [always]
+
+    - name: "[grafana-init] Resolve ACME solver"
+      include_tasks: tasks/tasks-resolve-acme-solver.yaml
+      vars:
+        label_name: grafana-init
+        cluster_issuer_name: "{{ grafana_cluster_issuer }}"
+        ingress_class_name: "{{ grafana_ingress_class }}"
+        acme_cluster_issuer_result_var: "grafana_acme_cluster_issuer"
+        acme_solver_result_var: "grafana_acme_solver"
+        acme_pod_labels_result_var: "grafana_acme_solver_pod_labels"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (NetworkPolicies + ESO)
+    # =========================================================================
+
+    - name: "[grafana-pre] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "grafana-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/grafana/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/grafana/pre"
+      tags: [pre]
+
+    - name: "[grafana-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/grafana/pre/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ grafana_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+            instanceName: traefik-{{ traefik_namespace }}
+          monitoring:
+            namespace: {{ prometheus_operator_namespace }}
+            prometheus:
+              port: {{ prometheus_port }}
+            alertmanager:
+              port: {{ alertmanager_port }}
+          grafanaEso:
+            vaultServerUrl: {{ vault_internal_url }}
+            saName: {{ eso_vault_integration_grafana.sa_name }}
+            roleName: {{ eso_vault_integration_grafana.role_name }}
+            secretStoreName: {{ eso_vault_integration_grafana.secret_store_name }}
+            kvEnginePath: {{ eso_vault_integration_grafana.kv_engine_path }}
+            secrets: {{ eso_vault_integration_grafana_secrets_merged | to_json }}
+          esoResourcesConfig:
+            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
+            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
+            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
+          grafana:
+            port: {{ grafana_port }}
+          acmeSolverLabels: {{ grafana_acme_solver_pod_labels | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[grafana-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install grafana-pre {{ remote_charts_dir }}/grafana/pre
+        --namespace {{ grafana_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/grafana/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ grafana_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: GENERATE AND STORE ADMIN CREDENTIALS IN VAULT
+    # =========================================================================
+
+    - name: "[grafana-vault-secrets] Find admin secret vault path"
+      set_fact:
+        vault_path_grafana_admin: "{{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).vault_path }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[grafana-vault-secrets] Check if admin secret exists"
+      shell: |
+        kubectl exec -n {{ vault_namespace }} vault-0 -- \
+          vault kv get -format=json \
+          {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }} 2>/dev/null
+      register: grafana_admin_secret_check
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[grafana-vault-secrets] Generate admin credentials"
+      set_fact:
+        generated_grafana_admin_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: grafana_admin_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[grafana-vault-secrets] Store admin credentials in Vault"
+      command: >
+        kubectl exec -n {{ vault_namespace }} vault-0 --
+        vault kv put {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}
+        username={{ grafana_admin_username }}
+        password={{ generated_grafana_admin_password }}
+      when: grafana_admin_secret_check.rc != 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[grafana-wait-eso] Force sync admin secret"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        label_name: "grafana-wait-eso"
+        eso_sync_namespace: "{{ grafana_namespace }}"
+        eso_sync_es_name: "{{ item }}"
+      loop: >-
+        {{
+          eso_vault_integration_grafana_secrets_merged
+          | map(attribute='external_secret_name')
+          | list
+        }}
+      tags: [install]
+
+    - name: "[grafana-wait-eso] Wait for admin secret"
+      command: kubectl get secret eso-grafana-admin -n {{ grafana_namespace }}
+      register: grafana_admin_secret_wait
+      until: grafana_admin_secret_wait.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: INSTALL (PVC + Deployment + Service)
+    # =========================================================================
+
+    - name: "[grafana-install] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "grafana-install"
+        chart_name: "install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/grafana/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/grafana/install"
+      tags: [install]
+
+    - name: "[grafana-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/grafana/install/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ grafana_namespace }}
+          grafana:
+            port: {{ grafana_port }}
+            image:
+              name: {{ grafana_image_name }}
+              tag: {{ grafana_image_tag }}
+            installPlugins: {{ grafana_install_plugins | default('') }}
+            externalUrl: {{ grafana_external_url }}
+          adminSecret:
+            name: eso-grafana-admin
+            usernameKey: username
+            passwordKey: password
+          pvc:
+            storageClassName: {{ grafana_storage_class }}
+            storageSize: {{ grafana_storage_size }}
+            accessMode: {{ grafana_storage_access_mode }}
+          tolerations: {{ grafana_tolerations | to_json }}
+          nodeSelector: {{ grafana_node_selector | to_json }}
+          resources: {{ grafana_resources | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[grafana-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install grafana {{ remote_charts_dir }}/grafana/install
+        --namespace {{ grafana_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/grafana/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ grafana_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[grafana-install] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "grafana-install"
+        rollout_namespace: "{{ grafana_namespace }}"
+        rollout_timeout: "{{ grafana_rollout_timeout }}"
+        rollout_resources:
+          - deployment/grafana
+      tags: [install]
+
+    # =========================================================================
+    # STEP 4: POST (Ingress + Certificate)
+    # =========================================================================
+
+    - name: "[grafana-post] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "grafana-post"
+        chart_name: "post"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/grafana/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/grafana/post"
+      tags: [post]
+
+    - name: "[grafana-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/grafana/post/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ grafana_namespace }}
+          ingressClass: {{ grafana_ingress_class }}
+          clusterIssuer: {{ grafana_cluster_issuer }}
+          vpnOnlyEnabled: {{ grafana_vpn_only_enabled }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+            entryPoints:
+              web: {{ traefik_web_entrypoint }}
+              websecure: {{ traefik_websecure_entrypoint }}
+          grafana:
+            ingress:
+              domain: {{ grafana_domain }}
+              secretName: {{ grafana_https_secret_name }}
+              httpEnable: {{ grafana_http_enable }}
+              httpsEnable: {{ grafana_https_enable }}
+            port: {{ grafana_port }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[grafana-post] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install grafana-post {{ remote_charts_dir }}/grafana/post
+        --namespace {{ grafana_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/grafana/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ grafana_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[grafana-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ grafana_namespace }}"
+        label_name: "grafana-verify"
+      tags: [always]
+
+    - name: "[grafana-verify] Get pods status"
+      command: kubectl get pods -n {{ grafana_namespace }} -o wide
+      register: grafana_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[grafana-verify] Print pods status"
+      debug:
+        msg: "{{ grafana_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[grafana-verify] Verify NetworkPolicies"
+      command: kubectl get networkpolicies -n {{ grafana_namespace }}
+      register: np_verify
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[grafana-verify] Show NetworkPolicies"
+      debug:
+        var: np_verify.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[grafana-verify] Installation complete"
+      debug:
+        msg:
+          - "grafana-pre + grafana + grafana-post: OK"
+          - "Grafana UI: https://{{ grafana_domain }}"
+          - "Namespace: {{ grafana_namespace }}"
+          - "Admin credentials stored in Vault: {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin | default('') }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

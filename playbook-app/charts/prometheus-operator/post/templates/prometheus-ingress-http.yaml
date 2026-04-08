@@ -1,0 +1,31 @@
+# =============================================================================
+# INGRESS FOR PROMETHEUS UI — HTTP (Traefik)
+# =============================================================================
+
+{{- if .Values.prometheus.ingress.httpEnable }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus-http
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
+    {{- if .Values.prometheus.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.traefik.namespace }}-vpn-only@kubernetescrd"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  rules:
+    - host: {{ .Values.prometheus.ingress.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus-instance
+                port:
+                  number: {{ .Values.prometheus.port }}
+{{- end }}

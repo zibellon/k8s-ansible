@@ -1,0 +1,217 @@
+# =============================================================================
+# Install NodeExporter via local Helm charts
+# Steps:
+#   1. pre:     NetworkPolicies
+#   2. install: DaemonSet + ServiceAccount + Service
+#   3. post:    (reserved, empty)
+#
+# Usage (tags):
+#   ansible-playbook node-exporter-install.yaml              # full install
+#   ansible-playbook node-exporter-install.yaml --tags pre   # only NetworkPolicies
+#   ansible-playbook node-exporter-install.yaml --tags install
+#   ansible-playbook node-exporter-install.yaml --tags post
+# =============================================================================
+
+- name: Install NodeExporter via local Helm chart
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[node-exporter-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "node-exporter-pre-check"
+      tags: [always]
+
+    - name: "[node-exporter-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        label_name: "node-exporter-pre-check"
+        namespace_value: "{{ node_exporter_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (NetworkPolicies)
+    # =========================================================================
+
+    - name: "[node-exporter-pre] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "node-exporter-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/node-exporter/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/node-exporter/pre"
+      tags: [pre]
+
+    - name: "[node-exporter-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/node-exporter/pre/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ node_exporter_namespace }}
+          node_exporter:
+            port: {{ node_exporter_port }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[node-exporter-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install node-exporter-pre {{ remote_charts_dir }}/node-exporter/pre
+        --namespace {{ node_exporter_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/node-exporter/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ node_exporter_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: INSTALL (DaemonSet + ServiceAccount + Service)
+    # =========================================================================
+
+    - name: "[node-exporter-install] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "node-exporter-install"
+        chart_name: "install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/node-exporter/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/node-exporter/install"
+      tags: [install]
+
+    - name: "[node-exporter-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/node-exporter/install/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ node_exporter_namespace }}
+          node_exporter:
+            image:
+              name: {{ node_exporter_image_name }}
+              tag: {{ node_exporter_image_tag }}
+            port: {{ node_exporter_port }}
+            args: {{ node_exporter_args | to_json }}
+          tolerations: {{ node_exporter_tolerations | to_json }}
+          nodeSelector: {{ node_exporter_node_selector | to_json }}
+          resources: {{ node_exporter_resources | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[node-exporter-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install node-exporter {{ remote_charts_dir }}/node-exporter/install
+        --namespace {{ node_exporter_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/node-exporter/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ node_exporter_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[node-exporter-install] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "node-exporter-install"
+        rollout_namespace: "{{ node_exporter_namespace }}"
+        rollout_timeout: "{{ node_exporter_rollout_timeout }}"
+        rollout_resources:
+          - daemonset/node-exporter
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: POST (reserved)
+    # =========================================================================
+
+    - name: "[node-exporter-post] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "node-exporter-post"
+        chart_name: "post"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/node-exporter/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/node-exporter/post"
+      tags: [post]
+
+    - name: "[node-exporter-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/node-exporter/post/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ node_exporter_namespace }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[node-exporter-post] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install node-exporter-post {{ remote_charts_dir }}/node-exporter/post
+        --namespace {{ node_exporter_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/node-exporter/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ node_exporter_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[node-exporter-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ node_exporter_namespace }}"
+        label_name: "node-exporter-verify"
+      tags: [always]
+
+    - name: "[node-exporter-verify] Get pods status"
+      command: kubectl get pods -n {{ node_exporter_namespace }} -o wide
+      register: node_exporter_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[node-exporter-verify] Print pods status"
+      debug:
+        msg: "{{ node_exporter_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[node-exporter-verify] Verify NetworkPolicies"
+      command: kubectl get networkpolicies -n {{ node_exporter_namespace }}
+      register: np_verify
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[node-exporter-verify] Show NetworkPolicies"
+      debug:
+        var: np_verify.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[node-exporter-verify] Installation complete"
+      debug:
+        msg:
+          - "node-exporter-pre + node-exporter + node-exporter-post: OK"
+          - "Namespace: {{ node_exporter_namespace }}"
+          - "Image: {{ node_exporter_image_name }}:{{ node_exporter_image_tag }}"
+          - "DaemonSet runs on all nodes (toleration: Exists)"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

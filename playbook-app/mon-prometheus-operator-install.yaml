@@ -1,0 +1,414 @@
+# =============================================================================
+# Install Prometheus Operator + Prometheus + Alertmanager via local Helm charts
+# Steps:
+#   1. pre:          NetworkPolicies (operator + prometheus + alertmanager)
+#   2. install:      CRDs + operator deployment
+#   3. prometheus:   Prometheus CRD + RBAC + Service
+#   4. alertmanager: Alertmanager CRD + AlertmanagerConfig + Service
+#   5. post:         Ingress + Certificates for Prometheus and Alertmanager UIs
+#
+# Usage (tags):
+#   ansible-playbook prometheus-operator-install.yaml                   # full install
+#   ansible-playbook prometheus-operator-install.yaml --tags pre        # only NetworkPolicies
+#   ansible-playbook prometheus-operator-install.yaml --tags install    # only operator
+#   ansible-playbook prometheus-operator-install.yaml --tags prometheus # only prometheus
+#   ansible-playbook prometheus-operator-install.yaml --tags alertmanager
+#   ansible-playbook prometheus-operator-install.yaml --tags post       # only ingress
+# =============================================================================
+
+- name: Install Prometheus Operator via local Helm chart
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[prometheus-operator-install-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "prometheus-operator-install-pre-check"
+      tags: [always]
+
+    - name: "[prometheus-operator-install-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        label_name: "prometheus-operator-install-pre-check"
+        namespace_value: "{{ prometheus_operator_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Resolve ACME solver labels (needed for pre NetworkPolicy)
+    # =========================================================================
+
+    - name: "[prometheus-operator-init] Resolve ACME solver"
+      include_tasks: tasks/tasks-resolve-acme-solver.yaml
+      vars:
+        label_name: prometheus-operator-init
+        cluster_issuer_name: "{{ prometheus_operator_cluster_issuer }}"
+        ingress_class_name: "{{ prometheus_operator_ingress_class }}"
+        acme_cluster_issuer_result_var: "prometheus_acme_cluster_issuer"
+        acme_solver_result_var: "prometheus_acme_solver"
+        acme_pod_labels_result_var: "prometheus_acme_solver_pod_labels"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PROMETHEUS-OPERATOR/CRDS (CRDs)
+    # =========================================================================
+
+    - name: "[prometheus-operator-crds] Copy CRDs to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "prometheus-operator-crds"
+        chart_name: "crds"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/crds/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/crds"
+      tags: [crds]
+
+    - name: "[prometheus-operator-crds] Copy install chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "prometheus-operator-crds"
+        chart_name: "install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/install"
+      tags: [crds]
+
+    - name: "[prometheus-operator-crds] Install prometheus-operator CRDs via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/prometheus-operator/crds/crds.yaml
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [crds]
+
+    - name: "[prometheus-operator-crds] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "prometheus-operator-crds"
+        crds_list:
+          - crd/alertmanagerconfigs.monitoring.coreos.com
+          - crd/alertmanagers.monitoring.coreos.com
+          - crd/podmonitors.monitoring.coreos.com
+          - crd/probes.monitoring.coreos.com
+          - crd/prometheusagents.monitoring.coreos.com
+          - crd/prometheuses.monitoring.coreos.com
+          - crd/prometheusrules.monitoring.coreos.com
+          - crd/scrapeconfigs.monitoring.coreos.com
+          - crd/servicemonitors.monitoring.coreos.com
+          - crd/thanosrulers.monitoring.coreos.com
+      tags: [crds]
+
+    # =========================================================================
+    # STEP 2: PROMETHEUS-OPERATOR/PRE (NetworkPolicies)
+    # =========================================================================
+
+    - name: "[prometheus-operator-pre] Copy pre chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "prometheus-operator-pre"
+        chart_name: "pre"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/pre"
+      tags: [pre]
+
+    - name: "[prometheus-operator-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/prometheus-operator/pre/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ prometheus_operator_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+            instanceName: traefik-{{ traefik_namespace }}
+          acmeSolverLabels: {{ prometheus_acme_solver_pod_labels | to_json }}
+          prometheus:
+            port: {{ prometheus_port }}
+          alertmanager:
+            port: {{ alertmanager_port }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[prometheus-operator-pre] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install prometheus-operator-pre {{ remote_charts_dir }}/prometheus-operator/pre
+        --namespace {{ prometheus_operator_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/prometheus-operator/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ prometheus_operator_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 3: PROMETHEUS-OPERATOR/INSTALL (operator manifests)
+    # =========================================================================
+
+    - name: "[prometheus-operator-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/prometheus-operator/install/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ prometheus_operator_namespace }}
+          tolerations: {{ prometheus_operator_tolerations | to_json }}
+          nodeSelector: {{ prometheus_operator_node_selector | to_json }}
+          resources: {{ prometheus_operator_resources | to_json }}
+          port: {{ prometheus_operator_port }}
+          args: {{ prometheus_operator_args | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[prometheus-operator-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install prometheus-operator {{ remote_charts_dir }}/prometheus-operator/install
+        --namespace {{ prometheus_operator_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/prometheus-operator/install/values-override.yaml
+        --cleanup-on-fail
+        --skip-crds
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ prometheus_operator_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # =========================================================================
+    # STEP 4: PROMETHEUS-OPERATOR/ROLLOUT (operator rollout)
+    # =========================================================================
+
+    - name: "[prometheus-operator-install] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "prometheus-operator-install"
+        rollout_namespace: "{{ prometheus_operator_namespace }}"
+        rollout_timeout: "{{ prometheus_operator_components_rollout_timeout }}"
+        rollout_resources:
+          - deployment/prometheus-operator
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: PROMETHEUS/INSTALL (Prometheus CRD + RBAC + Service)
+    # =========================================================================
+
+    - name: "[prometheus-install] Copy prometheus install chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "prometheus-install"
+        chart_name: "prometheus-install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/prometheus/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/prometheus/install"
+      tags: [prometheus]
+
+    - name: "[prometheus-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/prometheus-operator/prometheus/install/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ prometheus_operator_namespace }}
+          prometheusSpec: {{ prometheus_spec | to_json }}
+          prometheus:
+            port: {{ prometheus_port }}
+            reloaderPort: {{ prometheus_reloader_port }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [prometheus]
+
+    - name: "[prometheus-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install prometheus-operator-prometheus {{ remote_charts_dir }}/prometheus-operator/prometheus/install
+        --namespace {{ prometheus_operator_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/prometheus-operator/prometheus/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ prometheus_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [prometheus]
+
+    - name: "[prometheus-install] Wait for prometheus rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "prometheus-install"
+        rollout_namespace: "{{ prometheus_operator_namespace }}"
+        rollout_timeout: "{{ prometheus_rollout_timeout }}"
+        rollout_resources:
+          - statefulset/prometheus-prometheus-instance
+      tags: [prometheus]
+
+    # =========================================================================
+    # STEP 4: ALERTMANAGER/INSTALL (Alertmanager CRD + AlertmanagerConfig + Service)
+    # =========================================================================
+
+    - name: "[alertmanager-install] Copy alertmanager install chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "alertmanager-install"
+        chart_name: "alertmanager-install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/alertmanager/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/alertmanager/install"
+      tags: [alertmanager]
+
+    - name: "[alertmanager-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/prometheus-operator/alertmanager/install/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ prometheus_operator_namespace }}
+          alertmanagerSpec: {{ alertmanager_spec | to_json }}
+          alertmanagerRootConfigSpec: {{ alertmanager_root_config_spec | to_json }}
+          alertmanager:
+            port: {{ alertmanager_port }}
+            meshTcpPort: {{ alertmanager_mesh_tcp_port }}
+            meshUdpPort: {{ alertmanager_mesh_udp_port }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [alertmanager]
+
+    - name: "[alertmanager-install] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install prometheus-operator-alertmanager {{ remote_charts_dir }}/prometheus-operator/alertmanager/install
+        --namespace {{ prometheus_operator_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/prometheus-operator/alertmanager/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ prometheus_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [alertmanager]
+
+    - name: "[alertmanager-install] Wait for alertmanager rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "alertmanager-install"
+        rollout_namespace: "{{ prometheus_operator_namespace }}"
+        rollout_timeout: "{{ prometheus_rollout_timeout }}"
+        rollout_resources:
+          - statefulset/alertmanager-alertmanager-instance
+      tags: [alertmanager]
+
+    # =========================================================================
+    # STEP 5: POST (Ingress + Certificates)
+    # =========================================================================
+
+    - name: "[prometheus-operator-post] Copy post chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "prometheus-operator-post"
+        chart_name: "post"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/post"
+      tags: [post]
+
+    - name: "[prometheus-operator-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/prometheus-operator/post/values-override.yaml"
+        mode: "0600"
+        content: |
+          namespace: {{ prometheus_operator_namespace }}
+          ingressClass: {{ prometheus_operator_ingress_class }}
+          clusterIssuer: {{ prometheus_operator_cluster_issuer }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+            entryPoints:
+              web: {{ traefik_web_entrypoint }}
+              websecure: {{ traefik_websecure_entrypoint }}
+          prometheus:
+            ingress:
+              domain: {{ prometheus_domain }}
+              secretName: {{ prometheus_https_secret_name }}
+              vpnOnlyEnabled: {{ prometheus_vpn_only_enabled }}
+              httpEnable: {{ prometheus_http_enable }}
+              httpsEnable: {{ prometheus_https_enable }}
+            port: {{ prometheus_port }}
+          alertmanager:
+            ingress:
+              domain: {{ alertmanager_domain }}
+              secretName: {{ alertmanager_https_secret_name }}
+              vpnOnlyEnabled: {{ alertmanager_vpn_only_enabled }}
+              httpEnable: {{ alertmanager_http_enable }}
+              httpsEnable: {{ alertmanager_https_enable }}
+            port: {{ alertmanager_port }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[prometheus-operator-post] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install prometheus-operator-post {{ remote_charts_dir }}/prometheus-operator/post
+        --namespace {{ prometheus_operator_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/prometheus-operator/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ prometheus_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[prometheus-operator-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ prometheus_operator_namespace }}"
+        label_name: "prometheus-operator-verify"
+      tags: [always]
+
+    - name: "[prometheus-operator-verify] Get pods status"
+      command: kubectl get pods -n {{ prometheus_operator_namespace }} -o wide
+      register: prometheus_operator_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[prometheus-operator-verify] Print pods status"
+      debug:
+        msg: "{{ prometheus_operator_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[prometheus-operator-verify] Verify NetworkPolicies"
+      command: kubectl get networkpolicies -n {{ prometheus_operator_namespace }}
+      register: np_verify
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[prometheus-operator-verify] Show NetworkPolicies"
+      debug:
+        var: np_verify.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[prometheus-operator-verify] Installation complete"
+      debug:
+        msg:
+          - "prometheus-operator-pre + prometheus-operator + prometheus + alertmanager + post: OK"
+          - "CRDs installed: alertmanagerconfigs, alertmanagers, podmonitors, probes, prometheusagents, prometheuses, prometheusrules, scrapeconfigs, servicemonitors, thanosrulers"
+          - "Prometheus UI: https://{{ prometheus_domain }}"
+          - "Alertmanager UI: https://{{ alertmanager_domain }}"
+          - "Namespace: {{ prometheus_operator_namespace }}"
+          - "Reads ServiceMonitors/PodMonitors from ALL namespaces"
+          - "Reads AlertmanagerConfig from ALL namespaces"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
