@@ -154,20 +154,17 @@ spec:
     spec:
       automountServiceAccountToken: true
       containers:
+      {{- if .Values.args }}
       - args:
-        - --kubelet-service=kube-system/kubelet
-        - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1
-        - --watch-referenced-objects-in-all-namespaces=true
-        - --disable-unmanaged-prometheus-configuration=true
-        - --kubelet-endpoints=true
-        - --kubelet-endpointslice=false
+        {{- toYaml .Values.args | nindent 8 }}
+      {{- end }}
         env:
         - name: GOGC
           value: "30"
         image: quay.io/prometheus-operator/prometheus-operator:v0.90.1
         name: prometheus-operator
         ports:
-        - containerPort: 8080
+        - containerPort: {{ .Values.port }}
           name: http
         {{- if .Values.resources }}
         resources:
@@ -218,7 +215,7 @@ spec:
   clusterIP: None
   ports:
   - name: http
-    port: 8080
+    port: {{ .Values.port }}
     targetPort: http
   selector:
     app.kubernetes.io/component: controller
