@@ -34,6 +34,17 @@
         namespace_value: "{{ cilium_namespace }}"
       tags: [always]
 
+    - name: "[cilium-install-pre-check] Resolve ACME solver"
+      include_tasks: tasks/tasks-resolve-acme-solver.yaml
+      vars:
+        label_name: cilium-install-pre-check
+        cluster_issuer_name: "{{ cilium_hubble_ui_cluster_issuer_name }}"
+        ingress_class_name: "{{ cilium_hubble_ui_ingress_class_name }}"
+        acme_cluster_issuer_result_var: "cilium_hubble_ui_acme_cluster_issuer"
+        acme_solver_result_var: "cilium_hubble_ui_acme_solver"
+        acme_pod_labels_result_var: "cilium_hubble_acme_solver_pod_labels"
+      tags: [always]
+
     # =========================================================================
     # STEP 1: CILIUM-PRE (NetworkPolicies)
     # =========================================================================
@@ -56,6 +67,7 @@
           traefik:
             namespace: {{ traefik_namespace }}
             instanceName: traefik-{{ traefik_namespace }}
+          acmeSolverLabels: {{ cilium_hubble_acme_solver_pod_labels | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [pre]
@@ -195,6 +207,7 @@
         helm upgrade --install cilium cilium/cilium
         --version {{ cilium_version }}
         --namespace {{ cilium_namespace }}
+        --create-namespace
         --values {{ remote_charts_dir }}/cilium/values-override.yaml
         --cleanup-on-fail
         --atomic
@@ -269,6 +282,8 @@
         dest: "{{ remote_charts_dir }}/cilium/post/values-override.yaml"
         mode: "0644"
         content: |
+          namespace: {{ cilium_namespace }}
+
           nodeIps: {{
             (
               (groups['managers'] + groups['workers'])
@@ -281,6 +296,21 @@
               | map('regex_replace', '$', '/32')
               | list
             ) | to_json }}
+
+          hubbleUi:
+            domain: {{ cilium_hubble_ui_domain }}
+            clusterIssuer: {{ cilium_hubble_ui_cluster_issuer_name }}
+            ingressClass: {{ cilium_hubble_ui_ingress_class_name }}
+            secretName: {{ cilium_hubble_ui_https_secret_name }}
+            vpnOnlyEnabled: {{ cilium_hubble_ui_vpn_only_enabled }}
+            httpEnable: {{ cilium_hubble_ui_http_enable }}
+            httpsEnable: {{ cilium_hubble_ui_https_enable }}
+
+          traefik:
+            namespace: {{ traefik_namespace }}
+            entryPoints:
+              web: {{ traefik_web_entrypoint }}
+              websecure: {{ traefik_websecure_entrypoint }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [post]
@@ -337,6 +367,13 @@
     - name: "[cilium-verify] Print CiliumClusterwideNetworkPolicy status"
       debug:
         msg: "{{ ccnp_status.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[cilium-verify] Installation complete"
+      debug:
+        msg: "cilium-hubble: OK (Hubble UI available at https://{{ cilium_hubble_ui_domain }})"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

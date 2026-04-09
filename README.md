@@ -189,9 +189,12 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/cilium-install.yaml`
 ## ---
-## Важно! При установке - может зависнуть на пункте: TASK [[cilium-post] Install or upgrade via Helm]
+## Важно_1. При установке - может зависнуть на пункте: TASK [[cilium-post] Install or upgrade via Helm]
 ## Если такое произошло: Ctrl+C (Остановить процесс) + запустить заново
 ## Причина: когда cilium берет под контроль сеть на node - все соединения обрываются (в том числе и SSH)
+## ---
+## Важно_2. Установка изначально производится только с тагом `--tags install`
+## pre + post = станавливаются позже. После cert-manager, ESO, Traefik, Haproxy
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
@@ -199,7 +202,7 @@
 ## ---
 ##
 - установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags install`
 - обновление (версия, конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml`
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-restart.yaml`
@@ -287,11 +290,12 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/haproxy-restart.yaml`
 
 ## ---
-## cilium-hubble (относится к cilium). yaml -> helm
+## cilium (pre + post). yaml -> helm
 ## ---
 ## Есть hubble-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Это просто дополнительная конфигурация
 ## Тут не запускается никаких контейнеров
+## Устанавливается: NetworkPolicy, kube-system (NetworkPolicy), CiliumClusterWideNetworkPolicy
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
@@ -299,7 +303,7 @@
 ## ---
 ##
 - установка + обновление (версия, конфиг)
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-hubble-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags pre,post`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
 
 ## medik8s
