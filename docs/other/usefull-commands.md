@@ -265,3 +265,17 @@ kubectl exec -it etcd-k8s-manager-1 -n kube-system -- etcdctl \
 
 # Запустить тестовый контейнер
 kubectl run curl-test --rm -it --image=curlimages/curl --restart=Never -- sh
+
+# как проверить путь пакета
+ip route get IP
+
+## Привер вывода
+local 10.129.0.22 dev lo table local src 10.129.0.22 uid 1000 
+    cache <local> 
+
+local 10.129.0.22 dev lo table local src 10.129.0.22 uid 1000
+      ↑            ↑↑
+      │            └─ интерфейс: lo (loopback)
+      └─ тип маршрута: local (это мой IP, не отправлять наружу)
+
+Ядро Linux знает что 10.129.0.22 — это локальный адрес, кладёт пакет прямо в table local и обрабатывает через lo. Физический eth0 не задействован вообще.
