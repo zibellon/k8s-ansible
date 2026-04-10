@@ -569,7 +569,7 @@
 ## ---
 ##
 - установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/grafana.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-grafana-install.yaml`
 
 ## ---------------------
 ## ---------------------

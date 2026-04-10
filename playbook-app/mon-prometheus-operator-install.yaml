@@ -8,12 +8,12 @@
 #   5. post:         Ingress + Certificates for Prometheus and Alertmanager UIs
 #
 # Usage (tags):
-#   ansible-playbook prometheus-operator-install.yaml                   # full install
-#   ansible-playbook prometheus-operator-install.yaml --tags pre        # only NetworkPolicies
-#   ansible-playbook prometheus-operator-install.yaml --tags install    # only operator
-#   ansible-playbook prometheus-operator-install.yaml --tags prometheus # only prometheus
-#   ansible-playbook prometheus-operator-install.yaml --tags alertmanager
-#   ansible-playbook prometheus-operator-install.yaml --tags post       # only ingress
+#   ansible-playbook mon-prometheus-operator-install.yaml                   # full install
+#   ansible-playbook mon-prometheus-operator-install.yaml --tags pre        # only NetworkPolicies
+#   ansible-playbook mon-prometheus-operator-install.yaml --tags install    # only operator
+#   ansible-playbook mon-prometheus-operator-install.yaml --tags prometheus # only prometheus
+#   ansible-playbook mon-prometheus-operator-install.yaml --tags alertmanager
+#   ansible-playbook mon-prometheus-operator-install.yaml --tags post       # only ingress
 # =============================================================================
 
 - name: Install Prometheus Operator via local Helm chart
@@ -59,12 +59,12 @@
       vars:
         label_name: "prometheus-operator-crds"
         chart_name: "crds"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/crds/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/crds"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/crds/"
+        chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/crds"
       tags: [crds]
 
     - name: "[prometheus-operator-crds] Install prometheus-operator CRDs via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/prometheus-operator/crds/crds.yaml
+      command: kubectl create -f {{ remote_charts_dir }}/mon-prometheus-operator/crds/crds.yaml
       failed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -96,13 +96,13 @@
       vars:
         label_name: "prometheus-operator-pre"
         chart_name: "pre"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/pre/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/pre"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/pre"
       tags: [pre]
 
     - name: "[prometheus-operator-pre] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/prometheus-operator/pre/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/pre/values-override.yaml"
         mode: "0600"
         content: |
           namespace: {{ prometheus_operator_namespace }}
@@ -120,10 +120,10 @@
 
     - name: "[prometheus-operator-pre] Install or upgrade via Helm"
       command: >
-        helm upgrade --install prometheus-operator-pre {{ remote_charts_dir }}/prometheus-operator/pre
+        helm upgrade --install prometheus-operator-pre {{ remote_charts_dir }}/mon-prometheus-operator/pre
         --namespace {{ prometheus_operator_namespace }}
         --create-namespace
-        --values {{ remote_charts_dir }}/prometheus-operator/pre/values-override.yaml
+        --values {{ remote_charts_dir }}/mon-prometheus-operator/pre/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
@@ -142,13 +142,13 @@
       vars:
         label_name: "prometheus-operator-install"
         chart_name: "install"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/install/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/install"
       tags: [install]
 
     - name: "[prometheus-operator-install] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/prometheus-operator/install/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/install/values-override.yaml"
         mode: "0600"
         content: |
           namespace: {{ prometheus_operator_namespace }}
@@ -163,10 +163,10 @@
 
     - name: "[prometheus-operator-install] Install or upgrade via Helm"
       command: >
-        helm upgrade --install prometheus-operator {{ remote_charts_dir }}/prometheus-operator/install
+        helm upgrade --install prometheus-operator {{ remote_charts_dir }}/mon-prometheus-operator/install
         --namespace {{ prometheus_operator_namespace }}
         --create-namespace
-        --values {{ remote_charts_dir }}/prometheus-operator/install/values-override.yaml
+        --values {{ remote_charts_dir }}/mon-prometheus-operator/install/values-override.yaml
         --cleanup-on-fail
         --skip-crds
         --atomic
@@ -200,13 +200,13 @@
       vars:
         label_name: "prometheus-install"
         chart_name: "prometheus-install"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/prometheus/install/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/prometheus/install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/prometheus/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install"
       tags: [prometheus]
 
     - name: "[prometheus-install] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/prometheus-operator/prometheus/install/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install/values-override.yaml"
         mode: "0600"
         content: |
           namespace: {{ prometheus_operator_namespace }}
@@ -220,10 +220,10 @@
 
     - name: "[prometheus-install] Install or upgrade via Helm"
       command: >
-        helm upgrade --install prometheus-operator-prometheus {{ remote_charts_dir }}/prometheus-operator/prometheus/install
+        helm upgrade --install prometheus-operator-prometheus {{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install
         --namespace {{ prometheus_operator_namespace }}
         --create-namespace
-        --values {{ remote_charts_dir }}/prometheus-operator/prometheus/install/values-override.yaml
+        --values {{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
@@ -252,13 +252,13 @@
       vars:
         label_name: "alertmanager-install"
         chart_name: "alertmanager-install"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/alertmanager/install/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/alertmanager/install"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/alertmanager/install/"
+        chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install"
       tags: [alertmanager]
 
     - name: "[alertmanager-install] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/prometheus-operator/alertmanager/install/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install/values-override.yaml"
         mode: "0600"
         content: |
           namespace: {{ prometheus_operator_namespace }}
@@ -274,10 +274,10 @@
 
     - name: "[alertmanager-install] Install or upgrade via Helm"
       command: >
-        helm upgrade --install prometheus-operator-alertmanager {{ remote_charts_dir }}/prometheus-operator/alertmanager/install
+        helm upgrade --install prometheus-operator-alertmanager {{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install
         --namespace {{ prometheus_operator_namespace }}
         --create-namespace
-        --values {{ remote_charts_dir }}/prometheus-operator/alertmanager/install/values-override.yaml
+        --values {{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
@@ -306,13 +306,13 @@
       vars:
         label_name: "prometheus-operator-post"
         chart_name: "post"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/prometheus-operator/post/"
-        chart_remote_dest: "{{ remote_charts_dir }}/prometheus-operator/post"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/post"
       tags: [post]
 
     - name: "[prometheus-operator-post] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/prometheus-operator/post/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/post/values-override.yaml"
         mode: "0600"
         content: |
           namespace: {{ prometheus_operator_namespace }}
@@ -347,10 +347,10 @@
 
     - name: "[prometheus-operator-post] Install or upgrade via Helm"
       command: >
-        helm upgrade --install prometheus-operator-post {{ remote_charts_dir }}/prometheus-operator/post
+        helm upgrade --install prometheus-operator-post {{ remote_charts_dir }}/mon-prometheus-operator/post
         --namespace {{ prometheus_operator_namespace }}
         --create-namespace
-        --values {{ remote_charts_dir }}/prometheus-operator/post/values-override.yaml
+        --values {{ remote_charts_dir }}/mon-prometheus-operator/post/values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
