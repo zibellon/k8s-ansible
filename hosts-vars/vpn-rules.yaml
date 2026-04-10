@@ -1,0 +1,27 @@
+all:
+  vars:
+    # ------
+    # VPN Rules
+    # ------
+
+    # L3: VPN IP ranges — используются в NetworkPolicy
+    vpn_ips:
+      - "1.2.3.4/32"
+
+    # L7: VPN Traefik Middleware ресурсы для СОЗДАНИЯ (traefik/post/vpn-middlewares.yaml)
+    # Отдельный helm-template, не смешивается с traefik_middlewares
+    vpn_traefik_middlewares:
+      - name: vpn-only
+        spec:
+          ipAllowList:
+            sourceRange: "{{ vpn_ips }}"
+
+    # L7: Middleware-строка для стандартных k8s Ingress (annotation-based)
+    # Ссылается на traefik_namespace из traefik.yaml (Ansible lazy-eval)
+    vpn_ingress_middlewares: "{{ traefik_namespace }}-vpn-only@kubernetescrd"
+
+    # L7: Middleware-список для Traefik IngressRoute CRD (argocd, zitadel)
+    # Ссылается на traefik_namespace из traefik.yaml (Ansible lazy-eval)
+    vpn_ingress_route_middlewares:
+      - name: vpn-only
+        namespace: "{{ traefik_namespace }}"

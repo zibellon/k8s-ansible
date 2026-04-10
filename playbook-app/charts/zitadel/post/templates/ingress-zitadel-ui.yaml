@@ -22,7 +22,7 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: ingress-zitadel-ui-https
+  name: zitadel-ui-https
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
@@ -35,8 +35,10 @@ spec:
       priority: 10
       {{- if .Values.ingress.vpnOnlyEnabled }}
       middlewares:
-        - name: vpn-only
-          namespace: {{ .Values.traefik.namespace }}
+        {{- range .Values.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
       {{- end }}
       services:
         - name: zitadel
@@ -51,7 +53,7 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: ingress-zitadel-ui-http
+  name: zitadel-ui-http
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
@@ -64,8 +66,10 @@ spec:
       priority: 10
       {{- if .Values.ingress.vpnOnlyEnabled }}
       middlewares:
-        - name: vpn-only
-          namespace: {{ .Values.traefik.namespace }}
+        {{- range .Values.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
       {{- end }}
       services:
         - name: zitadel
