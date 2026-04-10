@@ -197,3 +197,168 @@ all:
         repeatInterval: 4h
       receivers:
         - name: "null"
+
+    # -----------------
+    # System Component Services (for ServiceMonitor scraping)
+    # Headless Services in kube-system pointing to static pods.
+    # ServiceMonitor selects these Services by their metadata labels.
+    # -----------------
+    prometheus_system_services:
+      - name: kube-controller-manager
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-controller-manager
+        clusterIP: None
+        podSelector:
+          component: kube-controller-manager
+        ports:
+          - name: https-metrics
+            port: 10257
+            targetPort: 10257
+            protocol: TCP
+
+      - name: kube-etcd
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-etcd
+        clusterIP: None
+        podSelector:
+          component: etcd
+        ports:
+          - name: http-metrics
+            port: 2381
+            targetPort: 2381
+            protocol: TCP
+
+      - name: kube-scheduler
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-scheduler
+        clusterIP: None
+        podSelector:
+          component: kube-scheduler
+        ports:
+          - name: https-metrics
+            port: 10259
+            targetPort: 10259
+            protocol: TCP
+
+      - name: coredns
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: coredns
+        clusterIP: None
+        podSelector:
+          k8s-app: kube-dns
+        ports:
+          - name: http-metrics
+            port: 9153
+            targetPort: 9153
+            protocol: TCP
+
+    # -----------------
+    # System Component ServiceMonitors
+    # Created in prometheus_operator_namespace (mon).
+    # Prometheus reads from all namespaces (serviceMonitorNamespaceSelector: {}).
+    # kubelet Service is auto-created by prometheus-operator (--kubelet-service=kube-system/kubelet).
+    # -----------------
+    prometheus_system_service_monitors:
+      - name: kube-apiserver
+        namespace: "{{ prometheus_operator_namespace }}"
+        jobLabel: kube-apiserver
+        namespaceSelector:
+          matchNames: [default]
+        selector:
+          matchLabels:
+            component: apiserver
+            provider: kubernetes
+        endpoints:
+          - port: https
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              serverName: kubernetes
+              insecureSkipVerify: false
+
+      - name: kube-controller-manager
+        namespace: "{{ prometheus_operator_namespace }}"
+        jobLabel: kube-controller-manager
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-controller-manager
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
+      - name: kube-etcd
+        namespace: "{{ prometheus_operator_namespace }}"
+        jobLabel: kube-etcd
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-etcd
+        endpoints:
+          - port: http-metrics
+            scheme: http
+
+      - name: kube-scheduler
+        namespace: "{{ prometheus_operator_namespace }}"
+        jobLabel: kube-scheduler
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-scheduler
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
+      - name: coredns
+        namespace: "{{ prometheus_operator_namespace }}"
+        jobLabel: coredns
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: coredns
+        endpoints:
+          - port: http-metrics
+            scheme: http
+
+      - name: kubelet
+        namespace: "{{ prometheus_operator_namespace }}"
+        jobLabel: k8s-app
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kubelet
+            k8s-app: kubelet
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            honorLabels: true
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+          - port: https-metrics
+            scheme: https
+            path: /metrics/cadvisor
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            honorLabels: true
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true

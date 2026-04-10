@@ -1,0 +1,24 @@
+# =============================================================================
+# HEADLESS SERVICES FOR SYSTEM COMPONENT SCRAPING
+# Creates Services in kube-system that point to static pods (controller-manager,
+# etcd, scheduler, coredns). ServiceMonitors select these Services by their
+# metadata labels.
+# =============================================================================
+
+{{- range .Values.systemServices }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+  labels:
+    {{- toYaml .labels | nindent 4 }}
+spec:
+  clusterIP: {{ .clusterIP }}
+  selector:
+    {{- toYaml .podSelector | nindent 4 }}
+  ports:
+    {{- toYaml .ports | nindent 4 }}
+  type: ClusterIP
+{{- end }}
