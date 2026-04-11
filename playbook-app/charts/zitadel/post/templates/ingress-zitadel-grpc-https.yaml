@@ -1,9 +1,11 @@
-{{- if not .Values.ingress.httpEnabled }}
 # =============================================================================
 # INGRESSROUTE FOR ZITADEL gRPC — HTTPS (Traefik)
 # Matches gRPC requests by Content-Type header. Higher priority than UI route.
 # Backend speaks h2c (HTTP/2 cleartext) on port 8080.
 # =============================================================================
+
+{{- if .Values.ingress.httpsEnable }}
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -31,33 +33,4 @@ spec:
           scheme: h2c
   tls:
     secretName: {{ .Values.ingress.tlsSecretName }}
-{{- else }}
-# =============================================================================
-# INGRESSROUTE FOR ZITADEL gRPC — HTTP (Traefik)
-# =============================================================================
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: zitadel-grpc-http
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
-spec:
-  entryPoints:
-    - {{ .Values.traefik.entryPoints.web }}
-  routes:
-    - kind: Rule
-      match: Host(`{{ .Values.ingress.domain }}`) && Header(`Content-Type`, `application/grpc`)
-      priority: 11
-      {{- if .Values.ingress.vpnOnlyEnabled }}
-      middlewares:
-        {{- range .Values.vpnIngressRouteMiddlewares }}
-        - name: {{ .name }}
-          namespace: {{ .namespace }}
-        {{- end }}
-      {{- end }}
-      services:
-        - name: zitadel
-          port: 8080
-          scheme: h2c
 {{- end }}
