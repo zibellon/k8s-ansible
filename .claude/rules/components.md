@@ -89,7 +89,7 @@ VPN IPs defined in global var `vpn_ips` (used by ipAllowList middleware).
 - Image: `hashicorp/vault:1.21.2`
 - Shamir seal: `vault_key_shares: 3`, `vault_key_threshold: 2`
 - Storage: PVC via `vault_storage_class` / `vault_storage_size`
-- Internal URL: `http://vault.vault.svc.cluster.local:8200`
+- Internal URL: `http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200`
 - Vault credentials on disk: `/etc/kubernetes/vault-unseal.json` (managers only)
 - Auto-unseal CronJob: runs every `vault_auto_unseal_schedule` on control-plane nodes only
 - KV engines: `secret` (admin use), `eso-secret` (ESO use)

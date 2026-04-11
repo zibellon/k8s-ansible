@@ -164,7 +164,7 @@ Same `all: vars:` root but contains real production values:
 |----------|-------|
 | `service_subnet` | "10.128.0.0/12" |
 | `pod_subnet` | "10.64.0.0/10" |
-| `dns_domain` | "cluster.local" |
+| `cluster_dns_domain` | "cluster.local" |
 | `node_port_start` | 1 |
 | `node_port_end` | 50000 |
 
@@ -216,7 +216,7 @@ Same `all: vars:` root but contains real production values:
 
 ```yaml
 vault_namespace: "vault"
-vault_internal_url: "http://vault.vault.svc.cluster.local:8200"
+vault_internal_url: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
 vault_key_shares: 3
 vault_key_threshold: 2
 vault_storage_class: "lh-major-single-best-effort"

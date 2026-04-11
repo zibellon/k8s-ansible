@@ -95,7 +95,7 @@ playbook inline vars                  ← highest priority
 |---------|-------|
 | service_subnet | 10.128.0.0/12 |
 | pod_subnet | 10.64.0.0/10 |
-| dns_domain | cluster.local |
+| cluster_dns_domain | cluster.local |
 | node_port range | 1–50000 |
 | HAProxy LB | 127.0.0.1:16443 |
 | HAProxy healthz | 127.0.0.1:16444 |
