@@ -1,50 +1,78 @@
 # =============================================================================
-# Distribute Vault credentials to ALL control-plane nodes
+# Vault Distribute Credentials
 # =============================================================================
-# This task distributes vault credentials (root_token + unseal_keys) to all
-# manager nodes. Runs naturally on all hosts in the play (hosts: managers).
+# Reads unseal keys and root token from the bank-vaults K8s Secret,
+# then writes /etc/kubernetes/vault-unseal.json on all manager nodes.
 #
-# Required vars:
-#   - vault_root_token_tmp: Vault root token
-#   - vault_unseal_keys_tmp: List of unseal keys
-#   - vault_creds_host_path_tmp: Path to save credentials file (e.g. /etc/kubernetes/vault-unseal.json)
+# Self-contained: reads K8s Secret internally, no input vars required.
+# Requires global vars: vault_unsealer_secret_name, vault_namespace, vault_creds_host_path
+#
+# Output file format (vault-unseal.json):
+#   {
+#     "vault-root": "<root_token>",
+#     "vault-unseal-0": "<key0>",
+#     "vault-unseal-1": "<key1>",
+#     ...
+#   }
 # =============================================================================
 
----
-- name: "[vault-creds] Build credentials JSON"
-  set_fact:
-    vault_creds_json:
-      root_token: "{{ vault_root_token_tmp }}"
-      unseal_keys: "{{ vault_unseal_keys_tmp }}"
-      key_threshold: "{{ vault_key_threshold }}"
+- name: "[{{ label_name | default('vault-distribute-creds') }}] Read credentials from K8s Secret"
+  command: >
+    kubectl get secret {{ vault_unsealer_secret_name }}
+    -n {{ vault_namespace }} -o json
+  register: _vault_k8s_secret_raw
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
   tags: [always]
 
-- name: "[vault-creds] Ensure credentials directory exists on all managers"
+- name: "[{{ label_name | default('vault-distribute-creds') }}] Build decoded credentials dict"
+  set_fact:
+    _vault_creds_json: >-
+      {{ dict(
+           (_vault_k8s_secret_raw.stdout | from_json).data.keys() | list
+           | zip(
+               (_vault_k8s_secret_raw.stdout | from_json).data.values()
+               | map('b64decode') | list
+             )
+         ) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ label_name | default('vault-distribute-creds') }}] Broadcast credentials to all managers"
+  set_fact:
+    _vault_creds_json: "{{ hostvars[master_manager_fact]._vault_creds_json }}"
+  tags: [always]
+
+- name: "[{{ label_name | default('vault-distribute-creds') }}] Ensure credentials directory exists"
   file:
-    path: "{{ vault_creds_host_path_tmp | dirname }}"
+    path: "{{ vault_creds_host_path | dirname }}"
     state: directory
     mode: "0755"
     owner: root
     group: root
   tags: [always]
 
-- name: "[vault-creds] Distribute credentials to all managers"
+- name: "[{{ label_name | default('vault-distribute-creds') }}] Write vault-unseal.json to all managers"
   copy:
-    content: "{{ vault_creds_json | to_nice_json }}"
-    dest: "{{ vault_creds_host_path_tmp }}"
+    content: "{{ _vault_creds_json | to_nice_json }}"
+    dest: "{{ vault_creds_host_path }}"
     mode: "0600"
     owner: root
     group: root
   tags: [always]
 
-- name: "[vault-creds] Verify credentials file on all managers"
-  stat:
-    path: "{{ vault_creds_host_path_tmp }}"
-  register: creds_file_check
-  tags: [always]
-  
-- name: "[vault-creds] Show distribution result"
+- name: "[{{ label_name | default('vault-distribute-creds') }}] Show distribution summary"
   debug:
-    msg: "Credentials distributed to {{ groups['managers'] | length }} manager(s): {{ groups['managers'] | join(', ') }}"
+    msg:
+      - "=============================================="
+      - "Vault credentials distributed"
+      - "File: {{ vault_creds_host_path }}"
+      - "Distributed to: {{ groups['managers'] | join(', ') }}"
+      - "Root token key: vault-root"
+      - "Unseal keys: {{ _vault_creds_json.keys() | select('match', 'vault-unseal-.*') | list | sort }}"
+      - "=============================================="
+  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]

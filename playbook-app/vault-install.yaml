@@ -1,21 +1,23 @@
 # =============================================================================
-# Install HashiCorp Vault (Helm deploy only)
+# Install HashiCorp Vault via bank-vaults operator
 # Steps:
 #   1. vault/pre: NetworkPolicies
-#   2. hashicorp/vault Helm chart
-#   3. vault/post: Ingress + CronJob for auto-unseal
+#   2. vault-operator: bank-vaults operator via OCI helm chart
+#   3. vault-cr: Vault CR (full spec) — operator creates StatefulSet + sidecars
+#   4. vault/post: Ingress
 #
 # Usage (tags):
 #   ansible-playbook vault-install.yaml              # full install
 #   ansible-playbook vault-install.yaml --tags pre   # only pre (NetworkPolicies)
 #   ansible-playbook vault-install.yaml --tags install
-#   ansible-playbook vault-install.yaml --tags post  # only post (Ingress + auto-unseal CronJob)
+#   ansible-playbook vault-install.yaml --tags post  # only post (Ingress)
 #
-# After install run vault-configure.yaml to initialize, unseal and configure Vault.
+# Credentials (unseal keys + root_token) are stored in K8s Secret:
+#   kubectl get secret {{ vault_unsealer_secret_name }} -n {{ vault_namespace }} -o json
 # =============================================================================
 
 ---
-- name: Install Vault via Helm
+- name: Install Vault via bank-vaults operator
   hosts: managers
   become: true
   gather_facts: false
@@ -35,16 +37,12 @@
       tags: [always]
 
     # =========================================================================
-    # INIT: Merge ESO integrations and resolve Vault config
+    # INIT: Merge ESO integrations
     # =========================================================================
 
     - name: "[vault-install-init] Merge ESO integrations"
       include_tasks: tasks/tasks-eso-merge.yaml
       tags: [always]
-
-    # =========================================================================
-    # STEP 1: INSTALL PRE (NetworkPolicies)
-    # =========================================================================
 
     - name: "[vault-install-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
@@ -55,6 +53,11 @@
         acme_cluster_issuer_result_var: "vault_ui_acme_cluster_issuer"
         acme_solver_result_var: "vault_ui_acme_solver"
         acme_pod_labels_result_var: "vault_acme_solver_pod_labels"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (NetworkPolicies)
+    # =========================================================================
 
     - name: "[vault-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
@@ -71,6 +74,8 @@
         mode: "0644"
         content: |
           namespace: {{ vault_namespace }}
+          serviceAccountName: vault
+          unsealerSecretName: {{ vault_unsealer_secret_name }}
           traefik:
             namespace: {{ traefik_namespace }}
             instanceName: traefik-{{ traefik_namespace }}
@@ -96,131 +101,197 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 2: INSTALL VAULT
-    # Mode A (vault_use_local_chart: true)  — local chart from repo
-    # Mode B (vault_use_local_chart: false) — official chart via helm repo
+    # STEP 2: INSTALL vault-operator (bank-vaults operator via OCI)
     # =========================================================================
 
-    # --- Mode A: copy local chart ---
-    - name: "[vault] Copy chart to server"
-      include_tasks: tasks/tasks-copy-chart.yaml
-      vars:
-        label_name: "vault"
-        chart_name: "install"
-        chart_local_src: "{{ project_root }}/playbook-app/charts/vault/install/"
-        chart_remote_dest: "{{ remote_charts_dir }}/vault/install"
-      when: vault_use_local_chart | bool
-      tags: [install]
+    - name: "[vault-operator] Create values-override for vault-operator"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/operator-values-override.yaml"
+        mode: "0644"
+        content: |
+          tolerations: {{ vault_operator_tolerations | to_json }}
+          nodeSelector: {{ vault_operator_node_selector | to_json }}
+          resources: {{ vault_operator_resources | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [operator]
 
-    # --- Mode B: add official helm repo ---
-    - name: "[vault] Add Helm repository"
-      include_tasks: tasks/tasks-add-helm-repo.yaml
-      vars:
-        label_name: "vault"
-        helm_repo_name: "hashicorp"
-        helm_repo_url: "https://helm.releases.hashicorp.com"
-      when: not vault_use_local_chart | bool
-      tags: [install]
-
-    # --- Mode B: create values dir (not created by copy-chart) ---
-    - name: "[vault] Ensure values directory exists"
+    - name: "[vault-operator] Ensure vault operator values dir exists"
       file:
-        path: "{{ remote_charts_dir }}/vault/install"
+        path: "{{ remote_charts_dir }}/vault"
         state: directory
         mode: "0755"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      when: not vault_use_local_chart | bool
-      tags: [install]
+      tags: [operator]
 
-    # --- Общий: values-override (одинаков для обоих режимов) ---
-    - name: "[vault] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/vault/install/values-override.yaml"
-        mode: "0644"
-        content: |
-          global:
-            enabled: true
-
-          server:
-            enabled: true
-            image:
-              repository: {{ vault_image_repository }}
-              tag: {{ vault_image_tag }}
-
-            standalone:
-              enabled: true
-              config: |
-                {{ vault_standalone_config | indent(16, first=False) }}
-            dataStorage:
-              enabled: true
-              size: {{ vault_storage_size }}
-              storageClass: {{ vault_storage_class }}
-
-            resources: {{ vault_resources | to_json }}
-            nodeSelector: {{ vault_node_selector | to_json }}
-            affinity: {{ vault_affinity | to_json }}
-            tolerations: {{ vault_tolerations | to_json }}
-
-          ui:
-            enabled: true
-            serviceType: ClusterIP
-
-          injector:
-            enabled: false
-
-          serverTelemetry:
-            serviceMonitor:
-              enabled: {{ vault_service_monitor_enabled }}
-              interval: {{ vault_service_monitor_interval }}
-              scrapeTimeout: {{ vault_service_monitor_scrape_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    # --- Mode A: install from local chart ---
-    - name: "[vault] Install via Helm (local chart)"
+    - name: "[vault-operator] Install vault-operator via OCI helm chart"
       command: >
-        helm upgrade --install vault {{ remote_charts_dir }}/vault/install
+        helm upgrade --install vault-operator {{ vault_operator_chart }}
         --namespace {{ vault_namespace }}
-        --values {{ remote_charts_dir }}/vault/install/values.yaml
-        --values {{ remote_charts_dir }}/vault/install/values-override.yaml
+        --create-namespace
+        --values {{ remote_charts_dir }}/vault/operator-values-override.yaml
         --cleanup-on-fail
         --atomic
         --wait
         --timeout {{ vault_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      when: vault_use_local_chart | bool
-      tags: [install]
+      tags: [operator]
 
-    # --- Mode B: install from official repo ---
-    - name: "[vault] Install via Helm (official chart)"
-      command: >
-        helm upgrade --install vault hashicorp/vault
-        --namespace {{ vault_namespace }}
-        --version {{ vault_remote_chart_version }}
-        --values {{ remote_charts_dir }}/vault/install/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ vault_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      when: not vault_use_local_chart | bool
-      tags: [install]
+    - name: "[vault-operator] Wait for vault-operator CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        label_name: "vault-operator"
+        crds_list:
+          - "crd/vaults.vault.banzaicloud.com"
+      tags: [operator]
 
-    - name: "[vault] Wait for vault pod to be Running"
-      command: >
-        kubectl wait --for=jsonpath='{.status.phase}'=Running
-        pod/vault-0 -n {{ vault_namespace }}
-        --timeout={{ vault_rollout_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
+    - name: "[vault-operator] Wait for vault-operator Deployment rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "vault-operator"
+        rollout_namespace: "{{ vault_namespace }}"
+        rollout_timeout: "{{ vault_rollout_timeout }}"
+        rollout_resources:
+          - "deployment/vault-operator"
+      tags: [operator]
 
     # =========================================================================
-    # STEP 3: INSTALL POST (Ingress + auto-unseal CronJob)
+    # STEP 3: APPLY Vault CR
+    # =========================================================================
+
+    - name: "[vault-cr] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "vault-cr"
+        chart_name: "cr"
+        chart_local_src: "{{ project_root }}/playbook-app/charts/vault/cr/"
+        chart_remote_dest: "{{ remote_charts_dir }}/vault/cr"
+      tags: [vault-cr]
+
+    - name: "[vault-cr] Create values-override.yaml"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/cr/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ vault_namespace }}
+          vaultSpec:
+            size: 1
+            serviceAccount: vault
+            unsealConfig:
+              options:
+                secretShares: {{ vault_key_shares }}
+                secretThreshold: {{ vault_key_threshold }}
+              kubernetes:
+                secretNamespace: {{ vault_namespace }}
+                secretName: {{ vault_unsealer_secret_name }}
+            config:
+              api_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
+              cluster_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8201"
+              storage:
+                raft:
+                  path: /vault/data
+              listener:
+                tcp:
+                  address: "[::]:8200"
+                  cluster_address: "[::]:8201"
+                  tls_disable: true
+                  telemetry:
+                    unauthenticated_metrics_access: "true"
+              ui: true
+              disable_mlock: true
+              telemetry:
+                prometheus_retention_time: "120s"
+                disable_hostname: true
+            externalConfig:
+              purgeUnmanagedConfig:
+                enabled: true
+                exclude:
+                  auth: true
+              policies: {{ vault_policies_final | to_json }}
+              auth:
+                - type: kubernetes
+                  config:
+                    kubernetes_host: "{{ vault_kubernetes_host }}"
+                  roles: {{ vault_roles_final | to_json }}
+              secrets:
+                - path: secret
+                  type: kv
+                  description: General secrets
+                  options:
+                    version: 2
+                - path: eso-secret
+                  type: kv
+                  description: ESO secrets
+                  options:
+                    version: 2
+            volumeClaimTemplates:
+              - metadata:
+                  name: vault-data
+                spec:
+                  accessModes: [ReadWriteOnce]
+                  storageClassName: {{ vault_storage_class }}
+                  resources:
+                    requests:
+                      storage: {{ vault_storage_size }}
+            volumeMounts:
+              - name: vault-data
+                mountPath: /vault/data
+            resources:
+              vault: {{ vault_resources | to_json }}
+            nodeSelector: {{ vault_node_selector | to_json }}
+            tolerations: {{ vault_tolerations | to_json }}
+            affinity: {{ vault_affinity | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [vault-cr]
+
+    - name: "[vault-cr] Apply Vault CR via Helm"
+      command: >
+        helm upgrade --install vault-cr {{ remote_charts_dir }}/vault/cr
+        --namespace {{ vault_namespace }}
+        --values {{ remote_charts_dir }}/vault/cr/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ vault_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [vault-cr]
+
+    - name: "[vault-cr] Wait for StatefulSet rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "vault-cr"
+        rollout_namespace: "{{ vault_namespace }}"
+        rollout_timeout: "{{ vault_rollout_timeout }}"
+        rollout_resources:
+          - "statefulset/vault"
+      tags: [vault-cr]
+
+    - name: "[vault-cr] Wait for unsealer K8s Secret (bank-vaults completed init)"
+      command: >
+        kubectl get secret {{ vault_unsealer_secret_name }}
+        -n {{ vault_namespace }}
+        -o jsonpath='{.data.vault-root}'
+      register: vault_secret_result
+      until: vault_secret_result.stdout | length > 0
+      retries: 60
+      delay: 5
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [vault-cr]
+
+    - name: "[vault-cr] Distribute credentials to all managers"
+      include_tasks: tasks/tasks-vault-distribute-creds.yaml
+      vars:
+        label_name: "vault-cr"
+      tags: [vault-cr]
+
+    # =========================================================================
+    # STEP 4: POST (Ingress)
     # =========================================================================
 
     - name: "[vault-post] Copy chart to remote"
@@ -252,10 +323,6 @@
             entryPoints:
               web: {{ traefik_web_entrypoint }}
               websecure: {{ traefik_websecure_entrypoint }}
-          autoUnseal:
-            schedule: "{{ vault_auto_unseal_schedule }}"
-            keyThreshold: {{ vault_key_threshold }}
-            credsHostPath: "{{ vault_creds_host_path }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [post]
@@ -301,7 +368,7 @@
 
     - name: "[vault-verify] Installation complete"
       debug:
-        msg: "vault-pre + vault + vault-post: OK"
+        msg: "vault-pre + vault-operator + vault-cr + vault-post: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

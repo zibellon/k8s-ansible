@@ -65,6 +65,61 @@ spec:
 # =============================================================================
 
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-internal
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+---
+# Vault: allow ingress from Traefik (UI) and ESO (API), egress to kube-apiserver
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vault-configurator
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault-configurator
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: 6443
+---
+# Vault: allow ingress from Traefik (UI) and ESO (API), egress to kube-apiserver
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vault-operator
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault-operator
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: 6443
+
+---
 # Vault: allow ingress from Traefik (UI) and ESO (API), egress to kube-apiserver
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -102,16 +157,6 @@ spec:
       ports:
         - protocol: TCP
           port: 8200
-    # Vault internal cluster communication
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: vault
-      ports:
-        - protocol: TCP
-          port: 8200
-        - protocol: TCP
-          port: 8201
   egress:
     # To kube-apiserver (for Kubernetes Auth)
     - ports:

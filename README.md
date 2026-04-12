@@ -356,37 +356,26 @@
 ## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
 ## Скачать ZIP архив последнего релиза, достать все templates, Chart.yaml и values.yaml
 ## ---
-## Важно_1. есть переменная `vault_use_local_chart` = true | false. Это переменная указывает - откуда взять helm-chart
-## Если установка идет на сервера, где доступен VAULT-HELM-CHART - то можно ставить с офф. репозитория
-## Если установка идет с офф. репозитория - нужно указать `vault_remote_chart_version` 
+## Важно_1. Установка идет через helm-chart: bank-vaults (https://bank-vaults.dev, https://github.com/bank-vaults)
+## Для хранения ключей используется k8s-secret
+## Есть playbook, для доставки ключей k8s.Secrets -> manager-nodes
+## ---
+## Важно_2. Работа с конфигурацией идет через Operator + CRDs
+## все политики, роли, методы авторизации и так далее - определяются в Vault (CRDs)
+## Для их синхронизации с Vaul-instance = надо вызвать `... playbook-app/vault-install.yaml --tags vault-cr`
 ## ---
 ## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть volume -> требуется Longhorn
-## Ожидание готовности deployment/daemonset - `kubectl wait --for=jsonpath='{.status.phase}'=Running`
-## Потому что проверка внутри пода: смотрит на готовность самого VAULT (что он инициализирован), а не просто на работоспособность контейнера
+## Ожидание готовности deployment/daemonset
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
-## `--tags pre, install, post`
-## ---
-## `vault-policy-sync --tags `
-## `policy, policy-add, policy-delete`
-## `role, role-add, role-delete`
+## `--tags pre, operator, vault-cr, post`
 ## ---
 ##
-- установка + конфигурация + синхронизация политик. Три отдельных playbook
+- установка (обновление) + конфигурация + синхронизация политик. Три отдельных playbook
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml`
-  - Ставится: vault-0 (StatefulSet)
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-configure.yaml`
-  - конфигурация (unseal-keys, сохранить на manager и так далее)
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-policy-sync.yaml`
-  - Синхронизация политик
-- обновление (версия, конфиг)
-  - Устанавливается через официальный HELM, но через исходники с Github
-  - Их нужно скачать и нужные положить в директорию с установкой vault (описано выше)
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml`
-- Есть дополнительный playbook, для перезапуска
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-restart.yaml`
+  - Ставится: operator, vault-0 (CRDs, StatefulSet)
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets

@@ -1,7 +1,9 @@
 all:
   vars:
     # ------
-    # Vault (HashiCorp)
+    # Vault (HashiCorp) — managed by bank-vaults operator
+    # Operator: oci://ghcr.io/bank-vaults/helm-charts/vault-operator
+    # Vault CR: playbook-app/charts/vault/cr/
     # 1 namespace = 1 SA + 1 SecretStore (для ESO)
     # sa_name - это название ServiceAccount (который будет создан в этом namespace)
     # role_name - это название Role (Внутри Vault - auth/kubernetes/role/${role_name})
@@ -12,12 +14,6 @@ all:
     # target_secret - это название секрета в Kubernetes (который будет создан в этом namespace)
     # vault_path - это full path в Vault
     # refresh_interval - опциональное переопределение интервала (иначе используется eso_resources_config.external_secret_refresh_interval)
-    # ------
-    # Chart install mode
-    # true  = local chart from repo (playbook-app/charts/vault/install/) — for RU servers (helm.releases.hashicorp.com is blocked)
-    # false = official chart from https://helm.releases.hashicorp.com
-    vault_use_local_chart: true
-    vault_remote_chart_version: "0.32.0"   # используется только при vault_use_local_chart: false
     # ------
     vault_namespace: "vault"
     vault_image_tag: "1.21.2"
@@ -32,36 +28,24 @@ all:
     vault_ui_ingress_class_name: "traefik-lb"
     vault_storage_class: "lh-major-single-best-effort"
     vault_storage_size: "2Gi"
-    # Vault unseal
+    # Vault unseal (bank-vaults operator stores keys in K8s Secret)
+    # secretShares / secretThreshold map directly to unsealConfig.secretShares / secretThreshold in Vault CR
+    # bank-vaults defaults: 5 / 3 — always set explicitly to avoid surprises
     vault_key_shares: 3
     vault_key_threshold: 2
-    vault_auto_unseal_schedule: "*/5 * * * *"  # CronJob schedule for auto-unseal
-    vault_creds_host_path: "/etc/kubernetes/vault-unseal.json"  # Path to credentials file on control-plane nodes
-    vault_creds_init_tmp_path: "/etc/kubernetes/vault-creds-init-tmp.json"  # Temp file for interrupted init
-    vault_creds_rotate_tmp_path: "/etc/kubernetes/vault-creds-rotate-tmp.json"  # Temp file for interrupted rotate
+    vault_creds_host_path: "/etc/kubernetes/vault-unseal.json"
+    # K8s Secret created by bank-vaults unsealer
+    vault_unsealer_secret_name: "vault-unseal-keys"
     # Vault Kubernetes Auth
     vault_kubernetes_host: "https://kubernetes.default.svc:443"
-    # Vault KV engines to create (array of mount paths)
-    vault_kv_engines:
-      - "secret"
-      - "eso-secret"
-    vault_standalone_config: |
-      ui = true
-      listener "tcp" {
-        tls_disable = 1
-        address = "[::]:8200"
-        cluster_address = "[::]:8201"
-        telemetry {
-          unauthenticated_metrics_access = "true"
-        }
-      }
-      storage "raft" {
-        path = "/vault/data"
-      }
-      telemetry {
-        prometheus_retention_time = "120s"
-        disable_hostname = true
-      }
+    # bank-vaults operator
+    vault_operator_chart: "oci://ghcr.io/bank-vaults/helm-charts/vault-operator"
+    vault_bank_vaults_version: "v1.32.1"
+    vault_roles_default_ttl: "1h"
+    # Operator pod scheduling (отдельные от Vault server)
+    vault_operator_tolerations: []
+    vault_operator_node_selector: {}
+    vault_operator_resources: {}
     # ---
     vault_tolerations: []
     vault_resources: {}
@@ -72,16 +56,16 @@ all:
     vault_config_helm_timeout: "2m"
     vault_rollout_timeout: "300s"
     # Prometheus metrics port (Vault API)
-    # Vault отдаёт Prometheus-метрики через основной API-порт 8200 по пути /v1/sys/metrics?format=prometheus. Отдельного порта нет
     vault_prometheus_port: 8200 # NOT CHANGE
     # Prometheus ServiceMonitor
     vault_service_monitor_enabled: true
     vault_service_monitor_interval: "30s"
     vault_service_monitor_scrape_timeout: "10s"
+    vault_service_monitor_additional_labels: {}
 
     # ---------
     # VAULT POLICIES
-    # Политики для ESO SA + административные политики Vault
+    # bank-vaults externalConfig format: name + rules (HCL)
     # ---------
     vault_policies_extra: []
     vault_policies:
@@ -89,103 +73,80 @@ all:
       # ESO: Traefik
       # ---------
       - name: traefik.eso-main
-        paths:
-          - path: eso-secret/data/traefik/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/traefik/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/traefik/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/traefik/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: HAProxy
       # ---------
       - name: haproxy.eso-main
-        paths:
-          - path: eso-secret/data/haproxy/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/haproxy/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/haproxy/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/haproxy/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: Longhorn
       # ---------
       - name: longhorn.eso-main
-        paths:
-          - path: eso-secret/data/longhorn/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/longhorn/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/longhorn/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/longhorn/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: GitLab
       # ---------
       - name: gitlab.eso-main
-        paths:
-          - path: eso-secret/data/gitlab/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/gitlab/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/gitlab/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/gitlab/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: GitLab Runner
       # ---------
       - name: gitlab-runner.eso-main
-        paths:
-          - path: eso-secret/data/gitlab-runner/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/gitlab-runner/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/gitlab-runner/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/gitlab-runner/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: ZITADEL
       # ---------
       - name: zitadel.eso-main
-        paths:
-          - path: eso-secret/data/zitadel/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/zitadel/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/zitadel/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/zitadel/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: ArgoCD
       # ---------
       - name: argocd.eso-main
-        paths:
-          - path: eso-secret/data/argocd/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/argocd/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/argocd/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/argocd/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: ArgoCD Git-Ops
       # ---------
       - name: argocd.eso-git-ops
-        paths:
-          - path: eso-secret/data/argocd/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/argocd/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/argocd/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/argocd/*" { capabilities = ["read", "list"] }
       # ---------
       # ESO: Grafana
       # ---------
       - name: grafana.eso-main
-        paths:
-          - path: eso-secret/data/grafana/*
-            capabilities: [read, list]
-          - path: eso-secret/metadata/grafana/*
-            capabilities: [read, list]
+        rules: |
+          path "eso-secret/data/grafana/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/grafana/*" { capabilities = ["read", "list"] }
       # ---------
       # Vault Admin (full access for vault-admin SA, used by Ansible for writing secrets)
       # ---------
       - name: vault-admin
-        paths:
-          - path: secret/data/*
-            capabilities: [create, read, update, delete, list]
-          - path: secret/metadata/*
-            capabilities: [create, read, update, delete, list]
-          - path: eso-secret/data/*
-            capabilities: [create, read, update, delete, list]
-          - path: eso-secret/metadata/*
-            capabilities: [create, read, update, delete, list]
-          - path: sys/policies/acl/*
-            capabilities: [create, read, update, delete, list]
-          - path: auth/*
-            capabilities: [create, read, update, delete, list]
+        rules: |
+          path "secret/data/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "secret/metadata/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "eso-secret/data/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "eso-secret/metadata/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "auth/*" { capabilities = ["create", "read", "update", "delete", "list"] }
 
     # ---------
     # VAULT ROLES
+    # bank-vaults externalConfig format: bound_service_account_names/namespaces + policies + ttl
     # ---------
     vault_roles_extra: []
     vault_roles:
@@ -193,79 +154,89 @@ all:
       # ESO: Traefik
       # ---------
       - name: traefik.eso-main
-        namespace: traefik-lb
-        sa_name: eso-main
+        bound_service_account_namespaces: traefik-lb
+        bound_service_account_names: eso-main
         policies:
           - traefik.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: HAProxy
       # ---------
       - name: haproxy.eso-main
-        namespace: haproxy-lb
-        sa_name: eso-main
+        bound_service_account_namespaces: haproxy-lb
+        bound_service_account_names: eso-main
         policies:
           - haproxy.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: Longhorn
       # ---------
       - name: longhorn.eso-main
-        namespace: longhorn-system
-        sa_name: eso-main
+        bound_service_account_namespaces: longhorn-system
+        bound_service_account_names: eso-main
         policies:
           - longhorn.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: GitLab
       # ---------
       - name: gitlab.eso-main
-        namespace: gitlab
-        sa_name: eso-main
+        bound_service_account_namespaces: gitlab
+        bound_service_account_names: eso-main
         policies:
           - gitlab.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: GitLab Runner
       # ---------
       - name: gitlab-runner.eso-main
-        namespace: gitlab-runner
-        sa_name: eso-main
+        bound_service_account_namespaces: gitlab-runner
+        bound_service_account_names: eso-main
         policies:
           - gitlab-runner.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: ZITADEL
       # ---------
       - name: zitadel.eso-main
-        namespace: zitadel
-        sa_name: eso-main
+        bound_service_account_namespaces: zitadel
+        bound_service_account_names: eso-main
         policies:
           - zitadel.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: ArgoCD
       # ---------
       - name: argocd.eso-main
-        namespace: argocd
-        sa_name: eso-main
+        bound_service_account_namespaces: argocd
+        bound_service_account_names: eso-main
         policies:
           - argocd.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: ArgoCD Git-Ops
       # ---------
       - name: argocd.eso-git-ops
-        namespace: argocd
-        sa_name: eso-git-ops
+        bound_service_account_namespaces: argocd
+        bound_service_account_names: eso-git-ops
         policies:
           - argocd.eso-git-ops
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # ESO: Grafana
       # ---------
       - name: grafana.eso-main
-        namespace: grafana
-        sa_name: eso-main
+        bound_service_account_namespaces: grafana
+        bound_service_account_names: eso-main
         policies:
           - grafana.eso-main
+        ttl: "{{ vault_roles_default_ttl }}"
       # ---------
       # Vault Admin (for writing secrets from Ansible)
       # ---------
       - name: vault-admin
-        namespace: vault
-        sa_name: vault-admin
+        bound_service_account_namespaces: vault
+        bound_service_account_names: vault-admin
         policies:
           - vault-admin
+        ttl: "{{ vault_roles_default_ttl }}"
