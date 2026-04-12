@@ -279,3 +279,25 @@ local 10.129.0.22 dev lo table local src 10.129.0.22 uid 1000
       └─ тип маршрута: local (это мой IP, не отправлять наружу)
 
 Ядро Linux знает что 10.129.0.22 — это локальный адрес, кладёт пакет прямо в table local и обрабатывает через lo. Физический eth0 не задействован вообще.
+
+# показать ВСЕ релизы в namespace (а не только те, которые ОКЕЙ)
+`helm list -n teleport --all`
+NAME         	NAMESPACE	REVISION	UPDATED                                	STATUS         	CHART                  	APP VERSION
+teleport     	teleport 	2       	2026-04-11 22:34:52.829400207 +0000 UTC	pending-upgrade	teleport-cluster-18.7.2	18.7.2     
+teleport-post	teleport 	6       	2026-04-11 20:55:40.036467791 +0000 UTC	deployed       	teleport-post-1.0.0    	           
+teleport-pre 	teleport 	5       	2026-04-11 22:34:39.127249822 +0000 UTC	deployed       	teleport-pre-1.0.0     	           
+
+# Показать историю версий релиза в namespace
+`helm history teleport -n teleport`
+REVISION	UPDATED                 	STATUS         	CHART                   	APP VERSION	DESCRIPTION      
+1       	Sat Apr 11 18:54:53 2026	deployed       	teleport-cluster-16.4.12	16.4.12    	Install complete 
+2       	Sat Apr 11 22:34:52 2026	pending-upgrade	teleport-cluster-18.7.2 	18.7.2     	Preparing upgrade
+
+# Откатить релиз на ОДНУ версию назад
+`helm rollback teleport -n teleport`
+
+## Откат на конкретную версию
+`helm rollback teleport 2 -n teleport`
+
+# првоерка статуса релиза
+`helm status teleport -n teleport`
