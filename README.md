@@ -355,6 +355,11 @@
 ## ЕСТЬ проблема: официальный helm не работает из РФ (Региональная блокировка)
 ## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
 ## Скачать ZIP архив последнего релиза, достать все templates, Chart.yaml и values.yaml
+## ---
+## Важно_1. есть переменная `vault_use_local_chart` = true | false. Это переменная указывает - откуда взять helm-chart
+## Если установка идет на сервера, где доступен VAULT-HELM-CHART - то можно ставить с офф. репозитория
+## Если установка идет с офф. репозитория - нужно указать `vault_remote_chart_version` 
+## ---
 ## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть volume -> требуется Longhorn
 ## Ожидание готовности deployment/daemonset - `kubectl wait --for=jsonpath='{.status.phase}'=Running`
@@ -385,6 +390,7 @@
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
+## ---
 ## В файле `hosts-vars/` + `hosts-vars-override/` есть отдельная структуры для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
 ## Пример: `./readme-vault.md`
 ## Вызов синхронизации VAULT: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-policy-sync.yaml`

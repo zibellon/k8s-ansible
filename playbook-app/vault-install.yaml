@@ -96,9 +96,12 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 2: INSTALL VAULT (Local Helm Chart)
+    # STEP 2: INSTALL VAULT
+    # Mode A (vault_use_local_chart: true)  — local chart from repo
+    # Mode B (vault_use_local_chart: false) — official chart via helm repo
     # =========================================================================
 
+    # --- Mode A: copy local chart ---
     - name: "[vault] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
@@ -106,8 +109,31 @@
         chart_name: "install"
         chart_local_src: "{{ project_root }}/playbook-app/charts/vault/install/"
         chart_remote_dest: "{{ remote_charts_dir }}/vault/install"
+      when: vault_use_local_chart | bool
       tags: [install]
 
+    # --- Mode B: add official helm repo ---
+    - name: "[vault] Add Helm repository"
+      include_tasks: tasks/tasks-add-helm-repo.yaml
+      vars:
+        label_name: "vault"
+        helm_repo_name: "hashicorp"
+        helm_repo_url: "https://helm.releases.hashicorp.com"
+      when: not vault_use_local_chart | bool
+      tags: [install]
+
+    # --- Mode B: create values dir (not created by copy-chart) ---
+    - name: "[vault] Ensure values directory exists"
+      file:
+        path: "{{ remote_charts_dir }}/vault/install"
+        state: directory
+        mode: "0755"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      when: not vault_use_local_chart | bool
+      tags: [install]
+
+    # --- Общий: values-override (одинаков для обоих режимов) ---
     - name: "[vault] Create values file"
       copy:
         dest: "{{ remote_charts_dir }}/vault/install/values-override.yaml"
@@ -152,7 +178,8 @@
       run_once: true
       tags: [install]
 
-    - name: "[vault] Install via Helm"
+    # --- Mode A: install from local chart ---
+    - name: "[vault] Install via Helm (local chart)"
       command: >
         helm upgrade --install vault {{ remote_charts_dir }}/vault/install
         --namespace {{ vault_namespace }}
@@ -164,6 +191,23 @@
         --timeout {{ vault_helm_timeout }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      when: vault_use_local_chart | bool
+      tags: [install]
+
+    # --- Mode B: install from official repo ---
+    - name: "[vault] Install via Helm (official chart)"
+      command: >
+        helm upgrade --install vault hashicorp/vault
+        --namespace {{ vault_namespace }}
+        --version {{ vault_remote_chart_version }}
+        --values {{ remote_charts_dir }}/vault/install/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ vault_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      when: not vault_use_local_chart | bool
       tags: [install]
 
     - name: "[vault] Wait for vault pod to be Running"
