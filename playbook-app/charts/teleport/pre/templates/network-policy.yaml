@@ -1,0 +1,288 @@
+# =============================================================================
+# TELEPORT NETWORK POLICIES - HARDENED
+# =============================================================================
+
+# =============================================================================
+# BASE POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in teleport namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# =============================================================================
+# TELEPORT INTERNAL COMMUNICATION (Auth ↔ Proxy)
+# =============================================================================
+
+# app.kubernetes.io/component=auth,
+# app.kubernetes.io/instance=teleport,
+# app.kubernetes.io/managed-by=Helm,
+# app.kubernetes.io/name=teleport-cluster,
+# app.kubernetes.io/version=18.7.2,
+# app=teleport,helm.sh/chart=teleport-cluster-18.7.2,
+# pod-template-hash=66ddf8c858,
+# teleport.dev/majorVersion=18
+
+# app.kubernetes.io/component=operator,
+# app.kubernetes.io/instance=teleport,
+# app.kubernetes.io/managed-by=Helm,
+# app.kubernetes.io/name=operator,
+# app.kubernetes.io/version=18.7.2,
+# helm.sh/chart=operator-18.7.2,
+# pod-template-hash=7bd59d44f4,
+# teleport.dev/majorVersion=18,
+# teleport.dev/release=teleport_teleport
+
+# app.kubernetes.io/component=proxy,
+# app.kubernetes.io/instance=teleport,
+# app.kubernetes.io/managed-by=Helm,
+# app.kubernetes.io/name=teleport-cluster,
+# app.kubernetes.io/version=18.7.2,
+# helm.sh/chart=teleport-cluster-18.7.2,
+# pod-template-hash=658997b5cb,
+# teleport.dev/majorVersion=18
+
+# Auth pod listens on 3025 (auth server internal port).
+# Proxy pod connects to Auth on 3025 to register itself and proxy requests.
+# Both pods have label app=teleport but different component labels.
+# Allow all traffic between pods inside longhorn-system
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-internal
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-teleport-operator
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: teleport
+      app.kubernetes.io/name: operator
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443
+
+# =============================================================================
+# TELEPORT APPLICATION POLICIES
+# =============================================================================
+
+# Teleport proxy pod: ingress from Traefik (web UI) and HAProxy (SSH, tunnel, kube)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-teleport
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: teleport-cluster
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik: web UI (HTTP port 3080)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teleport.webPort }}
+    # From HAProxy: SSH proxy (3023), reverse tunnel (3024), kube proxy (3026)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.haproxy.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kubernetes-ingress
+              app.kubernetes.io/instance: haproxy-ingress
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teleport.sshPort }}
+        - protocol: TCP
+          port: {{ .Values.teleport.reverseTunnelPort }}
+        - protocol: TCP
+          port: {{ .Values.teleport.kubeApiPort }}
+  egress:
+    # To kube-apiserver (for k8s enrollment and kube proxy)
+    - ports:
+        - protocol: TCP
+          port: 6443
+    # To external HTTPS (ACME, OIDC discovery, Teleport license check)
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+# ACME solver: ingress from Traefik (cert-manager HTTP-01 challenge)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels: {{ .Values.acmeSolverLabels | toYaml | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# TRAEFIK NAMESPACE POLICY (allow egress from Traefik to Teleport web UI)
+# =============================================================================
+
+# Allow Traefik to reach Teleport web UI (port 3080) and ACME solver
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-traefik
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    # To Teleport web UI (HTTP)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: teleport-cluster
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teleport.webPort }}
+    # To ACME solver
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels: {{ .Values.acmeSolverLabels | toYaml | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8089
+
+# =============================================================================
+# HAPROXY NAMESPACE POLICY (allow egress from HAProxy to Teleport)
+# =============================================================================
+
+# Allow HAProxy to reach Teleport SSH proxy (3023), reverse tunnel (3024), kube proxy (3026)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-haproxy
+  namespace: {{ .Values.haproxy.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kubernetes-ingress
+      app.kubernetes.io/instance: haproxy-ingress
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {{- if .Values.teleport.vpnOnlyEnabled }}
+      from:
+        {{- range .Values.teleport.vpnIps }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teleport.sshPort }}
+        - protocol: TCP
+          port: {{ .Values.teleport.reverseTunnelPort }}
+        - protocol: TCP
+          port: {{ .Values.teleport.kubeApiPort }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: teleport-cluster
+      ports:
+        - protocol: TCP
+          port: {{ .Values.teleport.sshPort }}
+        - protocol: TCP
+          port: {{ .Values.teleport.reverseTunnelPort }}
+        - protocol: TCP
+          port: {{ .Values.teleport.kubeApiPort }}

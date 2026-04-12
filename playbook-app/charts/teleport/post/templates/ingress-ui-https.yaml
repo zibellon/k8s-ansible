@@ -1,0 +1,49 @@
+# =============================================================================
+# TELEPORT WEB UI INGRESS — HTTPS (Traefik)
+# TLS terminated by Traefik/cert-manager. Teleport backend speaks HTTP on 3080.
+# =============================================================================
+
+{{- if .Values.ingress.httpsEnable }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.ingress.tlsSecretName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: {{ .Values.ingress.tlsSecretName }}
+  dnsNames:
+    - {{ .Values.ingress.domain | quote }}
+  issuerRef:
+    name: {{ .Values.ingress.clusterIssuer }}
+    kind: ClusterIssuer
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: teleport-ui-https
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    - {{ .Values.traefik.entryPoints.websecure }}
+  routes:
+    - match: Host(`{{ .Values.ingress.domain }}`) && PathPrefix(`/`)
+      kind: Rule
+      {{- if .Values.ingress.vpnOnlyEnabled }}
+      middlewares:
+        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
+      {{- end }}
+      services:
+        - name: teleport
+          port: {{ .Values.webServicePort }}              # ← service port 443 → pod port 3080
+          scheme: https
+          serversTransport: teleport-insecure
+  tls:
+    secretName: {{ .Values.ingress.tlsSecretName }}
+{{- end }}

@@ -1,0 +1,122 @@
+# =============================================================================
+# HAPROXY TCP INGRESS FOR TELEPORT SSH PROXY
+# Routes SSH traffic (tsh/openssh clients) to Teleport service
+# =============================================================================
+apiVersion: ingress.v1.haproxy.org/v1
+kind: TCP
+metadata:
+  name: ingress-teleport-ssh-tcp
+  namespace: {{ .Values.namespace }}
+  annotations:
+    ingress.class: "{{ .Values.haproxy.ingressClass }}"
+spec:
+  - name: tcp-teleport-ssh
+    frontend:
+      name: fe-tcp-teleport-ssh
+      binds:
+        - port: {{ .Values.sshPort }}
+    service:
+      name: teleport
+      port: {{ .Values.sshPort }}
+---
+# =============================================================================
+# NODEPORT SERVICE FOR TELEPORT SSH IN HAPROXY NAMESPACE
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-teleport-ssh
+  namespace: {{ .Values.haproxy.namespace }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: kubernetes-ingress
+    app.kubernetes.io/instance: haproxy-ingress
+  ports:
+    - name: tcp-ssh
+      port: {{ .Values.sshPort }}
+      targetPort: {{ .Values.sshPort }}
+      nodePort: {{ .Values.sshPort }}
+---
+# =============================================================================
+# HAPROXY TCP INGRESS FOR TELEPORT REVERSE TUNNEL
+# Routes reverse tunnel traffic from external agents
+# =============================================================================
+apiVersion: ingress.v1.haproxy.org/v1
+kind: TCP
+metadata:
+  name: teleport-tunnel-tcp
+  namespace: {{ .Values.namespace }}
+  annotations:
+    ingress.class: "{{ .Values.haproxy.ingressClass }}"
+spec:
+  - name: tcp-teleport-tunnel
+    frontend:
+      name: fe-tcp-teleport-tunnel
+      binds:
+        - port: {{ .Values.reverseTunnelPort }}
+    service:
+      name: teleport
+      port: {{ .Values.reverseTunnelPort }}
+---
+# =============================================================================
+# NODEPORT SERVICE FOR TELEPORT TUNNEL IN HAPROXY NAMESPACE
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-teleport-tunnel
+  namespace: {{ .Values.haproxy.namespace }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: kubernetes-ingress
+    app.kubernetes.io/instance: haproxy-ingress
+  ports:
+    - name: tcp-tunnel
+      port: {{ .Values.reverseTunnelPort }}
+      targetPort: {{ .Values.reverseTunnelPort }}
+      nodePort: {{ .Values.reverseTunnelPort }}
+---
+# =============================================================================
+# HAPROXY TCP INGRESS FOR TELEPORT KUBERNETES PROXY
+# Routes tsh kube / kubectl traffic through Teleport
+# =============================================================================
+apiVersion: ingress.v1.haproxy.org/v1
+kind: TCP
+metadata:
+  name: ingress-teleport-kube-tcp
+  namespace: {{ .Values.namespace }}
+  annotations:
+    ingress.class: "{{ .Values.haproxy.ingressClass }}"
+spec:
+  - name: tcp-teleport-kube
+    frontend:
+      name: fe-tcp-teleport-kube
+      binds:
+        - port: {{ .Values.kubeApiPort }}
+    service:
+      name: teleport
+      port: {{ .Values.kubeApiPort }}
+---
+# =============================================================================
+# NODEPORT SERVICE FOR TELEPORT KUBE PROXY IN HAPROXY NAMESPACE
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-teleport-kube
+  namespace: {{ .Values.haproxy.namespace }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: kubernetes-ingress
+    app.kubernetes.io/instance: haproxy-ingress
+  ports:
+    - name: tcp-kube
+      port: {{ .Values.kubeApiPort }}
+      targetPort: {{ .Values.kubeApiPort }}
+      nodePort: {{ .Values.kubeApiPort }}

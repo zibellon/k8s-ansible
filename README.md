@@ -402,6 +402,39 @@
 ## ---
 
 ## ---
+## Teleport (proxy + auth + operator)
+## ---
+## Важно_1. Все ресурсы teleport управляются через CRD. То есть: если надо добавить новую роль или нового пользователя
+## Добавляем новые значения в hosts-vars-override и вызываем `... playbook-app/teleport-install.yaml --tags configure`
+## Оператор работает только в одном направлении: CRD -> Teleport. Если что-то добавить в Teleport-UI - оно не появится в CRD
+## Если через UI обновить что-то, что есть в CRD - то через 1 минуту оно вернется к состоянию CRD
+## То есть: через UI, мы только смотрим и ничего не создаем
+## ---
+## Важно_2. После установки - надо получить ссылку на сброс и установку пароля для пользователя `superadmin`
+## `kubectl exec -n teleport deploy/teleport-auth -- tctl users reset superadmin`
+## Перейти по ссылке и установить пароль через UI
+## ---
+## Важно_3. Как проверить, что operator - все синхронизировал
+## `kubectl exec -n teleport deploy/teleport-auth -- tctl get role/superadmin`
+## `kubectl exec -n teleport deploy/teleport-auth -- tctl users ls`
+## ---
+## Важно_4. Для авторизации через консоль (например для kubectl) - работает только MFA=OTP (через PassKey - не получилось)
+## ---
+## Важно_5. Operator, может Отвалиться по преколу. У него сертификат на 1 час, и если он его не обновит - то отвалится
+## почему это не прописано в healthcheck = загадка
+## что искать в логах (operator + auth)
+- current time 2026-04-12T09:32:38Z is after 2026-04-12T08:36:50Z
+- write tcp 10.64.15.71:49648->10.132.251.113:3025: write: broken pipe
+- tls: expired certificate
+## Чинится простым перезапуском: `kubectl rollout restart deployment/teleport-operator -n teleport`
+## ---
+- установка
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-install.yaml`
+  - Установится: auth, proxy, operator
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-ssh-agent-install.yaml`
+  - установится на КАЖДУЮ node агента, для доступа к node по SSH
+
+## ---
 ## gitlab. Официальный helm
 ## ---
 ## Есть UI + API, доступны по URL -> требуется Certificate (cert-manager-CRD)

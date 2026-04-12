@@ -1,0 +1,72 @@
+all:
+  vars:
+    # ------
+    # Teleport (Infrastructure Access Platform)
+    # ------
+
+    # Basics
+    teleport_namespace: "teleport"
+    teleport_chart_version: "18.7.2"
+
+    # Networking / Ingress
+    teleport_domain: "teleport-k8s-v2.drawapp.ru"
+    longhorn_external_url: "https://teleport-k8s-v2.drawapp.ru"
+    teleport_tls_secret_name: "cert-teleport"
+    teleport_cluster_issuer_name: "acme-prod"
+    teleport_ingress_class_name: "traefik-lb"
+    teleport_http_enabled: false
+    teleport_https_enabled: true
+    teleport_vpn_only_enabled: false
+
+    # Cluster identity (clusterName = FQDN, immutable после первого деплоя!)
+    teleport_cluster_name: "{{ teleport_domain }}"
+    teleport_kube_cluster_name: "drawapp-k8s-v2" # Название кластера внутри Teleport. Любое произвольное название
+
+    teleport_web_port: 3080
+    teleport_web_service_port: 443
+    teleport_web_listen_addr: "0.0.0.0:{{ teleport_web_port }}"
+    teleport_web_public_addr: "{{ teleport_cluster_name }}:443"
+
+    # SSH / tunnel ports (HAProxy TCP NodePort)
+    teleport_ssh_port: 3023
+    teleport_ssh_listen_addr: "0.0.0.0:{{ teleport_ssh_port }}"
+
+    teleport_reverse_tunnel_port: 3024 # Другой телепорт или агент подключается к ЭТОМУ teleport. Другой - под NAT, и этот не может до него достучаться
+    teleport_reverse_tunnel_listen_addr: "0.0.0.0:{{ teleport_reverse_tunnel_port }}"
+
+    teleport_internal_connect_port: 3025 # Auth-server общается с Proxy-server
+
+    teleport_kube_listen_port: 3026
+    teleport_kube_listen_addr: "0.0.0.0:{{ teleport_kube_listen_port }}"
+    teleport_kube_public_addr: "{{ teleport_cluster_name }}:{{ teleport_kube_listen_port }}"
+
+    # SQLite data directory (Longhorn PVC)
+    teleport_data_storage_class: "lh-major-single-best-effort"
+    teleport_data_storage_size: "10Gi"
+
+    # Scheduling
+    teleport_tolerations: []
+    teleport_node_selector: {}
+    teleport_affinity: {}
+    teleport_resources: {}
+
+    # Prometheus / PodMonitor
+    teleport_pod_monitor_enabled: true
+    teleport_pod_monitor_interval: "30s"
+    teleport_pod_monitor_additional_labels: {}
+
+    # Timeouts
+    teleport_helm_pre_timeout: "5m"
+    teleport_helm_timeout: "10m"
+    teleport_helm_post_timeout: "5m"
+    teleport_rollout_timeout: "300s"
+
+    # ---------
+    # SSH-AGENT
+    # ---------
+
+    # Data directory on the node (config is always at /etc/teleport.yaml)
+    teleport_ssh_agent_data_dir: "/var/lib/teleport"
+
+    # Log level
+    teleport_ssh_agent_log_level: "INFO"

@@ -1,0 +1,376 @@
+# =============================================================================
+# Install Teleport (official Helm chart, SQLite backend on Longhorn PVC)
+# Steps:
+#   1. teleport/pre:       NetworkPolicies
+#   2. teleport:           main chart (standalone, SQLite + Longhorn PVC)
+#   3. teleport/post:      Ingress (Traefik HTTPS) + HAProxy TCP (SSH + tunnel)
+#   4. teleport/configure: Roles, Users, и все остальные CRDs via Teleport Operator
+#
+# Usage (tags):
+#   ansible-playbook teleport-install.yaml              # full install
+#   ansible-playbook teleport-install.yaml --tags pre   # only pre (NetworkPolicies)
+#   ansible-playbook teleport-install.yaml --tags install
+#   ansible-playbook teleport-install.yaml --tags post  # only post (Ingress + HAProxy TCP)
+#   ansible-playbook teleport-install.yaml --tags configure  # Roles, Users, CRDs
+#
+# Prerequisites:
+#   - Longhorn must be installed (storage for SQLite PVC)
+#   - cert-manager + ClusterIssuer must be configured
+#   - Traefik must be installed
+#   - HAProxy Ingress Controller must be installed
+#
+# NOTE: teleport_cluster_name is immutable after first deploy.
+#       Do NOT change it after the cluster is initialized.
+# =============================================================================
+
+---
+- name: Install Teleport (official Helm chart, SQLite backend)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[teleport-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "teleport-pre-check"
+      tags: [always]
+
+    - name: "[teleport-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        label_name: "teleport-pre-check"
+        namespace_value: "{{ teleport_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Resolve ClusterIssuer + ACME solver pod labels
+    # =========================================================================
+
+    - name: "[teleport-install-init] Resolve ACME solver"
+      include_tasks: tasks/tasks-resolve-acme-solver.yaml
+      vars:
+        label_name: teleport-install-init
+        cluster_issuer_name: "{{ teleport_cluster_issuer_name }}"
+        ingress_class_name: "{{ teleport_ingress_class_name }}"
+        acme_cluster_issuer_result_var: "teleport_acme_cluster_issuer"
+        acme_solver_result_var: "teleport_acme_solver"
+        acme_pod_labels_result_var: "teleport_acme_solver_pod_labels"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: INSTALL PRE (ESO Resources, NetworkPolicies)
+    # =========================================================================
+
+    - name: "[teleport-pre] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "teleport-pre"
+        chart_name: "teleport-pre"
+        chart_local_src: "{{ playbook_dir }}/charts/teleport/pre/"
+        chart_remote_dest: "{{ remote_charts_dir }}/teleport/pre"
+      tags: [pre]
+
+    - name: "[teleport-pre] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/teleport/pre/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ teleport_namespace }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+            instanceName: traefik-{{ traefik_namespace }}
+          haproxy:
+            namespace: {{ haproxy_namespace }}
+          teleport:
+            webPort: {{ teleport_web_port }}
+            sshPort: {{ teleport_ssh_port }}
+            reverseTunnelPort: {{ teleport_reverse_tunnel_port }}
+            internalConnectPort: {{ teleport_internal_connect_port }}
+            kubeApiPort: {{ teleport_kube_listen_port }}
+            vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
+            vpnIps: {{ vpn_ips | to_json }}
+          acmeSolverLabels: {{ teleport_acme_solver_pod_labels | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    - name: "[teleport-pre] Install via Helm"
+      command: >
+        helm upgrade --install teleport-pre {{ remote_charts_dir }}/teleport/pre
+        --namespace {{ teleport_namespace }}
+        --create-namespace
+        --values {{ remote_charts_dir }}/teleport/pre/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ teleport_helm_pre_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: INSTALL TELEPORT
+    # =========================================================================
+
+    - name: "[teleport] Add Helm repository"
+      include_tasks: tasks/tasks-add-helm-repo.yaml
+      vars:
+        label_name: "teleport"
+        helm_repo_name: "teleport"
+        helm_repo_url: "https://charts.releases.teleport.dev"
+      tags: [install]
+
+    - name: "[teleport] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/teleport/teleport-values-override.yaml"
+        mode: "0644"
+        content: |
+          clusterName: {{ teleport_cluster_name }}
+          kubeClusterName: {{ teleport_kube_cluster_name }}
+
+          chartMode: standalone
+          proxyListenerMode: separate
+
+          persistence:
+            enabled: true
+            storageClassName: {{ teleport_data_storage_class }}
+            volumeSize: {{ teleport_data_storage_size }}
+
+          auth:
+            teleportConfig:
+              teleport:
+                storage:
+                  type: sqlite
+                  sync: NORMAL
+                  journal: WAL
+
+          proxy:
+            teleportConfig:
+              proxy_service:
+                public_addr: {{ teleport_web_public_addr }}
+                web_listen_addr: {{ teleport_web_listen_addr }}
+                listen_addr: {{ teleport_ssh_listen_addr }}
+                tunnel_listen_addr: {{ teleport_reverse_tunnel_listen_addr }}
+                kube_listen_addr: {{ teleport_kube_listen_addr }}
+                kube_public_addr: {{ teleport_kube_public_addr }}
+
+          operator:
+            enabled: true
+
+          log:
+            format: json
+
+          service:
+            type: ClusterIP
+
+          podMonitor:
+            enabled: {{ teleport_pod_monitor_enabled }}
+            interval: {{ teleport_pod_monitor_interval }}
+            additionalLabels: {{ teleport_pod_monitor_additional_labels | to_json }}
+
+          tolerations: {{ teleport_tolerations | to_json }}
+          nodeSelector: {{ teleport_node_selector | to_json }}
+          affinity: {{ teleport_affinity | to_json }}
+          resources: {{ teleport_resources | to_json }}
+
+          ingress:
+            enabled: false
+
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[teleport] Install via Helm"
+      command: >
+        helm upgrade --install teleport teleport/teleport-cluster
+        --namespace {{ teleport_namespace }}
+        --values {{ remote_charts_dir }}/teleport/teleport-values-override.yaml
+        --version {{ teleport_chart_version }}
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --wait-for-jobs
+        --timeout {{ teleport_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[teleport] Wait for rollout to be ready"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "teleport"
+        rollout_namespace: "{{ teleport_namespace }}"
+        rollout_timeout: "{{ teleport_rollout_timeout }}"
+        rollout_resources:
+          - deployment/teleport-auth
+          - deployment/teleport-proxy
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: INSTALL POST CHART (Ingress + HAProxy TCP)
+    # =========================================================================
+
+    - name: "[teleport-post] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "teleport-post"
+        chart_name: "teleport-post"
+        chart_local_src: "{{ playbook_dir }}/charts/teleport/post/"
+        chart_remote_dest: "{{ remote_charts_dir }}/teleport/post"
+      tags: [post]
+
+    - name: "[teleport-post] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/teleport/post/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ teleport_namespace }}
+          ingress:
+            ingressClass: {{ teleport_ingress_class_name }}
+            domain: {{ teleport_domain }}
+            clusterIssuer: {{ teleport_cluster_issuer_name }}
+            tlsSecretName: {{ teleport_tls_secret_name }}
+            vpnOnlyEnabled: {{ teleport_vpn_only_enabled }}
+            vpnIngressRouteMiddlewares: {{ vpn_ingress_route_middlewares | to_json }}
+            httpEnable: {{ teleport_http_enabled }}
+            httpsEnable: {{ teleport_https_enabled }}
+          webServicePort: {{ teleport_web_service_port }}
+          sshPort: {{ teleport_ssh_port }}
+          reverseTunnelPort: {{ teleport_reverse_tunnel_port }}
+          kubeApiPort: {{ teleport_kube_listen_port }}
+          traefik:
+            namespace: {{ traefik_namespace }}
+            entryPoints:
+              web: {{ traefik_web_entrypoint }}
+              websecure: {{ traefik_websecure_entrypoint }}
+          haproxy:
+            namespace: {{ haproxy_namespace }}
+            ingressClass: {{ haproxy_ingress_class }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    - name: "[teleport-post] Install via Helm"
+      command: >
+        helm upgrade --install teleport-post {{ remote_charts_dir }}/teleport/post
+        --namespace {{ teleport_namespace }}
+        --values {{ remote_charts_dir }}/teleport/post/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ teleport_helm_post_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    # =========================================================================
+    # STEP 4: CONFIGURE (все CRDs via Teleport Operator)
+    # =========================================================================
+
+    - name: "[teleport-configure] Copy chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "teleport-configure"
+        chart_name: "teleport-configure"
+        chart_local_src: "{{ playbook_dir }}/charts/teleport/configure/"
+        chart_remote_dest: "{{ remote_charts_dir }}/teleport/configure"
+      tags: [configure]
+
+    - name: "[teleport-configure] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/teleport/configure/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ teleport_namespace }}
+          roles: {{ (teleport_configure_roles + teleport_configure_roles_extra) | to_json }}
+          users: {{ (teleport_configure_users + teleport_configure_users_extra) | to_json }}
+          bots: {{ (teleport_configure_bots + teleport_configure_bots_extra) | to_json }}
+          provisionTokens: {{ (teleport_configure_provision_tokens + teleport_configure_provision_tokens_extra) | to_json }}
+          apps: {{ (teleport_configure_apps + teleport_configure_apps_extra) | to_json }}
+          databases: {{ (teleport_configure_databases + teleport_configure_databases_extra) | to_json }}
+          githubConnectors: {{ (teleport_configure_github_connectors + teleport_configure_github_connectors_extra) | to_json }}
+          oidcConnectors: {{ (teleport_configure_oidc_connectors + teleport_configure_oidc_connectors_extra) | to_json }}
+          samlConnectors: {{ (teleport_configure_saml_connectors + teleport_configure_saml_connectors_extra) | to_json }}
+          accessLists: {{ (teleport_configure_access_lists + teleport_configure_access_lists_extra) | to_json }}
+          trustedClusters: {{ (teleport_configure_trusted_clusters + teleport_configure_trusted_clusters_extra) | to_json }}
+          loginRules: {{ (teleport_configure_login_rules + teleport_configure_login_rules_extra) | to_json }}
+          accessMonitoringRules: {{ (teleport_configure_access_monitoring_rules + teleport_configure_access_monitoring_rules_extra) | to_json }}
+          oktaImportRules: {{ (teleport_configure_okta_import_rules + teleport_configure_okta_import_rules_extra) | to_json }}
+          opensshServers: {{ (teleport_configure_openssh_servers + teleport_configure_openssh_servers_extra) | to_json }}
+          opensshEiceServers: {{ (teleport_configure_openssh_eice_servers + teleport_configure_openssh_eice_servers_extra) | to_json }}
+          workloadIdentities: {{ (teleport_configure_workload_identities + teleport_configure_workload_identities_extra) | to_json }}
+          inferenceModels: {{ (teleport_configure_inference_models + teleport_configure_inference_models_extra) | to_json }}
+          inferencePolicies: {{ (teleport_configure_inference_policies + teleport_configure_inference_policies_extra) | to_json }}
+          inferenceSecrets: {{ (teleport_configure_inference_secrets + teleport_configure_inference_secrets_extra) | to_json }}
+          autoupdateConfigs: {{ (teleport_configure_autoupdate_configs + teleport_configure_autoupdate_configs_extra) | to_json }}
+          autoupdateVersions: {{ (teleport_configure_autoupdate_versions + teleport_configure_autoupdate_versions_extra) | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [configure]
+
+    - name: "[teleport-configure] Install via Helm"
+      command: >
+        helm upgrade --install teleport-configure {{ remote_charts_dir }}/teleport/configure
+        --namespace {{ teleport_namespace }}
+        --values {{ remote_charts_dir }}/teleport/configure/values-override.yaml
+        --cleanup-on-fail
+        --atomic
+        --wait
+        --timeout {{ teleport_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [configure]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[teleport-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        helm_namespace: "{{ teleport_namespace }}"
+        label_name: "teleport-verify"
+      tags: [always]
+
+    - name: "[teleport-verify] Get pods status"
+      command: kubectl get pods -n {{ teleport_namespace }} -o wide
+      register: teleport_pods
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[teleport-verify] Print pods status"
+      debug:
+        msg: "{{ teleport_pods.stdout_lines }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[teleport-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "TELEPORT INSTALLATION COMPLETE"
+          - "=============================================="
+          - "Teleport UI:     https://{{ teleport_domain }}"
+          - "SSH proxy:       {{ teleport_domain }}:{{ teleport_ssh_port }}"
+          - "Reverse tunnel:  {{ teleport_domain }}:{{ teleport_reverse_tunnel_port }}"
+          - ""
+          - "To get invite link for superadmin (run once after first install):"
+          - "  kubectl exec -n {{ teleport_namespace }} deploy/teleport-auth -- tctl users reset superadmin"
+          - ""
+          - "IMPORTANT: teleport_cluster_name is immutable."
+          - "  Do NOT change it after first install."
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[teleport-verify] Installation complete"
+      debug:
+        msg: "teleport-pre + teleport-auth + teleport-proxy + teleport-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

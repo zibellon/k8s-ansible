@@ -1,0 +1,157 @@
+# =============================================================================
+# Install Teleport SSH Agent (systemd service on bare-metal nodes)
+# Steps:
+#   1. [always] Generate join token + ca_pin via tctl (fresh each run)
+#   2. [install] Uninstall existing teleport (full cleanup)
+#   3. [install] Install Teleport via install.sh script from Teleport proxy
+#   4. [install] Write teleport config and enable systemd service
+#
+# Usage (tags):
+#   ansible-playbook teleport-ssh-agent-install.yaml              # all nodes
+#   ansible-playbook teleport-ssh-agent-install.yaml --limit worker-01
+#   ansible-playbook teleport-ssh-agent-install.yaml --tags install
+#
+# Prerequisites:
+#   - Teleport cluster must be installed and running (teleport-install.yaml)
+#   - (Vault NOT required)
+#
+# How it works:
+#   - Token is generated fresh on every run (24h TTL, only needed for joining)
+#   - Token TTL does not affect already-registered nodes
+#   - Each run fully reinstalls the agent (stop → remove → install → configure)
+# =============================================================================
+
+---
+- name: Install Teleport SSH Agent (systemd)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    # =========================================================================
+    # PRE-CHECK
+    # =========================================================================
+
+    - name: "[teleport-ssh-agent-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "teleport-ssh-agent-pre-check"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Generate join token + ca_pin via tctl
+    # =========================================================================
+
+    - name: "[teleport-ssh-agent-init] Generate join token via Teleport"
+      shell: |
+        kubectl exec -n {{ teleport_namespace }} deploy/teleport-auth -- \
+          tctl tokens add --type=node --ttl=1h --format=json
+      register: teleport_token_output
+      changed_when: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[teleport-ssh-agent-init] Parse token and ca_pin from JSON"
+      set_fact:
+        teleport_ssh_agent_join_token: "{{ (teleport_token_output.stdout | from_json).token }}"
+        teleport_ssh_agent_ca_pin: "{{ (teleport_token_output.stdout | from_json).ca_pins | first }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: UNINSTALL EXISTING TELEPORT (full cleanup)
+    # =========================================================================
+
+    - name: "[teleport-ssh-agent-install] Stop teleport service"
+      systemd:
+        name: teleport
+        state: stopped
+        enabled: false
+      failed_when: false
+      tags: [install]
+
+    - name: "[teleport-ssh-agent-install] Remove teleport package"
+      apt:
+        name: teleport
+        state: absent
+      tags: [install]
+
+    - name: "[teleport-ssh-agent-install] Remove teleport data directory"
+      file:
+        path: /var/lib/teleport
+        state: absent
+      tags: [install]
+
+    - name: "[teleport-ssh-agent-install] Remove teleport config"
+      file:
+        path: /etc/teleport.yaml
+        state: absent
+      tags: [install]
+
+    # =========================================================================
+    # STEP 2: INSTALL TELEPORT VIA INSTALL SCRIPT
+    # =========================================================================
+
+    - name: "[teleport-ssh-agent-install] Install teleport via install script"
+      shell: curl "{{ longhorn_external_url }}/scripts/install.sh" | bash
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: CONFIGURE AND START SYSTEMD SERVICE
+    # =========================================================================
+
+    - name: "[teleport-ssh-agent-install] Create data directory"
+      file:
+        path: "{{ teleport_ssh_agent_data_dir }}"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+      tags: [install]
+
+    - name: "[teleport-ssh-agent-install] Write teleport config"
+      copy:
+        dest: "/etc/teleport.yaml"
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          version: v3
+          teleport:
+            nodename: "{{ inventory_hostname }}"
+            data_dir: {{ teleport_ssh_agent_data_dir }}
+            log:
+              output: stderr
+              severity: {{ teleport_ssh_agent_log_level }}
+              format:
+                output: json
+            proxy_server: {{ teleport_web_public_addr }}
+            ca_pin: "{{ teleport_ssh_agent_ca_pin }}"
+            join_params:
+              method: token
+              token_name: {{ teleport_ssh_agent_join_token }}
+          auth_service:
+            enabled: false
+          proxy_service:
+            enabled: false
+          ssh_service:
+            enabled: true
+            labels: {{ teleport_ssh_agent_node_labels | to_json }}
+      notify: Restart teleport
+      tags: [install]
+
+    - name: "[teleport-ssh-agent-install] Enable and start teleport service"
+      systemd:
+        name: teleport
+        state: started
+        enabled: true
+        daemon_reload: true
+      tags: [install]
+
+  handlers:
+    - name: Restart teleport
+      systemd:
+        name: teleport
+        state: restarted
+        daemon_reload: true

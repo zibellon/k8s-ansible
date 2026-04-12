@@ -1,0 +1,32 @@
+# =============================================================================
+# TELEPORT WEB UI INGRESS — HTTP (Traefik)
+# =============================================================================
+
+{{- if .Values.ingress.httpEnable }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: teleport-ui-http
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    - {{ .Values.traefik.entryPoints.web }}
+  routes:
+    - match: Host(`{{ .Values.ingress.domain }}`) && PathPrefix(`/`)
+      kind: Rule
+      {{- if .Values.ingress.vpnOnlyEnabled }}
+      middlewares:
+        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
+      {{- end }}
+      services:
+        - name: teleport
+          port: {{ .Values.webServicePort }}
+          scheme: https
+          serversTransport: teleport-insecure
+{{- end }}
