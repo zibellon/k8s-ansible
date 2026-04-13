@@ -90,19 +90,20 @@
       run_once: true
       tags: [pre]
 
-    - name: "[longhorn-pre] Install or upgrade via Helm"
-      command: >
-        helm upgrade --install longhorn-pre {{ remote_charts_dir }}/longhorn/pre
-        --namespace {{ longhorn_namespace }}
-        --create-namespace
-        --values {{ remote_charts_dir }}/longhorn/pre/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --wait-for-jobs
-        --timeout {{ longhorn_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[longhorn-pre] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "longhorn-pre"
+        helm_command: >
+          helm upgrade --install longhorn-pre {{ remote_charts_dir }}/longhorn/pre
+          --namespace {{ longhorn_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/longhorn/pre/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ longhorn_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -170,19 +171,20 @@
       run_once: true
       tags: [install]
 
-    - name: "[longhorn-install] Install or upgrade Longhorn via Helm"
-      command: >
-        helm upgrade --install longhorn longhorn/longhorn
-        --namespace {{ longhorn_namespace }}
-        --version {{ longhorn_chart_version }}
-        --values {{ remote_charts_dir }}/longhorn/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --wait-for-jobs
-        --timeout {{ longhorn_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[longhorn-install] Install or upgrade Longhorn via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "longhorn-install"
+        helm_command: >
+          helm upgrade --install longhorn longhorn/longhorn
+          --namespace {{ longhorn_namespace }}
+          --version {{ longhorn_chart_version }}
+          --values {{ remote_charts_dir }}/longhorn/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ longhorn_helm_timeout }}
       tags: [install]
 
     - name: "[longhorn-install] Wait for CRDs"
@@ -272,18 +274,19 @@
       run_once: true
       tags: [post]
 
-    - name: "[longhorn-post] Install or upgrade via Helm"
-      command: >
-        helm upgrade --install longhorn-post {{ remote_charts_dir }}/longhorn/post
-        --namespace {{ longhorn_namespace }}
-        --values {{ remote_charts_dir }}/longhorn/post/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --wait-for-jobs
-        --timeout {{ longhorn_config_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[longhorn-post] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "longhorn-post"
+        helm_command: >
+          helm upgrade --install longhorn-post {{ remote_charts_dir }}/longhorn/post
+          --namespace {{ longhorn_namespace }}
+          --values {{ remote_charts_dir }}/longhorn/post/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ longhorn_config_helm_timeout }}
       tags: [post]
 
     # =========================================================================

@@ -1,0 +1,51 @@
+# =============================================================================
+# Async Helm Upgrade (resilient to SSH disconnects)
+# =============================================================================
+# Params:
+#   - label_name: Label prefix for task names (used in logs)
+#   - helm_command: Complete helm command string to execute
+#
+# Fixed:
+#   - delegate_to: "{{ master_manager_fact }}" (only managers can run helm)
+#   - async/poll/retries/delay from hosts-vars/k8s-base.yaml
+#
+# Usage:
+#   - name: "[component-install] Install via Helm (async)"
+#     include_tasks: tasks/tasks-helm-upgrade-async.yaml
+#     vars:
+#       label_name: "component-install"
+#       helm_command: >
+#         helm upgrade --install component repo/chart
+#         --namespace {{ namespace }}
+#         --values {{ values_file }}
+#         --cleanup-on-fail --atomic --wait --timeout {{ timeout }}
+#     tags: [install]
+# =============================================================================
+
+- name: "[{{ label_name }}] Start async helm upgrade"
+  command: "{{ helm_command }}"
+  async: "{{ helm_async_timeout }}"
+  poll: "{{ helm_async_poll }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  register: helm_async_result
+  tags: [always]
+
+- name: "[{{ label_name }}] Wait for async helm upgrade"
+  async_status:
+    jid: "{{ helm_async_result.ansible_job_id }}"
+  register: helm_async_status
+  until: helm_async_status.finished
+  retries: "{{ helm_async_retries }}"
+  delay: "{{ helm_async_delay }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ label_name }}] Verify async helm upgrade succeeded"
+  fail:
+    msg: "Async helm upgrade failed. Check logs above."
+  when: not helm_async_status.finished | bool
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]

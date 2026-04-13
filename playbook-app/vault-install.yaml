@@ -84,18 +84,19 @@
       run_once: true
       tags: [pre]
 
-    - name: "[vault-pre] Install via Helm"
-      command: >
-        helm upgrade --install vault-pre {{ remote_charts_dir }}/vault/pre
-        --namespace {{ vault_namespace }}
-        --create-namespace
-        --values {{ remote_charts_dir }}/vault/pre/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ vault_config_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-pre] Install via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "vault-pre"
+        helm_command: >
+          helm upgrade --install vault-pre {{ remote_charts_dir }}/vault/pre
+          --namespace {{ vault_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/vault/pre/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ vault_config_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -123,18 +124,19 @@
       run_once: true
       tags: [operator]
 
-    - name: "[vault-operator] Install vault-operator via OCI helm chart"
-      command: >
-        helm upgrade --install vault-operator {{ vault_operator_chart }}
-        --namespace {{ vault_namespace }}
-        --create-namespace
-        --values {{ remote_charts_dir }}/vault/operator-values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ vault_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-operator] Install vault-operator via OCI helm chart (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "vault-operator"
+        helm_command: >
+          helm upgrade --install vault-operator {{ vault_operator_chart }}
+          --namespace {{ vault_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/vault/operator-values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ vault_helm_timeout }}
       tags: [operator]
 
     - name: "[vault-operator] Wait for vault-operator CRDs"
@@ -245,17 +247,18 @@
       run_once: true
       tags: [vault-cr]
 
-    - name: "[vault-cr] Apply Vault CR via Helm"
-      command: >
-        helm upgrade --install vault-cr {{ remote_charts_dir }}/vault/cr
-        --namespace {{ vault_namespace }}
-        --values {{ remote_charts_dir }}/vault/cr/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ vault_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-cr] Apply Vault CR via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "vault-cr"
+        helm_command: >
+          helm upgrade --install vault-cr {{ remote_charts_dir }}/vault/cr
+          --namespace {{ vault_namespace }}
+          --values {{ remote_charts_dir }}/vault/cr/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ vault_helm_timeout }}
       tags: [vault-cr]
 
     - name: "[vault-cr] Wait for StatefulSet rollout"
@@ -325,17 +328,18 @@
       run_once: true
       tags: [post]
 
-    - name: "[vault-post] Install via Helm"
-      command: >
-        helm upgrade --install vault-post {{ remote_charts_dir }}/vault/post
-        --namespace {{ vault_namespace }}
-        --values {{ remote_charts_dir }}/vault/post/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ vault_config_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-post] Install via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "vault-post"
+        helm_command: >
+          helm upgrade --install vault-post {{ remote_charts_dir }}/vault/post
+          --namespace {{ vault_namespace }}
+          --values {{ remote_charts_dir }}/vault/post/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ vault_config_helm_timeout }}
       tags: [post]
 
     # =========================================================================

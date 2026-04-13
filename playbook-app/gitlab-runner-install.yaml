@@ -107,18 +107,19 @@
       run_once: true
       tags: [pre]
 
-    - name: "[gitlab-runner-pre] Install via Helm"
-      command: >
-        helm upgrade --install gitlab-runner-pre {{ remote_charts_dir }}/gitlab-runner/pre
-        --namespace {{ gitlab_runner_namespace }}
-        --create-namespace
-        --values {{ remote_charts_dir }}/gitlab-runner/pre/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ gitlab_runner_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-runner-pre] Install via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "gitlab-runner-pre"
+        helm_command: >
+          helm upgrade --install gitlab-runner-pre {{ remote_charts_dir }}/gitlab-runner/pre
+          --namespace {{ gitlab_runner_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/gitlab-runner/pre/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ gitlab_runner_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -350,18 +351,19 @@
         helm_repo_url: "https://charts.gitlab.io"
       tags: [install]
 
-    - name: "[gitlab-runner-install] Install via Helm"
-      command: >
-        helm upgrade --install gitlab-runner gitlab/gitlab-runner
-        --namespace {{ gitlab_runner_namespace }}
-        --values {{ remote_charts_dir }}/gitlab-runner/values-override.yaml
-        --version {{ gitlab_runner_chart_version }}
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --timeout {{ gitlab_runner_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-runner-install] Install via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "gitlab-runner-install"
+        helm_command: >
+          helm upgrade --install gitlab-runner gitlab/gitlab-runner
+          --namespace {{ gitlab_runner_namespace }}
+          --values {{ remote_charts_dir }}/gitlab-runner/values-override.yaml
+          --version {{ gitlab_runner_chart_version }}
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ gitlab_runner_helm_timeout }}
       tags: [install]
 
     - name: "[gitlab-runner-install] Wait for rollout to be ready"

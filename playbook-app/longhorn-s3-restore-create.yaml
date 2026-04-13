@@ -71,18 +71,19 @@
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    - name: "[longhorn-s3-restore-create] Install via Helm"
-      command: >
-        helm upgrade --install longhorn-s3-restore {{ remote_charts_dir }}/longhorn-s3-restore
-        --namespace {{ longhorn_namespace }}
-        --values {{ remote_charts_dir }}/longhorn-s3-restore/values-override.yaml
-        --cleanup-on-fail
-        --atomic
-        --wait
-        --wait-for-jobs
-        --timeout {{ longhorn_config_helm_timeout }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[longhorn-s3-restore-create] Install via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "longhorn-s3-restore-create"
+        helm_command: >
+          helm upgrade --install longhorn-s3-restore {{ remote_charts_dir }}/longhorn-s3-restore
+          --namespace {{ longhorn_namespace }}
+          --values {{ remote_charts_dir }}/longhorn-s3-restore/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ longhorn_config_helm_timeout }}
 
     # =========================================================================
     # VERIFICATION
