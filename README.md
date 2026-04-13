@@ -350,15 +350,15 @@
 ## ---
 
 ## ---
-## Vault. Официальный helm
+## Vault. (Bank-vaults) Официальный helm
 ## ---
 ## ЕСТЬ проблема: официальный helm не работает из РФ (Региональная блокировка)
 ## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
 ## Скачать ZIP архив последнего релиза, достать все templates, Chart.yaml и values.yaml
 ## ---
 ## Важно_1. Установка идет через helm-chart: bank-vaults (https://bank-vaults.dev, https://github.com/bank-vaults)
-## Для хранения ключей используется k8s-secret
-## Есть playbook, для доставки ключей k8s.Secrets -> manager-nodes
+## Для хранения ключей используется `k8s-secret`
+## Есть playbook, для доставки ключей k8s.Secrets -> manager-nodes (как json файл)
 ## ---
 ## Важно_2. Работа с конфигурацией идет через Operator + CRDs
 ## все политики, роли, методы авторизации и так далее - определяются в Vault (CRDs)
@@ -376,6 +376,12 @@
 - установка (обновление) + конфигурация + синхронизация политик. Три отдельных playbook
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml`
   - Ставится: operator, vault-0 (CRDs, StatefulSet)
+- Обновление
+  - все устанавливается через официальный helm-chart
+  - НО RBAC - почему-то решили ставить отдельно. Почему - зашадка
+  - собрать официальный yaml: `kubectl kustomize https://github.com/bank-vaults/vault-operator/deploy/rbac > vault-rbac-official.yaml`
+  - поправить содержимое под HELM
+  - перенести в `playbook-app/charts/vault/pre`
 
 ## ---
 ## Теперь, можно запускать что-то, что требует secrets
