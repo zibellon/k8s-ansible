@@ -263,7 +263,7 @@
       vars:
         label_name: "longhorn-install"
         rollout_namespace: "{{ longhorn_namespace }}"
-        rollout_timeout: "{{ longhorn_manager_rollout_timeout }}"
+        rollout_timeout: "{{ longhorn_daemonset_rollout_timeout }}"
         rollout_resources:
           - daemonset/longhorn-manager
       tags: [install]
@@ -273,9 +273,33 @@
       vars:
         label_name: "longhorn-install"
         rollout_namespace: "{{ longhorn_namespace }}"
-        rollout_timeout: "{{ longhorn_ui_rollout_timeout }}"
+        rollout_timeout: "{{ longhorn_deployment_rollout_timeout }}"
         rollout_resources:
+          - deployment/longhorn-driver-deployer
           - deployment/longhorn-ui
+      tags: [install]
+
+    - name: "[longhorn-install] Wait for DaemonSet rollout (csi)"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "longhorn-install"
+        rollout_namespace: "{{ longhorn_namespace }}"
+        rollout_timeout: "{{ longhorn_daemonset_rollout_timeout }}"
+        rollout_resources:
+          - daemonset/longhorn-csi-plugin
+      tags: [install]
+
+    - name: "[longhorn-install] Wait for Deployment rollout (csi)"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "longhorn-install"
+        rollout_namespace: "{{ longhorn_namespace }}"
+        rollout_timeout: "{{ longhorn_deployment_rollout_timeout }}"
+        rollout_resources:
+          - deployment/csi-attacher
+          - deployment/csi-provisioner
+          - deployment/csi-resizer
+          - deployment/csi-snapshotter
       tags: [install]
 
     # =========================================================================
