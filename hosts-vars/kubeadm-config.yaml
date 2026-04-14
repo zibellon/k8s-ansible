@@ -1,0 +1,67 @@
+all:
+  vars:
+    # -----------------------------------------------------------------------
+    # kubeadm config template
+    # -----------------------------------------------------------------------
+    # Шаблон для генерации /etc/kubernetes/kubeadm-config.yaml
+    # cert_sans собирается динамически в tasks-kubeadm-config-create.yaml
+    #
+    # Eviction: kubelet_eviction_soft, kubelet_eviction_hard — dict переменные
+    # Если soft eviction не нужен: kubelet_eviction_soft: {}
+    # -----------------------------------------------------------------------
+    kubeadm_config_template: |
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: InitConfiguration
+      localAPIEndpoint:
+        advertiseAddress: "{{ api_server_advertise_address }}"
+        bindPort: {{ api_server_bind_port }}
+      nodeRegistration:
+        criSocket: "unix:///var/run/containerd/containerd.sock"
+      ---
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: ClusterConfiguration
+      kubernetesVersion: "{{ k8s_full_version }}"
+      controlPlaneEndpoint: "{{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}"
+      apiServer:
+        extraArgs:
+          - name: service-node-port-range
+            value: "{{ node_port_start }}-{{ node_port_end }}"
+          - name: encryption-provider-config
+            value: "{{ etcd_encryption_config_path }}"
+        extraVolumes:
+          - name: encryption-config
+            hostPath: "{{ etcd_encryption_config_path }}"
+            mountPath: "{{ etcd_encryption_config_path }}"
+            readOnly: true
+            pathType: File
+        certSANs: {{ cert_sans | to_json }}
+      networking:
+        serviceSubnet: "{{ service_subnet }}"
+        podSubnet: "{{ pod_subnet }}"
+        dnsDomain: "{{ cluster_dns_domain }}"
+      controllerManager:
+        extraArgs:
+          - name: allocate-node-cidrs
+            value: "false"
+          - name: node-monitor-grace-period
+            value: "{{ node_monitor_grace_period }}"
+      ---
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      cgroupDriver: systemd
+      containerLogMaxSize: {{ kubelet_container_log_max_size }}
+      containerLogMaxFiles: {{ kubelet_container_log_max_files }}
+      featureGates:
+        KubeletCrashLoopBackOffMax: true
+      crashLoopBackOff:
+        maxContainerRestartPeriod: {{ kubelet_crashloop_max_backoff }}
+      imageGCHighThresholdPercent: {{ kubelet_image_gc_high_threshold }}
+      imageGCLowThresholdPercent: {{ kubelet_image_gc_low_threshold }}
+      imageMinimumGCAge: {{ kubelet_image_minimum_gc_age }}
+      evictionSoft: {{ kubelet_eviction_soft | to_json }}
+      evictionSoftGracePeriod: {{ kubelet_eviction_soft_grace_period | to_json }}
+      evictionHard: {{ kubelet_eviction_hard | to_json }}
+      ---
+      apiVersion: kubeproxy.config.k8s.io/v1alpha1
+      kind: KubeProxyConfiguration
+      mode: ipvs

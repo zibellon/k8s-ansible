@@ -4,14 +4,21 @@
 # Creates:
 #   - /etc/haproxy/haproxy.cfg
 #
-# Required variables (from hosts.yaml):
+# Required variables (from hosts-vars/):
+#   - haproxy_apiserver_lb_config_template (hosts-vars/haproxy-apiserver-lb.yaml)
 #   - haproxy_apiserver_lb_host
 #   - haproxy_apiserver_lb_port
 #   - haproxy_apiserver_lb_healthz_port
 #   - api_server_advertise_address (per-host)
 #
+# How it works:
+#   1. Build manager_ips list from inventory
+#   2. Build __manager_servers_ip_list block (Jinja2 loop)
+#   3. Replace __MANAGER_SERVER_IP_LIST__ placeholder in config template
+#
 # Sets facts:
 #   - manager_ips (list of IPs for HAProxy backend)
+#   - __manager_servers_ip_list (server lines for backend)
 #   - haproxy_config_result (copy module result)
 # =============================================================================
 
@@ -36,42 +43,16 @@
 # =========================================================================
 # HAPROXY CONFIG
 # =========================================================================
+- name: Build manager servers block for HAProxy
+  set_fact:
+    __manager_servers_ip_list: >-
+      {% for ip in manager_ips %}
+      server manager-{{ loop.index }} {{ ip }}:6443 check
+      {% endfor %}
+
 - name: Create HAProxy config file
   copy:
     dest: /etc/haproxy/haproxy.cfg
     mode: "0644"
-    content: |
-      global
-          log stdout format raw local0
-          maxconn 2100
-
-      defaults
-          log     global
-          mode    tcp
-          option  tcplog
-          option  dontlognull
-          timeout connect 5s
-          timeout client  30s
-          timeout server  30s
-          retries 3
-
-      # Health check endpoint for liveness probe
-      frontend healthz
-          bind *:{{ haproxy_apiserver_lb_healthz_port }}
-          mode http
-          monitor-uri /healthz
-
-      # Kubernetes API frontend
-      frontend kubernetes-api
-          bind {{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}
-          default_backend kubernetes-masters
-
-      # Backend with control-plane nodes
-      backend kubernetes-masters
-          option tcp-check
-          balance roundrobin
-          default-server inter 5s fall 3 rise 2
-          {% for ip in manager_ips %}
-          server manager-{{ loop.index }} {{ ip }}:6443 check
-          {% endfor %}
+    content: "{{ haproxy_apiserver_lb_config_template | replace('__MANAGER_SERVER_IP_LIST__', __manager_servers_ip_list) }}"
   register: haproxy_config_result
