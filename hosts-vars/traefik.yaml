@@ -5,10 +5,7 @@ all:
     # ------
     traefik_chart_version: "39.0.5"
     traefik_namespace: "traefik-lb"
-    # Image configuration (AirGapped support)
-    traefik_image_registry: "ghcr.io"
-    traefik_image_repository: "traefik/traefik"
-    traefik_image_tag: "v3.6.12"
+    # ---
     traefik_daemonset_name: "traefik-lb"
     traefik_ingress_class: "traefik-lb"
     traefik_web_entrypoint: "web" # WARNING: DO NOT CHANGE - hardcoded in helm chart
@@ -21,22 +18,9 @@ all:
     traefik_dashboard_ingress_https_enable: true
     traefik_dashboard_cluster_issuer_name: "acme-prod"
     traefik_dashboard_ingress_class_name: "traefik-lb"
-    # Tolerations (DaemonSet)
-    traefik_tolerations:
-      - operator: "Exists"
-    traefik_node_selector: {}
-    traefik_resources: {}
-    # Traefik ports
-    traefik_traefik_port: 8080 # NOT CHANGE
+    # Used in cilium-install.yaml post values
     traefik_web_port: 80 # NOT CHANGE
     traefik_websecure_port: 443 # NOT CHANGE
-    traefik_prometheus_port: 9200
-    # ServiceMonitor (prometheus-operator)
-    traefik_service_monitor_enabled: true
-    traefik_service_monitor_interval: "30s"
-    traefik_service_monitor_scrape_timeout: "15s"
-    # Дополнительные labels для совпадения с serviceMonitorSelector
-    traefik_service_monitor_additional_labels: {}
     # Middlewares
     traefik_middlewares:
       - name: http-to-https
@@ -72,3 +56,143 @@ all:
     # Helm timeouts
     traefik_helm_timeout: "5m"
     traefik_rollout_timeout: "300s"
+    # Helm chart values
+    traefik_helm_values:
+      image:
+        registry: "docker.io"
+        repository: "traefik"
+        tag: "v3.6.12"
+      fullnameOverride: "{{ traefik_daemonset_name }}"
+      tolerations:
+        - operator: "Exists"
+      nodeSelector: {}
+      resources: {}
+      serviceAccountAnnotations:
+        app.kubernetes.io/component: ingress-controller
+      deployment:
+        kind: DaemonSet
+        annotations:
+          app.kubernetes.io/component: ingress-controller
+      ingressClass:
+        enabled: true
+        name: "{{ traefik_ingress_class }}"
+        isDefaultClass: false
+      service:
+        type: NodePort
+        annotations:
+          app.kubernetes.io/component: ingress-controller
+        spec:
+          externalTrafficPolicy: Local
+      ports:
+        traefik:
+          port: 8080
+          exposedPort: 8080
+          expose:
+            default: false
+        web:
+          asDefault: true
+          port: 80
+          nodePort: 80
+          expose:
+            default: true
+          exposedPort: 80
+          forwardedHeaders:
+            insecure: true
+          proxyProtocol:
+            insecure: true
+          transport:
+            respondingTimeouts:
+              idleTimeout: 600
+              writeTimeout: 600
+              readTimeout: 600
+        websecure:
+          asDefault: true
+          port: 443
+          nodePort: 443
+          expose:
+            default: true
+          exposedPort: 443
+          http:
+            tls:
+              enabled: true
+          forwardedHeaders:
+            insecure: true
+          proxyProtocol:
+            insecure: true
+          transport:
+            respondingTimeouts:
+              idleTimeout: 600
+              writeTimeout: 600
+              readTimeout: 600
+        metrics:
+          port: 9200
+          exposedPort: 9200
+          expose:
+            default: false
+      providers:
+        kubernetesCRD:
+          enabled: true
+          ingressClass: "{{ traefik_ingress_class }}"
+          allowCrossNamespace: true
+        kubernetesIngress:
+          enabled: true
+          ingressClass: "{{ traefik_ingress_class }}"
+          publishedService:
+            enabled: false
+      logs:
+        general:
+          level: DEBUG
+          format: json
+        access:
+          enabled: true
+          format: json
+      gateway:
+        enabled: false
+      gatewayClass:
+        enabled: false
+      api:
+        dashboard: true
+      metrics:
+        addInternals: true
+        prometheus:
+          entryPoint: metrics
+          service:
+            enabled: true
+          serviceMonitor:
+            enabled: true
+            interval: "30s"
+            scrapeTimeout: "15s"
+            additionalLabels: {}
+      additionalArguments:
+        - "--api.insecure=true"
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      extraObjects:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: "traefik-dashboard"
+            labels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: "traefik-{{ traefik_namespace }}"
+          spec:
+            type: ClusterIP
+            selector:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: "traefik-{{ traefik_namespace }}"
+            ports:
+              - name: dashboard
+                protocol: TCP
+                port: 8080
+                targetPort: 8080

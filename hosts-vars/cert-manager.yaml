@@ -3,39 +3,9 @@ all:
     # ------
     # Cert-manager
     # ------
-    cert_manager_version: "1.20.2"
-    # Image configuration (AirGapped support)
-    cert_manager_image_registry: "quay.io"
-    cert_manager_image_repository_controller: "jetstack/cert-manager-controller"
-    cert_manager_image_repository_cainjector: "jetstack/cert-manager-cainjector"
-    cert_manager_image_repository_webhook: "jetstack/cert-manager-webhook"
-    cert_manager_image_tag: "v1.20.2"
-    # ------
     cert_manager_namespace: "cert-manager"
-    # Tolerations (Deployments)
-    cert_manager_tolerations: []
-    cert_manager_node_selector: {}
-    cert_manager_affinity: {}
-    cert_manager_replica_count: 1
-    cert_manager_resources: {}
-    # ---
-    cert_manager_cainjector_tolerations: []
-    cert_manager_cainjector_node_selector: {}
-    cert_manager_cainjector_affinity: {}
-    cert_manager_cainjector_replica_count: 1
-    cert_manager_cainjector_resources: {}
-    # ---
-    cert_manager_webhook_tolerations: []
-    cert_manager_webhook_node_selector: {}
-    cert_manager_webhook_affinity: {}
-    cert_manager_webhook_replica_count: 1
-    cert_manager_webhook_resources: {}
-    # ---
-    # Job tolerations
-    cert_manager_startupapicheck_tolerations: []
-    cert_manager_startupapicheck_node_selector: {}
-    cert_manager_startupapicheck_affinity: {}
-    cert_manager_startupapicheck_resources: {}
+    cert_manager_chart_version: "1.20.2"
+    # ------
     # Cluster issuers
     cert_manager_cluster_issuers:
       - name: "acme-prod"
@@ -52,19 +22,52 @@ all:
               app.kubernetes.io/instance: traefik-lb
               app.kubernetes.io/component: acme-http01-solver
               app.kubernetes.io/managed-by: cert-manager
-    # Prometheus metrics port
-    cert_manager_prometheus_port: 9402 # NOT CHANGE
-    # ServiceMonitor (prometheus-operator)
-    cert_manager_service_monitor_enabled: true
-    cert_manager_service_monitor_interval: "60s"
-    cert_manager_service_monitor_scrape_timeout: "30s"
-    # Значение label prometheus: на ServiceMonitor (для prometheusInstance selector)
-    cert_manager_service_monitor_prometheus_instance: "default"
-    cert_manager_service_monitor_target_port: "http-metrics"
-    cert_manager_service_monitor_path: "/metrics"
-    # Дополнительные labels для совпадения с serviceMonitorSelector
-    cert_manager_service_monitor_labels: {}
     # Helm timeouts
     cert_manager_helm_timeout: "5m"
     cert_manager_config_helm_timeout: "2m"
     cert_manager_rollout_timeout: "180s"
+    # Helm chart values
+    cert_manager_helm_values:
+      crds:
+        enabled: true
+      image:
+        repository: "quay.io/jetstack/cert-manager-controller"
+        tag: "v1.20.2"
+      prometheus:
+        enabled: true
+        servicemonitor:
+          enabled: true
+          prometheusInstance: "default"
+          targetPort: "http-metrics"
+          path: "/metrics"
+          interval: "60s"
+          scrapeTimeout: "30s"
+          labels: {}
+      tolerations: []
+      nodeSelector: {}
+      affinity: {}
+      replicaCount: 1
+      resources: {}
+      cainjector:
+        image:
+          repository: "quay.io/jetstack/cert-manager-cainjector"
+          tag: "v1.20.2"
+        tolerations: []
+        nodeSelector: {}
+        affinity: {}
+        replicaCount: 1
+        resources: {}
+      webhook:
+        image:
+          repository: "quay.io/jetstack/cert-manager-webhook"
+          tag: "v1.20.2"
+        tolerations: []
+        nodeSelector: {}
+        affinity: {}
+        replicaCount: 1
+        resources: {}
+      startupapicheck:
+        tolerations: []
+        nodeSelector: {}
+        affinity: {}
+        resources: {}
