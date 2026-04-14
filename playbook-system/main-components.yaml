@@ -157,25 +157,25 @@
       register: containerd_cgroup_result
 
     # =========================================================================
-    # REGISTRY MIRROR (docker.io rate limits workaround)
+    # REGISTRY MIRRORS / ADDITIONAL CONFIGS
     # =========================================================================
 
-    - name: Create certs.d directory for docker.io
+    - name: Create additional containerd config directories
       file:
-        path: /etc/containerd/certs.d/docker.io
+        path: "/etc/containerd/certs.d/{{ item.dirName }}"
         state: directory
         mode: '0755'
+      loop: "{{ containerd_additional_configs }}"
+      when: containerd_additional_configs | length > 0
 
-    - name: Create docker.io mirror config
+    - name: Create additional containerd config files
       copy:
-        dest: /etc/containerd/certs.d/docker.io/hosts.toml
-        content: |
-          server = "https://docker.io"
-
-          [host."https://mirror.gcr.io"]
-            capabilities = ["pull","resolve"]
+        dest: "/etc/containerd/certs.d/{{ item.dirName }}/hosts.toml"
+        content: "{{ item.content }}"
         mode: '0644'
-      register: docker_mirror_result
+      loop: "{{ containerd_additional_configs }}"
+      when: containerd_additional_configs | length > 0
+      register: containerd_additional_config_result
 
     # containerd 2.x already has config_path = '/etc/containerd/certs.d:/etc/docker/certs.d' by default
     - name: Restart containerd
@@ -184,7 +184,7 @@
         state: restarted
       when: >-
         containerd_cgroup_result.changed or
-        docker_mirror_result.changed or
+        (containerd_additional_config_result is defined and containerd_additional_config_result.changed) or
         containerd_config_result.changed
 
     # =========================================================================
