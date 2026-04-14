@@ -3,34 +3,9 @@ all:
     # ------
     # Cilium
     # ------
-    cilium_version: "1.19.1"
+    cilium_chart_version: "1.19.1"
     cilium_namespace: "cilium"
-    # Image configuration (AirGapped support) — каждый компонент со своим образом
-    # Cilium Agent
-    cilium_agent_image_registry: "quay.io"
-    cilium_agent_image_repository: "cilium/cilium"
-    cilium_agent_image_tag: "v1.19.1"
-    # Cilium Operator
-    cilium_operator_image_registry: "quay.io"
-    cilium_operator_image_repository: "cilium/operator"
-    cilium_operator_image_tag: "v1.19.1"
-    # Cilium Envoy
-    cilium_envoy_image_registry: "quay.io"
-    cilium_envoy_image_repository: "cilium/cilium-envoy"
-    cilium_envoy_image_tag: "v1.36.5"
-    # Hubble Relay
-    cilium_hubble_relay_image_registry: "quay.io"
-    cilium_hubble_relay_image_repository: "cilium/hubble-relay"
-    cilium_hubble_relay_image_tag: "v1.19.1"
-    # Hubble UI Backend
-    cilium_hubble_ui_backend_image_registry: "quay.io"
-    cilium_hubble_ui_backend_image_repository: "cilium/hubble-ui-backend"
-    cilium_hubble_ui_backend_image_tag: "v0.13.3"
-    # Hubble UI Frontend
-    cilium_hubble_ui_frontend_image_registry: "quay.io"
-    cilium_hubble_ui_frontend_image_repository: "cilium/hubble-ui"
-    cilium_hubble_ui_frontend_image_tag: "v0.13.3"
-    cilium_mask_size: 21 # Cilium IPAM settings (pods per node)
+    # ---
     cilium_hubble_ui_domain: "cilium-hubble-ui-k8s-v2.drawapp.ru" # Hubble UI domain
     cilium_hubble_ui_vpn_only_enabled: false
     cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui"
@@ -38,61 +13,125 @@ all:
     cilium_hubble_ui_ingress_https_enable: true
     cilium_hubble_ui_cluster_issuer_name: "acme-prod"
     cilium_hubble_ui_ingress_class_name: "traefik-lb"
-    cilium_healthz_bind_addr: "0.0.0.0:10256"
-    # DaemonSet tolerations (cilium agent - ДОЛЖЕН работать на ВСЕХ нодах)
-    cilium_tolerations:
-      - operator: "Exists"
-    cilium_node_selector: {}
-    cilium_resources: {}
-    # cilium-envoy DaemonSet tolerations (ДОЛЖЕН работать на ВСЕХ нодах)
-    cilium_envoy_tolerations:
-      - operator: "Exists"
-    cilium_envoy_node_selector: {}
-    cilium_envoy_resources: {}
-    # Operator tolerations (Deployment) - воспроизводит Helm-дефолт
-    cilium_operator_tolerations:
-      - operator: "Exists"
-    cilium_operator_node_selector: {}
-    cilium_operator_resources: {}
-    cilium_operator_replicas: 1
-    # Hubble Relay tolerations (Deployment)
-    cilium_hubble_relay_tolerations: []
-    cilium_hubble_relay_node_selector: {}
-    cilium_hubble_relay_resources: {}
-    cilium_hubble_relay_replicas: 1
-    cilium_hubble_relay_affinity: {}
-    # Hubble UI tolerations (Deployment)
-    cilium_hubble_ui_tolerations: []
-    cilium_hubble_ui_node_selector: {}
-    cilium_hubble_ui_replicas: 1
-    cilium_hubble_ui_affinity: {}
-    cilium_hubble_ui_backend_resources: {}
-    cilium_hubble_ui_frontend_resources: {}
-    # Prometheus metrics ports
-    cilium_prometheus_port: 9962
-    cilium_envoy_prometheus_port: 9964
-    cilium_operator_prometheus_port: 9963
-    cilium_hubble_relay_prometheus_port: 9966
-    cilium_hubble_metrics_port: 9965
-    cilium_hubble_metrics_enabled:
-      - dns
-      - drop
-      - tcp
-      - "flow:sourceContext=workload;destinationContext=workload"
-      - flows-to-world
-      - port-distribution
-      - icmp
-      - "httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction"
-    # ServiceMonitor (prometheus-operator)
-    cilium_service_monitor_enabled: true
-    cilium_service_monitor_interval: "30s"
-    cilium_service_monitor_scrape_timeout: "10s"
-    # Labels для совпадения с prometheus serviceMonitorSelector
-    # Пример для kube-prometheus-stack: release: prometheus
-    cilium_service_monitor_labels: {}
     # Helm timeouts
     cilium_helm_timeout: "5m"
     cilium_config_helm_timeout: "2m"
     cilium_post_config_helm_timeout: "2m"
     cilium_daemonset_rollout_timeout: "300s"
     cilium_deployment_rollout_timeout: "120s"
+    # Helm chart values
+    cilium_helm_values:
+      image:
+        repository: "quay.io/cilium/cilium"
+        tag: "v1.19.1"
+      operator:
+        image:
+          repository: "quay.io/cilium/operator"
+          tag: "v1.19.1"
+        tolerations:
+          - operator: "Exists"
+        nodeSelector: {}
+        replicas: 1
+        resources: {}
+        prometheus:
+          enabled: true
+          port: 9963
+          metricsService: true
+          serviceMonitor:
+            enabled: true
+            interval: "30s"
+            scrapeTimeout: "10s"
+            labels: {}
+      envoy:
+        image:
+          repository: "quay.io/cilium/cilium-envoy"
+          tag: "v1.36.5"
+        tolerations:
+          - operator: "Exists"
+        nodeSelector: {}
+        resources: {}
+        prometheus:
+          enabled: true
+          port: "9964"
+          serviceMonitor:
+            enabled: true
+            interval: "30s"
+            scrapeTimeout: "10s"
+            labels: {}
+      hubble:
+        relay:
+          image:
+            repository: "quay.io/cilium/hubble-relay"
+            tag: "v1.19.1"
+          enabled: true
+          tolerations: []
+          nodeSelector: {}
+          resources: {}
+          replicas: 1
+          affinity: {}
+          prometheus:
+            enabled: true
+            port: 9966
+            serviceMonitor:
+              enabled: true
+              interval: "30s"
+              labels: {}
+        ui:
+          backend:
+            image:
+              repository: "quay.io/cilium/hubble-ui-backend"
+              tag: "v0.13.3"
+            resources: {}
+          frontend:
+            image:
+              repository: "quay.io/cilium/hubble-ui"
+              tag: "v0.13.3"
+            resources: {}
+          enabled: true
+          tolerations: []
+          nodeSelector: {}
+          replicas: 1
+          affinity: {}
+        metrics:
+          port: 9965
+          enabled:
+            - dns
+            - drop
+            - tcp
+            - "flow:sourceContext=workload;destinationContext=workload"
+            - flows-to-world
+            - port-distribution
+            - icmp
+            - "httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction"
+          serviceMonitor:
+            enabled: true
+            interval: "30s"
+            labels: {}
+        peerService:
+          clusterDomain: "{{ cluster_dns_domain }}"
+      tolerations:
+        - operator: "Exists"
+      nodeSelector: {}
+      resources: {}
+      prometheus:
+        enabled: true
+        port: 9962
+        metricsService: true
+        serviceMonitor:
+          enabled: true
+          interval: "30s"
+          scrapeTimeout: "10s"
+          labels: {}
+      ipam:
+        operator:
+          clusterPoolIPv4PodCIDRList:
+            - "{{ pod_subnet }}"
+          clusterPoolIPv4MaskSize: 21
+      kubeProxyReplacement: true
+      kubeProxyReplacementHealthzBindAddr: "0.0.0.0:10256"
+      k8sServiceHost: "{{ haproxy_apiserver_lb_host }}"
+      k8sServicePort: "{{ haproxy_apiserver_lb_port }}"
+      nodePort:
+        range: "{{ node_port_start }},{{ node_port_end }}"
+      hostFirewall:
+        enabled: true

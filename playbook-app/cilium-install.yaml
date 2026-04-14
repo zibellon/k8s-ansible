@@ -113,117 +113,7 @@
       copy:
         dest: "{{ remote_charts_dir }}/cilium/values-override.yaml"
         mode: "0644"
-        content: |
-          image:
-            repository: "{{ cilium_agent_image_registry }}/{{ cilium_agent_image_repository }}"
-            tag: "{{ cilium_agent_image_tag }}"
-          operator:
-            image:
-              repository: "{{ cilium_operator_image_registry }}/{{ cilium_operator_image_repository }}"
-              tag: "{{ cilium_operator_image_tag }}"
-          envoy:
-            image:
-              repository: "{{ cilium_envoy_image_registry }}/{{ cilium_envoy_image_repository }}"
-              tag: "{{ cilium_envoy_image_tag }}"
-          hubble:
-            relay:
-              image:
-                repository: "{{ cilium_hubble_relay_image_registry }}/{{ cilium_hubble_relay_image_repository }}"
-                tag: "{{ cilium_hubble_relay_image_tag }}"
-            ui:
-              backend:
-                image:
-                  repository: "{{ cilium_hubble_ui_backend_image_registry }}/{{ cilium_hubble_ui_backend_image_repository }}"
-                  tag: "{{ cilium_hubble_ui_backend_image_tag }}"
-              frontend:
-                image:
-                  repository: "{{ cilium_hubble_ui_frontend_image_registry }}/{{ cilium_hubble_ui_frontend_image_repository }}"
-                  tag: "{{ cilium_hubble_ui_frontend_image_tag }}"
-          tolerations: {{ cilium_tolerations | to_json }}
-          nodeSelector: {{ cilium_node_selector | to_json }}
-          resources: {{ cilium_resources | to_json }}
-          prometheus:
-            enabled: true
-            port: {{ cilium_prometheus_port }}
-            metricsService: true
-            serviceMonitor:
-              enabled: {{ cilium_service_monitor_enabled }}
-              interval: "{{ cilium_service_monitor_interval }}"
-              scrapeTimeout: "{{ cilium_service_monitor_scrape_timeout }}"
-              labels: {{ cilium_service_monitor_labels | to_json }}
-          envoy:
-            tolerations: {{ cilium_envoy_tolerations | to_json }}
-            nodeSelector: {{ cilium_envoy_node_selector | to_json }}
-            resources: {{ cilium_envoy_resources | to_json }}
-            prometheus:
-              enabled: true
-              port: "{{ cilium_envoy_prometheus_port }}"
-              serviceMonitor:
-                enabled: {{ cilium_service_monitor_enabled }}
-                interval: "{{ cilium_service_monitor_interval }}"
-                scrapeTimeout: "{{ cilium_service_monitor_scrape_timeout }}"
-                labels: {{ cilium_service_monitor_labels | to_json }}
-          ipam:
-            operator:
-              clusterPoolIPv4PodCIDRList:
-                - {{ pod_subnet }}
-              clusterPoolIPv4MaskSize: {{ cilium_mask_size }}
-          operator:
-            tolerations: {{ cilium_operator_tolerations | to_json }}
-            nodeSelector: {{ cilium_operator_node_selector | to_json }}
-            replicas: {{ cilium_operator_replicas }}
-            resources: {{ cilium_operator_resources | to_json }}
-            prometheus:
-              enabled: true
-              port: {{ cilium_operator_prometheus_port }}
-              metricsService: true
-              serviceMonitor:
-                enabled: {{ cilium_service_monitor_enabled }}
-                interval: "{{ cilium_service_monitor_interval }}"
-                scrapeTimeout: "{{ cilium_service_monitor_scrape_timeout }}"
-                labels: {{ cilium_service_monitor_labels | to_json }}
-          kubeProxyReplacement: true
-          kubeProxyReplacementHealthzBindAddr: "{{ cilium_healthz_bind_addr }}"
-          k8sServiceHost: {{ haproxy_apiserver_lb_host }}
-          k8sServicePort: {{ haproxy_apiserver_lb_port }}
-          nodePort:
-            range: "{{ node_port_start }},{{ node_port_end }}"
-          hubble:
-            metrics:
-              port: {{ cilium_hubble_metrics_port }}
-              enabled: {{ cilium_hubble_metrics_enabled | to_json }}
-              serviceMonitor:
-                enabled: {{ cilium_service_monitor_enabled }}
-                interval: "{{ cilium_service_monitor_interval }}"
-                labels: {{ cilium_service_monitor_labels | to_json }}
-            relay:
-              enabled: true
-              tolerations: {{ cilium_hubble_relay_tolerations | to_json }}
-              nodeSelector: {{ cilium_hubble_relay_node_selector | to_json }}
-              resources: {{ cilium_hubble_relay_resources | to_json }}
-              replicas: {{ cilium_hubble_relay_replicas }}
-              affinity: {{ cilium_hubble_relay_affinity | to_json }}
-              prometheus:
-                enabled: true
-                port: {{ cilium_hubble_relay_prometheus_port }}
-                serviceMonitor:
-                  enabled: {{ cilium_service_monitor_enabled }}
-                  interval: "{{ cilium_service_monitor_interval }}"
-                  labels: {{ cilium_service_monitor_labels | to_json }}
-            ui:
-              enabled: true
-              tolerations: {{ cilium_hubble_ui_tolerations | to_json }}
-              nodeSelector: {{ cilium_hubble_ui_node_selector | to_json }}
-              replicas: {{ cilium_hubble_ui_replicas }}
-              affinity: {{ cilium_hubble_ui_affinity | to_json }}
-              backend:
-                resources: {{ cilium_hubble_ui_backend_resources | to_json }}
-              frontend:
-                resources: {{ cilium_hubble_ui_frontend_resources | to_json }}
-            peerService:
-              clusterDomain: {{ cluster_dns_domain }}
-          hostFirewall:
-            enabled: true
+        content: "{{ cilium_helm_values | to_nice_yaml }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -234,7 +124,7 @@
         label_name: "cilium-install"
         helm_command: >
           helm upgrade --install cilium cilium/cilium
-          --version {{ cilium_version }}
+          --version {{ cilium_chart_version }}
           --namespace {{ cilium_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/cilium/values-override.yaml

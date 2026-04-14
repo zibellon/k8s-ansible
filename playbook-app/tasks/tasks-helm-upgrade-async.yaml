@@ -30,22 +30,3 @@
   run_once: true
   register: helm_async_result
   tags: [always]
-
-- name: "[{{ label_name }}] Wait for async helm upgrade"
-  async_status:
-    jid: "{{ helm_async_result.ansible_job_id }}"
-  register: helm_async_status
-  until: helm_async_status.finished
-  retries: "{{ helm_async_retries }}"
-  delay: "{{ helm_async_delay }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ label_name }}] Verify async helm upgrade succeeded"
-  fail:
-    msg: "Async helm upgrade failed. Check logs above."
-  when: not helm_async_status.finished | bool
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
