@@ -376,3 +376,16 @@ kubectl get validatingwebhookconfiguration longhorn-webhook-validator \
 # Проверь TLS верификацию как это делает kube-apiserver
 echo | openssl s_client -connect 10.131.29.191:9502 \
   -CAfile /tmp/webhook-ca.crt 2>&1 | grep -E "Verify return|error"
+
+
+# БАГ с driver-deployer
+## Если в defaultSettings - указать managerUrl
+longhorn-driver-deployer стартует
+  └─ вызывает CheckMountPropagationWithNode("http://longhorn-backend:9500/v1")
+      └─ RancherClient делает GET http://longhorn-backend:9500/v1
+          └─ ManagerURLMiddleware видит defaultSettings.managerUrl = "https://longhorn-ui-k8s-v2.drawapp.ru"
+              └─ инжектирует X-Forwarded-Proto: https, X-Forwarded-Host: longhorn-ui-k8s-v2.drawapp.ru
+          └─ ответ содержит заголовок X-API-Schemas: https://longhorn-ui-k8s-v2.drawapp.ru/v1/schemas
+      └─ RancherClient видит что X-API-Schemas ≠ исходному URL
+          └─ делает ВТОРОЙ запрос: GET https://longhorn-ui-k8s-v2.drawapp.ru/v1/schemas  ← вот оно
+              └─ cert не готов → Traefik отдаёт self-signed → TLS ошибка → CRASH

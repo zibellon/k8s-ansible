@@ -176,74 +176,7 @@
         mode: "0644"
         content: |
           namespace: {{ vault_namespace }}
-          vaultSpec:
-            size: 1
-            serviceAccount: vault
-            image: "{{ vault_image_registry }}/{{ vault_image_repository }}:{{ vault_image_tag }}"
-            unsealConfig:
-              options:
-                secretShares: {{ vault_key_shares }}
-                secretThreshold: {{ vault_key_threshold }}
-              kubernetes:
-                secretNamespace: {{ vault_namespace }}
-                secretName: {{ vault_unsealer_secret_name }}
-            config:
-              api_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
-              cluster_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8201"
-              storage:
-                raft:
-                  path: /vault/data
-              listener:
-                tcp:
-                  address: "[::]:8200"
-                  cluster_address: "[::]:8201"
-                  tls_disable: true
-                  telemetry:
-                    unauthenticated_metrics_access: "true"
-              ui: true
-              disable_mlock: true
-              telemetry:
-                prometheus_retention_time: "120s"
-                disable_hostname: true
-            externalConfig:
-              purgeUnmanagedConfig:
-                enabled: true
-                exclude:
-                  auth: true
-              policies: {{ vault_policies_final | to_json }}
-              auth:
-                - type: kubernetes
-                  config:
-                    kubernetes_host: "{{ vault_kubernetes_host }}"
-                  roles: {{ vault_roles_final | to_json }}
-              secrets:
-                - path: secret
-                  type: kv
-                  description: General secrets
-                  options:
-                    version: 2
-                - path: eso-secret
-                  type: kv
-                  description: ESO secrets
-                  options:
-                    version: 2
-            volumeClaimTemplates:
-              - metadata:
-                  name: vault-data
-                spec:
-                  accessModes: [ReadWriteOnce]
-                  storageClassName: {{ vault_storage_class }}
-                  resources:
-                    requests:
-                      storage: {{ vault_storage_size }}
-            volumeMounts:
-              - name: vault-data
-                mountPath: /vault/data
-            resources:
-              vault: {{ vault_resources | to_json }}
-            nodeSelector: {{ vault_node_selector | to_json }}
-            tolerations: {{ vault_tolerations | to_json }}
-            affinity: {{ vault_affinity | to_json }}
+          vaultSpec: {{ vault_spec | to_json }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [vault-cr]

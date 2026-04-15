@@ -122,93 +122,7 @@
       copy:
         dest: "{{ remote_charts_dir }}/longhorn/values-override.yaml"
         mode: "0644"
-        content: |
-          image:
-            longhorn:
-              engine:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_image_engine_repository }}"
-                tag: "{{ longhorn_image_engine_tag }}"
-              manager:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_image_manager_repository }}"
-                tag: "{{ longhorn_image_manager_tag }}"
-              ui:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_image_ui_repository }}"
-                tag: "{{ longhorn_image_ui_tag }}"
-              instanceManager:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_image_instance_manager_repository }}"
-                tag: "{{ longhorn_image_instance_manager_tag }}"
-              shareManager:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_image_share_manager_repository }}"
-                tag: "{{ longhorn_image_share_manager_tag }}"
-              backingImageManager:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_image_backing_image_manager_repository }}"
-                tag: "{{ longhorn_image_backing_image_manager_tag }}"
-              supportBundleKit:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_image_support_bundle_kit_repository }}"
-                tag: "{{ longhorn_image_support_bundle_kit_tag }}"
-            csi:
-              attacher:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_csi_attacher_repository }}"
-                tag: "{{ longhorn_csi_attacher_tag }}"
-              provisioner:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_csi_provisioner_repository }}"
-                tag: "{{ longhorn_csi_provisioner_tag }}"
-              nodeDriverRegistrar:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_csi_node_driver_registrar_repository }}"
-                tag: "{{ longhorn_csi_node_driver_registrar_tag }}"
-              resizer:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_csi_resizer_repository }}"
-                tag: "{{ longhorn_csi_resizer_tag }}"
-              snapshotter:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_csi_snapshotter_repository }}"
-                tag: "{{ longhorn_csi_snapshotter_tag }}"
-              livenessProbe:
-                repository: "{{ longhorn_image_registry }}/{{ longhorn_csi_liveness_probe_repository }}"
-                tag: "{{ longhorn_csi_liveness_probe_tag }}"
-          # Custom default settings
-          defaultSettings:
-            managerUrl: {{ longhorn_external_url }}
-            defaultDataLocality: "best-effort"
-            defaultReplicaCount: 2
-            defaultLonghornStaticStorageClass: "longhorn-static"
-            disableRevisionCounter: '{"v1":"true"}'
-            allowCollectingLonghornUsageMetrics: false
-            systemManagedPodsImagePullPolicy: "if-not-present"
-            snapshotDataIntegrity: "enabled"
-            backupExecutionTimeout: 15
-            backupCompressionMethod: "gzip"
-            storageMinimalAvailablePercentage: 5
-            storageReservedPercentageForDefaultDisk: 5
-            priorityClass: "longhorn-critical"
-            disableSchedulingOnCordonedNode: true
-            replicaAutoBalance: "best-effort"
-            removeSnapshotsDuringFilesystemTrim: true
-            nodeDownPodDeletionPolicy: "do-nothing"
-            nodeDrainPolicy: "block-for-eviction"
-            taintToleration: "{{ longhorn_system_managed_components_taint_toleration }}"
-            systemManagedComponentsNodeSelector: "{{ longhorn_system_managed_components_node_selector }}"
-          # StorageClass settings
-          persistence:
-            defaultClassReplicaCount: {{ longhorn_default_class_replica_count }}
-          longhornManager:
-            log:
-              format: json
-            tolerations: {{ longhorn_manager_tolerations | to_json }}
-            nodeSelector: {{ longhorn_manager_node_selector | to_json }}
-            resources: {{ longhorn_manager_resources | to_json }}
-          longhornDriver:
-            tolerations: {{ longhorn_driver_tolerations | to_json }}
-            nodeSelector: {{ longhorn_driver_node_selector | to_json }}
-          longhornUI:
-            replicas: {{ longhorn_ui_replicas }}
-            affinity: {{ longhorn_ui_affinity | to_json }}
-            tolerations: {{ longhorn_ui_tolerations | to_json }}
-            nodeSelector: {{ longhorn_ui_node_selector | to_json }}
-          metrics:
-            serviceMonitor:
-              enabled: {{ longhorn_service_monitor_enabled }}
-              interval: "{{ longhorn_service_monitor_interval }}"
-              scrapeTimeout: "{{ longhorn_service_monitor_scrape_timeout }}"
+        content: "{{ longhorn_helm_values | to_nice_yaml }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -258,44 +172,26 @@
           - crd/volumes.longhorn.io
       tags: [install]
 
-    - name: "[longhorn-install] Wait for DaemonSet rollout"
+    - name: "[longhorn-install] Wait for HelmMainComponents rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
         label_name: "longhorn-install"
         rollout_namespace: "{{ longhorn_namespace }}"
-        rollout_timeout: "{{ longhorn_daemonset_rollout_timeout }}"
+        rollout_timeout: "{{ longhorn_rollout_timeout }}"
         rollout_resources:
           - daemonset/longhorn-manager
-      tags: [install]
-
-    - name: "[longhorn-install] Wait for Deployment rollout"
-      include_tasks: tasks/tasks-wait-rollout.yaml
-      vars:
-        label_name: "longhorn-install"
-        rollout_namespace: "{{ longhorn_namespace }}"
-        rollout_timeout: "{{ longhorn_deployment_rollout_timeout }}"
-        rollout_resources:
-          - deployment/longhorn-driver-deployer
           - deployment/longhorn-ui
+          - deployment/longhorn-driver-deployer
       tags: [install]
 
-    - name: "[longhorn-install] Wait for DaemonSet rollout (csi)"
+    - name: "[longhorn-install] Wait for ManagedComponents rollout (csi)"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
         label_name: "longhorn-install"
         rollout_namespace: "{{ longhorn_namespace }}"
-        rollout_timeout: "{{ longhorn_daemonset_rollout_timeout }}"
+        rollout_timeout: "{{ longhorn_rollout_timeout }}"
         rollout_resources:
           - daemonset/longhorn-csi-plugin
-      tags: [install]
-
-    - name: "[longhorn-install] Wait for Deployment rollout (csi)"
-      include_tasks: tasks/tasks-wait-rollout.yaml
-      vars:
-        label_name: "longhorn-install"
-        rollout_namespace: "{{ longhorn_namespace }}"
-        rollout_timeout: "{{ longhorn_deployment_rollout_timeout }}"
-        rollout_resources:
           - deployment/csi-attacher
           - deployment/csi-provisioner
           - deployment/csi-resizer

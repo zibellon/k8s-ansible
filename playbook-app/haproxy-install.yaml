@@ -108,41 +108,7 @@
       copy:
         dest: "{{ remote_charts_dir }}/haproxy/values-override.yaml"
         mode: "0644"
-        content: |
-          fullnameOverride: {{ haproxy_daemonset_name }}
-          controller:
-            image:
-              repository: "{{ haproxy_image_registry }}/{{ haproxy_image_repository }}"
-              tag: "{{ haproxy_image_tag }}"
-            kind: DaemonSet
-            tolerations: {{ haproxy_tolerations | to_json }}
-            nodeSelector: {{ haproxy_node_selector | to_json }}
-            resources: {{ haproxy_resources | to_json }}
-            ingressClassResource:
-              name: {{ haproxy_ingress_class }}
-            ingressClass: {{ haproxy_ingress_class }}
-            defaultTLSSecret:
-              enabled: false
-            logging:
-              level: info
-              traffic:
-                address: stdout
-                format: raw
-                facility: daemon
-            service:
-              enabled: true
-              type: ClusterIP
-              enablePorts:
-                http: false
-                https: false
-                quic: false
-                stat: true
-            serviceMonitor:
-              enabled: {{ haproxy_service_monitor_enabled }}
-              extraLabels: {{ haproxy_service_monitor_extra_labels | to_json }}
-              endpoints: {{ haproxy_service_monitor_endpoints | to_json }}
-          serviceAccount:
-            create: true
+        content: "{{ haproxy_helm_values | to_nice_yaml }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -154,6 +120,7 @@
         helm_command: >
           helm upgrade --install haproxy-ingress haproxytech/kubernetes-ingress
           --namespace {{ haproxy_namespace }}
+          --create-namespace
           --version {{ haproxy_chart_version }}
           --values {{ remote_charts_dir }}/haproxy/values-override.yaml
           --cleanup-on-fail
@@ -168,10 +135,15 @@
       vars:
         label_name: "haproxy-install"
         crds_list:
-          - crd/backends.ingress.v1.haproxy.org
-          - crd/defaults.ingress.v1.haproxy.org
-          - crd/globals.ingress.v1.haproxy.org
-          - crd/tcps.ingress.v1.haproxy.org
+          - crd/backends.core.haproxy.org
+          - crd/backends.ingress.v3.haproxy.org
+          - crd/defaults.core.haproxy.org
+          - crd/defaults.ingress.v3.haproxy.org
+          - crd/frontends.ingress.v3.haproxy.org
+          - crd/globals.core.haproxy.org
+          - crd/globals.ingress.v3.haproxy.org
+          - crd/tcps.ingress.v3.haproxy.org
+          - crd/validationrules.ingress.v3.haproxy.org
       tags: [install]
 
     - name: "[haproxy-install] Wait for rollouts"

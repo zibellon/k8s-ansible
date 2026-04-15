@@ -16,9 +16,6 @@ all:
     # refresh_interval - опциональное переопределение интервала (иначе используется eso_resources_config.external_secret_refresh_interval)
     # ------
     vault_namespace: "vault"
-    vault_image_registry: "docker.io"
-    vault_image_repository: "hashicorp/vault"
-    vault_image_tag: "1.21.2"
     vault_internal_url: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
     vault_ui_domain: "vault-k8s-v2.drawapp.ru"
     vault_ui_https_secret_name: "cert-vault-ui"
@@ -27,8 +24,6 @@ all:
     vault_ui_ingress_https_enable: true
     vault_ui_cluster_issuer_name: "acme-prod"
     vault_ui_ingress_class_name: "traefik-lb"
-    vault_storage_class: "lh-major-single-best-effort"
-    vault_storage_size: "2Gi"
     # Vault unseal (bank-vaults operator stores keys in K8s Secret)
     # secretShares / secretThreshold map directly to unsealConfig.secretShares / secretThreshold in Vault CR
     # bank-vaults defaults: 5 / 3 — always set explicitly to avoid surprises
@@ -47,11 +42,6 @@ all:
     vault_operator_tolerations: []
     vault_operator_node_selector: {}
     vault_operator_resources: {}
-    # ---
-    vault_tolerations: []
-    vault_resources: {}
-    vault_node_selector: {}
-    vault_affinity: {}
     # Helm timeouts
     vault_helm_timeout: "5m"
     vault_config_helm_timeout: "2m"
@@ -241,3 +231,77 @@ all:
         policies:
           - vault-admin
         ttl: "{{ vault_roles_default_ttl }}"
+
+    # ---------
+    # VAULT SPEC
+    # Full Vault CR spec — edit here to change image, storage, unseal params, etc.
+    # Dynamic refs kept only for values that differ per environment.
+    # ---------
+    vault_spec:
+      size: 1
+      serviceAccount: vault
+      image: "docker.io/hashicorp/vault:1.21.2"
+      unsealConfig:
+        options:
+          secretShares: "{{ vault_key_shares }}"
+          secretThreshold: "{{ vault_key_threshold }}"
+        kubernetes:
+          secretNamespace: "{{ vault_namespace }}"
+          secretName: "{{ vault_unsealer_secret_name }}"
+      config:
+        api_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
+        cluster_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8201"
+        storage:
+          raft:
+            path: /vault/data
+        listener:
+          tcp:
+            address: "[::]:8200"
+            cluster_address: "[::]:8201"
+            tls_disable: true
+            telemetry:
+              unauthenticated_metrics_access: "true"
+        ui: true
+        disable_mlock: true
+        telemetry:
+          prometheus_retention_time: "120s"
+          disable_hostname: true
+      externalConfig:
+        purgeUnmanagedConfig:
+          enabled: true
+          exclude:
+            auth: true
+        policies: "{{ vault_policies_final }}"
+        auth:
+          - type: kubernetes
+            config:
+              kubernetes_host: "{{ vault_kubernetes_host }}"
+            roles: "{{ vault_roles_final }}"
+        secrets:
+          - path: secret
+            type: kv
+            description: General secrets
+            options:
+              version: 2
+          - path: eso-secret
+            type: kv
+            description: ESO secrets
+            options:
+              version: 2
+      volumeClaimTemplates:
+        - metadata:
+            name: vault-data
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: lh-major-single-best-effort
+            resources:
+              requests:
+                storage: 2Gi
+      volumeMounts:
+        - name: vault-data
+          mountPath: /vault/data
+      resources:
+        vault: {}
+      nodeSelector: {}
+      tolerations: []
+      affinity: {}
