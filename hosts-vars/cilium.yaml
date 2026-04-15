@@ -19,15 +19,32 @@ all:
     cilium_post_config_helm_timeout: "2m"
     cilium_daemonset_rollout_timeout: "300s"
     cilium_deployment_rollout_timeout: "120s"
+
+    # Registry для образов Cilium. По умолчанию — quay.io.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/cilium.yaml:
+    #   cilium_image_registry_host: "my-private-registry.local"
+    #
+    # СБ должна загрузить следующие образы (только хост меняется, пути остаются оригинальными):
+    #   <host>/cilium/cilium:v1.19.1
+    #   <host>/cilium/operator-generic:v1.19.1
+    #   <host>/cilium/cilium-envoy:v1.36.5
+    #   <host>/cilium/hubble-relay:v1.19.1
+    #   <host>/cilium/hubble-ui-backend:v0.13.3
+    #   <host>/cilium/hubble-ui:v0.13.3
+    cilium_image_registry_host: "quay.io"
+
     # Helm chart values
     cilium_helm_values:
       image:
-        repository: "quay.io/cilium/cilium"
+        repository: "{{ cilium_image_registry_host }}/cilium/cilium"
         tag: "v1.19.1"
       operator:
         image:
-          repository: "quay.io/cilium/operator"
+          repository: "{{ cilium_image_registry_host }}/cilium/operator"
           tag: "v1.19.1"
+          # suffix="" → chart template produces operator-{cloud}{suffix} = operator-generic
+          # default chart suffix is "-ci" which would produce operator-generic-ci (wrong)
+          suffix: ""
         tolerations:
           - operator: "Exists"
         nodeSelector: {}
@@ -44,8 +61,10 @@ all:
             labels: {}
       envoy:
         image:
-          repository: "quay.io/cilium/cilium-envoy"
-          tag: "v1.36.5"
+          repository: "{{ cilium_image_registry_host }}/cilium/cilium-envoy"
+          tag: "v1.36.5-1775659161-c07fe96b7c1b6cbfc3d477da1821e70205e572a9"
+          # chart default useDigest=true with digest for v1.36.6; our tag is v1.36.5 → must disable
+          useDigest: false
         tolerations:
           - operator: "Exists"
         nodeSelector: {}
@@ -61,7 +80,7 @@ all:
       hubble:
         relay:
           image:
-            repository: "quay.io/cilium/hubble-relay"
+            repository: "{{ cilium_image_registry_host }}/cilium/hubble-relay"
             tag: "v1.19.1"
           enabled: true
           tolerations: []
@@ -79,12 +98,12 @@ all:
         ui:
           backend:
             image:
-              repository: "quay.io/cilium/hubble-ui-backend"
+              repository: "{{ cilium_image_registry_host }}/cilium/hubble-ui-backend"
               tag: "v0.13.3"
             resources: {}
           frontend:
             image:
-              repository: "quay.io/cilium/hubble-ui"
+              repository: "{{ cilium_image_registry_host }}/cilium/hubble-ui"
               tag: "v0.13.3"
             resources: {}
           enabled: true
