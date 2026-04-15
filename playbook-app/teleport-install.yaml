@@ -114,85 +114,40 @@
     # STEP 2: INSTALL TELEPORT
     # =========================================================================
 
-    - name: "[teleport] Add Helm repository"
+    - name: "[teleport-install] Add Helm repository"
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
-        label_name: "teleport"
+        label_name: "teleport-install"
         helm_repo_name: "teleport"
         helm_repo_url: "https://charts.releases.teleport.dev"
       tags: [install]
 
-    - name: "[teleport] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/teleport/teleport-values-override.yaml"
-        mode: "0644"
-        content: |
-          clusterName: {{ teleport_cluster_name }}
-          image:
-            repository: "{{ teleport_image_registry }}/{{ teleport_image_repository }}"
-            tag: "{{ teleport_image_tag }}"
-          kubeClusterName: {{ teleport_kube_cluster_name }}
-
-          chartMode: standalone
-          proxyListenerMode: separate
-
-          persistence:
-            enabled: true
-            storageClassName: {{ teleport_data_storage_class }}
-            volumeSize: {{ teleport_data_storage_size }}
-
-          auth:
-            teleportConfig:
-              teleport:
-                storage:
-                  type: sqlite
-                  sync: NORMAL
-                  journal: WAL
-
-          proxy:
-            teleportConfig:
-              proxy_service:
-                public_addr: {{ teleport_web_public_addr }}
-                web_listen_addr: {{ teleport_web_listen_addr }}
-                listen_addr: {{ teleport_ssh_listen_addr }}
-                tunnel_listen_addr: {{ teleport_reverse_tunnel_listen_addr }}
-                kube_listen_addr: {{ teleport_kube_listen_addr }}
-                kube_public_addr: {{ teleport_kube_public_addr }}
-
-          operator:
-            enabled: true
-
-          log:
-            format: json
-
-          service:
-            type: ClusterIP
-
-          podMonitor:
-            enabled: {{ teleport_pod_monitor_enabled }}
-            interval: {{ teleport_pod_monitor_interval }}
-            additionalLabels: {{ teleport_pod_monitor_additional_labels | to_json }}
-
-          tolerations: {{ teleport_tolerations | to_json }}
-          nodeSelector: {{ teleport_node_selector | to_json }}
-          affinity: {{ teleport_affinity | to_json }}
-          resources: {{ teleport_resources | to_json }}
-
-          ingress:
-            enabled: false
-
+    - name: "[teleport-install] Create values directory"
+      file:
+        path: "{{ remote_charts_dir }}/teleport/install"
+        state: directory
+        mode: "0755"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
-    - name: "[teleport] Install via Helm (async)"
+    - name: "[teleport-install] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/teleport/install/teleport-values-override.yaml"
+        mode: "0644"
+        content: "{{ teleport_helm_values | to_nice_yaml }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[teleport-install] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "teleport"
+        label_name: "teleport-install"
         helm_command: >
           helm upgrade --install teleport teleport/teleport-cluster
           --namespace {{ teleport_namespace }}
-          --values {{ remote_charts_dir }}/teleport/teleport-values-override.yaml
+          --values {{ remote_charts_dir }}/teleport/install/teleport-values-override.yaml
           --version {{ teleport_chart_version }}
           --cleanup-on-fail
           --atomic
@@ -205,42 +160,48 @@
     # WAIT FOR TELEPORT CRDs (created by Teleport Operator)
     # =========================================================================
 
-    - name: "[teleport] Wait for CRDs"
+    - name: "[teleport-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "teleport"
+        label_name: "teleport-install"
         crds_list:
-          - crd/teleportroles.teleport.dev
-          - crd/teleportusers.teleport.dev
-          - crd/teleportapps.teleport.dev
-          - crd/teleportdatabases.teleport.dev
-          - crd/teleportprovisiontokens.teleport.dev
-          - crd/teleportbots.teleport.dev
-          - crd/teleportgithubconnectors.teleport.dev
-          - crd/teleportoidcconnectors.teleport.dev
-          - crd/teleportsamlconnectors.teleport.dev
-          - crd/teleporttrustedclusters.teleport.dev
-          - crd/teleportaccesslists.teleport.dev
-          - crd/teleportloginrules.teleport.dev
-          - crd/teleportaccessmonitoringrules.teleport.dev
-          - crd/teleportoktaimportrules.teleport.dev
-          - crd/teleportopensshservers.teleport.dev
-          - crd/teleportworkloadidentities.teleport.dev
-          - crd/teleportinferencemodels.teleport.dev
-          - crd/teleportinferencepolicies.teleport.dev
-          - crd/teleportautoupdateconfigs.teleport.dev
-          - crd/teleportautoupdateversions.teleport.dev
+          - crd/teleportaccesslists.resources.teleport.dev
+          - crd/teleportaccessmonitoringrulesv1.resources.teleport.dev
+          - crd/teleportappsv3.resources.teleport.dev
+          - crd/teleportautoupdateconfigsv1.resources.teleport.dev
+          - crd/teleportautoupdateversionsv1.resources.teleport.dev
+          - crd/teleportbotsv1.resources.teleport.dev
+          - crd/teleportdatabasesv3.resources.teleport.dev
+          - crd/teleportgithubconnectors.resources.teleport.dev
+          - crd/teleportinferencemodels.resources.teleport.dev
+          - crd/teleportinferencepolicies.resources.teleport.dev
+          - crd/teleportinferencesecrets.resources.teleport.dev
+          - crd/teleportloginrules.resources.teleport.dev
+          - crd/teleportoidcconnectors.resources.teleport.dev
+          - crd/teleportoktaimportrules.resources.teleport.dev
+          - crd/teleportopenssheiceserversv2.resources.teleport.dev
+          - crd/teleportopensshserversv2.resources.teleport.dev
+          - crd/teleportprovisiontokens.resources.teleport.dev
+          - crd/teleportroles.resources.teleport.dev
+          - crd/teleportrolesv6.resources.teleport.dev
+          - crd/teleportrolesv7.resources.teleport.dev
+          - crd/teleportrolesv8.resources.teleport.dev
+          - crd/teleportsamlconnectors.resources.teleport.dev
+          - crd/teleporttrustedclustersv2.resources.teleport.dev
+          - crd/teleportusers.resources.teleport.dev
+          - crd/teleportworkloadidentitiesv1.resources.teleport.dev
       tags: [install]
 
-    - name: "[teleport] Wait for rollout to be ready"
+    - name: "[teleport-install] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "teleport"
+        label_name: "teleport-install"
         rollout_namespace: "{{ teleport_namespace }}"
         rollout_timeout: "{{ teleport_rollout_timeout }}"
         rollout_resources:
           - deployment/teleport-auth
           - deployment/teleport-proxy
+          - deployment/teleport-operator
       tags: [install]
 
     # =========================================================================

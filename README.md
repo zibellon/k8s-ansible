@@ -376,7 +376,7 @@
 ## `--tags pre, operator, vault-cr, post`
 ## ---
 ##
-- установка (обновление) + конфигурация + синхронизация политик. Три отдельных playbook
+- установка (обновление) + конфигурация + синхронизация политик = ОДИН playbook
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml`
   - Ставится: operator, vault-0 (CRDs, StatefulSet)
 - Обновление

@@ -3,18 +3,13 @@ all:
     # ------
     # Teleport (Infrastructure Access Platform)
     # ------
-
-    # Basics
     teleport_namespace: "teleport"
     teleport_chart_version: "18.7.2"
-    # Image configuration (AirGapped support)
-    teleport_image_registry: "public.ecr.aws"
-    teleport_image_repository: "gravitational/teleport"
-    teleport_image_tag: "18.7.2"
+    # ---
 
     # Networking / Ingress
     teleport_domain: "teleport-k8s-v2.drawapp.ru"
-    longhorn_external_url: "https://teleport-k8s-v2.drawapp.ru"
+    teleport_external_url: "https://teleport-k8s-v2.drawapp.ru"
     teleport_tls_secret_name: "cert-teleport"
     teleport_cluster_issuer_name: "acme-prod"
     teleport_ingress_class_name: "traefik-lb"
@@ -29,6 +24,7 @@ all:
     teleport_web_port: 3080
     teleport_web_service_port: 443
     teleport_web_listen_addr: "0.0.0.0:{{ teleport_web_port }}"
+    # Used in teleport-ssh-agent-install.yaml
     teleport_web_public_addr: "{{ teleport_cluster_name }}:443"
 
     # SSH / tunnel ports (HAProxy TCP NodePort)
@@ -48,22 +44,54 @@ all:
     teleport_data_storage_class: "lh-major-single-best-effort"
     teleport_data_storage_size: "10Gi"
 
-    # Scheduling
-    teleport_tolerations: []
-    teleport_node_selector: {}
-    teleport_affinity: {}
-    teleport_resources: {}
-
-    # Prometheus / PodMonitor
-    teleport_pod_monitor_enabled: true
-    teleport_pod_monitor_interval: "30s"
-    teleport_pod_monitor_additional_labels: {}
-
     # Timeouts
     teleport_helm_pre_timeout: "5m"
     teleport_helm_timeout: "10m"
     teleport_helm_post_timeout: "5m"
     teleport_rollout_timeout: "300s"
+    # Helm chart values
+    # image: "public.ecr.aws/gravitational/teleport" # ПРЕКОЛ, тут нельзя указать tag. Версия - берется из {{ teleport_chart_version }}
+    teleport_helm_values:
+      clusterName: "{{ teleport_cluster_name }}"
+      kubeClusterName: "{{ teleport_kube_cluster_name }}"
+      chartMode: standalone
+      proxyListenerMode: separate
+      persistence:
+        enabled: true
+        storageClassName: "{{ teleport_data_storage_class }}"
+        volumeSize: "{{ teleport_data_storage_size }}"
+      auth:
+        teleportConfig:
+          teleport:
+            storage:
+              type: sqlite
+              sync: NORMAL
+              journal: WAL
+      proxy:
+        teleportConfig:
+          proxy_service:
+            public_addr: "{{ teleport_web_public_addr }}"
+            web_listen_addr: "{{ teleport_web_listen_addr }}"
+            listen_addr: "{{ teleport_ssh_listen_addr }}"
+            tunnel_listen_addr: "{{ teleport_reverse_tunnel_listen_addr }}"
+            kube_listen_addr: "{{ teleport_kube_listen_addr }}"
+            kube_public_addr: "{{ teleport_kube_public_addr }}"
+      operator:
+        enabled: true
+      log:
+        format: json
+      service:
+        type: ClusterIP
+      podMonitor:
+        enabled: true
+        interval: "30s"
+        additionalLabels: {}
+      tolerations: []
+      nodeSelector: {}
+      affinity: {}
+      resources: {}
+      ingress:
+        enabled: false
 
     # ---------
     # SSH-AGENT
