@@ -37,11 +37,11 @@ spec:
           port: 53
 
 ---
-# Allow all traffic between pods within prometheus-operator namespace
+# Allow all traffic between pods inside longhorn-system
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: "allow-all-internal"
+  name: allow-internal-traffic
   namespace: {{ .Values.namespace }}
 spec:
   podSelector: {}
@@ -73,8 +73,6 @@ spec:
     - Ingress
   ingress:
     - ports:
-        - protocol: TCP
-          port: {{ .Values.prometheus.reloader_port }}
         - protocol: TCP
           port: {{ .Values.prometheus.port }}
         - protocol: TCP
@@ -135,15 +133,6 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.prometheus.port }}
-    # Alertmanager → Prometheus
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: alertmanager
-              app.kubernetes.io/instance: alertmanager-instance
-      ports:
-        - protocol: TCP
-          port: {{ .Values.prometheus.port }}
   egress:
     # Unrestricted — Scarape ALL
     - {}
@@ -176,15 +165,6 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.alertmanager.port }}
-    # Prometheus → Alertmanager (push alerts + scrape /metrics)
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: prometheus
-              app.kubernetes.io/instance: prometheus-instance
       ports:
         - protocol: TCP
           port: {{ .Values.alertmanager.port }}

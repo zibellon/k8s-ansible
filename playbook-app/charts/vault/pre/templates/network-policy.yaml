@@ -40,6 +40,25 @@ spec:
         - protocol: TCP
           port: 53
 
+---
+# Allow all traffic between pods inside longhorn-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
 # =============================================================================
 # PROMETHEUS SCRAPING
 # =============================================================================
@@ -63,24 +82,6 @@ spec:
 # =============================================================================
 # VAULT POLICIES
 # =============================================================================
-
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-all-internal
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - podSelector: {}
-  egress:
-    - to:
-        - podSelector: {}
 
 ---
 # Vault: allow ingress from Traefik (UI) and ESO (API), egress to kube-apiserver
@@ -162,16 +163,6 @@ spec:
     - ports:
         - protocol: TCP
           port: 6443
-    # Vault internal cluster communication
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: vault
-      ports:
-        - protocol: TCP
-          port: 8200
-        - protocol: TCP
-          port: 8201
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge)

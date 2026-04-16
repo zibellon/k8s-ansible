@@ -44,6 +44,25 @@ spec:
         - protocol: TCP
           port: 53
 
+---
+# Allow all traffic between pods inside longhorn-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
 # =============================================================================
 # TELEPORT INTERNAL COMMUNICATION (Auth ↔ Proxy)
 # =============================================================================
@@ -80,23 +99,6 @@ spec:
 # Proxy pod connects to Auth on 3025 to register itself and proxy requests.
 # Both pods have label app=teleport but different component labels.
 # Allow all traffic between pods inside longhorn-system
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-all-internal
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - podSelector: {}
-  egress:
-    - to:
-        - podSelector: {}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

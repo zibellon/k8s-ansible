@@ -40,6 +40,53 @@ spec:
         - protocol: TCP
           port: 53
 
+---
+# Allow all traffic between pods inside longhorn-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+# =============================================================================
+# PROMETHEUS SCRAPING
+# =============================================================================
+
+# Allow Prometheus scraping of Cilium metrics
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-for-monitoring
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 9962 # cilium-agent
+        - protocol: TCP
+          port: 9963 # cilium-operator
+        - protocol: TCP
+          port: 9964 # cilium-envoy
+        - protocol: TCP
+          port: 9965 # hubble-metrics
+        - protocol: TCP
+          port: 9966 # hubble-relay
+
 # =============================================================================
 # HUBBLE COMPONENTS
 # =============================================================================
@@ -59,13 +106,6 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              k8s-app: hubble-ui
-      ports:
-        - protocol: TCP
-          port: 4245
     - ports:
         - protocol: TCP
           port: 4222
@@ -104,13 +144,6 @@ spec:
         - protocol: TCP
           port: 8081
   egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              k8s-app: hubble-relay
-      ports:
-        - protocol: TCP
-          port: 4245
     - ports:
         - protocol: TCP
           port: 6443 # API server
@@ -180,27 +213,3 @@ spec:
       ports:
         - protocol: TCP
           port: 8089
-
-# Allow Prometheus scraping of Cilium metrics
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-for-monitoring
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-  ingress:
-    - ports:
-        - protocol: TCP
-          port: 9962 # cilium-agent
-        - protocol: TCP
-          port: 9963 # cilium-operator
-        - protocol: TCP
-          port: 9964 # cilium-envoy
-        - protocol: TCP
-          port: 9965 # hubble-metrics
-        - protocol: TCP
-          port: 9966 # hubble-relay

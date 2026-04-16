@@ -44,41 +44,24 @@ spec:
         - protocol: TCP
           port: 53
 
-# =============================================================================
-# STORAGE POLICIES (PostgreSQL)
-# =============================================================================
-
 ---
-# PostgreSQL: ingress from ZITADEL app pods (setup job, main deployment)
+# Allow all traffic between pods inside longhorn-system
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-postgresql
+  name: allow-internal-traffic
   namespace: {{ .Values.namespace }}
 spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: zitadel-postgresql
-      app.kubernetes.io/instance: zitadel-postgresql-{{ .Values.namespace }}
+  podSelector: {}
   policyTypes:
     - Ingress
+    - Egress
   ingress:
-    # From ZITADEL main deployment
     - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: zitadel
-      ports:
-        - protocol: TCP
-          port: 5432
-    # From ZITADEL setup job
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: setup
-      ports:
-        - protocol: TCP
-          port: 5432
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
 
 # =============================================================================
 # ZITADEL APPLICATION POLICIES
@@ -111,25 +94,12 @@ spec:
         - protocol: TCP
           port: 8080
   egress:
-    # To PostgreSQL
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: zitadel-postgresql
-      ports:
-        - protocol: TCP
-          port: 5432
     # To external HTTPS (email providers, OIDC discovery, etc.)
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-      ports:
+    - ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 80
 
 ---
 # ACME solver: ingress from Traefik (cert-manager HTTP-01 challenge)

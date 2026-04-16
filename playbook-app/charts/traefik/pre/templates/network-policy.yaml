@@ -40,6 +40,25 @@ spec:
         - protocol: TCP
           port: 53
 
+---
+# Allow all traffic between pods inside longhorn-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
 # =============================================================================
 # PROMETHEUS SCRAPING
 # =============================================================================
@@ -84,8 +103,6 @@ spec:
           port: 80 # web
         - protocol: TCP
           port: 443 # websecure
-        - protocol: TCP
-          port: 8080 # dashboard (ClusterIP only, restrict if needed)
   egress:
     - ports:
         - protocol: TCP
@@ -94,14 +111,6 @@ spec:
           port: 443
         - protocol: TCP
           port: 6443
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: traefik
-              app.kubernetes.io/instance: {{ .Values.instanceName }}
-      ports:
-        - protocol: TCP
-          port: 8080
     - to:
         - namespaceSelector:
             matchLabels:
