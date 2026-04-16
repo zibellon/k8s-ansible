@@ -116,65 +116,62 @@
     # STEP 2: GENERATE AND STORE ADMIN CREDENTIALS IN VAULT
     # =========================================================================
 
-    - name: "[grafana-vault-secrets] Find admin secret vault path"
+    - name: "[grafana-vault-secrets] Resolve admin secret paths"
       set_fact:
-        vault_path_grafana_admin: "{{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).vault_path }}"
+        vault_path_grafana_admin: >-
+          {{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).vault_path }}
+        grafana_admin_es_name: >-
+          {{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).external_secret_name }}
+        grafana_admin_secret_name: >-
+          {{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).target_secret_name }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
-    - name: "[grafana-vault-secrets] Check if admin secret exists"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }} 2>/dev/null
-      register: grafana_admin_secret_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[grafana-vault-secrets] Get admin credentials from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "grafana-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+        vault_get_field: password
+        vault_get_fact_name: "grafana_admin_vault"
       tags: [install]
 
-    - name: "[grafana-vault-secrets] Generate admin credentials"
-      set_fact:
-        generated_grafana_admin_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-      when: grafana_admin_secret_check.rc != 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[grafana-vault-secrets] Generate admin password"
+      include_tasks: tasks/tasks-generate-secret.yaml
+      vars:
+        label_name: "grafana-vault-secrets"
+        generate_fact_name: "_grafana_admin_password_generated"
+      when: not grafana_admin_vault_exists
       tags: [install]
 
     - name: "[grafana-vault-secrets] Store admin credentials in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}
-        username={{ grafana_admin_username }}
-        password={{ generated_grafana_admin_password }}
-      when: grafana_admin_secret_check.rc != 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[grafana-wait-eso] Force sync admin secret"
-      include_tasks: tasks/tasks-eso-force-sync.yaml
+      include_tasks: tasks/tasks-vault-put-and-sync.yaml
       vars:
-        label_name: "grafana-wait-eso"
+        label_name: "grafana-vault-secrets"
+        vault_put_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+        vault_put_data:
+          username: "{{ grafana_admin_username }}"
+          password: "{{ _grafana_admin_password_generated }}"
         eso_sync_namespace: "{{ grafana_namespace }}"
-        eso_sync_es_name: "{{ item }}"
-      loop: >-
-        {{
-          eso_vault_integration_grafana_secrets_merged
-          | map(attribute='external_secret_name')
-          | list
-        }}
+        eso_sync_es_name: "{{ grafana_admin_es_name }}"
+        eso_wait_secret_name: "{{ grafana_admin_secret_name }}"
+      when: not grafana_admin_vault_exists
       tags: [install]
 
-    - name: "[grafana-wait-eso] Wait for admin secret"
-      command: kubectl get secret eso-grafana-admin -n {{ grafana_namespace }}
-      register: grafana_admin_secret_wait
-      until: grafana_admin_secret_wait.rc == 0
-      retries: 30
-      delay: 5
-      changed_when: false
+    - name: "[grafana-vault-secrets] Get admin credentials from Vault (verify)"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "grafana-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+        vault_get_field: password
+        vault_get_fact_name: "grafana_admin_vault_after"
+      tags: [install]
+
+    - name: "[grafana-vault-secrets] Fail if admin secret still missing in Vault"
+      fail:
+        msg: "Grafana admin secret not found in Vault after write: {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+      when: not grafana_admin_vault_after_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -206,7 +203,7 @@
             installPlugins: {{ grafana_install_plugins | default('') }}
             externalUrl: {{ grafana_external_url }}
           adminSecret:
-            name: eso-grafana-admin
+            name: {{ grafana_admin_secret_name }}
             usernameKey: username
             passwordKey: password
           pvc:

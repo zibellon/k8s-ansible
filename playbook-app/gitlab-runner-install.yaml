@@ -174,17 +174,13 @@
       run_once: true
       tags: [install]
 
-    - name: "[gitlab-runner-minio] Check if runner-cache access_key exists in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }} 2>/dev/null \
-          | jq -r '.data.data.access_key // empty'
-      register: runner_cache_access_key_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-runner-minio] Get runner-cache access key from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-runner-minio"
+        vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
+        vault_get_field: access_key
+        vault_get_fact_name: "runner_cache_access_key_vault"
       tags: [install]
 
     - name: "[gitlab-runner-minio] Create access key for runner-cache"
@@ -193,72 +189,69 @@
         mc admin accesskey create myminio {{ runner_minio_root_user.stdout }}
         --name 'runner-cache-key' --json
       register: runner_cache_accesskey_result
-      when: runner_cache_access_key_check.stdout == ""
+      when: not runner_cache_access_key_vault_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
     - name: "[gitlab-runner-minio] Store runner-cache access key in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}
-        access_key={{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}
-        secret_key={{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}
-        bucket_name=runner-cache
-      when: runner_cache_access_key_check.stdout == ""
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-vault-put-and-sync.yaml
+      vars:
+        label_name: "gitlab-runner-minio"
+        vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
+        vault_put_data:
+          access_key: "{{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}"
+          secret_key: "{{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}"
+          bucket_name: runner-cache
+        eso_sync_namespace: "{{ gitlab_runner_namespace }}"
+        eso_sync_es_name: >-
+          {{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'minio_runner_cache') | first).external_secret_name }}
+        eso_wait_secret_name: "{{ secret_minio_cache }}"
+      when: not runner_cache_access_key_vault_exists
       tags: [install]
 
     # =========================================================================
     # STEP 3: VERIFY RUNNER TOKEN EXISTS IN VAULT (token set manually by DevOps)
     # =========================================================================
 
-    - name: "[gitlab-runner-token] Verify runner token exists in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -field=token \
-          {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}
-      register: vault_token_check
-      failed_when: vault_token_check.rc != 0
-      changed_when: false
+    - name: "[gitlab-runner-token] Get runner token from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-runner-token"
+        vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}"
+        vault_get_field: token
+        vault_get_fact_name: "gitlab_runner_token_vault"
+      tags: [install]
+
+    - name: "[gitlab-runner-token] Fail if runner token not found in Vault"
+      fail:
+        msg: >
+          Runner token not found in Vault at
+          {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}.
+          Create a runner in GitLab UI (Admin → CI/CD → Runners) and store the token manually:
+          vault kv put {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }} token=<value>
+      when: not gitlab_runner_token_vault_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
     # =========================================================================
-    # STEP 4: WAIT FOR ESO TO SYNC SECRETS (runner token + minio cache)
+    # STEP 4: WAIT FOR ESO TO SYNC SECRETS (runner token)
     # =========================================================================
 
-    - name: "[gitlab-runner-wait-eso] Force sync runner secrets"
+    - name: "[gitlab-runner-wait-eso] Force sync runner token secret"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
         label_name: "gitlab-runner-wait-eso"
         eso_sync_namespace: "{{ gitlab_runner_namespace }}"
-        eso_sync_es_name: "{{ item }}"
-      loop: >-
-        {{
-          eso_vault_integration_gitlab_runner_secrets_merged
-          | map(attribute='external_secret_name')
-          | list
-        }}
+        eso_sync_es_name: >-
+          {{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'runner_token') | first).external_secret_name }}
       tags: [install]
 
     - name: "[gitlab-runner-wait-eso] Wait for runner token secret"
       command: kubectl get secret {{ secret_runner_token }} -n {{ gitlab_runner_namespace }}
       register: runner_token_secret_wait
       until: runner_token_secret_wait.rc == 0
-      retries: 30
-      delay: 5
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-runner-wait-eso] Wait for MinIO cache secret"
-      command: kubectl get secret {{ secret_minio_cache }} -n {{ gitlab_runner_namespace }}
-      register: minio_cache_secret_wait
-      until: minio_cache_secret_wait.rc == 0
       retries: 30
       delay: 5
       changed_when: false
@@ -274,74 +267,7 @@
       copy:
         dest: "{{ remote_charts_dir }}/gitlab-runner/values-override.yaml"
         mode: "0644"
-        content: |
-          image:
-            repository: "{{ gitlab_runner_image_registry }}/{{ gitlab_runner_image_repository }}"
-            tag: "{{ gitlab_runner_image_tag }}"
-          gitlabUrl: {{ gitlab_runner_gitlab_url }}
-          replicas: {{ gitlab_runner_replicas }}
-          concurrent: {{ gitlab_runner_concurrent }}
-          checkInterval: {{ gitlab_runner_check_interval }}
-          unregisterRunners: {{ gitlab_runner_unregister_runners }}
-
-          runners:
-            secret: "{{ secret_runner_token }}"
-            cache:
-              secretName: "{{ secret_minio_cache }}"
-            config: |
-              {{ gitlab_runner_config | indent(14, first=False) }}
-
-          rbac:
-            create: true
-            clusterWideAccess: false
-
-          serviceAccount:
-            create: true
-            name: "gitlab-runner"
-
-          podLabels:
-            app.kubernetes.io/name: "gitlab-runner"
-            app.kubernetes.io/component: "runner"
-            app.kubernetes.io/part-of: "gitlab"
-            app.kubernetes.io/managed-by: "helm"
-
-          tolerations: {{ gitlab_runner_tolerations | to_json }}
-          nodeSelector: {{ gitlab_runner_node_selector | to_json }}
-          resources: {{ gitlab_runner_resources | to_json }}
-          affinity: {{ gitlab_runner_affinity | to_json }}
-
-          podSecurityContext:
-            runAsNonRoot: true
-            runAsUser: 100
-            fsGroup: 65533
-
-          securityContext:
-            allowPrivilegeEscalation: false
-            privileged: false
-            readOnlyRootFilesystem: false
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
-
-          resources:
-            requests:
-              memory: {{ gitlab_runner_memory_request }}
-              cpu: {{ gitlab_runner_cpu_request }}
-            limits:
-              memory: {{ gitlab_runner_memory_limit }}
-
-          service:
-            enabled: true
-
-          metrics:
-            enabled: true
-            port: {{ gitlab_runner_prometheus_port }}
-            serviceMonitor:
-              enabled: {{ gitlab_runner_service_monitor_enabled }}
-              interval: "{{ gitlab_runner_service_monitor_interval }}"
-              scrapeTimeout: "{{ gitlab_runner_service_monitor_scrape_timeout }}"
-              labels: {{ gitlab_runner_service_monitor_additional_labels | to_json }}
+        content: "{{ gitlab_runner_helm_values | to_nice_yaml }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]

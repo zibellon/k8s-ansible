@@ -154,149 +154,152 @@
     # =========================================================================
 
     # ----- PostgreSQL credentials -----
-    - name: "[gitlab-vault-secrets] Check if PostgreSQL secret exists"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }} 2>/dev/null
-      register: postgresql_secret_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-vault-secrets] Get PostgreSQL credentials from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }}"
+        vault_get_field: password
+        vault_get_fact_name: "gitlab_postgresql_vault"
       tags: [install]
 
     - name: "[gitlab-vault-secrets] Generate PostgreSQL password"
-      set_fact:
-        generated_postgresql_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-      when: postgresql_secret_check.rc != 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-generate-secret.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        generate_fact_name: "_gitlab_postgresql_password_generated"
+      when: not gitlab_postgresql_vault_exists
       tags: [install]
 
     - name: "[gitlab-vault-secrets] Store PostgreSQL credentials in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }}
-        username=gitlab
-        password={{ generated_postgresql_password }}
-      when: postgresql_secret_check.rc != 0
+      include_tasks: tasks/tasks-vault-put-and-sync.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }}"
+        vault_put_data:
+          username: gitlab
+          password: "{{ _gitlab_postgresql_password_generated }}"
+        eso_sync_namespace: "{{ gitlab_namespace }}"
+        eso_sync_es_name: >-
+          {{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'postgresql') | first).external_secret_name }}
+        eso_wait_secret_name: "{{ secret_postgresql }}"
+      when: not gitlab_postgresql_vault_exists
+      tags: [install]
+
+    - name: "[gitlab-vault-secrets] Get PostgreSQL credentials from Vault (verify)"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }}"
+        vault_get_field: password
+        vault_get_fact_name: "gitlab_postgresql_vault_after"
+      tags: [install]
+
+    - name: "[gitlab-vault-secrets] Fail if PostgreSQL secret still missing in Vault"
+      fail:
+        msg: "GitLab PostgreSQL secret not found in Vault after write: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }}"
+      when: not gitlab_postgresql_vault_after_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
     # ----- Redis credentials -----
-    - name: "[gitlab-vault-secrets] Check if Redis secret exists"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }} 2>/dev/null
-      register: redis_secret_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-vault-secrets] Get Redis credentials from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }}"
+        vault_get_field: password
+        vault_get_fact_name: "gitlab_redis_vault"
       tags: [install]
 
+    # redis_args embeds the password, so we generate it here before the put
     - name: "[gitlab-vault-secrets] Generate Redis password"
       set_fact:
-        generated_redis_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-      when: redis_secret_check.rc != 0
+        _gitlab_redis_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: not gitlab_redis_vault_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
     - name: "[gitlab-vault-secrets] Store Redis credentials in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }}
-        password={{ generated_redis_password }}
-        redis_args="--save 1 1 --notify-keyspace-events KEA --requirepass {{ generated_redis_password }}"
-      when: redis_secret_check.rc != 0
+      include_tasks: tasks/tasks-vault-put-and-sync.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }}"
+        vault_put_data:
+          password: "{{ _gitlab_redis_password }}"
+          redis_args: "--save 1 1 --notify-keyspace-events KEA --requirepass {{ _gitlab_redis_password }}"
+        eso_sync_namespace: "{{ gitlab_namespace }}"
+        eso_sync_es_name: >-
+          {{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'redis') | first).external_secret_name }}
+        eso_wait_secret_name: "{{ secret_redis }}"
+      when: not gitlab_redis_vault_exists
+      tags: [install]
+
+    - name: "[gitlab-vault-secrets] Get Redis credentials from Vault (verify)"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }}"
+        vault_get_field: password
+        vault_get_fact_name: "gitlab_redis_vault_after"
+      tags: [install]
+
+    - name: "[gitlab-vault-secrets] Fail if Redis secret still missing in Vault"
+      fail:
+        msg: "GitLab Redis secret not found in Vault after write: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }}"
+      when: not gitlab_redis_vault_after_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
     # ----- MinIO root credentials -----
-    - name: "[gitlab-vault-secrets] Check if MinIO root secret exists"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }} 2>/dev/null
-      register: minio_root_secret_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-vault-secrets] Get MinIO root credentials from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }}"
+        vault_get_field: password
+        vault_get_fact_name: "gitlab_minio_root_vault"
       tags: [install]
 
     - name: "[gitlab-vault-secrets] Generate MinIO root password"
-      set_fact:
-        generated_minio_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-      when: minio_root_secret_check.rc != 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-generate-secret.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        generate_fact_name: "_gitlab_minio_root_password_generated"
+      when: not gitlab_minio_root_vault_exists
       tags: [install]
 
     - name: "[gitlab-vault-secrets] Store MinIO root credentials in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }}
-        username={{ gitlab_minio_root_user }}
-        password={{ generated_minio_password }}
-      when: minio_root_secret_check.rc != 0
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    # =========================================================================
-    # STEP 3: WAIT FOR INITIAL SECRETS TO SYNC
-    # =========================================================================
-
-    - name: "[gitlab-wait-eso] Force sync initial secrets"
-      include_tasks: tasks/tasks-eso-force-sync.yaml
+      include_tasks: tasks/tasks-vault-put-and-sync.yaml
       vars:
-        label_name: "gitlab-wait-eso"
+        label_name: "gitlab-vault-secrets"
+        vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }}"
+        vault_put_data:
+          username: "{{ gitlab_minio_root_user }}"
+          password: "{{ _gitlab_minio_root_password_generated }}"
         eso_sync_namespace: "{{ gitlab_namespace }}"
-        eso_sync_es_name: "{{ item }}"
-      loop: >-
-        {{
-          eso_vault_integration_gitlab_secrets_merged
-          | selectattr('type', 'in', ['postgresql', 'redis', 'minio_root'])
-          | map(attribute='external_secret_name')
-          | list
-        }}
+        eso_sync_es_name: >-
+          {{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_root') | first).external_secret_name }}
+        eso_wait_secret_name: "{{ secret_minio_root }}"
+      when: not gitlab_minio_root_vault_exists
       tags: [install]
 
-    - name: "[gitlab-wait-eso] Wait for PostgreSQL secret"
-      command: kubectl get secret {{ secret_postgresql }} -n {{ gitlab_namespace }}
-      register: postgresql_secret_wait
-      until: postgresql_secret_wait.rc == 0
-      retries: 30
-      delay: 5
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-vault-secrets] Get MinIO root credentials from Vault (verify)"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-vault-secrets"
+        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }}"
+        vault_get_field: password
+        vault_get_fact_name: "gitlab_minio_root_vault_after"
       tags: [install]
 
-    - name: "[gitlab-wait-eso] Wait for Redis secret"
-      command: kubectl get secret {{ secret_redis }} -n {{ gitlab_namespace }}
-      register: redis_secret_wait
-      until: redis_secret_wait.rc == 0
-      retries: 30
-      delay: 5
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-wait-eso] Wait for MinIO root secret"
-      command: kubectl get secret {{ secret_minio_root }} -n {{ gitlab_namespace }}
-      register: minio_root_secret_wait
-      until: minio_root_secret_wait.rc == 0
-      retries: 30
-      delay: 5
-      changed_when: false
+    - name: "[gitlab-vault-secrets] Fail if MinIO root secret still missing in Vault"
+      fail:
+        msg: "GitLab MinIO root secret not found in Vault after write: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }}"
+      when: not gitlab_minio_root_vault_after_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -514,17 +517,13 @@
       tags: [install]
 
     # Create access keys for registry
-    - name: "[gitlab-minio-setup] Check if registry access_key exists in Vault"
-      shell: |
-        kubectl exec -n {{ vault_namespace }} vault-0 -- \
-          vault kv get -format=json \
-          {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_registry }} 2>/dev/null \
-          | jq -r '.data.data.access_key // empty'
-      register: registry_access_key_check
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-minio-setup] Get registry access key from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        label_name: "gitlab-minio-setup"
+        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_registry }}"
+        vault_get_field: access_key
+        vault_get_fact_name: "gitlab_registry_access_key_vault"
       tags: [install]
 
     - name: "[gitlab-minio-setup] Create access key for registry"
@@ -533,53 +532,25 @@
         mc admin accesskey create myminio {{ minio_root_user_from_secret.stdout }}
         --name 'registry-key' --json
       register: registry_accesskey_result
-      when: registry_access_key_check.stdout == ""
+      when: not gitlab_registry_access_key_vault_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
     - name: "[gitlab-minio-setup] Store registry access key in Vault"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 --
-        vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_registry }}
-        access_key={{ (registry_accesskey_result.stdout | from_json).accessKey }}
-        secret_key={{ (registry_accesskey_result.stdout | from_json).secretKey }}
-        bucket_name=registry
-      when: registry_access_key_check.stdout == ""
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    # =========================================================================
-    # STEP 8: WAIT FOR MINIO ACCESS KEYS TO SYNC
-    # =========================================================================
-
-    - name: "[gitlab-wait-eso] Force sync MinIO access key secrets"
-      include_tasks: tasks/tasks-eso-force-sync.yaml
+      include_tasks: tasks/tasks-vault-put-and-sync.yaml
       vars:
-        label_name: "gitlab-wait-eso"
+        label_name: "gitlab-minio-setup"
+        vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_registry }}"
+        vault_put_data:
+          access_key: "{{ (registry_accesskey_result.stdout | from_json).accessKey }}"
+          secret_key: "{{ (registry_accesskey_result.stdout | from_json).secretKey }}"
+          bucket_name: registry
         eso_sync_namespace: "{{ gitlab_namespace }}"
-        eso_sync_es_name: "{{ item }}"
-      loop: >-
-        {{
-          eso_vault_integration_gitlab_secrets_merged
-          | selectattr('type', 'in', ['minio_registry', 'gitlab_registry_minio_connection', 'gitlab_minio_connection'])
-          | map(attribute='external_secret_name')
-          | list
-        }}
-      tags: [install]
-
-    - name: "[gitlab-wait-eso] Wait for registry secret with access_key"
-      shell: |
-        kubectl get secret {{ secret_minio_registry }} -n {{ gitlab_namespace }} \
-          -o jsonpath='{.data.access_key}' | base64 -d
-      register: registry_access_key_sync_check
-      until: registry_access_key_sync_check.stdout != ""
-      retries: 30
-      delay: 5
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+        eso_sync_es_name: >-
+          {{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_registry') | first).external_secret_name }}
+        eso_wait_secret_name: "{{ secret_minio_registry }}"
+      when: not gitlab_registry_access_key_vault_exists
       tags: [install]
 
     # =========================================================================
