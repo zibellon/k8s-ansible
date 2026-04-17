@@ -1,10 +1,51 @@
 all:
   vars:
     # ------
-    # Longhorn
+    # registry+images (AirGap)
     # ------
-    longhorn_chart_version: "1.11.1"
+    # Registry для образов Longhorn. По умолчанию — docker.io.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/longhorn.yaml:
+    #   longhorn_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить следующие образы (только registry меняется):
+    #   <registry>/longhornio/longhorn-engine:v1.11.1
+    #   <registry>/longhornio/longhorn-manager:v1.11.1
+    #   <registry>/longhornio/longhorn-ui:v1.11.1
+    #   <registry>/longhornio/longhorn-instance-manager:v1.11.1
+    #   <registry>/longhornio/longhorn-share-manager:v1.11.1
+    #   <registry>/longhornio/backing-image-manager:v1.11.1
+    #   <registry>/longhornio/support-bundle-kit:v0.0.81
+    #   <registry>/longhornio/csi-attacher:v4.11.0
+    #   <registry>/longhornio/csi-provisioner:v5.3.0-20260225
+    #   <registry>/longhornio/csi-node-driver-registrar:v2.16.0
+    #   <registry>/longhornio/csi-resizer:v2.1.0
+    #   <registry>/longhornio/csi-snapshotter:v8.5.0
+    #   <registry>/longhornio/livenessprobe:v2.18.0
+    longhorn_image_registry: "docker.io"
+    # Image tags
+    # longhorn_image_tag — общий для core (engine/manager/ui/instanceManager/shareManager/backingImageManager)
+    longhorn_image_tag: "v1.11.1"
+    longhorn_support_bundle_kit_image_tag: "v0.0.81"
+    # CSI sidecars — версионируются независимо upstream
+    longhorn_csi_attacher_image_tag: "v4.11.0"
+    longhorn_csi_provisioner_image_tag: "v5.3.0-20260225"
+    longhorn_csi_node_driver_registrar_image_tag: "v2.16.0"
+    longhorn_csi_resizer_image_tag: "v2.1.0"
+    longhorn_csi_snapshotter_image_tag: "v8.5.0"
+    longhorn_csi_livenessprobe_image_tag: "v2.18.0"
+    # ---------
+    # ---------
     longhorn_namespace: "longhorn-system" # DO NOT CHANGE
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    longhorn_helm_repo_url: "https://charts.longhorn.io"
+    longhorn_helm_repo_name: "longhorn"
+    longhorn_helm_chart_name: "longhorn"
+    longhorn_chart_version: "1.11.1"
+    # Helm timeouts
+    longhorn_pre_helm_timeout: "5m"
+    longhorn_install_helm_timeout: "10m"
+    longhorn_post_helm_timeout: "2m"
+    longhorn_rollout_timeout: "600s"
     # ---
     longhorn_ui_domain: "longhorn-ui-k8s-v2.drawapp.ru"
     longhorn_external_url: "https://longhorn-ui-k8s-v2.drawapp.ru"
@@ -15,70 +56,58 @@ all:
     longhorn_ui_cluster_issuer_name: "acme-prod"
     longhorn_ui_ingress_class_name: "traefik-lb"
     longhorn_storage_classes: []
-    # Helm timeouts
-    longhorn_helm_timeout: "10m"
-    longhorn_config_helm_timeout: "2m"
-    longhorn_rollout_timeout: "300s"
 
     # Helm chart values
     longhorn_helm_values:
+      global:
+        imageRegistry: "{{ longhorn_image_registry }}"
       image:
         longhorn:
           engine:
-            registry: "docker.io"
             repository: "longhornio/longhorn-engine"
-            tag: "v1.11.1"
+            tag: "{{ longhorn_image_tag }}"
           manager:
-            registry: "docker.io"
             repository: "longhornio/longhorn-manager"
-            tag: "v1.11.1"
+            tag: "{{ longhorn_image_tag }}"
           ui:
-            registry: "docker.io"
             repository: "longhornio/longhorn-ui"
-            tag: "v1.11.1"
+            tag: "{{ longhorn_image_tag }}"
           instanceManager:
-            registry: "docker.io"
             repository: "longhornio/longhorn-instance-manager"
-            tag: "v1.11.1"
+            tag: "{{ longhorn_image_tag }}"
           shareManager:
-            registry: "docker.io"
             repository: "longhornio/longhorn-share-manager"
-            tag: "v1.11.1"
+            tag: "{{ longhorn_image_tag }}"
           backingImageManager:
-            registry: "docker.io"
             repository: "longhornio/backing-image-manager"
-            tag: "v1.11.1"
+            tag: "{{ longhorn_image_tag }}"
           supportBundleKit:
-            registry: "docker.io"
             repository: "longhornio/support-bundle-kit"
-            tag: "v0.0.81"
+            tag: "{{ longhorn_support_bundle_kit_image_tag }}"
         csi:
           attacher:
-            registry: "docker.io"
             repository: "longhornio/csi-attacher"
-            tag: "v4.11.0"
+            tag: "{{ longhorn_csi_attacher_image_tag }}"
           provisioner:
-            registry: "docker.io"
             repository: "longhornio/csi-provisioner"
-            tag: "v5.3.0-20260225"
+            tag: "{{ longhorn_csi_provisioner_image_tag }}"
           nodeDriverRegistrar:
-            registry: "docker.io"
             repository: "longhornio/csi-node-driver-registrar"
-            tag: "v2.16.0"
+            tag: "{{ longhorn_csi_node_driver_registrar_image_tag }}"
           resizer:
-            registry: "docker.io"
             repository: "longhornio/csi-resizer"
-            tag: "v2.1.0"
+            tag: "{{ longhorn_csi_resizer_image_tag }}"
           snapshotter:
-            registry: "docker.io"
             repository: "longhornio/csi-snapshotter"
-            tag: "v8.5.0"
+            tag: "{{ longhorn_csi_snapshotter_image_tag }}"
           livenessProbe:
-            registry: "docker.io"
             repository: "longhornio/livenessprobe"
-            tag: "v2.18.0"
+            tag: "{{ longhorn_csi_livenessprobe_image_tag }}"
       defaultSettings:
-        # managerUrl: "{{ longhorn_external_url }}" # ПРЕКОЛ ...
+        # Есть компонент longhorn-driver-deployer, Этот товарищ ходит к longhorn-manager по dyenhtyytve flhtce http://longhorn-manager:9200
+        # Если переопределить managerUrl - то товарищ longhorn-driver-deployer начнет ходить к manager ПО НОВОМУ УКАЗАНОМУ url
+        # это спровоцирует ошибку (сетевые политики или домен еще не доступен)
+        # managerUrl: "{{ longhorn_external_url }}"
         defaultDataLocality: "best-effort"
         defaultReplicaCount: 2
         defaultLonghornStaticStorageClass: "longhorn-static"
