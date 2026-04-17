@@ -1,11 +1,34 @@
 all:
   vars:
     # ------
-    # Cert-manager
+    # registry+images (AirGap)
     # ------
+    # Registry для образов cert-manager. По умолчанию — quay.io.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/cert-manager.yaml:
+    #   cert_manager_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить следующие образы (только хост меняется, путь jetstack/* остаётся):
+    #   <registry>/jetstack/cert-manager-controller:v1.20.2
+    #   <registry>/jetstack/cert-manager-cainjector:v1.20.2
+    #   <registry>/jetstack/cert-manager-webhook:v1.20.2
+    #   <registry>/jetstack/cert-manager-acmesolver:v1.20.2
+    #   <registry>/jetstack/cert-manager-startupapicheck:v1.20.2
+    cert_manager_image_registry: "quay.io"
+    cert_manager_image_tag: "v1.20.2"
+    # ---------
+    # ---------
     cert_manager_namespace: "cert-manager"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    cert_manager_helm_repo_url: "https://charts.jetstack.io"
+    cert_manager_helm_repo_name: "jetstack"
+    cert_manager_helm_chart_name: "cert-manager"
     cert_manager_chart_version: "1.20.2"
     # ------
+    # Helm timeouts
+    cert_manager_pre_helm_timeout: "2m"
+    cert_manager_install_helm_timeout: "5m"
+    cert_manager_post_helm_timeout: "2m"
+    cert_manager_rollout_timeout: "180s"
     # Cluster issuers
     cert_manager_cluster_issuers:
       - name: "acme-prod"
@@ -22,17 +45,16 @@ all:
               app.kubernetes.io/instance: traefik-lb
               app.kubernetes.io/component: acme-http01-solver
               app.kubernetes.io/managed-by: cert-manager
-    # Helm timeouts
-    cert_manager_helm_timeout: "5m"
-    cert_manager_config_helm_timeout: "2m"
-    cert_manager_rollout_timeout: "180s"
     # Helm chart values
     cert_manager_helm_values:
+      # imageRegistry + imageNamespace заменяют per-component image.repository
+      # chart строит: {imageRegistry}/{imageNamespace}/{image.name}:{tag} для всех компонентов
+      imageRegistry: "{{ cert_manager_image_registry }}"
+      imageNamespace: "jetstack"
       crds:
         enabled: true
       image:
-        repository: "quay.io/jetstack/cert-manager-controller"
-        tag: "v1.20.2"
+        tag: "{{ cert_manager_image_tag }}"
       prometheus:
         enabled: true
         servicemonitor:
@@ -48,10 +70,12 @@ all:
       affinity: {}
       replicaCount: 1
       resources: {}
+      acmesolver:
+        image:
+          tag: "{{ cert_manager_image_tag }}"
       cainjector:
         image:
-          repository: "quay.io/jetstack/cert-manager-cainjector"
-          tag: "v1.20.2"
+          tag: "{{ cert_manager_image_tag }}"
         tolerations: []
         nodeSelector: {}
         affinity: {}
@@ -59,14 +83,15 @@ all:
         resources: {}
       webhook:
         image:
-          repository: "quay.io/jetstack/cert-manager-webhook"
-          tag: "v1.20.2"
+          tag: "{{ cert_manager_image_tag }}"
         tolerations: []
         nodeSelector: {}
         affinity: {}
         replicaCount: 1
         resources: {}
       startupapicheck:
+        image:
+          tag: "{{ cert_manager_image_tag }}"
         tolerations: []
         nodeSelector: {}
         affinity: {}
