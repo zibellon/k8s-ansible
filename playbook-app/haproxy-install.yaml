@@ -89,7 +89,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ haproxy_helm_timeout }}
+          --timeout {{ haproxy_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -100,8 +100,8 @@
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
         label_name: "haproxy-install"
-        helm_repo_name: "haproxytech"
-        helm_repo_url: "https://haproxytech.github.io/helm-charts"
+        helm_repo_name: "{{ haproxy_helm_repo_name }}"
+        helm_repo_url: "{{ haproxy_helm_repo_url }}"
       tags: [install]
 
     - name: "[haproxy-install] Create values file"
@@ -118,7 +118,7 @@
       vars:
         label_name: "haproxy-install"
         helm_command: >
-          helm upgrade --install haproxy-ingress haproxytech/kubernetes-ingress
+          helm upgrade --install haproxy-ingress {{ haproxy_helm_repo_name }}/{{ haproxy_helm_chart_name }}
           --namespace {{ haproxy_namespace }}
           --create-namespace
           --version {{ haproxy_chart_version }}
@@ -127,7 +127,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ haproxy_helm_timeout }}
+          --timeout {{ haproxy_install_helm_timeout }}
       tags: [install]
 
     - name: "[haproxy-install] Wait for CRDs"
@@ -135,12 +135,9 @@
       vars:
         label_name: "haproxy-install"
         crds_list:
-          - crd/backends.core.haproxy.org
           - crd/backends.ingress.v3.haproxy.org
-          - crd/defaults.core.haproxy.org
           - crd/defaults.ingress.v3.haproxy.org
           - crd/frontends.ingress.v3.haproxy.org
-          - crd/globals.core.haproxy.org
           - crd/globals.ingress.v3.haproxy.org
           - crd/tcps.ingress.v3.haproxy.org
           - crd/validationrules.ingress.v3.haproxy.org
@@ -189,12 +186,13 @@
         helm_command: >
           helm upgrade --install haproxy-post {{ remote_charts_dir }}/haproxy/post
           --namespace {{ haproxy_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/haproxy/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ haproxy_config_helm_timeout }}
+          --timeout {{ haproxy_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================
