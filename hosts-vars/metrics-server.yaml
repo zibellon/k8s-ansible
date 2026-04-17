@@ -1,19 +1,35 @@
 all:
   vars:
     # ------
-    # Metrics Server
+    # registry+images (AirGap)
     # ------
-    metrics_server_chart_version: "3.13.0"
+    # Registry для образов metrics-server. По умолчанию — registry.k8s.io.
+    # Для airgap — переопределить в hosts-vars-override/metrics-server.yaml:
+    #   metrics_server_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить:
+    #   <registry>/metrics-server/metrics-server:v0.8.0
+    # Если планируется включить addonResizer (addonResizer.enabled: true):
+    #   <registry>/autoscaling/addon-resizer:1.8.23
+    metrics_server_image_registry: "registry.k8s.io"
+    metrics_server_image_tag: "v0.8.0"
+    # ---------
+    # ---------
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     metrics_server_namespace: "metrics-server"
-    # ---
+    metrics_server_helm_repo_url: "https://kubernetes-sigs.github.io/metrics-server/"
+    metrics_server_helm_repo_name: "metrics-server"
+    metrics_server_helm_chart_name: "metrics-server"
+    metrics_server_chart_version: "3.13.0"
     # Helm timeouts
-    metrics_server_helm_timeout: "5m"
+    metrics_server_pre_helm_timeout: "5m"
+    metrics_server_install_helm_timeout: "5m"
     metrics_server_rollout_timeout: "120s"
     # Helm chart values
     metrics_server_helm_values:
       image:
-        repository: "registry.k8s.io/metrics-server/metrics-server"
-        tag: "v0.8.0"
+        repository: "{{ metrics_server_image_registry }}/metrics-server/metrics-server"
+        tag: "{{ metrics_server_image_tag }}"
       defaultArgs:
         - --cert-dir=/tmp
         - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname

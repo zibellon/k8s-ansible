@@ -67,7 +67,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ metrics_server_helm_timeout }}
+          --timeout {{ metrics_server_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -78,8 +78,8 @@
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
         label_name: "metrics-server-install"
-        helm_repo_name: "metrics-server"
-        helm_repo_url: "https://kubernetes-sigs.github.io/metrics-server/"
+        helm_repo_name: "{{ metrics_server_helm_repo_name }}"
+        helm_repo_url: "{{ metrics_server_helm_repo_url }}"
       tags: [install]
 
     - name: "[metrics-server-install] Ensure charts directory exists"
@@ -105,7 +105,7 @@
       vars:
         label_name: "metrics-server-install"
         helm_command: >
-          helm upgrade --install metrics-server metrics-server/metrics-server
+          helm upgrade --install metrics-server {{ metrics_server_helm_repo_name }}/{{ metrics_server_helm_chart_name }}
           --namespace {{ metrics_server_namespace }}
           --create-namespace
           --version {{ metrics_server_chart_version }}
@@ -114,7 +114,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ metrics_server_helm_timeout }}
+          --timeout {{ metrics_server_install_helm_timeout }}
       tags: [install]
 
     # =========================================================================
@@ -128,7 +128,7 @@
         rollout_namespace: "{{ metrics_server_namespace }}"
         rollout_timeout: "{{ metrics_server_rollout_timeout }}"
         rollout_resources:
-          - deployment/metrics-server
+          - deployment.apps/metrics-server
       tags: [install]
 
     # =========================================================================
@@ -149,7 +149,7 @@
       tags: [always]
 
     - name: "[metrics-server-verify] Get metrics-server pods status"
-      command: kubectl get pods -n {{ metrics_server_namespace }} -l k8s-app=metrics-server -o wide
+      command: kubectl get pods -n {{ metrics_server_namespace }} -o wide
       register: metrics_server_pods
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
