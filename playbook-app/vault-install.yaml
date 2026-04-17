@@ -96,30 +96,27 @@
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ vault_config_helm_timeout }}
+          --timeout {{ vault_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
     # STEP 2: INSTALL vault-operator (bank-vaults operator via OCI)
     # =========================================================================
 
-    - name: "[vault-operator] Create values-override for vault-operator"
-      copy:
-        dest: "{{ remote_charts_dir }}/vault/operator-values-override.yaml"
-        mode: "0644"
-        content: |
-          tolerations: {{ vault_operator_tolerations | to_json }}
-          nodeSelector: {{ vault_operator_node_selector | to_json }}
-          resources: {{ vault_operator_resources | to_json }}
+    - name: "[vault-operator] Ensure vault operator values dir exists"
+      file:
+        path: "{{ remote_charts_dir }}/vault/operator"
+        state: directory
+        mode: "0755"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [operator]
 
-    - name: "[vault-operator] Ensure vault operator values dir exists"
-      file:
-        path: "{{ remote_charts_dir }}/vault"
-        state: directory
-        mode: "0755"
+    - name: "[vault-operator] Create values-override for vault-operator"
+      copy:
+        dest: "{{ remote_charts_dir }}/vault/operator/values-override.yaml"
+        mode: "0644"
+        content: "{{ vault_operator_helm_values | to_nice_yaml }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [operator]
@@ -132,11 +129,12 @@
           helm upgrade --install vault-operator {{ vault_operator_chart }}
           --namespace {{ vault_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/vault/operator-values-override.yaml
+          --values {{ remote_charts_dir }}/vault/operator/values-override.yaml
+          --version {{ vault_bank_vaults_chart_version }}
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ vault_helm_timeout }}
+          --timeout {{ vault_operator_helm_timeout }}
       tags: [operator]
 
     - name: "[vault-operator] Wait for vault-operator CRDs"
@@ -154,7 +152,7 @@
         rollout_namespace: "{{ vault_namespace }}"
         rollout_timeout: "{{ vault_rollout_timeout }}"
         rollout_resources:
-          - "deployment/vault-operator"
+          - "deployment.apps/vault-operator"
       tags: [operator]
 
     # =========================================================================
@@ -188,11 +186,12 @@
         helm_command: >
           helm upgrade --install vault-cr {{ remote_charts_dir }}/vault/cr
           --namespace {{ vault_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/vault/cr/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ vault_helm_timeout }}
+          --timeout {{ vault_cr_helm_timeout }}
       tags: [vault-cr]
 
     - name: "[vault-cr] Wait for StatefulSet rollout"
@@ -269,11 +268,12 @@
         helm_command: >
           helm upgrade --install vault-post {{ remote_charts_dir }}/vault/post
           --namespace {{ vault_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/vault/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ vault_config_helm_timeout }}
+          --timeout {{ vault_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================

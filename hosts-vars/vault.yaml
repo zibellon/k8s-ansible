@@ -1,6 +1,22 @@
 all:
   vars:
     # ------
+    # registry+images (AirGap)
+    # ------
+    # Registry для образов Vault. По умолчанию: vault server — docker.io, operator/sidecar — ghcr.io.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/vault.yaml:
+    #   vault_image_registry: "my-private-registry.local"
+    #   vault_operator_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить следующие образы:
+    #   <vault_image_registry>/hashicorp/vault:<vault_image_tag>
+    #   <vault_operator_image_registry>/bank-vaults/vault-operator  (тег = версия chart)
+    #   <vault_operator_image_registry>/bank-vaults/bank-vaults:v1.32.1
+    vault_image_registry: "docker.io"
+    vault_image_tag: "1.21.2"
+    vault_operator_image_registry: "ghcr.io"
+    # ---------
+    # ---------
     # Vault (HashiCorp) — managed by bank-vaults operator
     # Operator: oci://ghcr.io/bank-vaults/helm-charts/vault-operator
     # Vault CR: playbook-app/charts/vault/cr/
@@ -14,8 +30,19 @@ all:
     # target_secret - это название секрета в Kubernetes (который будет создан в этом namespace)
     # vault_path - это full path в Vault
     # refresh_interval - опциональное переопределение интервала (иначе используется eso_resources_config.external_secret_refresh_interval)
-    # ------
+    # ---------
     vault_namespace: "vault"
+    # Helm repository (OCI) - адрес chart bank-vaults/vault-operator (переопределить в hosts-vars-override/ для airgap)
+    vault_operator_chart: "oci://ghcr.io/bank-vaults/helm-charts/vault-operator"
+    vault_bank_vaults_chart_version: "1.23.4"
+    # ---------
+    # Helm timeouts
+    vault_pre_helm_timeout: "2m"
+    vault_operator_helm_timeout: "5m"
+    vault_cr_helm_timeout: "5m"
+    vault_post_helm_timeout: "2m"
+    vault_rollout_timeout: "300s"
+
     vault_internal_url: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
     vault_ui_domain: "vault-k8s-v2.drawapp.ru"
     vault_ui_https_secret_name: "cert-vault-ui"
@@ -35,17 +62,22 @@ all:
     # Vault Kubernetes Auth
     vault_kubernetes_host: "https://kubernetes.default.svc:443"
     # bank-vaults operator
-    vault_operator_chart: "oci://ghcr.io/bank-vaults/helm-charts/vault-operator"
     vault_bank_vaults_version: "v1.32.1"
     vault_roles_default_ttl: "1h"
-    # Operator pod scheduling (отдельные от Vault server)
-    vault_operator_tolerations: []
-    vault_operator_node_selector: {}
-    vault_operator_resources: {}
-    # Helm timeouts
-    vault_helm_timeout: "5m"
-    vault_config_helm_timeout: "2m"
-    vault_rollout_timeout: "300s"
+
+    # Operator Helm values (bank-vaults operator chart)
+    vault_operator_helm_values:
+      image:
+        repository: "{{ vault_operator_image_registry }}/bank-vaults/vault-operator"
+      bankVaults:
+        image:
+          repository: "{{ vault_operator_image_registry }}/bank-vaults/bank-vaults"
+          tag: "{{ vault_bank_vaults_version }}"
+      tolerations: []
+      nodeSelector: {}
+      affinity: {}
+      resources: {}
+
     # Prometheus metrics port (Vault API)
     vault_prometheus_port: 8200 # NOT CHANGE
     # Prometheus ServiceMonitor
@@ -240,7 +272,7 @@ all:
     vault_spec:
       size: 1
       serviceAccount: vault
-      image: "docker.io/hashicorp/vault:1.21.2"
+      image: "{{ vault_image_registry }}/hashicorp/vault:{{ vault_image_tag }}"
       unsealConfig:
         options:
           secretShares: "{{ vault_key_shares }}"
@@ -266,6 +298,11 @@ all:
         telemetry:
           prometheus_retention_time: "120s"
           disable_hostname: true
+      # Добавляем переменные окружения здесь
+      vaultEnvsConfig:
+        - name: VAULT_ADDR
+          value: "http://127.0.0.1:8200"
+      # ---
       externalConfig:
         purgeUnmanagedConfig:
           enabled: true
@@ -302,6 +339,7 @@ all:
           mountPath: /vault/data
       resources:
         vault: {}
+        bankVaults: {}
       nodeSelector: {}
       tolerations: []
       affinity: {}
