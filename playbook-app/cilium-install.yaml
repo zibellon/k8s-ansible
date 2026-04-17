@@ -85,7 +85,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ cilium_config_helm_timeout }}
+          --timeout {{ cilium_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -96,13 +96,13 @@
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
         label_name: "cilium-install"
-        helm_repo_name: "cilium"
-        helm_repo_url: "https://helm.cilium.io/"
+        helm_repo_name: "{{ cilium_helm_repo_name }}"
+        helm_repo_url: "{{ cilium_helm_repo_url }}"
       tags: [install]
 
     - name: "[cilium-install] Ensure charts directory exists"
       file:
-        path: "{{ remote_charts_dir }}/cilium"
+        path: "{{ remote_charts_dir }}/cilium/install"
         state: directory
         mode: "0755"
       delegate_to: "{{ master_manager_fact }}"
@@ -111,7 +111,7 @@
 
     - name: "[cilium-install] Create values file"
       copy:
-        dest: "{{ remote_charts_dir }}/cilium/values-override.yaml"
+        dest: "{{ remote_charts_dir }}/cilium/install/values-override.yaml"
         mode: "0644"
         content: "{{ cilium_helm_values | to_nice_yaml }}"
       delegate_to: "{{ master_manager_fact }}"
@@ -123,16 +123,16 @@
       vars:
         label_name: "cilium-install"
         helm_command: >
-          helm upgrade --install cilium cilium/cilium
+          helm upgrade --install cilium {{ cilium_helm_repo_name }}/{{ cilium_helm_chart_name }}
           --version {{ cilium_chart_version }}
           --namespace {{ cilium_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/cilium/values-override.yaml
+          --values {{ remote_charts_dir }}/cilium/install/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ cilium_helm_timeout }}
+          --timeout {{ cilium_install_helm_timeout }}
       tags: [install]
 
     # =========================================================================
@@ -160,25 +160,18 @@
     # WAIT FOR CILIUM PODS
     # =========================================================================
 
-    - name: "[cilium-install] Wait for DaemonSet rollouts"
+    - name: "[cilium-install] Wait for DaemonSet/Deployment rollouts"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
         label_name: "cilium-install"
         rollout_namespace: "{{ cilium_namespace }}"
-        rollout_timeout: "{{ cilium_daemonset_rollout_timeout }}"
+        rollout_timeout: "{{ cilium_rollout_timeout }}"
         rollout_resources:
-          - daemonset/cilium
-          - daemonset/cilium-envoy
-      tags: [install]
-
-    - name: "[cilium-install] Wait for Deployment rollouts"
-      include_tasks: tasks/tasks-wait-rollout.yaml
-      vars:
-        label_name: "cilium-install"
-        rollout_namespace: "{{ cilium_namespace }}"
-        rollout_timeout: "{{ cilium_deployment_rollout_timeout }}"
-        rollout_resources:
-          - deployment/cilium-operator
+          - daemonset.apps/cilium
+          - daemonset.apps/cilium-envoy
+          - deployment.apps/cilium-operator
+          - deployment.apps/hubble-ui
+          - deployment.apps/hubble-relay
       tags: [install]
 
     # =========================================================================
@@ -240,12 +233,13 @@
         helm_command: >
           helm upgrade --install cilium-post {{ remote_charts_dir }}/cilium/post
           --namespace {{ cilium_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/cilium/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ cilium_post_config_helm_timeout }}
+          --timeout {{ cilium_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================
