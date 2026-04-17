@@ -100,7 +100,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ traefik_helm_timeout }}
+          --timeout {{ traefik_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -111,8 +111,8 @@
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
         label_name: "traefik-install"
-        helm_repo_name: "traefik"
-        helm_repo_url: "https://traefik.github.io/charts"
+        helm_repo_name: "{{ traefik_helm_repo_name }}"
+        helm_repo_url: "{{ traefik_helm_repo_url }}"
       tags: [install]
 
     - name: "[traefik-install] Create values directory"
@@ -138,15 +138,16 @@
       vars:
         label_name: "traefik-install"
         helm_command: >
-          helm upgrade --install traefik traefik/traefik
+          helm upgrade --install traefik {{ traefik_helm_repo_name }}/{{ traefik_helm_chart_name }}
           --namespace {{ traefik_namespace }}
+          --create-namespace
           --version {{ traefik_chart_version }}
           --values {{ remote_charts_dir }}/traefik/install/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ traefik_helm_timeout }}
+          --timeout {{ traefik_install_helm_timeout }}
       tags: [install]
 
     # =========================================================================
@@ -243,12 +244,13 @@
         helm_command: >
           helm upgrade --install traefik-post {{ remote_charts_dir }}/traefik/post
           --namespace {{ traefik_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/traefik/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ traefik_helm_timeout }}
+          --timeout {{ traefik_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================

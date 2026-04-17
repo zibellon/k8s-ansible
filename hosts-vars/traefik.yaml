@@ -1,10 +1,29 @@
 all:
   vars:
     # ------
-    # Traefik
+    # registry+images (AirGap)
     # ------
-    traefik_chart_version: "39.0.5"
+    # Registry для образа Traefik. По умолчанию — docker.io.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/traefik.yaml:
+    #   traefik_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить 1 образ:
+    #   <registry>/traefik:v3.6.12
+    traefik_image_registry: "docker.io"
+    traefik_image_tag: "v3.6.12"
+    # ---------
+    # ---------
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     traefik_namespace: "traefik-lb"
+    traefik_helm_repo_url: "https://traefik.github.io/charts"
+    traefik_helm_repo_name: "traefik"
+    traefik_helm_chart_name: "traefik"
+    traefik_chart_version: "39.0.5"
+    # Helm timeouts
+    traefik_pre_helm_timeout: "5m"
+    traefik_install_helm_timeout: "5m"
+    traefik_post_helm_timeout: "5m"
+    traefik_rollout_timeout: "300s"
     # ---
     traefik_daemonset_name: "traefik-lb"
     traefik_ingress_class: "traefik-lb"
@@ -53,15 +72,12 @@ all:
             regex: "(^https://www.|^http://www.|^http://)(.+)"
             replacement: "https://${2}"
             permanent: true
-    # Helm timeouts
-    traefik_helm_timeout: "5m"
-    traefik_rollout_timeout: "300s"
     # Helm chart values
     traefik_helm_values:
       image:
-        registry: "docker.io"
+        registry: "{{ traefik_image_registry }}"
         repository: "traefik"
-        tag: "v3.6.12"
+        tag: "{{ traefik_image_tag }}"
       fullnameOverride: "{{ traefik_daemonset_name }}"
       tolerations:
         - operator: "Exists"
@@ -78,10 +94,11 @@ all:
         name: "{{ traefik_ingress_class }}"
         isDefaultClass: false
       service:
-        type: NodePort
+        # type: NodePort # говорит что не используется
         annotations:
           app.kubernetes.io/component: ingress-controller
         spec:
+          type: NodePort
           externalTrafficPolicy: Local
       ports:
         traefik:
@@ -178,6 +195,8 @@ all:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       extraObjects:
         - apiVersion: v1
           kind: Service
