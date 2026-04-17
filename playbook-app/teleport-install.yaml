@@ -107,7 +107,7 @@
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ teleport_helm_pre_timeout }}
+          --timeout {{ teleport_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -118,8 +118,8 @@
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
         label_name: "teleport-install"
-        helm_repo_name: "teleport"
-        helm_repo_url: "https://charts.releases.teleport.dev"
+        helm_repo_name: "{{ teleport_helm_repo_name }}"
+        helm_repo_url: "{{ teleport_helm_repo_url }}"
       tags: [install]
 
     - name: "[teleport-install] Create values directory"
@@ -145,15 +145,16 @@
       vars:
         label_name: "teleport-install"
         helm_command: >
-          helm upgrade --install teleport teleport/teleport-cluster
+          helm upgrade --install teleport {{ teleport_helm_repo_name }}/{{ teleport_helm_chart_name }}
           --namespace {{ teleport_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/teleport/install/teleport-values-override.yaml
           --version {{ teleport_chart_version }}
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ teleport_helm_timeout }}
+          --timeout {{ teleport_install_helm_timeout }}
       tags: [install]
 
     # =========================================================================
@@ -255,11 +256,12 @@
         helm_command: >
           helm upgrade --install teleport-post {{ remote_charts_dir }}/teleport/post
           --namespace {{ teleport_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/teleport/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ teleport_helm_post_timeout }}
+          --timeout {{ teleport_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================
@@ -314,11 +316,12 @@
         helm_command: >
           helm upgrade --install teleport-configure {{ remote_charts_dir }}/teleport/configure
           --namespace {{ teleport_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/teleport/configure/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ teleport_helm_timeout }}
+          --timeout {{ teleport_configure_helm_timeout }}
       tags: [configure]
 
     # =========================================================================

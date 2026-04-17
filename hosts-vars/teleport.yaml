@@ -1,12 +1,33 @@
 all:
   vars:
     # ------
-    # Teleport (Infrastructure Access Platform)
+    # registry+images (AirGap)
     # ------
+    # Registry для образов Teleport. По умолчанию — public.ecr.aws.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/teleport.yaml:
+    #   teleport_image_registry_host: "my-private-registry.local"
+    #
+    # прекол про image, registry, repository
+    # Прекол в том, что нельзя указать таг (версию). Она подставляется автоматически: из helm-chart-app-version
+    #
+    # СБ должна загрузить следующие образы (только хост меняется, пути остаются оригинальными):
+    #   <host>/gravitational/teleport-distroless:v<teleport_chart_version>   (auth + proxy pods)
+    #   <host>/gravitational/teleport-operator:v<teleport_chart_version>     (operator pod)
+    teleport_image_registry_host: "public.ecr.aws"
+    # ---------
+    # ---------
     teleport_namespace: "teleport"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    teleport_helm_repo_url: "https://charts.releases.teleport.dev"
+    teleport_helm_repo_name: "teleport"
+    teleport_helm_chart_name: "teleport-cluster"
     teleport_chart_version: "18.7.2"
-    # ---
-
+    # Timeouts
+    teleport_pre_helm_timeout: "5m"
+    teleport_install_helm_timeout: "10m"
+    teleport_post_helm_timeout: "5m"
+    teleport_configure_helm_timeout: "5m"
+    teleport_rollout_timeout: "300s"
     # Networking / Ingress
     teleport_domain: "teleport-k8s-v2.drawapp.ru"
     teleport_external_url: "https://teleport-k8s-v2.drawapp.ru"
@@ -44,14 +65,13 @@ all:
     teleport_data_storage_class: "lh-major-single-best-effort"
     teleport_data_storage_size: "10Gi"
 
-    # Timeouts
-    teleport_helm_pre_timeout: "5m"
-    teleport_helm_timeout: "10m"
-    teleport_helm_post_timeout: "5m"
-    teleport_rollout_timeout: "300s"
     # Helm chart values
-    # image: "public.ecr.aws/gravitational/teleport" # ПРЕКОЛ, тут нельзя указать tag. Версия - берется из {{ teleport_chart_version }}
+    # ВАЖНО: tag для teleport-distroless / teleport-operator НЕ задаётся —
+    # teleport-cluster chart автоматически подставляет appVersion (= teleport_chart_version)
+    # через helper {{ include "teleport-cluster.version" . }}.
+    # Т.е. обновление версии Teleport = bump teleport_chart_version (строка 17).
     teleport_helm_values:
+      image: "{{ teleport_image_registry_host }}/gravitational/teleport-distroless"
       clusterName: "{{ teleport_cluster_name }}"
       kubeClusterName: "{{ teleport_kube_cluster_name }}"
       chartMode: standalone
@@ -78,6 +98,11 @@ all:
             kube_public_addr: "{{ teleport_kube_public_addr }}"
       operator:
         enabled: true
+        image: "{{ teleport_image_registry_host }}/gravitational/teleport-operator"
+        tolerations: []
+        nodeSelector: {}
+        affinity: {}
+        resources: {}
       log:
         format: json
       service:
