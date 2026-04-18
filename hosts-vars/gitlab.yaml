@@ -110,6 +110,101 @@ all:
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lh-major-single-best-effort"
 
+    # Pre-phase values (ESO Resources + NetworkPolicies chart)
+    # eso_vault_integration_gitlab_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
+    # gitlab_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
+    gitlab_pre_helm_values:
+      namespace: "{{ gitlab_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      haproxy:
+        namespace: "{{ haproxy_namespace }}"
+      gitlab:
+        releaseName: gitlab
+        sshPortExternal: "{{ gitlab_ssh_port_external }}"
+        sshPortInternal: "{{ gitlab_ssh_port_internal }}"
+        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
+        vpnIps: "{{ vpn_ips }}"
+      gitlabEso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_gitlab.sa_name }}"
+        roleName: "{{ eso_vault_integration_gitlab.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_gitlab.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_gitlab.kv_engine_path }}"
+        isNeedEso: "{{ eso_vault_integration_gitlab.is_need_eso | default(true) }}"
+        secrets: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      minio:
+        s3Endpoint: "{{ gitlab_minio_s3_endpoint }}"
+        s3Region: "{{ gitlab_minio_s3_region }}"
+        s3PathStyle: "{{ gitlab_minio_s3_path_style }}"
+      acmeSolverLabels: "{{ gitlab_acme_solver_pod_labels }}"
+    # PostgreSQL sub-release values
+    # secret_postgresql — runtime-факт от set_fact [always] в playbook
+    gitlab_postgresql_helm_values:
+      namespace: "{{ gitlab_namespace }}"
+      image: "{{ gitlab_postgresql_image }}"
+      storageClass: "{{ gitlab_postgresql_storage_class }}"
+      storageSize: "{{ gitlab_postgresql_storage_size }}"
+      credentialsSecretName: "{{ secret_postgresql }}"
+    # Redis sub-release values
+    # secret_redis — runtime-факт от set_fact [always] в playbook
+    gitlab_redis_helm_values:
+      namespace: "{{ gitlab_namespace }}"
+      image: "{{ gitlab_redis_image }}"
+      credentialsSecretName: "{{ secret_redis }}"
+      storageClass: "{{ gitlab_redis_storage_class }}"
+      storageSize: "{{ gitlab_redis_storage_size }}"
+    # MinIO sub-release values
+    # secret_minio_root — runtime-факт от set_fact [always] в playbook
+    gitlab_minio_helm_values:
+      namespace: "{{ gitlab_namespace }}"
+      image: "{{ gitlab_minio_image }}"
+      storageClass: "{{ gitlab_minio_storage_class }}"
+      storageSize: "{{ gitlab_minio_storage_size }}"
+      rootSecretName: "{{ secret_minio_root }}"
+    # Post-phase values (Ingress chart)
+    gitlab_post_helm_values:
+      namespace: "{{ gitlab_namespace }}"
+      sshPortExternal: "{{ gitlab_ssh_port_external }}"
+      gitlab:
+        ingressClass: "{{ gitlab_ingress_class_name }}"
+        domain: "{{ gitlab_ui_domain }}"
+        registryDomain: "{{ gitlab_registry_domain }}"
+        pagesDomain: "{{ gitlab_pages_domain }}"
+        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
+        uiSecretName: "{{ gitlab_ui_https_secret_name }}"
+        registrySecretName: "{{ gitlab_registry_https_secret_name }}"
+        pagesSecretName: "{{ gitlab_pages_https_secret_name }}"
+        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+        httpEnable: "{{ gitlab_ingress_http_enable }}"
+        httpsEnable: "{{ gitlab_ingress_https_enable }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      minio:
+        ingressClass: "{{ gitlab_ingress_class_name }}"
+        consoleDomain: "{{ gitlab_minio_console_domain }}"
+        apiDomain: "{{ gitlab_minio_api_domain }}"
+        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
+        consoleSecretName: "{{ gitlab_minio_console_https_secret_name }}"
+        apiSecretName: "{{ gitlab_minio_api_https_secret_name }}"
+        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+        httpEnable: "{{ gitlab_minio_ingress_http_enable }}"
+        httpsEnable: "{{ gitlab_minio_ingress_https_enable }}"
+      haproxy:
+        namespace: "{{ haproxy_namespace }}"
+        ingressClass: "{{ haproxy_ingress_class }}"
     # Helm chart values
     gitlab_helm_values:
       global:

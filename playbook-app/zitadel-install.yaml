@@ -88,31 +88,12 @@
       tags: [pre]
 
     - name: "[zitadel-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/zitadel/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ zitadel_namespace }}
-          externalSecrets:
-            namespace: {{ external_secrets_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          zitadelEso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_zitadel.sa_name }}
-            roleName: {{ eso_vault_integration_zitadel.role_name }}
-            secretStoreName: {{ eso_vault_integration_zitadel.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_zitadel.kv_engine_path }}
-            isNeedEso: {{ eso_vault_integration_zitadel.is_need_eso | default(true) }}
-            secrets: {{ eso_vault_integration_zitadel_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-          acmeSolverLabels: {{ zitadel_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "zitadel-pre"
+        dto_dir: "{{ remote_charts_dir }}/zitadel/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ zitadel_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[zitadel-pre] Install via Helm (async)"
@@ -195,17 +176,12 @@
       tags: [postgresql]
 
     - name: "[zitadel-postgresql] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/zitadel/postgresql/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ zitadel_namespace }}
-          image: {{ zitadel_postgresql_image }}
-          storageClass: {{ zitadel_postgresql_storage_class }}
-          storageSize: {{ zitadel_postgresql_storage_size }}
-          credentialsSecretName: {{ secret_postgresql }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "zitadel-postgresql"
+        dto_dir: "{{ remote_charts_dir }}/zitadel/postgresql"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ zitadel_postgresql_helm_values | to_nice_yaml }}"
       tags: [postgresql]
 
     - name: "[zitadel-postgresql] Install via Helm (async)"
@@ -341,31 +317,12 @@
       tags: [post]
 
     - name: "[zitadel-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/zitadel/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ zitadel_namespace }}
-          resources: {{ zitadel_resources | to_json }}
-          nodeSelector: {{ zitadel_node_selector | to_json }}
-          tolerations: {{ zitadel_tolerations | to_json }}
-          affinity: {{ zitadel_affinity | to_json }}
-          ingress:
-            ingressClass: {{ zitadel_ingress_class_name }}
-            domain: {{ zitadel_domain }}
-            clusterIssuer: {{ zitadel_cluster_issuer_name }}
-            tlsSecretName: {{ zitadel_tls_secret_name }}
-            vpnOnlyEnabled: {{ zitadel_vpn_only_enabled }}
-            vpnIngressRouteMiddlewares: {{ vpn_ingress_route_middlewares | to_json }}
-            httpEnable: {{ zitadel_ingress_http_enable }}
-            httpsEnable: {{ zitadel_ingress_https_enable }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "zitadel-post"
+        dto_dir: "{{ remote_charts_dir }}/zitadel/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ zitadel_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[zitadel-post] Install via Helm (async)"

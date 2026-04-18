@@ -96,43 +96,12 @@
       tags: [pre]
 
     - name: "[gitlab-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/gitlab/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ gitlab_namespace }}
-          externalSecrets:
-            namespace: {{ external_secrets_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          haproxy:
-            namespace: {{ haproxy_namespace }}
-          gitlab:
-            releaseName: gitlab
-            sshPortExternal: {{ gitlab_ssh_port_external }}
-            sshPortInternal: {{ gitlab_ssh_port_internal }}
-            vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
-            vpnIps: {{ vpn_ips | to_json }}
-          gitlabEso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_gitlab.sa_name }}
-            roleName: {{ eso_vault_integration_gitlab.role_name }}
-            secretStoreName: {{ eso_vault_integration_gitlab.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_gitlab.kv_engine_path }}
-            isNeedEso: {{ eso_vault_integration_gitlab.is_need_eso | default(true) }}
-            secrets: {{ eso_vault_integration_gitlab_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-          minio:
-            s3Endpoint: {{ gitlab_minio_s3_endpoint }}
-            s3Region: {{ gitlab_minio_s3_region }}
-            s3PathStyle: {{ gitlab_minio_s3_path_style }}
-          acmeSolverLabels: {{ gitlab_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "gitlab-pre"
+        dto_dir: "{{ remote_charts_dir }}/gitlab/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ gitlab_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[gitlab-pre] Install via Helm (async)"
@@ -212,17 +181,12 @@
       tags: [postgresql]
 
     - name: "[gitlab-postgresql] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/gitlab/postgresql/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ gitlab_namespace }}
-          image: {{ gitlab_postgresql_image }}
-          storageClass: {{ gitlab_postgresql_storage_class }}
-          storageSize: {{ gitlab_postgresql_storage_size }}
-          credentialsSecretName: {{ secret_postgresql }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "gitlab-postgresql"
+        dto_dir: "{{ remote_charts_dir }}/gitlab/postgresql"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ gitlab_postgresql_helm_values | to_nice_yaml }}"
       tags: [postgresql]
 
     - name: "[gitlab-postgresql] Install via Helm (async)"
@@ -313,17 +277,12 @@
       tags: [redis]
 
     - name: "[gitlab-redis] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/gitlab/redis/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ gitlab_namespace }}
-          image: {{ gitlab_redis_image }}
-          credentialsSecretName: {{ secret_redis }}
-          storageClass: {{ gitlab_redis_storage_class }}
-          storageSize: {{ gitlab_redis_storage_size }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "gitlab-redis"
+        dto_dir: "{{ remote_charts_dir }}/gitlab/redis"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ gitlab_redis_helm_values | to_nice_yaml }}"
       tags: [redis]
 
     - name: "[gitlab-redis] Install via Helm (async)"
@@ -413,17 +372,12 @@
       tags: [minio]
 
     - name: "[gitlab-minio] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/gitlab/minio/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ gitlab_namespace }}
-          image: {{ gitlab_minio_image }}
-          storageClass: {{ gitlab_minio_storage_class }}
-          storageSize: {{ gitlab_minio_storage_size }}
-          rootSecretName: {{ secret_minio_root }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "gitlab-minio"
+        dto_dir: "{{ remote_charts_dir }}/gitlab/minio"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ gitlab_minio_helm_values | to_nice_yaml }}"
       tags: [minio]
 
     - name: "[gitlab-minio] Install via Helm (async)"
@@ -628,46 +582,12 @@
       tags: [post]
 
     - name: "[gitlab-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/gitlab/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ gitlab_namespace }}
-          sshPortExternal: {{ gitlab_ssh_port_external }}
-          gitlab:
-            ingressClass: {{ gitlab_ingress_class_name }}
-            domain: {{ gitlab_ui_domain }}
-            registryDomain: {{ gitlab_registry_domain }}
-            pagesDomain: {{ gitlab_pages_domain }}
-            clusterIssuer: {{ gitlab_cluster_issuer_name }}
-            uiSecretName: {{ gitlab_ui_https_secret_name }}
-            registrySecretName: {{ gitlab_registry_https_secret_name }}
-            pagesSecretName: {{ gitlab_pages_https_secret_name }}
-            vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
-            vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-            httpEnable: {{ gitlab_ingress_http_enable }}
-            httpsEnable: {{ gitlab_ingress_https_enable }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-          minio:
-            ingressClass: {{ gitlab_ingress_class_name }}
-            consoleDomain: {{ gitlab_minio_console_domain }}
-            apiDomain: {{ gitlab_minio_api_domain }}
-            clusterIssuer: {{ gitlab_cluster_issuer_name }}
-            consoleSecretName: {{ gitlab_minio_console_https_secret_name }}
-            apiSecretName: {{ gitlab_minio_api_https_secret_name }}
-            vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
-            vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-            httpEnable: {{ gitlab_minio_ingress_http_enable }}
-            httpsEnable: {{ gitlab_minio_ingress_https_enable }}
-          haproxy:
-            namespace: {{ haproxy_namespace }}
-            ingressClass: {{ haproxy_ingress_class }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "gitlab-post"
+        dto_dir: "{{ remote_charts_dir }}/gitlab/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ gitlab_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[gitlab-post] Install via Helm (async)"

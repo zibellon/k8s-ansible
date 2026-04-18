@@ -75,36 +75,12 @@
       tags: [pre]
 
     - name: "[gitlab-runner-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/gitlab-runner/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ gitlab_runner_namespace }}
-          externalSecrets:
-            namespace: {{ external_secrets_namespace }}
-          runnerEso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_gitlab_runner.sa_name }}
-            roleName: {{ eso_vault_integration_gitlab_runner.role_name }}
-            secretStoreName: {{ eso_vault_integration_gitlab_runner.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_gitlab_runner.kv_engine_path }}
-            isNeedEso: {{ eso_vault_integration_gitlab_runner.is_need_eso | default(true) }}
-            secrets: {{ eso_vault_integration_gitlab_runner_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-          gitlab:
-            namespace: {{ gitlab_namespace }}
-            releaseName: gitlab
-          gitlab_runner:
-            name: {{ gitlab_runner_label_name }}
-            component: {{ gitlab_runner_label_component }}
-          gitlab_runner_job:
-            name: {{ gitlab_runner_job_label_name }}
-            component: {{ gitlab_runner_job_label_component }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "gitlab-runner-pre"
+        dto_dir: "{{ remote_charts_dir }}/gitlab-runner/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ gitlab_runner_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[gitlab-runner-pre] Install via Helm (async)"

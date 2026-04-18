@@ -93,3 +93,96 @@ all:
     # Each entry creates one AppProject + one or more Applications in ArgoCD
     # Пример и переопределение — в hosts-vars-override/argocd.yaml
     argocd_git_ops_apps: []
+    # Pre-phase values (ESO + ConfigMaps + NetworkPolicies chart)
+    # eso_vault_integration_argocd_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
+    # argocd_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
+    argocd_pre_helm_values:
+      namespace: "{{ argocd_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      gitlab:
+        namespace: "{{ gitlab_namespace }}"
+        sshPortInternal: "{{ gitlab_ssh_port_internal }}"
+      gitlabRunner:
+        namespace: "{{ gitlab_runner_namespace }}"
+      gitlabRunnerJob:
+        name: "{{ gitlab_runner_job_label_name }}"
+        component: "{{ gitlab_runner_job_label_component }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_argocd.sa_name }}"
+        roleName: "{{ eso_vault_integration_argocd.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_argocd.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_argocd.kv_engine_path }}"
+        isNeedEso: "{{ eso_vault_integration_argocd.is_need_eso | default(true) }}"
+        secrets: "{{ eso_vault_integration_argocd_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      configMaps:
+        argocdCm:
+          data: "{{ argocd_cm_extra }}"
+        cmdParamsCm:
+          data: "{{ argocd_cm_cmd_params_extra }}"
+        gpgKeysCm:
+          data: "{{ argocd_cm_gpg_keys_extra }}"
+        notificationsCm:
+          data: "{{ argocd_cm_notifications_extra }}"
+        rbacCm:
+          data: "{{ argocd_cm_rbac_extra }}"
+        sshKnownHostsCm:
+          additional: "{{ argocd_cm_ssh_known_hosts_extra }}"
+        tlsCertsCm:
+          data: "{{ argocd_cm_tls_certs_extra }}"
+      acmeSolverLabels: "{{ argocd_acme_solver_pod_labels }}"
+    # Install-phase values (ArgoCD manifests chart)
+    argocd_install_helm_values:
+      namespace: "{{ argocd_namespace }}"
+      global:
+        image:
+          mainWithRegistry: "{{ argocd_image_main_with_registry }}"
+          mainTag: "{{ argocd_image_main_tag }}"
+          dexWithRegistry: "{{ argocd_image_dex_with_registry }}"
+          dexTag: "{{ argocd_image_dex_tag }}"
+          redisWithRegistry: "{{ argocd_image_redis_with_registry }}"
+          redisTag: "{{ argocd_image_redis_tag }}"
+      tolerations: "{{ argocd_tolerations }}"
+      nodeSelector: "{{ argocd_node_selector }}"
+      resources:
+        applicationController: "{{ argocd_resources_application_controller }}"
+        applicationsetController: "{{ argocd_resources_applicationset_controller }}"
+        dexServer: "{{ argocd_resources_dex_server }}"
+        notificationsController: "{{ argocd_resources_notifications_controller }}"
+        redis: "{{ argocd_resources_redis }}"
+        repoServer: "{{ argocd_resources_repo_server }}"
+        server: "{{ argocd_resources_server }}"
+    # Post-phase values (Ingress + ServiceMonitor chart)
+    argocd_post_helm_values:
+      namespace: "{{ argocd_namespace }}"
+      ingress:
+        uiDomain: "{{ argocd_ui_domain }}"
+        rpcDomain: "{{ argocd_rpc_domain }}"
+        ingressClass: "{{ argocd_ingress_class_name }}"
+        clusterIssuer: "{{ argocd_cluster_issuer_name }}"
+        uiSecretName: "{{ argocd_ui_https_secret_name }}"
+        rpcSecretName: "{{ argocd_rpc_https_secret_name }}"
+        vpnOnlyEnabled: "{{ argocd_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+        httpEnable: "{{ argocd_ingress_http_enable }}"
+        httpsEnable: "{{ argocd_ingress_https_enable }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      serviceMonitor:
+        enabled: "{{ argocd_service_monitor_enabled }}"
+        interval: "{{ argocd_service_monitor_interval }}"
+        scrapeTimeout: "{{ argocd_service_monitor_scrape_timeout }}"
+        labels: "{{ argocd_service_monitor_additional_labels }}"
+    # GitOps-phase values (AppProject + Applications chart)
+    argocd_gitops_helm_values:
+      namespace: "{{ argocd_namespace }}"
+      gitOpsApps: "{{ argocd_git_ops_apps }}"

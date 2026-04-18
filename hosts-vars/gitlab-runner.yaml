@@ -49,6 +49,33 @@ all:
     gitlab_runner_label_component: "runner"
     gitlab_runner_job_label_name: "gitlab-runner-job"
     gitlab_runner_job_label_component: "job"
+    # Pre-phase values (ESO Resources + NetworkPolicies chart)
+    # eso_vault_integration_gitlab_runner_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
+    gitlab_runner_pre_helm_values:
+      namespace: "{{ gitlab_runner_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      runnerEso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_gitlab_runner.sa_name }}"
+        roleName: "{{ eso_vault_integration_gitlab_runner.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_gitlab_runner.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}"
+        isNeedEso: "{{ eso_vault_integration_gitlab_runner.is_need_eso | default(true) }}"
+        secrets: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      gitlab:
+        namespace: "{{ gitlab_namespace }}"
+        releaseName: gitlab
+      gitlab_runner:
+        name: "{{ gitlab_runner_label_name }}"
+        component: "{{ gitlab_runner_label_component }}"
+      gitlab_runner_job:
+        name: "{{ gitlab_runner_job_label_name }}"
+        component: "{{ gitlab_runner_job_label_component }}"
     gitlab_runner_config: |
       [[runners]]
         executor = "kubernetes"

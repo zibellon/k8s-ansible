@@ -61,6 +61,60 @@ all:
     zitadel_postgresql_storage_size: "10Gi"
     # ---
     zitadel_postgresql_username: "zitadel"
+    # Pre-phase values (ESO Resources + NetworkPolicies chart)
+    # eso_vault_integration_zitadel_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
+    # zitadel_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
+    zitadel_pre_helm_values:
+      namespace: "{{ zitadel_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      zitadelEso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_zitadel.sa_name }}"
+        roleName: "{{ eso_vault_integration_zitadel.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_zitadel.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_zitadel.kv_engine_path }}"
+        isNeedEso: "{{ eso_vault_integration_zitadel.is_need_eso | default(true) }}"
+        secrets: "{{ eso_vault_integration_zitadel_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      acmeSolverLabels: "{{ zitadel_acme_solver_pod_labels }}"
+    # PostgreSQL sub-release values
+    # secret_postgresql — runtime-факт от set_fact [always] в playbook
+    zitadel_postgresql_helm_values:
+      namespace: "{{ zitadel_namespace }}"
+      image: "{{ zitadel_postgresql_image }}"
+      storageClass: "{{ zitadel_postgresql_storage_class }}"
+      storageSize: "{{ zitadel_postgresql_storage_size }}"
+      credentialsSecretName: "{{ secret_postgresql }}"
+    # Post-phase values (Ingress chart)
+    # zitadel_resources / zitadel_node_selector / zitadel_tolerations / zitadel_affinity
+    # не определены в hosts-vars/ — берутся из hosts-vars-override/zitadel.yaml
+    zitadel_post_helm_values:
+      namespace: "{{ zitadel_namespace }}"
+      resources: "{{ zitadel_resources }}"
+      nodeSelector: "{{ zitadel_node_selector }}"
+      tolerations: "{{ zitadel_tolerations }}"
+      affinity: "{{ zitadel_affinity }}"
+      ingress:
+        ingressClass: "{{ zitadel_ingress_class_name }}"
+        domain: "{{ zitadel_domain }}"
+        clusterIssuer: "{{ zitadel_cluster_issuer_name }}"
+        tlsSecretName: "{{ zitadel_tls_secret_name }}"
+        vpnOnlyEnabled: "{{ zitadel_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+        httpEnable: "{{ zitadel_ingress_http_enable }}"
+        httpsEnable: "{{ zitadel_ingress_https_enable }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
     # Helm chart values
     zitadel_helm_values:
       imageRegistry: "{{ zitadel_tools_image_registry }}"

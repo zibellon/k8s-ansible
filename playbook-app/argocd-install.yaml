@@ -103,52 +103,12 @@
       tags: [pre]
 
     - name: "[argocd-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/argocd/pre/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ argocd_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          gitlab:
-            namespace: {{ gitlab_namespace }}
-            sshPortInternal: {{ gitlab_ssh_port_internal }}
-          gitlabRunner:
-            namespace: {{ gitlab_runner_namespace }}
-          gitlabRunnerJob:
-            name: {{ gitlab_runner_job_label_name }}
-            component: {{ gitlab_runner_job_label_component }}
-          eso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_argocd.sa_name }}
-            roleName: {{ eso_vault_integration_argocd.role_name }}
-            secretStoreName: {{ eso_vault_integration_argocd.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_argocd.kv_engine_path }}
-            isNeedEso: {{ eso_vault_integration_argocd.is_need_eso | default(true) }}
-            secrets: {{ eso_vault_integration_argocd_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-          configMaps:
-            argocdCm:
-              data: {{ argocd_cm_extra | to_json }}
-            cmdParamsCm:
-              data: {{ argocd_cm_cmd_params_extra | to_json }}
-            gpgKeysCm:
-              data: {{ argocd_cm_gpg_keys_extra | to_json }}
-            notificationsCm:
-              data: {{ argocd_cm_notifications_extra | to_json }}
-            rbacCm:
-              data: {{ argocd_cm_rbac_extra | to_json }}
-            sshKnownHostsCm:
-              additional: {{ argocd_cm_ssh_known_hosts_extra | to_json }}
-            tlsCertsCm:
-              data: {{ argocd_cm_tls_certs_extra | to_json }}
-          acmeSolverLabels: {{ argocd_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "argocd-pre"
+        dto_dir: "{{ remote_charts_dir }}/argocd/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argocd_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[argocd-pre] Install or upgrade via Helm (async)"
@@ -181,31 +141,12 @@
       tags: [install]
 
     - name: "[argocd-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/argocd/install/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ argocd_namespace }}
-          global:
-            image:
-              mainWithRegistry: "{{ argocd_image_main_with_registry }}"
-              mainTag: "{{ argocd_image_main_tag }}"
-              dexWithRegistry: "{{ argocd_image_dex_with_registry }}"
-              dexTag: "{{ argocd_image_dex_tag }}"
-              redisWithRegistry: "{{ argocd_image_redis_with_registry }}"
-              redisTag: "{{ argocd_image_redis_tag }}"
-          tolerations: {{ argocd_tolerations | to_json }}
-          nodeSelector: {{ argocd_node_selector | to_json }}
-          resources:
-            applicationController: {{ argocd_resources_application_controller | to_json }}
-            applicationsetController: {{ argocd_resources_applicationset_controller | to_json }}
-            dexServer: {{ argocd_resources_dex_server | to_json }}
-            notificationsController: {{ argocd_resources_notifications_controller | to_json }}
-            redis: {{ argocd_resources_redis | to_json }}
-            repoServer: {{ argocd_resources_repo_server | to_json }}
-            server: {{ argocd_resources_server | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "argocd-install"
+        dto_dir: "{{ remote_charts_dir }}/argocd/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[argocd-install] Install or upgrade argocd via Helm (async)"
@@ -259,34 +200,12 @@
       tags: [post]
 
     - name: "[argocd-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/argocd/post/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ argocd_namespace }}
-          ingress:
-            uiDomain: {{ argocd_ui_domain }}
-            rpcDomain: {{ argocd_rpc_domain }}
-            ingressClass: {{ argocd_ingress_class_name }}
-            clusterIssuer: {{ argocd_cluster_issuer_name }}
-            uiSecretName: {{ argocd_ui_https_secret_name }}
-            rpcSecretName: {{ argocd_rpc_https_secret_name }}
-            vpnOnlyEnabled: {{ argocd_vpn_only_enabled }}
-            vpnIngressRouteMiddlewares: {{ vpn_ingress_route_middlewares | to_json }}
-            httpEnable: {{ argocd_ingress_http_enable }}
-            httpsEnable: {{ argocd_ingress_https_enable }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-          serviceMonitor:
-            enabled: {{ argocd_service_monitor_enabled }}
-            interval: "{{ argocd_service_monitor_interval }}"
-            scrapeTimeout: "{{ argocd_service_monitor_scrape_timeout }}"
-            labels: {{ argocd_service_monitor_additional_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "argocd-post"
+        dto_dir: "{{ remote_charts_dir }}/argocd/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argocd_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[argocd-post] Install or upgrade via Helm (async)"
@@ -319,14 +238,12 @@
       tags: [gitops]
 
     - name: "[argocd-gitops] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/argocd/gitops/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ argocd_namespace }}
-          gitOpsApps: {{ argocd_git_ops_apps | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "argocd-gitops"
+        dto_dir: "{{ remote_charts_dir }}/argocd/gitops"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argocd_gitops_helm_values | to_nice_yaml }}"
       tags: [gitops]
 
     - name: "[argocd-gitops] Install or upgrade via Helm (async)"
