@@ -45,15 +45,12 @@
       tags: [pre]
 
     - name: "[node-exporter-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-node-exporter/pre/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ node_exporter_namespace }}
-          node_exporter:
-            port: {{ node_exporter_port }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "node-exporter-pre"
+        dto_dir: "{{ remote_charts_dir }}/mon-node-exporter/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ node_exporter_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[node-exporter-pre] Install or upgrade via Helm (async)"
@@ -85,22 +82,12 @@
       tags: [install]
 
     - name: "[node-exporter-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-node-exporter/install/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ node_exporter_namespace }}
-          node_exporter:
-            image:
-              name: {{ node_exporter_image_name }}
-              tag: {{ node_exporter_image_tag }}
-            port: {{ node_exporter_port }}
-            args: {{ node_exporter_args | to_json }}
-          tolerations: {{ node_exporter_tolerations | to_json }}
-          nodeSelector: {{ node_exporter_node_selector | to_json }}
-          resources: {{ node_exporter_resources | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "node-exporter-install"
+        dto_dir: "{{ remote_charts_dir }}/mon-node-exporter/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ node_exporter_install_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[node-exporter-install] Install or upgrade via Helm (async)"
@@ -143,18 +130,12 @@
       tags: [post]
 
     - name: "[node-exporter-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-node-exporter/post/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ node_exporter_namespace }}
-          serviceMonitor:
-            enabled: {{ node_exporter_service_monitor_enabled }}
-            interval: "{{ node_exporter_service_monitor_interval }}"
-            scrapeTimeout: "{{ node_exporter_service_monitor_scrape_timeout }}"
-            labels: {{ node_exporter_service_monitor_additional_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "node-exporter-post"
+        dto_dir: "{{ remote_charts_dir }}/mon-node-exporter/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ node_exporter_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[node-exporter-post] Install or upgrade via Helm (async)"

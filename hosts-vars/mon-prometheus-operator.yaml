@@ -388,3 +388,70 @@ all:
             tlsConfig:
               caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               insecureSkipVerify: true
+    # Pre-phase values (NetworkPolicies chart)
+    # prometheus_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
+    prometheus_operator_pre_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      acmeSolverLabels: "{{ prometheus_acme_solver_pod_labels }}"
+      prometheus:
+        port: "{{ prometheus_port }}"
+      alertmanager:
+        port: "{{ alertmanager_port }}"
+    # Install-phase values (operator deployment chart)
+    prometheus_operator_install_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      imageOperator: "{{ prometheus_operator_image_with_registry }}"
+      tolerations: "{{ prometheus_operator_tolerations }}"
+      nodeSelector: "{{ prometheus_operator_node_selector }}"
+      resources: "{{ prometheus_operator_resources }}"
+      port: "{{ prometheus_operator_port }}"
+      args: "{{ prometheus_operator_args }}"
+    # Prometheus-phase values (Prometheus CRD chart)
+    prometheus_operator_prometheus_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      prometheusSpec: "{{ prometheus_spec }}"
+      prometheus:
+        port: "{{ prometheus_port }}"
+        reloaderPort: "{{ prometheus_reloader_port }}"
+    # Alertmanager-phase values (Alertmanager CRD chart)
+    prometheus_operator_alertmanager_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      alertmanagerSpec: "{{ alertmanager_spec }}"
+      alertmanagerRootConfigSpec: "{{ alertmanager_root_config_spec }}"
+      alertmanager:
+        port: "{{ alertmanager_port }}"
+        meshTcpPort: "{{ alertmanager_mesh_tcp_port }}"
+        meshUdpPort: "{{ alertmanager_mesh_udp_port }}"
+    # Post-phase values (Ingress + Certificates chart)
+    prometheus_operator_post_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      ingressClass: "{{ prometheus_operator_ingress_class }}"
+      clusterIssuer: "{{ prometheus_operator_cluster_issuer }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      prometheus:
+        ingress:
+          domain: "{{ prometheus_domain }}"
+          secretName: "{{ prometheus_https_secret_name }}"
+          vpnOnlyEnabled: "{{ prometheus_vpn_only_enabled }}"
+          vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+          httpEnable: "{{ prometheus_ingress_http_enable }}"
+          httpsEnable: "{{ prometheus_ingress_https_enable }}"
+        port: "{{ prometheus_port }}"
+      alertmanager:
+        ingress:
+          domain: "{{ alertmanager_domain }}"
+          secretName: "{{ alertmanager_https_secret_name }}"
+          vpnOnlyEnabled: "{{ alertmanager_vpn_only_enabled }}"
+          vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+          httpEnable: "{{ alertmanager_ingress_http_enable }}"
+          httpsEnable: "{{ alertmanager_ingress_https_enable }}"
+        port: "{{ alertmanager_port }}"
+      systemServices: "{{ prometheus_system_services }}"
+      systemServiceMonitors: "{{ prometheus_system_service_monitors }}"

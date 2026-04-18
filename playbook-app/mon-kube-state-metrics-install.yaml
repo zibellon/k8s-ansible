@@ -45,15 +45,12 @@
       tags: [pre]
 
     - name: "[ksm-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-kube-state-metrics/pre/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ kube_state_metrics_namespace }}
-          kube_state_metrics:
-            port: {{ kube_state_metrics_port }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "ksm-pre"
+        dto_dir: "{{ remote_charts_dir }}/mon-kube-state-metrics/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ kube_state_metrics_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[ksm-pre] Install or upgrade via Helm (async)"
@@ -85,22 +82,12 @@
       tags: [install]
 
     - name: "[ksm-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-kube-state-metrics/install/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ kube_state_metrics_namespace }}
-          kube_state_metrics:
-            image:
-              name: {{ kube_state_metrics_image_name }}
-              tag: {{ kube_state_metrics_image_tag }}
-            port: {{ kube_state_metrics_port }}
-            args: {{ kube_state_metrics_args | to_json }}
-          tolerations: {{ kube_state_metrics_tolerations | to_json }}
-          nodeSelector: {{ kube_state_metrics_node_selector | to_json }}
-          resources: {{ kube_state_metrics_resources | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "ksm-install"
+        dto_dir: "{{ remote_charts_dir }}/mon-kube-state-metrics/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ kube_state_metrics_install_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[ksm-install] Install or upgrade via Helm (async)"
@@ -143,18 +130,12 @@
       tags: [post]
 
     - name: "[ksm-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-kube-state-metrics/post/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ kube_state_metrics_namespace }}
-          serviceMonitor:
-            enabled: {{ kube_state_metrics_service_monitor_enabled }}
-            interval: "{{ kube_state_metrics_service_monitor_interval }}"
-            scrapeTimeout: "{{ kube_state_metrics_service_monitor_scrape_timeout }}"
-            labels: {{ kube_state_metrics_service_monitor_additional_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "ksm-post"
+        dto_dir: "{{ remote_charts_dir }}/mon-kube-state-metrics/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ kube_state_metrics_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[ksm-post] Install or upgrade via Helm (async)"

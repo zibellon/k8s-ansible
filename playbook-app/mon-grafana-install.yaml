@@ -65,36 +65,12 @@
       tags: [pre]
 
     - name: "[grafana-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-grafana/pre/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ grafana_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          monitoring:
-            namespace: {{ prometheus_operator_namespace }}
-            prometheus:
-              port: {{ prometheus_port }}
-            alertmanager:
-              port: {{ alertmanager_port }}
-          grafanaEso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_grafana.sa_name }}
-            roleName: {{ eso_vault_integration_grafana.role_name }}
-            secretStoreName: {{ eso_vault_integration_grafana.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_grafana.kv_engine_path }}
-            secrets: {{ eso_vault_integration_grafana_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-          grafana:
-            port: {{ grafana_port }}
-          acmeSolverLabels: {{ grafana_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "grafana-pre"
+        dto_dir: "{{ remote_charts_dir }}/mon-grafana/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ grafana_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[grafana-pre] Install or upgrade via Helm (async)"
@@ -183,31 +159,12 @@
       tags: [install]
 
     - name: "[grafana-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-grafana/install/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ grafana_namespace }}
-          grafana:
-            port: {{ grafana_port }}
-            image:
-              name: {{ grafana_image_name }}
-              tag: {{ grafana_image_tag }}
-            installPlugins: {{ grafana_install_plugins | default('') }}
-            externalUrl: {{ grafana_external_url }}
-          adminSecret:
-            name: {{ grafana_admin_secret_name }}
-            usernameKey: username
-            passwordKey: password
-          pvc:
-            storageClassName: {{ grafana_storage_class }}
-            storageSize: {{ grafana_storage_size }}
-            accessMode: {{ grafana_storage_access_mode }}
-          tolerations: {{ grafana_tolerations | to_json }}
-          nodeSelector: {{ grafana_node_selector | to_json }}
-          resources: {{ grafana_resources | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "grafana-install"
+        dto_dir: "{{ remote_charts_dir }}/mon-grafana/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ grafana_install_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[grafana-install] Install or upgrade via Helm (async)"
@@ -250,29 +207,12 @@
       tags: [post]
 
     - name: "[grafana-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-grafana/post/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ grafana_namespace }}
-          ingressClass: {{ grafana_ingress_class }}
-          clusterIssuer: {{ grafana_cluster_issuer }}
-          vpnOnlyEnabled: {{ grafana_vpn_only_enabled }}
-          vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-          grafana:
-            ingress:
-              domain: {{ grafana_domain }}
-              secretName: {{ grafana_https_secret_name }}
-              httpEnable: {{ grafana_ingress_http_enable }}
-              httpsEnable: {{ grafana_ingress_https_enable }}
-            port: {{ grafana_port }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "grafana-post"
+        dto_dir: "{{ remote_charts_dir }}/mon-grafana/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ grafana_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[grafana-post] Install or upgrade via Helm (async)"

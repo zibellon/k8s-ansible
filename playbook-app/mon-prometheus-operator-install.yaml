@@ -101,21 +101,12 @@
       tags: [pre]
 
     - name: "[prometheus-operator-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/pre/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ prometheus_operator_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          acmeSolverLabels: {{ prometheus_acme_solver_pod_labels | to_json }}
-          prometheus:
-            port: {{ prometheus_port }}
-          alertmanager:
-            port: {{ alertmanager_port }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "prometheus-operator-pre"
+        dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ prometheus_operator_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[prometheus-operator-pre] Install or upgrade via Helm (async)"
@@ -148,19 +139,12 @@
       tags: [install]
 
     - name: "[prometheus-operator-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/install/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ prometheus_operator_namespace }}
-          imageOperator: "{{ prometheus_operator_image_with_registry }}"
-          tolerations: {{ prometheus_operator_tolerations | to_json }}
-          nodeSelector: {{ prometheus_operator_node_selector | to_json }}
-          resources: {{ prometheus_operator_resources | to_json }}
-          port: {{ prometheus_operator_port }}
-          args: {{ prometheus_operator_args | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "prometheus-operator-install"
+        dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ prometheus_operator_install_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[prometheus-operator-install] Install or upgrade via Helm (async)"
@@ -208,17 +192,12 @@
       tags: [prometheus]
 
     - name: "[prometheus-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ prometheus_operator_namespace }}
-          prometheusSpec: {{ prometheus_spec | to_json }}
-          prometheus:
-            port: {{ prometheus_port }}
-            reloaderPort: {{ prometheus_reloader_port }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "prometheus-install"
+        dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ prometheus_operator_prometheus_helm_values | to_nice_yaml }}"
       tags: [prometheus]
 
     - name: "[prometheus-install] Install or upgrade via Helm (async)"
@@ -261,19 +240,12 @@
       tags: [alertmanager]
 
     - name: "[alertmanager-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ prometheus_operator_namespace }}
-          alertmanagerSpec: {{ alertmanager_spec | to_json }}
-          alertmanagerRootConfigSpec: {{ alertmanager_root_config_spec | to_json }}
-          alertmanager:
-            port: {{ alertmanager_port }}
-            meshTcpPort: {{ alertmanager_mesh_tcp_port }}
-            meshUdpPort: {{ alertmanager_mesh_udp_port }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "alertmanager-install"
+        dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ prometheus_operator_alertmanager_helm_values | to_nice_yaml }}"
       tags: [alertmanager]
 
     - name: "[alertmanager-install] Install or upgrade via Helm (async)"
@@ -316,40 +288,12 @@
       tags: [post]
 
     - name: "[prometheus-operator-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/mon-prometheus-operator/post/values-override.yaml"
-        mode: "0600"
-        content: |
-          namespace: {{ prometheus_operator_namespace }}
-          ingressClass: {{ prometheus_operator_ingress_class }}
-          clusterIssuer: {{ prometheus_operator_cluster_issuer }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-          prometheus:
-            ingress:
-              domain: {{ prometheus_domain }}
-              secretName: {{ prometheus_https_secret_name }}
-              vpnOnlyEnabled: {{ prometheus_vpn_only_enabled }}
-              vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-              httpEnable: {{ prometheus_ingress_http_enable }}
-              httpsEnable: {{ prometheus_ingress_https_enable }}
-            port: {{ prometheus_port }}
-          alertmanager:
-            ingress:
-              domain: {{ alertmanager_domain }}
-              secretName: {{ alertmanager_https_secret_name }}
-              vpnOnlyEnabled: {{ alertmanager_vpn_only_enabled }}
-              vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-              httpEnable: {{ alertmanager_ingress_http_enable }}
-              httpsEnable: {{ alertmanager_ingress_https_enable }}
-            port: {{ alertmanager_port }}
-          systemServices: {{ prometheus_system_services | to_json }}
-          systemServiceMonitors: {{ prometheus_system_service_monitors | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "prometheus-operator-post"
+        dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ prometheus_operator_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[prometheus-operator-post] Install or upgrade via Helm (async)"

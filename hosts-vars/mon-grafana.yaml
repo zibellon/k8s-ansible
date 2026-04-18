@@ -40,3 +40,72 @@ all:
     grafana_node_selector:
       node-role.kubernetes.io/worker: ""
     grafana_resources: {}
+    # Pre-phase values (NetworkPolicies + ESO chart)
+    # eso_vault_integration_grafana_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
+    # grafana_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
+    grafana_pre_helm_values:
+      namespace: "{{ grafana_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      monitoring:
+        namespace: "{{ prometheus_operator_namespace }}"
+        prometheus:
+          port: "{{ prometheus_port }}"
+        alertmanager:
+          port: "{{ alertmanager_port }}"
+      grafanaEso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_grafana.sa_name }}"
+        roleName: "{{ eso_vault_integration_grafana.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_grafana.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_grafana.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_grafana_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      grafana:
+        port: "{{ grafana_port }}"
+      acmeSolverLabels: "{{ grafana_acme_solver_pod_labels }}"
+    # Install-phase values
+    # grafana_admin_secret_name — runtime-факт от set_fact [install] в playbook
+    grafana_install_helm_values:
+      namespace: "{{ grafana_namespace }}"
+      grafana:
+        port: "{{ grafana_port }}"
+        image:
+          name: "{{ grafana_image_name }}"
+          tag: "{{ grafana_image_tag }}"
+        installPlugins: "{{ grafana_install_plugins | default('') }}"
+        externalUrl: "{{ grafana_external_url }}"
+      adminSecret:
+        name: "{{ grafana_admin_secret_name }}"
+        usernameKey: username
+        passwordKey: password
+      pvc:
+        storageClassName: "{{ grafana_storage_class }}"
+        storageSize: "{{ grafana_storage_size }}"
+        accessMode: "{{ grafana_storage_access_mode }}"
+      tolerations: "{{ grafana_tolerations }}"
+      nodeSelector: "{{ grafana_node_selector }}"
+      resources: "{{ grafana_resources }}"
+    # Post-phase values (Ingress + Certificate chart)
+    grafana_post_helm_values:
+      namespace: "{{ grafana_namespace }}"
+      ingressClass: "{{ grafana_ingress_class }}"
+      clusterIssuer: "{{ grafana_cluster_issuer }}"
+      vpnOnlyEnabled: "{{ grafana_vpn_only_enabled }}"
+      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      grafana:
+        ingress:
+          domain: "{{ grafana_domain }}"
+          secretName: "{{ grafana_https_secret_name }}"
+          httpEnable: "{{ grafana_ingress_http_enable }}"
+          httpsEnable: "{{ grafana_ingress_https_enable }}"
+        port: "{{ grafana_port }}"
