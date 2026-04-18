@@ -55,25 +55,12 @@
       tags: [pre]
 
     - name: "[haproxy-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/haproxy/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ haproxy_namespace }}
-          eso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_haproxy.sa_name }}
-            roleName: {{ eso_vault_integration_haproxy.role_name }}
-            secretStoreName: {{ eso_vault_integration_haproxy.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_haproxy.kv_engine_path }}
-            isNeedEso: {{ eso_vault_integration_haproxy.is_need_eso | default(true) }}
-            secrets: {{ eso_vault_integration_haproxy_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "haproxy-pre"
+        dto_dir: "{{ remote_charts_dir }}/haproxy/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ haproxy_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[haproxy-pre] Install or upgrade via Helm (async)"
@@ -167,16 +154,12 @@
       tags: [post]
 
     - name: "[haproxy-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/haproxy/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ haproxy_namespace }}
-          ingressClass: {{ haproxy_ingress_class }}
-          global: {{ haproxy_global_config | to_json }}
-          defaults: {{ haproxy_defaults_config | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "haproxy-post"
+        dto_dir: "{{ remote_charts_dir }}/haproxy/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ haproxy_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[haproxy-post] Install or upgrade via Helm (async)"

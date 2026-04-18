@@ -64,27 +64,12 @@
       tags: [pre]
 
     - name: "[traefik-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/traefik/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ traefik_namespace }}
-          instanceName: traefik-{{ traefik_namespace }}
-          eso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_traefik.sa_name }}
-            roleName: {{ eso_vault_integration_traefik.role_name }}
-            secretStoreName: {{ eso_vault_integration_traefik.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_traefik.kv_engine_path }}
-            isNeedEso: {{ eso_vault_integration_traefik.is_need_eso | default(true) }}
-            secrets: {{ eso_vault_integration_traefik_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-          acmeSolverLabels: {{ traefik_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "traefik-pre"
+        dto_dir: "{{ remote_charts_dir }}/traefik/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ traefik_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[traefik-pre] Install or upgrade via Helm (async)"
@@ -203,29 +188,12 @@
       tags: [post]
 
     - name: "[traefik-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/traefik/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ traefik_namespace }}
-          ingressClass: {{ traefik_dashboard_ingress_class_name }}
-          traefik:
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-          middlewares: {{ traefik_middlewares | to_json }}
-          vpnMiddlewares: {{ vpn_traefik_middlewares | to_json }}
-          vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-          dashboard:
-            serviceName: {{ traefik_dashboard_service_name }}
-            domain: {{ traefik_dashboard_domain }}
-            secretName: {{ traefik_dashboard_https_secret_name }}
-            clusterIssuer: {{ traefik_dashboard_cluster_issuer_name }}
-            vpnOnlyEnabled: {{ traefik_dashboard_vpn_only_enabled }}
-            httpEnable: {{ traefik_dashboard_ingress_http_enable }}
-            httpsEnable: {{ traefik_dashboard_ingress_https_enable }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "traefik-post"
+        dto_dir: "{{ remote_charts_dir }}/traefik/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ traefik_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[traefik-post] Install or upgrade via Helm (async)"

@@ -72,6 +72,44 @@ all:
             regex: "(^https://www.|^http://www.|^http://)(.+)"
             replacement: "https://${2}"
             permanent: true
+    # Pre-phase values (NetworkPolicies + ESO chart)
+    # Примечание: eso.secrets — runtime-факт от tasks-eso-merge.yaml (tags: [always])
+    # acmeSolverLabels — runtime-факт от tasks-resolve-acme-solver.yaml (tags: [always])
+    traefik_pre_helm_values:
+      namespace: "{{ traefik_namespace }}"
+      instanceName: "traefik-{{ traefik_namespace }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_traefik.sa_name }}"
+        roleName: "{{ eso_vault_integration_traefik.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_traefik.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_traefik.kv_engine_path }}"
+        isNeedEso: "{{ eso_vault_integration_traefik.is_need_eso | default(true) }}"
+        secrets: "{{ eso_vault_integration_traefik_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      acmeSolverLabels: "{{ traefik_acme_solver_pod_labels }}"
+    # Post-phase values (Middlewares + Dashboard Ingress chart)
+    traefik_post_helm_values:
+      namespace: "{{ traefik_namespace }}"
+      ingressClass: "{{ traefik_dashboard_ingress_class_name }}"
+      traefik:
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      middlewares: "{{ traefik_middlewares }}"
+      vpnMiddlewares: "{{ vpn_traefik_middlewares }}"
+      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      dashboard:
+        serviceName: "{{ traefik_dashboard_service_name }}"
+        domain: "{{ traefik_dashboard_domain }}"
+        secretName: "{{ traefik_dashboard_https_secret_name }}"
+        clusterIssuer: "{{ traefik_dashboard_cluster_issuer_name }}"
+        vpnOnlyEnabled: "{{ traefik_dashboard_vpn_only_enabled }}"
+        httpEnable: "{{ traefik_dashboard_ingress_http_enable }}"
+        httpsEnable: "{{ traefik_dashboard_ingress_https_enable }}"
     # Helm chart values
     traefik_helm_values:
       image:

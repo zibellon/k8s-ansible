@@ -67,6 +67,29 @@ all:
       tcp_smart_connect: enabled
       tcp_smart_accept: enabled
       tcplog: true
+    # Pre-phase values (NetworkPolicies + ESO chart)
+    # Примечание: eso.secrets и esoResourcesConfig используют runtime-факты,
+    # которые вычисляются tasks-eso-merge.yaml (tags: [always]) до выполнения pre-фазы.
+    haproxy_pre_helm_values:
+      namespace: "{{ haproxy_namespace }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_haproxy.sa_name }}"
+        roleName: "{{ eso_vault_integration_haproxy.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_haproxy.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_haproxy.kv_engine_path }}"
+        isNeedEso: "{{ eso_vault_integration_haproxy.is_need_eso | default(true) }}"
+        secrets: "{{ eso_vault_integration_haproxy_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+    # Post-phase values (Global + Defaults CRDs chart)
+    haproxy_post_helm_values:
+      namespace: "{{ haproxy_namespace }}"
+      ingressClass: "{{ haproxy_ingress_class }}"
+      global: "{{ haproxy_global_config }}"
+      defaults: "{{ haproxy_defaults_config }}"
     # Helm chart values
     haproxy_helm_values:
       fullnameOverride: "{{ haproxy_daemonset_name }}"
