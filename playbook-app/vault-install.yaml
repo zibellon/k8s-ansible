@@ -48,11 +48,11 @@
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
         label_name: vault-install-init
-        cluster_issuer_name: "{{ vault_ui_cluster_issuer_name }}"
-        ingress_class_name: "{{ vault_ui_ingress_class_name }}"
-        acme_cluster_issuer_result_var: "vault_ui_acme_cluster_issuer"
-        acme_solver_result_var: "vault_ui_acme_solver"
-        acme_pod_labels_result_var: "vault_acme_solver_pod_labels"
+        dto_cluster_issuer_name: "{{ vault_ui_cluster_issuer_name }}"
+        dto_ingress_class_name: "{{ vault_ui_ingress_class_name }}"
+        dto_acme_cluster_issuer_result_var: "vault_ui_acme_cluster_issuer"
+        dto_acme_solver_result_var: "vault_ui_acme_solver"
+        dto_acme_pod_labels_result_var: "vault_acme_solver_pod_labels"
       tags: [always]
 
     # =========================================================================
@@ -108,6 +108,7 @@
       vars:
         label_name: "vault-operator"
         dto_dir: "{{ remote_charts_dir }}/vault/operator"
+        dto_filename: "values-override.yaml"
         dto_content: "{{ vault_operator_helm_values | to_nice_yaml }}"
       tags: [operator]
 
@@ -131,7 +132,7 @@
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
         label_name: "vault-operator"
-        crds_list:
+        dto_crds_list:
           - "crd/vaults.vault.banzaicloud.com"
       tags: [operator]
 
@@ -139,9 +140,9 @@
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
         label_name: "vault-operator"
-        rollout_namespace: "{{ vault_namespace }}"
-        rollout_timeout: "{{ vault_rollout_timeout }}"
-        rollout_resources:
+        dto_rollout_namespace: "{{ vault_namespace }}"
+        dto_rollout_timeout: "{{ vault_rollout_timeout }}"
+        dto_rollout_resources_list:
           - "deployment.apps/vault-operator"
       tags: [operator]
 
@@ -188,14 +189,14 @@
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
         label_name: "vault-cr"
-        rollout_namespace: "{{ vault_namespace }}"
-        rollout_timeout: "{{ vault_rollout_timeout }}"
-        rollout_resources:
+        dto_rollout_namespace: "{{ vault_namespace }}"
+        dto_rollout_timeout: "{{ vault_rollout_timeout }}"
+        dto_rollout_resources_list:
           - "statefulset/vault"
       tags: [vault-cr]
 
     - name: "[vault-cr] Wait for unsealer K8s Secret"
-      include_tasks: tasks/tasks-secret-wait.yaml
+      include_tasks: tasks/tasks-wait-secret.yaml
       vars:
         label_name: "vault-cr"
         dto_wait_secret_name: "{{ vault_unsealer_secret_name }}"

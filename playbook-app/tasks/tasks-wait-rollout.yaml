@@ -3,9 +3,9 @@
 # =============================================================================
 # Params:
 #   - label_name: Label for task names (used in logs)
-#   - rollout_namespace: Namespace
-#   - rollout_timeout: Timeout for rollout status
-#   - rollout_resources: List of resources (e.g. deployment/name, daemonset/name, statefulset/name)
+#   - dto_rollout_namespace: Namespace
+#   - dto_rollout_timeout: Timeout for rollout status
+#   - dto_rollout_resources_list: List of resources (e.g. deployment/name, daemonset/name, statefulset/name)
 # =============================================================================
 
 - name: "[{{ label_name }}] Assert all dto params are provided"
@@ -13,27 +13,27 @@
     that:
       - label_name is defined
       - label_name | length > 0
-      - rollout_namespace is defined
-      - rollout_namespace | length > 0
-      - rollout_timeout is defined
-      - rollout_timeout | length > 0
-      - rollout_resources is defined
-      - rollout_resources is sequence
-      - rollout_resources | length > 0
+      - dto_rollout_namespace is defined
+      - dto_rollout_namespace | length > 0
+      - dto_rollout_timeout is defined
+      - dto_rollout_timeout | length > 0
+      - dto_rollout_resources_list is defined
+      - dto_rollout_resources_list is sequence
+      - dto_rollout_resources_list | length > 0
     fail_msg: >-
       tasks-wait-rollout: all params required:
-      label_name, rollout_namespace, rollout_timeout, rollout_resources (non-empty list)
+      label_name, dto_rollout_namespace, dto_rollout_timeout, dto_rollout_resources_list (non-empty list)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 - name: "[{{ label_name }}] Wait for rollouts to complete"
-  command: kubectl rollout status {{ item }} -n {{ rollout_namespace }} --timeout={{ rollout_timeout }}
-  loop: "{{ rollout_resources }}"
+  command: kubectl rollout status {{ item }} -n {{ dto_rollout_namespace }} --timeout={{ dto_rollout_timeout }}
+  loop: "{{ dto_rollout_resources_list }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   register: rollout_result
   until: rollout_result.rc == 0
-  retries: 15
-  delay: 4
+  retries: "{{ rollout_wait.retries }}"
+  delay: "{{ rollout_wait.delay }}"
   tags: [always]

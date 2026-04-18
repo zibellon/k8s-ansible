@@ -3,11 +3,11 @@
 # =============================================================================
 # Params:
 #   - label_name:                   Label prefix for task names (e.g. "longhorn-install-init")
-#   - cluster_issuer_name:          Name of ClusterIssuer to look up in cert_manager_cluster_issuers
-#   - ingress_class_name:           ingressClass to match inside issuer.solvers
-#   - acme_cluster_issuer_result_var: Variable name to store the resolved ClusterIssuer object
-#   - acme_solver_result_var:        Variable name to store the resolved solver object
-#   - acme_pod_labels_result_var:    Variable name to store solver.podLabels
+#   - dto_cluster_issuer_name:          Name of ClusterIssuer to look up in cert_manager_cluster_issuers
+#   - dto_ingress_class_name:           ingressClass to match inside issuer.solvers
+#   - dto_acme_cluster_issuer_result_var: Variable name to store the resolved ClusterIssuer object
+#   - dto_acme_solver_result_var:        Variable name to store the resolved solver object
+#   - dto_acme_pod_labels_result_var:    Variable name to store solver.podLabels
 # =============================================================================
 
 - name: "[{{ label_name }}] Assert all dto params are provided"
@@ -15,20 +15,20 @@
     that:
       - label_name is defined
       - label_name | length > 0
-      - cluster_issuer_name is defined
-      - cluster_issuer_name | length > 0
-      - ingress_class_name is defined
-      - ingress_class_name | length > 0
-      - acme_cluster_issuer_result_var is defined
-      - acme_cluster_issuer_result_var | length > 0
-      - acme_solver_result_var is defined
-      - acme_solver_result_var | length > 0
-      - acme_pod_labels_result_var is defined
-      - acme_pod_labels_result_var | length > 0
+      - dto_cluster_issuer_name is defined
+      - dto_cluster_issuer_name | length > 0
+      - dto_ingress_class_name is defined
+      - dto_ingress_class_name | length > 0
+      - dto_acme_cluster_issuer_result_var is defined
+      - dto_acme_cluster_issuer_result_var | length > 0
+      - dto_acme_solver_result_var is defined
+      - dto_acme_solver_result_var | length > 0
+      - dto_acme_pod_labels_result_var is defined
+      - dto_acme_pod_labels_result_var | length > 0
     fail_msg: >-
       tasks-resolve-acme-solver: all params required:
-      label_name, cluster_issuer_name, ingress_class_name,
-      acme_cluster_issuer_result_var, acme_solver_result_var, acme_pod_labels_result_var
+      label_name, dto_cluster_issuer_name, dto_ingress_class_name,
+      dto_acme_cluster_issuer_result_var, dto_acme_solver_result_var, dto_acme_pod_labels_result_var
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -37,7 +37,7 @@
   set_fact:
     _acme_resolved_issuer: >-
       {{ cert_manager_cluster_issuers
-         | selectattr('name', 'equalto', cluster_issuer_name)
+         | selectattr('name', 'equalto', dto_cluster_issuer_name)
          | list | first | default(none) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -47,7 +47,7 @@
   assert:
     that: _acme_resolved_issuer is not none
     fail_msg: >-
-      cluster_issuer_name='{{ cluster_issuer_name }}'
+      dto_cluster_issuer_name='{{ dto_cluster_issuer_name }}'
       not found in cert_manager_cluster_issuers
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -57,7 +57,7 @@
   set_fact:
     _acme_resolved_solver: >-
       {{ _acme_resolved_issuer.solvers
-         | selectattr('ingressClass', 'equalto', ingress_class_name)
+         | selectattr('ingressClass', 'equalto', dto_ingress_class_name)
          | list | first | default(none) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -67,17 +67,17 @@
   assert:
     that: _acme_resolved_solver is not none
     fail_msg: >-
-      No solver with ingressClass='{{ ingress_class_name }}'
-      found in ClusterIssuer '{{ cluster_issuer_name }}'
+      No solver with ingressClass='{{ dto_ingress_class_name }}'
+      found in ClusterIssuer '{{ dto_cluster_issuer_name }}'
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 - name: "[{{ label_name }}] Set ACME solver result vars"
   set_fact:
-    "{{ acme_cluster_issuer_result_var }}": "{{ _acme_resolved_issuer }}"
-    "{{ acme_solver_result_var }}": "{{ _acme_resolved_solver }}"
-    "{{ acme_pod_labels_result_var }}": "{{ _acme_resolved_solver.podLabels }}"
+    "{{ dto_acme_cluster_issuer_result_var }}": "{{ _acme_resolved_issuer }}"
+    "{{ dto_acme_solver_result_var }}": "{{ _acme_resolved_solver }}"
+    "{{ dto_acme_pod_labels_result_var }}": "{{ _acme_resolved_solver.podLabels }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]

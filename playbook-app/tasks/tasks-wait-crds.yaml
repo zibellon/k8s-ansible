@@ -3,7 +3,7 @@
 # =============================================================================
 # Params:
 #   - label_name: Label for task names (used in logs)
-#   - crds_list: List of CRD names (with crd/ prefix)
+#   - dto_crds_list: List of CRD names (with crd/ prefix)
 #   - crds_wait: Dict with timeout, retries, delay (from hosts.yaml)
 # =============================================================================
 
@@ -12,17 +12,12 @@
     that:
       - label_name is defined
       - label_name | length > 0
-      - crds_list is defined
-      - crds_list is sequence
-      - crds_list | length > 0
-      - crds_wait is defined
-      - crds_wait is mapping
-      - crds_wait.timeout is defined
-      - crds_wait.retries is defined
-      - crds_wait.delay is defined
+      - dto_crds_list is defined
+      - dto_crds_list is sequence
+      - dto_crds_list | length > 0
     fail_msg: >-
       tasks-wait-crds: all params required:
-      label_name, crds_list (non-empty list), crds_wait (dict with timeout/retries/delay)
+      label_name, dto_crds_list (non-empty list)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -30,7 +25,7 @@
 - name: "[{{ label_name }}] Wait for CRDs to be established"
   command: >
     kubectl wait --for=condition=Established
-    {{ crds_list | join(' ') }}
+    {{ dto_crds_list | join(' ') }}
     --timeout={{ crds_wait.timeout }}
   register: crds_wait_result
   until: crds_wait_result.rc == 0
