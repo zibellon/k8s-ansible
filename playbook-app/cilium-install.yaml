@@ -59,17 +59,12 @@
       tags: [pre]
 
     - name: "[cilium-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/cilium/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ cilium_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          acmeSolverLabels: {{ cilium_hubble_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "cilium-pre"
+        dto_dir: "{{ remote_charts_dir }}/cilium/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ cilium_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[cilium-pre] Install or upgrade via Helm (async)"
@@ -179,42 +174,12 @@
       tags: [post]
 
     - name: "[cilium-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/cilium/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ cilium_namespace }}
-
-          nodeIps: {{
-            (
-              (groups['managers'] + groups['workers'])
-              | map('extract', hostvars, 'ansible_host')
-              | map('regex_replace', '$', '/32')
-              | list
-              +
-              (groups['managers'] + groups['workers'])
-              | map('extract', hostvars, 'internal_ip')
-              | map('regex_replace', '$', '/32')
-              | list
-            ) | to_json }}
-
-          hubbleUi:
-            domain: {{ cilium_hubble_ui_domain }}
-            clusterIssuer: {{ cilium_hubble_ui_cluster_issuer_name }}
-            ingressClass: {{ cilium_hubble_ui_ingress_class_name }}
-            secretName: {{ cilium_hubble_ui_https_secret_name }}
-            vpnOnlyEnabled: {{ cilium_hubble_ui_vpn_only_enabled }}
-            vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-            httpEnable: {{ cilium_hubble_ui_ingress_http_enable }}
-            httpsEnable: {{ cilium_hubble_ui_ingress_https_enable }}
-
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "cilium-post"
+        dto_dir: "{{ remote_charts_dir }}/cilium/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ cilium_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[cilium-post] Install or upgrade via Helm (async)"

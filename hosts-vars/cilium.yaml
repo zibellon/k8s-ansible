@@ -167,3 +167,42 @@ all:
         range: "{{ node_port_start }},{{ node_port_end }}"
       hostFirewall:
         enabled: true
+
+    # Pre-phase values (NetworkPolicies chart)
+    # cilium_hubble_acme_solver_pod_labels - create in playbook runtime 
+    cilium_pre_helm_values:
+      namespace: "{{ cilium_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      acmeSolverLabels: "{{ cilium_hubble_acme_solver_pod_labels }}"
+
+    # Post-phase node IPs — built at playbook-time from inventory (groups/hostvars available then)
+    cilium_post_node_ips_list: >-
+      {{ ((groups['managers'] + groups['workers'])
+          | map('extract', hostvars, 'ansible_host')
+          | map('regex_replace', '$', '/32')
+          | list)
+         + ((groups['managers'] + groups['workers'])
+            | map('extract', hostvars, 'internal_ip')
+            | map('regex_replace', '$', '/32')
+            | list) }}
+
+    # Post-phase values (CiliumClusterwideNetworkPolicy + Hubble UI ingress)
+    cilium_post_helm_values:
+      namespace: "{{ cilium_namespace }}"
+      nodeIpsList: "{{ cilium_post_node_ips_list }}"
+      hubbleUi:
+        domain: "{{ cilium_hubble_ui_domain }}"
+        clusterIssuer: "{{ cilium_hubble_ui_cluster_issuer_name }}"
+        ingressClass: "{{ cilium_hubble_ui_ingress_class_name }}"
+        secretName: "{{ cilium_hubble_ui_https_secret_name }}"
+        vpnOnlyEnabled: "{{ cilium_hubble_ui_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+        httpEnable: "{{ cilium_hubble_ui_ingress_http_enable }}"
+        httpsEnable: "{{ cilium_hubble_ui_ingress_https_enable }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"

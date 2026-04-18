@@ -207,7 +207,7 @@ After this the node has: containerd + runc + CNI plugins + kubelet + kubeadm + k
 
 ### 3.3 Cilium host-firewall prerequisite
 
-Cilium is installed with host firewall **on**. The host firewall policy (`CiliumClusterwideNetworkPolicy` in `cilium/post/`) is built from `nodeIps`, a list assembled from every inventory host's `ansible_host` + `internal_ip`.
+Cilium is installed with host firewall **on**. The host firewall policy (`CiliumClusterwideNetworkPolicy` in `cilium/post/`) is built from `nodeIpsList`, a list assembled from every inventory host's `ansible_host` + `internal_ip`.
 
 Adding a node requires:
 
@@ -404,10 +404,10 @@ At `kubeadm init` we pass `--skip-phases=addon/kube-proxy`. No `kube-proxy` Daem
 
 ### 5.2 Host firewall (`CiliumClusterwideNetworkPolicy`)
 
-Defined in `playbook-app/charts/cilium/post/`. The policy's `nodeIps` array is built from every inventory host's `ansible_host` + `internal_ip`. Allows:
+Defined in `playbook-app/charts/cilium/post/`. The policy's `nodeIpsList` array is built from every inventory host's `ansible_host` + `internal_ip`. Allows:
 
 - Kubelet (10250), apiserver (6443 via HAProxy), etcd, Hubble (4244), etc.
-- All `nodeIps` entities talking to all other `nodeIps`.
+- All `nodeIpsList` entities talking to all other `nodeIpsList`.
 
 When adding a node: update `hosts-vars-override/hosts.yaml`, re-run `cilium-install.yaml --tags post` **before** joining the new node. See §3.3.
 

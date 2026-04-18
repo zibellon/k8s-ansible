@@ -109,7 +109,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 
 ### 1.5 Cilium host-firewall prerequisite (critical)
 
-Cilium runs with host firewall on. The policy `CiliumClusterwideNetworkPolicy` (in `charts/cilium/post/`) builds `nodeIps` from every inventory host's `ansible_host` + `internal_ip`. Traffic from IPs outside that list is dropped at the host interface.
+Cilium runs with host firewall on. The policy `CiliumClusterwideNetworkPolicy` (in `charts/cilium/post/`) builds `nodeIpsList` from every inventory host's `ansible_host` + `internal_ip`. Traffic from IPs outside that list is dropped at the host interface.
 
 **Consequence.** Joining a new node requires the Cilium policy to already include that node's IPs, otherwise the kubelet ↔ apiserver handshake is blocked.
 

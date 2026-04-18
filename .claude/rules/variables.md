@@ -257,7 +257,7 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `is_master_manager_exist` | `tasks-set-master-manager.yaml` | Guards in bootstrap plays |
 | `is_cluster_init` | `tasks-set-is-cluster-init.yaml` | Skip re-init logic |
 | `is_node_joined` | `tasks-set-is-node-joined.yaml` | Skip re-join logic |
-| `joined_node_ips` | `tasks-gather-cluster-facts.yaml` | Cilium host-firewall `nodeIps`, certSANs |
+| `joined_node_ips` | `tasks-gather-cluster-facts.yaml` | Cilium host-firewall `nodeIpsList`, certSANs |
 | `joined_node_hostnames` | same | Logging / validation |
 | `vault_policies_final` | `tasks-eso-merge.yaml` | Rendered into `vault/install/values-override.yaml` |
 | `vault_roles_final` | same | Same |
