@@ -514,7 +514,7 @@ Called from every ESO-integrated component's install playbook with `tags: [alway
 | Task include | Purpose | Typical caller |
 |---|---|---|
 | `tasks-vault-get.yaml` | Read one KV v2 field → named Ansible fact + `<fact>_exists` flag. | `-configure` playbooks (resolve current creds before using them) |
-| `tasks-vault-put-and-sync.yaml` | `vault kv put`, then annotate the target `ExternalSecret` to force sync, then wait for the downstream K8s `Secret` to appear. | secret-rotation flows |
+| `tasks-vault-put.yaml` | `vault kv put`, then annotate the target `ExternalSecret` to force sync, then wait for the downstream K8s `Secret` to appear. | secret-rotation flows |
 | `tasks-generate-secret.yaml` | Generate random N-char secret → named fact. | bootstrap of first-run passwords |
 | `tasks-eso-force-sync.yaml` | Annotate ExternalSecret(s) with `force-sync={{ now }}` to trigger ESO reconciliation (used after Vault put, or standalone via `eso-force-sync.yaml`). | every rotation; also used standalone |
 | `tasks-vault-distribute-creds.yaml` | Reads `vault-unsealer-secret` from the cluster, decodes, writes `/etc/kubernetes/vault-unseal.json` on all managers. | `manager-join.yaml`, `vault-install.yaml` post |
@@ -525,7 +525,7 @@ Called from every ESO-integrated component's install playbook with `tags: [alway
 
 ```
 1. tasks-generate-secret.yaml       → gitlab_root_password fact
-2. tasks-vault-put-and-sync.yaml    → vault kv put eso-secret/gitlab/gitlab-root
+2. tasks-vault-put.yaml    → vault kv put eso-secret/gitlab/gitlab-root
                                     → annotate ExternalSecret "gitlab-root"
                                     → wait for Secret "gitlab-root" in gitlab ns
 3. gitlab chart install             → pods mount/env the now-present Secret
@@ -537,7 +537,7 @@ Called from every ESO-integrated component's install playbook with `tags: [alway
 1. tasks-generate-secret.yaml       → new_pg_password fact
 2. put on server in /tmp (optional)
 3. ALTER USER in live postgres
-4. tasks-vault-put-and-sync.yaml    → vault kv put eso-secret/gitlab/postgresql
+4. tasks-vault-put.yaml    → vault kv put eso-secret/gitlab/postgresql
                                     → ESO rewrites K8s Secret gitlab-postgresql
 5. (optional) Reloader restarts pods that mount the Secret
 6. delete /tmp file

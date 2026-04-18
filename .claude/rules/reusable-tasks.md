@@ -103,7 +103,7 @@ General rules for callers:
 - **Purpose.** Annotate ExternalSecrets with `force-sync=<epoch>` to trigger ESO reconciliation without waiting for `refreshInterval`.
 - **Input.** `label_name`, `namespace`.
 - **Output.** All ExternalSecrets in the namespace annotated.
-- **Callers.** `eso-force-sync.yaml` standalone; also after `tasks-vault-put-and-sync.yaml` (internal).
+- **Callers.** `eso-force-sync.yaml` standalone; also after `tasks-vault-put.yaml` (internal).
 - **Idempotent.** Annotation bump is always safe.
 
 ### 1.12 `tasks-vault-get.yaml`
@@ -114,7 +114,7 @@ General rules for callers:
 - **Callers.** `-configure` playbooks (resolve current credentials before rotating), `-rotate` playbooks.
 - **Idempotent.** Read-only.
 
-### 1.13 `tasks-vault-put-and-sync.yaml`
+### 1.13 `tasks-vault-put.yaml`
 
 - **Purpose.** `vault kv put`, then annotate the target ExternalSecret to force ESO sync, then wait for the downstream K8s `Secret` to appear.
 - **Input.** Vault path, KV fields, ExternalSecret name, target namespace, target K8s Secret name, timeouts.
@@ -145,6 +145,16 @@ General rules for callers:
 - **Output.** Helm release updated.
 - **Callers.** `gitlab-install.yaml`.
 - **Idempotent.** Same semantics as synchronous helm; async is just about avoiding SSH timeouts.
+
+### 1.17 `tasks-k8s-secret-get.yaml`
+
+- **Purpose.** Read a single `.data` field from a K8s Secret into a named fact. Never fails on missing secret or field — callers branch on `<fact>_exists`.
+- **Input.** `label_name`, `dto_secret_namespace`, `dto_secret_name`, `dto_secret_field`, `dto_secret_res_fact_name` (all required).
+- **Output (runtime facts, set on all hosts).**
+  - `{{ dto_secret_res_fact_name }}` — decoded string value (`''` if missing).
+  - `{{ dto_secret_res_fact_name }}_exists` — bool (true only if field is non-empty).
+- **Callers.** `argocd-configure.yaml`, `gitlab-configure.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `vault-install.yaml`.
+- **Idempotent.** Read-only; safe to call repeatedly.
 
 ---
 

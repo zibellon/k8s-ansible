@@ -451,7 +451,7 @@
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
-## `--tags pre, install, post`
+## `--tags pre, postgresql, redis, minio, install, post`
 ## ---
 ## 
 - установка + обновление (версия + конфиг)
@@ -650,3 +650,8 @@
 ## ...
 ## ---
 
+интересный моммент - про перенос docker-image
+
+1. На машине с доступом в интернет: docker pull, docker save, и упаковывают в .tar.
+2. Переносят .tar в закрытый контур.
+3. На локальной машине: docker load, docker tag (на адрес 1.2.3.4:15001) и docker push.

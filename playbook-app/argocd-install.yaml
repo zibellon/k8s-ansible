@@ -55,6 +55,7 @@
         acme_cluster_issuer_result_var: "argocd_ui_acme_cluster_issuer"
         acme_solver_result_var: "argocd_ui_acme_solver"
         acme_pod_labels_result_var: "argocd_acme_solver_pod_labels"
+      tags: [always]
 
     # =========================================================================
     # STEP 1: ARGOCD/INSTALL (CRDs + ArgoCD manifests)
@@ -161,7 +162,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ argocd_helm_timeout }}
+          --timeout {{ argocd_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -219,7 +220,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ argocd_helm_timeout }}
+          --timeout {{ argocd_install_helm_timeout }}
       tags: [install]
 
     # =========================================================================
@@ -231,19 +232,19 @@
       vars:
         label_name: "argocd-install"
         rollout_namespace: "{{ argocd_namespace }}"
-        rollout_timeout: "{{ argocd_components_rollout_timeout }}"
+        rollout_timeout: "{{ argocd_rollout_timeout }}"
         rollout_resources:
           - statefulset/argocd-application-controller
-          - deployment/argocd-applicationset-controller
-          - deployment/argocd-dex-server
-          - deployment/argocd-notifications-controller
-          - deployment/argocd-redis
-          - deployment/argocd-repo-server
-          - deployment/argocd-server
+          - deployment.apps/argocd-applicationset-controller
+          - deployment.apps/argocd-dex-server
+          - deployment.apps/argocd-notifications-controller
+          - deployment.apps/argocd-redis
+          - deployment.apps/argocd-repo-server
+          - deployment.apps/argocd-server
       tags: [install]
 
     # =========================================================================
-    # STEP 3: ARGOCD/POST (Ingress UI + RPC + default AppProject)
+    # STEP 4: ARGOCD/POST (Ingress UI + RPC + default AppProject)
     # =========================================================================
 
     - name: "[argocd-post] Copy post chart to remote"
@@ -293,12 +294,13 @@
         helm_command: >
           helm upgrade --install argocd-post {{ remote_charts_dir }}/argocd/post
           --namespace {{ argocd_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/argocd/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ argocd_helm_timeout }}
+          --timeout {{ argocd_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================

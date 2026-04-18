@@ -1,38 +1,50 @@
 all:
   vars:
     # ------
-    # GitLab Runner
+    # registry+images (AirGap)
     # ------
+    # Registry для образов GitLab Runner. По умолчанию — registry.gitlab.com.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/gitlab-runner.yaml:
+    #   gitlab_runner_image_registry_host: "my-private-registry.local"
+    #
+    # СБ должна загрузить следующий образ (только registry меняется, путь остаётся оригинальным):
+    #   <host>/gitlab-org/gitlab-runner:alpine-v<appVersion>
+    #   Пример: registry.gitlab.com/gitlab-org/gitlab-runner:alpine-v17.11.4
+    gitlab_runner_image_registry_host: "registry.gitlab.com"
+    gitlab_runner_image_tag: "alpine-v17.11.4"
+    # ---------
+    # Registry для helper-образа GitLab Runner. По умолчанию — registry.gitlab.com.
+    # Для airgap — переопределить в hosts-vars-override/gitlab-runner.yaml:
+    #   gitlab_runner_helper_image_registry_host: "my-private-registry.local"
+    #
+    # СБ должна загрузить:
+    #   <registry>/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-<tag>
+    #   Пример: registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-alpine-v17.11.4
+    gitlab_runner_helper_image_registry_host: "registry.gitlab.com"
+    # Registry и тег для DinD (Docker-in-Docker) executor образа. По умолчанию — docker.io.
+    # Используется как executor image и DinD sidecar в runners.config TOML.
+    # Для airgap — переопределить в hosts-vars-override/gitlab-runner.yaml:
+    #   gitlab_runner_dind_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить (2 образа):
+    #   <registry>/docker:<tag>       (executor)
+    #   <registry>/docker:<tag>-dind  (DinD sidecar)
+    gitlab_runner_dind_image_registry: "docker.io"
+    gitlab_runner_dind_image_tag: "29.3.0"
+    # ---------
+    # ---------
     gitlab_runner_namespace: "gitlab-runner"
-    # Image configuration (AirGapped support)
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    gitlab_runner_helm_repo_url: "https://charts.gitlab.io"
+    gitlab_runner_helm_repo_name: "gitlab"
+    gitlab_runner_helm_chart_name: "gitlab-runner"
     gitlab_runner_chart_version: "0.78.0" # gitlab-runner 17.11
-    gitlab_runner_image_registry: "registry.gitlab.com"
-    gitlab_runner_image_repository: "gitlab-org/gitlab-runner"
-    gitlab_runner_image_tag: "v17.11.4"
+    # Helm timeouts
+    gitlab_runner_pre_helm_timeout: "5m"
+    gitlab_runner_install_helm_timeout: "5m"
+    gitlab_runner_rollout_timeout: "180s"
     # Internal GitLab URL (webservice via cluster DNS, bypasses external ingress)
     gitlab_runner_gitlab_url: "http://gitlab-webservice-default.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:8181"
-    # Tolerations (Deployment)
-    gitlab_runner_tolerations: []
-    gitlab_runner_node_selector: {}
-    gitlab_runner_resources: {}
-    gitlab_runner_affinity: {}
-    # ---
-    gitlab_runner_replicas: 3
-    gitlab_runner_concurrent: 10
-    gitlab_runner_check_interval: 30
-    gitlab_runner_memory_request: "256Mi"
-    gitlab_runner_cpu_request: "100m"
-    gitlab_runner_memory_limit: "512Mi"
-    # Prevent runner from being deleted from GitLab on pod termination
-    # (preStop lifecycle hook is disabled, runner goes "offline" gracefully)
-    gitlab_runner_unregister_runners: false
-    # Prometheus metrics port
-    gitlab_runner_prometheus_port: 9252
-    # ServiceMonitor (prometheus-operator)
-    gitlab_runner_service_monitor_enabled: true
-    gitlab_runner_service_monitor_interval: "30s"
-    gitlab_runner_service_monitor_scrape_timeout: "15s"
-    gitlab_runner_service_monitor_additional_labels: {}
     gitlab_runner_label_name: "gitlab-runner"
     gitlab_runner_label_component: "runner"
     gitlab_runner_job_label_name: "gitlab-runner-job"
@@ -41,6 +53,7 @@ all:
       [[runners]]
         executor = "kubernetes"
         shell = "bash"
+        helper_image = "{{ gitlab_runner_helper_image_registry_host }}/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-{{ gitlab_runner_image_tag }}"
         environment = ["DOCKER_TLS_CERTDIR=", "DOCKER_HOST=tcp://docker-my-dind:2375"]
 
         [runners.cache]
@@ -57,7 +70,7 @@ all:
         [runners.kubernetes]
           namespace = "{{ gitlab_runner_namespace }}"
           service_account = "gitlab-runner"
-          image = "docker:29.3.0"
+          image = "{{ gitlab_runner_dind_image_registry }}/docker:{{ gitlab_runner_dind_image_tag }}"
           privileged = true
           allow_privilege_escalation = true
 
@@ -65,15 +78,68 @@ all:
             "node-role.kubernetes.io/worker" = ""
 
           [runners.kubernetes.pod_labels]
-            "app.kubernetes.io/name"       = "gitlab-runner-job"
-            "app.kubernetes.io/component"  = "job"
+            "app.kubernetes.io/name"       = "{{ gitlab_runner_job_label_name }}"
+            "app.kubernetes.io/component"  = "{{ gitlab_runner_job_label_component }}"
             "app.kubernetes.io/part-of"    = "gitlab"
             "app.kubernetes.io/managed-by" = "gitlab-runner"
 
           [[runners.kubernetes.services]]
-            name = "docker:29.3.0-dind"
+            name = "{{ gitlab_runner_dind_image_registry }}/docker:{{ gitlab_runner_dind_image_tag }}-dind"
             alias = "docker-my-dind"
             environment = ["HEALTHCHECK_TCP_PORT=2375"]
-    # Helm timeouts
-    gitlab_runner_helm_timeout: "5m"
-    gitlab_runner_rollout_timeout: "180s"
+
+    # Helm chart values
+    gitlab_runner_helm_values:
+      image:
+        registry: "{{ gitlab_runner_image_registry_host }}"
+        image: "gitlab-org/gitlab-runner"
+        tag: "{{ gitlab_runner_image_tag }}"
+      gitlabUrl: "{{ gitlab_runner_gitlab_url }}"
+      replicas: 3
+      concurrent: 10
+      checkInterval: 30
+      unregisterRunners: false
+      runners:
+        secret: "{{ secret_runner_token }}"
+        cache:
+          secretName: "{{ secret_minio_cache }}"
+        config: "{{ gitlab_runner_config }}"
+      rbac:
+        create: true
+        clusterWideAccess: false
+      serviceAccount:
+        create: true
+        name: gitlab-runner
+      podLabels:
+        app.kubernetes.io/name: gitlab-runner
+        app.kubernetes.io/component: runner
+        app.kubernetes.io/part-of: gitlab
+        app.kubernetes.io/managed-by: helm
+      tolerations: []
+      nodeSelector: {}
+      affinity: {}
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        fsGroup: 65533
+      securityContext:
+        allowPrivilegeEscalation: false
+        privileged: false
+        readOnlyRootFilesystem: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "512Mi"
+      metrics:
+        enabled: true
+        port: 9252
+        podMonitor:
+          enabled: true
+          interval: "30s"
+          scrapeTimeout: "15s"

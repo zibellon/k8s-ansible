@@ -1,14 +1,55 @@
 all:
   vars:
     # ------
-    # ZITADEL (Identity & Access Management)
+    # registry+images (AirGap)
     # ------
-    zitadel_namespace: "zitadel"
-    # Image configuration (AirGapped support)
+    # Registry для образов ZITADEL (app + login UI). По умолчанию — ghcr.io.
+    # Для airgap — переопределить в hosts-vars-override/zitadel.yaml:
+    #   zitadel_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить (2 образа):
+    #   <registry>/zitadel/zitadel:v4.13.1              (main app, initJob, setupJob)
+    #   <registry>/zitadel/zitadel-login:<appVersion>  (Login UI, см. chart appVersion)
     zitadel_image_registry: "ghcr.io"
-    zitadel_image_repository: "zitadel/zitadel"
-    zitadel_image_tag: "2.77.3"
-    zitadel_chart_version: "8.12.0"
+    # Registry для tool-образов официального chart. По умолчанию — docker.io.
+    # Маппится на chart-поле imageRegistry (покрывает wait4x, busybox, kubectl).
+    # Для airgap — переопределить в hosts-vars-override/zitadel.yaml:
+    #   zitadel_tools_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить (3 образа):
+    #   <registry>/wait4x/wait4x:3.6
+    #   <registry>/busybox:1.37
+    #   <registry>/alpine/k8s:<cluster-version>  (тег = версия k8s кластера)
+    zitadel_tools_image_registry: "docker.io"
+    # PostgreSQL
+    # Registry для образа PostgreSQL (локальный chart). По умолчанию — docker.io.
+    # Для airgap — переопределить в hosts-vars-override/zitadel.yaml:
+    #   zitadel_postgresql_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить:
+    #   <registry>/postgres:16-alpine
+    zitadel_postgresql_image_registry: "docker.io"
+    zitadel_postgresql_image: "{{ zitadel_postgresql_image_registry }}/postgres:16-alpine"
+    # ---------
+    # Image tags
+    # zitadel-login tag не задаётся — chart подставляет appVersion автоматически (values.yaml default tag: "").
+    zitadel_image_tag: "v4.13.1"
+    # ---------
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    zitadel_namespace: "zitadel"
+    zitadel_helm_repo_url: "https://charts.zitadel.com"
+    zitadel_helm_repo_name: "zitadel"
+    zitadel_helm_chart_name: "zitadel"
+    zitadel_chart_version: "9.30.0"
+    # ---
+    # Timeouts
+    zitadel_pre_helm_timeout: "5m"
+    zitadel_postgresql_helm_timeout: "5m"
+    zitadel_postgresql_rollout_timeout: "300s"
+    zitadel_install_helm_timeout: "10m"
+    zitadel_install_rollout_timeout: "300s"
+    zitadel_post_helm_timeout: "5m"
+    # ---------
     zitadel_domain: ""
     zitadel_tls_secret_name: "cert-zitadel"
     zitadel_cluster_issuer_name: "acme-prod"
@@ -16,18 +57,73 @@ all:
     zitadel_ingress_http_enable: false
     zitadel_ingress_https_enable: true
     zitadel_vpn_only_enabled: false
-    # PostgreSQL
-    zitadel_postgresql_image: "postgres:16-alpine"
     zitadel_postgresql_storage_class: "lh-major-multi-best-effort"
     zitadel_postgresql_storage_size: "10Gi"
     # ---
-    zitadel_resources: {}
-    zitadel_node_selector: {}
-    zitadel_tolerations: []
-    zitadel_affinity: {}
-    # Timeouts
-    zitadel_helm_timeout: "10m"
-    zitadel_pre_helm_timeout: "5m"
-    zitadel_storage_helm_timeout: "5m"
-    zitadel_rollout_timeout: "300s"
-    zitadel_storage_rollout_timeout: "300s"
+    zitadel_postgresql_username: "zitadel"
+    # Helm chart values
+    zitadel_helm_values:
+      imageRegistry: "{{ zitadel_tools_image_registry }}"
+      image:
+        repository: "{{ zitadel_image_registry }}/zitadel/zitadel"
+        tag: "{{ zitadel_image_tag }}"
+      login:
+        image:
+          repository: "{{ zitadel_image_registry }}/zitadel/zitadel-login"
+      replicaCount: 1
+      resources: {}
+      nodeSelector: {}
+      tolerations: []
+      affinity: {}
+      zitadel:
+        masterkeySecretName: "{{ secret_masterkey }}"
+        # masterkeySecretKeyName удалён — в chart 9.x ключ в secret hardcoded: "masterkey"
+        configmapConfig:
+          ExternalDomain: "{{ zitadel_domain }}"
+          ExternalPort: 443
+          ExternalSecure: true
+          TLS:
+            Enabled: false
+          Database:
+            Postgres:
+              Host: zitadel-postgresql
+              Port: 5432
+              Database: zitadel
+              MaxOpenConns: 20
+              MaxIdleConns: 10
+              ConnMaxLifetime: "30m"
+              Admin:
+                Username: zitadel
+                SSL:
+                  Mode: disable
+              User:
+                Username: zitadel
+                SSL:
+                  Mode: disable
+      env:
+        - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: "{{ secret_postgresql }}"
+              key: password
+        - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: "{{ secret_postgresql }}"
+              key: password
+      service:
+        type: ClusterIP
+        port: 8080
+        annotations:
+          traefik.ingress.kubernetes.io/service.serversscheme: h2c
+      ingress:
+        enabled: false
+      autoscaling:
+        enabled: false
+      pdb:
+        enabled: false
+      setupJob:
+        # --init-projections=true переехал из initJob → setupJob (chart 9.x default)
+        # --masterkeyFile убран: chart 9.x сам пробрасывает --masterkeyFromEnv из secret
+        additionalArgs:
+          - "--init-projections=true"

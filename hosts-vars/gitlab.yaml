@@ -1,13 +1,65 @@
 all:
   vars:
     # ------
-    # GitLab
+    # registry+images (AirGap)
     # ------
+    # Registry для образов GitLab. По умолчанию — registry.gitlab.com.
+    # Для airgap/приватного registry — переопределить в hosts-vars-override/gitlab.yaml:
+    #   gitlab_image_registry_host: "my-private-registry.local"
+    #
+    # СБ должна загрузить следующие образы (только хост меняется, пути остаются оригинальными):
+    #   <host>/gitlab-org/build/cng/gitlab-webservice-ce:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-workhorse-ce:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-sidekiq-ce:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-toolbox-ce:v<gitlabVersion>   (toolbox + migrations)
+    #   <host>/gitlab-org/build/cng/gitaly:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-shell:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-exporter:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-pages:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-container-registry:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/certificates:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/kubectl:v<gitlabVersion>
+    #   <host>/gitlab-org/build/cng/gitlab-base:v<gitlabVersion>
+    gitlab_image_registry_host: "registry.gitlab.com"
+    # ---------
+    # Registry для sub-releases: PostgreSQL, Redis, MinIO. По умолчанию — docker.io.
+    # Для airgap — переопределить в hosts-vars-override/gitlab.yaml:
+    #   gitlab_postgresql_image_registry: "my-private-registry.local"
+    #   gitlab_redis_image_registry:      "my-private-registry.local"
+    #   gitlab_minio_image_registry:      "my-private-registry.local"
+    #
+    # СБ должна загрузить (3 образа):
+    #   <registry>/postgres:16-alpine
+    #   <registry>/redis/redis-stack-server:latest
+    #   <registry>/minio/minio:latest
+    gitlab_postgresql_image_registry: "docker.io"
+    gitlab_redis_image_registry: "docker.io"
+    gitlab_minio_image_registry: "docker.io"
+    # ---------
+    # ---------
     gitlab_namespace: "gitlab"
-    # Image configuration (AirGapped support)
-    gitlab_image_registry: "registry.gitlab.com"
-    gitlab_image_tag: "18.3.3"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    gitlab_helm_repo_url: "https://charts.gitlab.io"
+    gitlab_helm_repo_name: "gitlab"
+    gitlab_helm_chart_name: "gitlab"
     gitlab_chart_version: "8.11.8"  # GitLab 17.11
+    # Helm timeouts
+    gitlab_pre_helm_timeout: "5m"
+    
+    gitlab_postgresql_helm_timeout: "5m"
+    gitlab_postgresql_rollout_timeout: "300s"
+
+    gitlab_redis_helm_timeout: "5m"
+    gitlab_redis_rollout_timeout: "300s"
+
+    gitlab_minio_helm_timeout: "5m"
+    gitlab_minio_rollout_timeout: "300s"
+    
+    gitlab_install_helm_timeout: "15m"
+    gitlab_rollout_timeout: "600s"
+    
+    gitlab_post_helm_timeout: "5m"
+
     # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
     # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
     gitlab_ssh_port_external: 3714
@@ -34,17 +86,17 @@ all:
     gitlab_vpn_only_enabled: false
 
     # GitLab PostgreSQL
-    gitlab_postgresql_image: "postgres:16-alpine"
+    gitlab_postgresql_image: "{{ gitlab_postgresql_image_registry }}/postgres:16-alpine"
     gitlab_postgresql_storage_class: "lh-major-multi-best-effort"
     gitlab_postgresql_storage_size: "4Gi"
 
     # GitLab Redis
-    gitlab_redis_image: "redis/redis-stack-server:latest"
+    gitlab_redis_image: "{{ gitlab_redis_image_registry }}/redis/redis-stack-server:latest"
     gitlab_redis_storage_class: "lh-major-single-best-effort"
     gitlab_redis_storage_size: "1Gi"
 
     # GitLab MinIO
-    gitlab_minio_image: "minio/minio:latest"
+    gitlab_minio_image: "{{ gitlab_minio_image_registry }}/minio/minio:latest"
     gitlab_minio_root_user: "admin"
     gitlab_minio_storage_class: "lh-major-single-best-effort"
     gitlab_minio_storage_size: "2Gi"
@@ -54,80 +106,267 @@ all:
     gitlab_minio_s3_region: "us-east-1"
     gitlab_minio_s3_path_style: true
 
-    # GitLab Registry
-    gitlab_registry_tolerations: []
-    gitlab_registry_node_selector: {}
-    gitlab_registry_resources: {}
-
-    # GitLab Webservice
-    gitlab_webservice_tolerations: []
-    gitlab_webservice_node_selector: {}
-    gitlab_webservice_resources:
-      requests:
-        memory: "2Gi"
-        cpu: "250m"
-      limits:
-        memory: "4Gi"
-
-    # GitLab Sidekiq
-    gitlab_sidekiq_tolerations: []
-    gitlab_sidekiq_node_selector: {}
-    gitlab_sidekiq_resources:
-      requests:
-        memory: "1Gi"
-        cpu: "250m"
-      limits:
-        memory: "3Gi"
-
-    # GitLab Shell
-    gitlab_gitlab_shell_tolerations: []
-    gitlab_gitlab_shell_node_selector: {}
-    gitlab_gitlab_shell_resources: {}
-
-    # GitLab Gitaly
+    # GitLab Gitaly storage
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lh-major-single-best-effort"
-    gitlab_gitaly_tolerations: []
-    gitlab_gitaly_node_selector: {}
-    gitlab_gitaly_resources: {}
 
-    # GitLab Exporter
-    gitlab_gitlab_exporter_tolerations: []
-    gitlab_gitlab_exporter_node_selector: {}
-    gitlab_gitlab_exporter_resources: {}
-
-    # GitLab Pages
-    gitlab_pages_tolerations: []
-    gitlab_pages_node_selector: {}
-    gitlab_pages_resources: {}
-
-    # GitLab Toolbox
-    gitlab_toolbox_tolerations: []
-    gitlab_toolbox_node_selector: {}
-    gitlab_toolbox_resources: {}
-
-    # GitLab Migrations
-    gitlab_migrations_tolerations: []
-    gitlab_migrations_node_selector: {}
-    gitlab_migrations_resources: {}
-
-    # Prometheus ServiceMonitor / PodMonitor
-    gitlab_service_monitor_enabled: true
-    gitlab_service_monitor_endpoint_config:
-      interval: "30s"
-      scrapeTimeout: "10s"
-    # Prometheus metrics ports (GitLab chart defaults, always-on)
-    gitlab_exporter_prometheus_port: 9168
-    gitlab_webservice_prometheus_port: 8083
-    gitlab_workhorse_prometheus_port: 9229
-    gitlab_sidekiq_prometheus_port: 3807
-    gitlab_gitaly_prometheus_port: 9236
-    gitlab_registry_prometheus_port: 5001
-    gitlab_pages_prometheus_port: 9235
-    # Helm timeouts
-    gitlab_helm_timeout: "15m"
-    gitlab_pre_helm_timeout: "5m"
-    gitlab_storage_helm_timeout: "5m"
-    gitlab_minio_rollout_timeout: "300s"
-    gitlab_rollout_timeout: "600s"
-    gitlab_storage_rollout_timeout: "300s"
+    # Helm chart values
+    gitlab_helm_values:
+      global:
+        edition: ce
+        # Версия образов GitLab — должна соответствовать gitlab_chart_version (8.11.8 = GitLab 17.11)
+        gitlabVersion: "17.11.7"
+        communityImages:
+          webservice:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-webservice-ce"
+          workhorse:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-workhorse-ce"
+          sidekiq:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-sidekiq-ce"
+          toolbox:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-toolbox-ce"
+          migrations:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-toolbox-ce"
+        certificates:
+          image:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/certificates"
+        kubectl:
+          image:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/kubectl"
+        gitlabBase:
+          image:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-base"
+        hosts:
+          domain: "{{ gitlab_base_domain }}"
+          https: "{{ gitlab_external_https }}"
+          gitlab:
+            name: "{{ gitlab_ui_domain }}"
+            https: "{{ gitlab_external_https }}"
+          registry:
+            name: "{{ gitlab_registry_domain }}"
+            https: "{{ gitlab_external_https }}"
+          pages:
+            name: "{{ gitlab_pages_domain }}"
+            https: "{{ gitlab_external_https }}"
+        ingress:
+          enabled: false
+          configureCertmanager: false
+        shell:
+          port: "{{ gitlab_ssh_port_external }}"
+        psql:
+          host: gitlab-postgresql
+          port: 5432
+          database: gitlabhq_production
+          username: gitlab
+          password:
+            useSecret: true
+            secret: "{{ secret_postgresql }}"
+            key: password
+        redis:
+          host: gitlab-redis
+          port: 6379
+          auth:
+            enabled: true
+            secret: "{{ secret_redis }}"
+            key: password
+        minio:
+          enabled: false
+        registry:
+          bucket: registry
+        kas:
+          enabled: false
+        pages:
+          enabled: true
+        appConfig:
+          lfs:
+            enabled: false
+          object_store:
+            enabled: true
+            proxy_download: true
+            connection:
+              secret: "{{ secret_gitlab_minio_connection }}"
+              key: connection
+          artifacts:
+            enabled: true
+            bucket: gitlab-artifacts
+          uploads:
+            enabled: true
+            bucket: gitlab-uploads
+          packages:
+            enabled: true
+            bucket: gitlab-packages
+          backups:
+            bucket: gitlab-backups
+        smtp:
+          enabled: false
+        monitoring:
+          enabled: true
+      nginx-ingress:
+        enabled: false
+      certmanager:
+        install: false
+      prometheus:
+        install: false
+      postgresql:
+        install: false
+      redis:
+        install: false
+      registry:
+        enabled: true
+        image:
+          repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-container-registry"
+        tolerations: []
+        nodeSelector: {}
+        resources: {}
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+            endpointConfig:
+              interval: "30s"
+              scrapeTimeout: "10s"
+        hpa:
+          minReplicas: 1
+          maxReplicas: 1
+        maxUnavailable: 1
+        deployment:
+          strategy:
+            type: Recreate
+        storage:
+          secret: "{{ secret_gitlab_registry_minio_connection }}"
+          key: config
+          redirect:
+            disable: true
+      gitlab:
+        webservice:
+          tolerations: []
+          nodeSelector: {}
+          minReplicas: 1
+          maxReplicas: 1
+          maxUnavailable: 1
+          deployment:
+            strategy:
+              type: Recreate
+          workerProcesses: 2
+          workerTimeout: 180
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "250m"
+            limits:
+              memory: "4Gi"
+          metrics:
+            serviceMonitor:
+              enabled: true
+              endpointConfig:
+                interval: "30s"
+                scrapeTimeout: "10s"
+          workhorse:
+            metrics:
+              enabled: true
+              serviceMonitor:
+                enabled: true
+                endpointConfig:
+                  interval: "30s"
+                  scrapeTimeout: "10s"
+        sidekiq:
+          tolerations: []
+          nodeSelector: {}
+          minReplicas: 1
+          maxReplicas: 1
+          maxUnavailable: 1
+          deployment:
+            strategy:
+              type: Recreate
+          concurrency: 10
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "250m"
+            limits:
+              memory: "3Gi"
+          metrics:
+            enabled: true
+            podMonitor:
+              enabled: true
+              endpointConfig:
+                interval: "30s"
+                scrapeTimeout: "10s"
+        gitlab-shell:
+          image:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-shell"
+          tolerations: []
+          nodeSelector: {}
+          resources: {}
+          minReplicas: 1
+          maxReplicas: 1
+          maxUnavailable: 1
+          deployment:
+            strategy:
+              type: Recreate
+        gitaly:
+          image:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitaly"
+          tolerations: []
+          nodeSelector: {}
+          resources: {}
+          persistence:
+            size: "{{ gitlab_gitaly_storage_size }}"
+            storageClass: "{{ gitlab_gitaly_storage_class }}"
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+              endpointConfig:
+                interval: "30s"
+                scrapeTimeout: "10s"
+        gitlab-exporter:
+          image:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-exporter"
+          tolerations: []
+          nodeSelector: {}
+          resources: {}
+          deployment:
+            strategy:
+              type: Recreate
+          metrics:
+            serviceMonitor:
+              enabled: true
+              endpointConfig:
+                interval: "30s"
+                scrapeTimeout: "10s"
+        gitlab-pages:
+          image:
+            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-pages"
+          tolerations: []
+          nodeSelector: {}
+          resources: {}
+          hpa:
+            minReplicas: 1
+            maxReplicas: 1
+          deployment:
+            strategy:
+              type: Recreate
+          metrics:
+            serviceMonitor:
+              enabled: true
+              endpointConfig:
+                interval: "30s"
+                scrapeTimeout: "10s"
+        toolbox:
+          enabled: true
+          tolerations: []
+          nodeSelector: {}
+          resources: {}
+          deployment:
+            strategy:
+              type: Recreate
+        migrations:
+          enabled: true
+          tolerations: []
+          nodeSelector: {}
+          resources: {}
+      gitlab-runner:
+        install: false
+      upgradeCheck:
+        enabled: true

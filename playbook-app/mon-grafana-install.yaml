@@ -109,7 +109,7 @@
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ grafana_helm_timeout }}
+          --timeout {{ grafana_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -120,8 +120,6 @@
       set_fact:
         vault_path_grafana_admin: >-
           {{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).vault_path }}
-        grafana_admin_es_name: >-
-          {{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).external_secret_name }}
         grafana_admin_secret_name: >-
           {{ (eso_vault_integration_grafana_secrets_merged | selectattr('type', 'equalto', 'grafana_admin') | first).target_secret_name }}
       delegate_to: "{{ master_manager_fact }}"
@@ -132,48 +130,43 @@
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         label_name: "grafana-vault-secrets"
-        vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
-        vault_get_field: password
-        vault_get_fact_name: "grafana_admin_vault"
+        dto_vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+        dto_vault_get_field: password
+        dto_vault_get_res_fact_name: "grafana_admin_vault"
       tags: [install]
 
     - name: "[grafana-vault-secrets] Generate admin password"
       include_tasks: tasks/tasks-generate-secret.yaml
       vars:
         label_name: "grafana-vault-secrets"
-        generate_fact_name: "_grafana_admin_password_generated"
+        dto_generate_fact_name: "_grafana_admin_password_generated"
       when: not grafana_admin_vault_exists
       tags: [install]
 
     - name: "[grafana-vault-secrets] Store admin credentials in Vault"
-      include_tasks: tasks/tasks-vault-put-and-sync.yaml
+      include_tasks: tasks/tasks-vault-put.yaml
       vars:
         label_name: "grafana-vault-secrets"
-        vault_put_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
-        vault_put_data:
+        dto_vault_put_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+        dto_vault_put_data:
           username: "{{ grafana_admin_username }}"
           password: "{{ _grafana_admin_password_generated }}"
-        eso_sync_namespace: "{{ grafana_namespace }}"
-        eso_sync_es_name: "{{ grafana_admin_es_name }}"
-        eso_wait_secret_name: "{{ grafana_admin_secret_name }}"
       when: not grafana_admin_vault_exists
       tags: [install]
 
-    - name: "[grafana-vault-secrets] Get admin credentials from Vault (verify)"
-      include_tasks: tasks/tasks-vault-get.yaml
+    - name: "[grafana-vault-secrets] Trigger ESO sync"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
         label_name: "grafana-vault-secrets"
-        vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
-        vault_get_field: password
-        vault_get_fact_name: "grafana_admin_vault_after"
+        dto_eso_sync_namespace: "{{ grafana_namespace }}"
       tags: [install]
 
-    - name: "[grafana-vault-secrets] Fail if admin secret still missing in Vault"
-      fail:
-        msg: "Grafana admin secret not found in Vault after write: {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
-      when: not grafana_admin_vault_after_exists
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[grafana-vault-secrets] Wait for secret"
+      include_tasks: tasks/tasks-secret-wait.yaml
+      vars:
+        label_name: "grafana-vault-secrets"
+        dto_wait_secret_name: "{{ grafana_admin_secret_name }}"
+        dto_wait_secret_namespace: "{{ grafana_namespace }}"
       tags: [install]
 
     # =========================================================================
@@ -230,7 +223,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ grafana_helm_timeout }}
+          --timeout {{ grafana_install_helm_timeout }}
       tags: [install]
 
     - name: "[grafana-install] Wait for rollout"
@@ -240,7 +233,7 @@
         rollout_namespace: "{{ grafana_namespace }}"
         rollout_timeout: "{{ grafana_rollout_timeout }}"
         rollout_resources:
-          - deployment/grafana
+          - deployment.apps/grafana
       tags: [install]
 
     # =========================================================================
@@ -294,7 +287,7 @@
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ grafana_helm_timeout }}
+          --timeout {{ grafana_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================

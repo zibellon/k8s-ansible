@@ -1,9 +1,33 @@
 all:
   vars:
-    # -----------------
-    # Prometheus Operator
-    # -----------------
+    # ------
+    # registry+images (AirGap)
+    # ------
+    # Registry для образов prometheus-operator стека. По умолчанию — quay.io.
+    # Для airgap — переопределить в hosts-vars-override/mon-prometheus-operator.yaml:
+    #   prometheus_operator_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить (4 образа):
+    #   <registry>/prometheus-operator/prometheus-operator:v0.90.1
+    #   <registry>/prometheus-operator/prometheus-config-reloader:v0.90.1
+    #   <registry>/prometheus/prometheus:v3.7.2
+    #   <registry>/prometheus/alertmanager:v0.28.1
+    prometheus_operator_image_registry: "quay.io"
+    # Image tags (prometheus-operator stack — каждый компонент версионируется независимо)
+    prometheus_operator_image_tag: "v0.90.1"
+    prometheus_config_reloader_image_tag: "v0.90.1"
+    prometheus_image_tag: "v3.7.2"
+    alertmanager_image_tag: "v0.28.1"
+    prometheus_operator_image_with_registry: "{{ prometheus_operator_image_registry }}/prometheus-operator/prometheus-operator:{{ prometheus_operator_image_tag }}"
+    # ---------
+    # ---------
     prometheus_operator_namespace: "mon"
+    # Helm timeouts
+    prometheus_operator_pre_helm_timeout: "3m"
+    prometheus_operator_install_helm_timeout: "3m"
+    prometheus_operator_post_helm_timeout: "3m"
+    prometheus_operator_rollout_timeout: "300s"
+    # ---------
     prometheus_operator_ingress_class: "traefik-lb"
     prometheus_operator_cluster_issuer: "acme-prod"
     prometheus_operator_tolerations: []
@@ -19,18 +43,19 @@ all:
     prometheus_operator_port: 8080
     prometheus_operator_args:
       - --kubelet-service=kube-system/kubelet
-      - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1
+      - --prometheus-config-reloader={{ prometheus_operator_image_registry }}/prometheus-operator/prometheus-config-reloader:{{ prometheus_config_reloader_image_tag }}
       - --watch-referenced-objects-in-all-namespaces=true
       - --disable-unmanaged-prometheus-configuration=true
       - --kubelet-endpoints=true
       - --kubelet-endpointslice=false
-    # Helm timeouts
-    prometheus_operator_helm_timeout: "3m"
-    prometheus_operator_components_rollout_timeout: "60s"
 
     # -----------------
     # Prometheus Instance
     # -----------------
+    # Helm timeouts
+    prometheus_helm_timeout: "5m"
+    prometheus_rollout_timeout: "300s"
+    # ---------
     # Ingress
     prometheus_domain: "prom-k8s-v2.drawapp.ru"
     prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
@@ -40,9 +65,6 @@ all:
     prometheus_ingress_https_enable: true
     prometheus_port: 9090
     prometheus_reloader_port: 8080
-    # Helm timeouts
-    prometheus_helm_timeout: "5m"
-    prometheus_rollout_timeout: "300s"
 
     # Full spec for kind: Prometheus CRD — passed as-is into .spec
     prometheus_spec:
@@ -56,9 +78,9 @@ all:
           app.kubernetes.io/managed-by: Helm
       serviceAccountName: prometheus-instance
       automountServiceAccountToken: true
-      image: "quay.io/prometheus/prometheus:v3.7.2"
+      image: "{{ prometheus_operator_image_registry }}/prometheus/prometheus:{{ prometheus_image_tag }}"
       imagePullPolicy: IfNotPresent
-      version: v3.7.2
+      version: "{{ prometheus_image_tag }}"
       replicas: 1
       logLevel: info
       logFormat: json
@@ -91,7 +113,7 @@ all:
               - ReadWriteOnce
             resources:
               requests:
-                storage: 5Gi
+                storage: 15Gi
       tsdb:
         outOfOrderTimeWindow: 0s
       securityContext:
@@ -120,6 +142,10 @@ all:
     # -----------------
     # Alertmanager Instance
     # -----------------
+    # Helm timeouts
+    alertmanager_helm_timeout: "5m"
+    alertmanager_rollout_timeout: "300s"
+    # ---------
     # Ingress
     alertmanager_domain: "alertmanager-k8s-v2.drawapp.ru"
     alertmanager_external_url: "https://alertmanager-k8s-v2.drawapp.ru"
@@ -140,9 +166,9 @@ all:
           app.kubernetes.io/component: alertmanager
           app.kubernetes.io/part-of: monitoring
           app.kubernetes.io/managed-by: Helm
-      image: "quay.io/prometheus/alertmanager:v0.28.1"
+      image: "{{ prometheus_operator_image_registry }}/prometheus/alertmanager:{{ alertmanager_image_tag }}"
       imagePullPolicy: IfNotPresent
-      version: v0.28.1
+      version: "{{ alertmanager_image_tag }}"
       replicas: 1
       logLevel: info
       logFormat: json
@@ -164,7 +190,7 @@ all:
               - ReadWriteOnce
             resources:
               requests:
-                storage: 1Gi
+                storage: 5Gi
       securityContext:
         fsGroup: 2000
         runAsGroup: 2000

@@ -1,19 +1,33 @@
 all:
   vars:
     # ------
-    # ArgoCD
+    # registry+images (AirGap)
     # ------
-    argocd_namespace: "argocd" # DO NOT CHANGE - hardcoded in ClusterRoleBindings
-    # Image configuration (AirGapped support)
+    # для приватного registry переопределить все три переменные в hosts-vars-override/argocd.yaml:
+    #   argocd_image_main_with_registry: "my-registry.local/argoproj/argocd"
+    #   argocd_image_dex_with_registry:  "my-registry.local/dexidp/dex"
+    #   argocd_image_redis_with_registry: "my-registry.local/library/redis"
+    #
+    # СБ должна загрузить следующие образы (путь после хоста остаётся оригинальным):
+    #   quay.io/argoproj/argocd:<argocd_image_main_tag>     (main + dex initContainer)
+    #   ghcr.io/dexidp/dex:<argocd_image_dex_tag>           (dex server)
+    #   docker.io/library/redis:<argocd_image_redis_tag>    (redis)
     argocd_image_main_with_registry: "quay.io/argoproj/argocd"
     argocd_image_main_tag: "v3.0.6"
     # Dex server image
     argocd_image_dex_with_registry: "ghcr.io/dexidp/dex"
     argocd_image_dex_tag: "v2.41.1"
-    # Redis image
-    argocd_image_redis_with_registry: "redis"
+    argocd_image_redis_with_registry: "docker.io/library/redis"
     argocd_image_redis_tag: "7.2.7-alpine"
-    # ---
+    # ---------
+    # ---------
+    # Helm timeouts
+    argocd_pre_helm_timeout: "5m"
+    argocd_install_helm_timeout: "5m"
+    argocd_rollout_timeout: "180s"
+    argocd_post_helm_timeout: "5m"
+    # ---------
+    argocd_namespace: "argocd" # DO NOT CHANGE - hardcoded in ClusterRoleBindings
     argocd_ui_domain: "argocd-ui-k8s-v2.drawapp.ru"
     argocd_external_url: "https://argocd-ui-k8s-v2.drawapp.ru"
     argocd_ui_https_secret_name: "cert-argocd-ui"
@@ -24,6 +38,8 @@ all:
     argocd_ingress_class_name: "traefik-lb"
     argocd_ingress_http_enable: false
     argocd_ingress_https_enable: true
+    # ------
+    argocd_admin_username: "admin"
     argocd_reconciliation_timeout: "30s"
     argocd_reconciliation_jitter: "10s"
     argocd_session_duration: "120h"
@@ -70,6 +86,3 @@ all:
     argocd_service_monitor_interval: "30s"
     argocd_service_monitor_scrape_timeout: "15s"
     argocd_service_monitor_additional_labels: {}
-    # Helm timeouts
-    argocd_helm_timeout: "5m"
-    argocd_components_rollout_timeout: "120s"

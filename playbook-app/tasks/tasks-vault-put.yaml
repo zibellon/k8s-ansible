@@ -1,0 +1,43 @@
+# =============================================================================
+# Vault Put and Sync — Write a KV v2 secret and trigger ESO sync
+# =============================================================================
+# Writes a dict of fields to a Vault KV v2 path (vault kv put — full replace).
+# Generation of secret values is the caller's responsibility — use tasks-generate-secret.yaml.
+#
+# Required vars:
+#   label_name     — task label prefix
+#   dto_vault_put_path — full KV path incl. mount, e.g. "eso-secret/gitlab/postgresql"
+#   dto_vault_put_data — dict { field: value } to write (must be non-empty)
+#
+# Semantics: always vault kv put (full replace). To preserve existing fields the
+# caller must pre-read them via tasks-vault-get.yaml and merge into dto_vault_put_data.
+#
+# Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
+# =============================================================================
+
+- name: "[{{ label_name }}] Assert: dto_vault_put_data must be provided"
+  assert:
+    that:
+      - (dto_vault_put_data | default({})) | length > 0
+    fail_msg: "tasks-vault-put-and-sync: dto_vault_put_data must be a non-empty dict"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ label_name }}] Read Vault root token"
+  shell: "jq -r '.\"vault-root\"' {{ vault_creds_host_path }}"
+  register: _vault_put_token
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ label_name }}] Write secret to Vault"
+  shell: |
+    printf '%s' {{ dto_vault_put_data | to_json | quote }} | \
+      kubectl exec -i -n {{ vault_namespace }} vault-0 -- \
+        env VAULT_TOKEN="{{ _vault_put_token.stdout }}" \
+        vault kv put {{ dto_vault_put_path }} -
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]

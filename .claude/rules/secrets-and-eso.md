@@ -146,7 +146,7 @@ Runtime-produced merged view: `eso_vault_integration_<c>_secrets_merged = base +
 | Task | Use |
 |---|---|
 | `tasks-vault-get.yaml` | Read a single KV field into a named fact + `<fact>_exists` boolean. Safe on missing paths. |
-| `tasks-vault-put-and-sync.yaml` | `vault kv put` + annotate ExternalSecret + wait for target K8s Secret to be present/updated. |
+| `tasks-vault-put.yaml` | `vault kv put` + annotate ExternalSecret + wait for target K8s Secret to be present/updated. |
 | `tasks-generate-secret.yaml` | Generate random N-char secret into a named fact. |
 | `tasks-eso-force-sync.yaml` | Annotate ExternalSecrets with `force-sync=<epoch>` to trigger ESO reconciliation. |
 | `tasks-vault-distribute-creds.yaml` | Read `vault-unsealer-secret` from cluster and write `/etc/kubernetes/vault-unseal.json` on all managers. |
@@ -228,10 +228,9 @@ spec:
 
 ```
 1. <c>-install.yaml calls tasks-generate-secret.yaml  → new_password fact
-2. tasks-vault-put-and-sync.yaml:
+2. tasks-vault-put.yaml:
      vault kv put eso-secret/gitlab/gitlab-root password=<new_password>
      kubectl annotate externalsecret gitlab-root force-sync=<epoch>
-     wait for K8s Secret "gitlab-root" in ns gitlab
 3. Main gitlab chart installs; pods mount the now-present Secret
 4. (optional) verify: log in to GitLab with the new password from Vault
 ```
@@ -243,9 +242,9 @@ Idempotency: if `tasks-vault-get.yaml` reports the Vault path already exists, sk
 ```
 1. tasks-generate-secret.yaml             → new_pg_password
 2. (optional) write to /tmp on DB host, ALTER USER in running postgres
-3. tasks-vault-put-and-sync.yaml
+3. tasks-vault-put.yaml
      vault kv put eso-secret/gitlab/postgresql password=<new_pg_password>
-     annotate + wait for K8s Secret "gitlab-postgresql" to reflect new data
+     annotate
 4. (future) Reloader restarts pods that mount the Secret
    — until Reloader is installed, manually run `gitlab-restart.yaml`
 5. rm /tmp file
@@ -306,7 +305,7 @@ Checklist — keep strictly in order.
     ```
     ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install.yaml
     ```
-11. **First-seed secrets** from a `<c>-configure.yaml` or in-install task using `tasks-generate-secret.yaml` + `tasks-vault-put-and-sync.yaml`.
+11. **First-seed secrets** from a `<c>-configure.yaml` or in-install task using `tasks-generate-secret.yaml` + `tasks-vault-put.yaml`.
 
 ---
 
@@ -327,7 +326,7 @@ Generic template (see §6.2 for concrete example):
 1. `tasks-vault-get.yaml` — fetch current creds (if needed for DB ALTER statements).
 2. `tasks-generate-secret.yaml` — new value.
 3. Apply to the running workload (DB, IdP, etc.).
-4. `tasks-vault-put-and-sync.yaml` — persist + force ESO re-sync.
+4. `tasks-vault-put.yaml` — persist + force ESO re-sync.
 5. (future: Reloader) restart workload to pick up the new mounted Secret. Until Reloader lands, use `<c>-restart.yaml`.
 
 ---

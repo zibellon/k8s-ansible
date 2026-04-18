@@ -7,23 +7,23 @@
 #
 # Required vars:
 #   label_name          — task label prefix
-#   vault_get_path      — full KV path incl. mount, e.g. "eso-secret/gitlab/root"
-#   vault_get_field     — field to extract (required; one field per call)
-#   vault_get_fact_name — output fact name (sets <name> and <name>_exists)
+#   dto_vault_get_path      — full KV path incl. mount, e.g. "eso-secret/gitlab/root"
+#   dto_vault_get_field     — field to extract (required; one field per call)
+#   dto_vault_get_res_fact_name — output fact name (sets <name> and <name>_exists)
 #
 # Output facts (set on master_manager_fact):
-#   {{ vault_get_fact_name }}        — string value of the field ('' if missing)
-#   {{ vault_get_fact_name }}_exists — bool (true only if path exists AND field non-empty)
+#   {{ dto_vault_get_res_fact_name }}        — string value of the field ('' if missing)
+#   {{ dto_vault_get_res_fact_name }}_exists — bool (true only if path exists AND field non-empty)
 #
 # Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
 # =============================================================================
 
-- name: "[{{ label_name }}] Assert vault_get_field is provided"
+- name: "[{{ label_name }}] Assert dto_vault_get_field is provided"
   assert:
     that:
-      - vault_get_field is defined
-      - vault_get_field | length > 0
-    fail_msg: "tasks-vault-get: vault_get_field is required — pass the field name to extract"
+      - dto_vault_get_field is defined
+      - dto_vault_get_field | length > 0
+    fail_msg: "tasks-vault-get: dto_vault_get_field is required — pass the field name to extract"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -40,7 +40,7 @@
   shell: |
     kubectl exec -n {{ vault_namespace }} vault-0 -- \
       env VAULT_TOKEN="{{ _vault_get_token.stdout }}" \
-      vault kv get -format=json {{ vault_get_path }}
+      vault kv get -format=json {{ dto_vault_get_path }}
   register: _vault_get_raw
   failed_when: false
   changed_when: false
@@ -62,20 +62,20 @@
 
 - name: "[{{ label_name }}] Set result fact"
   set_fact:
-    "{{ vault_get_fact_name }}": "{{ _vault_get_data[vault_get_field] | default('') | string }}"
-    "{{ vault_get_fact_name + '_exists' }}": >-
+    "{{ dto_vault_get_res_fact_name }}": "{{ _vault_get_data[dto_vault_get_field] | default('') | string }}"
+    "{{ dto_vault_get_res_fact_name + '_exists' }}": >-
       {{
         _vault_get_path_exists | bool
-        and (_vault_get_data[vault_get_field] | default('') | string | length > 0)
+        and (_vault_get_data[dto_vault_get_field] | default('') | string | length > 0)
       }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Set fact to host"
+- name: "[{{ label_name }}] Set fact to all host"
   set_fact:
-    "{{ vault_get_fact_name }}": "{{ hostvars[master_manager_fact][vault_get_fact_name] }}"
-    "{{ vault_get_fact_name + '_exists' }}": "{{ hostvars[master_manager_fact][vault_get_fact_name + '_exists'] }}"
+    "{{ dto_vault_get_res_fact_name }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_fact_name] }}"
+    "{{ dto_vault_get_res_fact_name + '_exists' }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_fact_name + '_exists'] }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]

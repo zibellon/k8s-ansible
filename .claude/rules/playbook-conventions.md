@@ -102,7 +102,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 12.1 Add `eso_vault_integration_<c>` object in the component's vars file (see `secrets-and-eso.md` for schema).
 12.2 Include `tasks-eso-merge.yaml` (tag `always`, no arguments). It reads all `eso_vault_integration_*` objects and produces `eso_vault_integration_<c>_secrets_merged` facts.
 12.3 In the `pre/` chart, render `ServiceAccount`, `SecretStore`, and `ExternalSecret` manifests from those merged facts — never hand-write secret lists inline in values-override.
-12.4 If the component installs before Vault exists (bootstrap-time), gate ESO resources with `<c>_is_need_eso: false` in the chart templates and seed the secret via `tasks-vault-put-and-sync.yaml` from a `-configure` playbook afterwards.
+12.4 If the component installs before Vault exists (bootstrap-time), gate ESO resources with `<c>_is_need_eso: false` in the chart templates and seed the secret via `tasks-vault-put.yaml` from a `-configure` playbook afterwards.
 
 ## 13. ACME / cert-manager Integration
 
@@ -123,7 +123,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 ## 16. Non-Install Playbook Patterns
 
-16.1 **`-configure`**: resolves (or rotates) credentials via `tasks-vault-get.yaml` / `tasks-vault-put-and-sync.yaml`, then validates against the component's own API. Does not touch Helm.
+16.1 **`-configure`**: resolves (or rotates) credentials via `tasks-vault-get.yaml` / `tasks-vault-put.yaml`, then validates against the component's own API. Does not touch Helm.
 16.2 **`-restart`**: reads target resources, runs `kubectl rollout restart`, then `tasks-wait-rollout.yaml`. Never use `kubectl delete pod` — always restart at the controller level.
 16.3 **`-rotate`**: component-specific state mutation (e.g. Vault rekey). MUST be idempotent and resume-safe — use state files on disk (see `bootstrap-and-ha.md` §3).
 16.4 **`-force-sync`**: wraps `tasks-eso-force-sync.yaml` — annotates ExternalSecrets with `force-sync=<epoch>` to trigger ESO reconciliation.

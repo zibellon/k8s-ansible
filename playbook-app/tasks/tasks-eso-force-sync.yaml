@@ -7,8 +7,8 @@
 #   label_name          — label prefix for task names (used in logs)
 #
 # Optional input variables:
-#   eso_sync_namespace  — target namespace (default: "")
-#   eso_sync_es_name    — specific ExternalSecret name (default: "")
+#   dto_eso_sync_namespace  — target namespace (default: "")
+#   dto_eso_sync_es_name    — specific ExternalSecret name (default: "")
 #
 # Behaviour:
 #   namespace + es_name  → annotate that single ExternalSecret
@@ -22,12 +22,12 @@
 
 - name: "[{{ label_name }}] Sync specific ExternalSecret"
   command: >
-    kubectl annotate externalsecret {{ eso_sync_es_name }}
-    -n {{ eso_sync_namespace }}
+    kubectl annotate externalsecret {{ dto_eso_sync_es_name }}
+    -n {{ dto_eso_sync_namespace }}
     force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
   when:
-    - eso_sync_namespace | default('') != ''
-    - eso_sync_es_name | default('') != ''
+    - dto_eso_sync_namespace | default('') != ''
+    - dto_eso_sync_es_name | default('') != ''
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -36,11 +36,11 @@
 - name: "[{{ label_name }}] Sync all ExternalSecrets in namespace"
   command: >
     kubectl annotate externalsecret --all
-    -n {{ eso_sync_namespace }}
+    -n {{ dto_eso_sync_namespace }}
     force-sync={{ lookup('pipe', 'date +%s') }} --overwrite
   when:
-    - eso_sync_namespace | default('') != ''
-    - eso_sync_es_name | default('') == ''
+    - dto_eso_sync_namespace | default('') != ''
+    - dto_eso_sync_es_name | default('') == ''
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -56,12 +56,13 @@
     - "{{ traefik_namespace }}"
     - "{{ haproxy_namespace }}"
     - "{{ longhorn_namespace }}"
+    - "{{ zitadel_namespace }}"
     - "{{ gitlab_namespace }}"
     - "{{ argocd_namespace }}"
     - "{{ grafana_namespace }}"
   loop_control:
     loop_var: eso_ns_item
-  when: eso_sync_namespace | default('') == ''
+  when: dto_eso_sync_namespace | default('') == ''
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
   run_once: true

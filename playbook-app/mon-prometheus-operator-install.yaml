@@ -131,7 +131,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ prometheus_operator_helm_timeout }}
+          --timeout {{ prometheus_operator_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -153,6 +153,7 @@
         mode: "0600"
         content: |
           namespace: {{ prometheus_operator_namespace }}
+          imageOperator: "{{ prometheus_operator_image_with_registry }}"
           tolerations: {{ prometheus_operator_tolerations | to_json }}
           nodeSelector: {{ prometheus_operator_node_selector | to_json }}
           resources: {{ prometheus_operator_resources | to_json }}
@@ -176,7 +177,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ prometheus_operator_helm_timeout }}
+          --timeout {{ prometheus_operator_install_helm_timeout }}
       tags: [install]
 
     # =========================================================================
@@ -188,9 +189,9 @@
       vars:
         label_name: "prometheus-operator-install"
         rollout_namespace: "{{ prometheus_operator_namespace }}"
-        rollout_timeout: "{{ prometheus_operator_components_rollout_timeout }}"
+        rollout_timeout: "{{ prometheus_operator_rollout_timeout }}"
         rollout_resources:
-          - deployment/prometheus-operator
+          - deployment.apps/prometheus-operator
       tags: [install]
 
     # =========================================================================
@@ -288,7 +289,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ prometheus_helm_timeout }}
+          --timeout {{ alertmanager_helm_timeout }}
       tags: [alertmanager]
 
     - name: "[alertmanager-install] Wait for alertmanager rollout"
@@ -296,7 +297,7 @@
       vars:
         label_name: "alertmanager-install"
         rollout_namespace: "{{ prometheus_operator_namespace }}"
-        rollout_timeout: "{{ prometheus_rollout_timeout }}"
+        rollout_timeout: "{{ alertmanager_rollout_timeout }}"
         rollout_resources:
           - statefulset/alertmanager-alertmanager-instance
       tags: [alertmanager]
@@ -364,7 +365,7 @@
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ prometheus_helm_timeout }}
+          --timeout {{ prometheus_operator_post_helm_timeout }}
       tags: [post]
 
     # =========================================================================

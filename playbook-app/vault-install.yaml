@@ -204,16 +204,28 @@
           - "statefulset/vault"
       tags: [vault-cr]
 
-    - name: "[vault-cr] Wait for unsealer K8s Secret (bank-vaults completed init)"
-      command: >
-        kubectl get secret {{ vault_unsealer_secret_name }}
-        -n {{ vault_namespace }}
-        -o jsonpath='{.data.vault-root}'
-      register: vault_secret_result
-      until: vault_secret_result.stdout | length > 0
-      retries: 60
-      delay: 5
-      changed_when: false
+    - name: "[vault-cr] Wait for unsealer K8s Secret"
+      include_tasks: tasks/tasks-secret-wait.yaml
+      vars:
+        label_name: "vault-cr"
+        dto_wait_secret_name: "{{ vault_unsealer_secret_name }}"
+        dto_wait_secret_namespace: "{{ vault_namespace }}"
+      tags: [vault-cr]
+
+    - name: "[vault-cr] Read vault-root field from unsealer secret"
+      include_tasks: tasks/tasks-k8s-secret-get.yaml
+      vars:
+        label_name: "vault-cr"
+        dto_secret_namespace: "{{ vault_namespace }}"
+        dto_secret_name: "{{ vault_unsealer_secret_name }}"
+        dto_secret_field: "vault-root"
+        dto_secret_res_fact_name: "vault_cr_root_token"
+      tags: [vault-cr]
+
+    - name: "[vault-cr] Assert vault-root field is populated"
+      assert:
+        that: vault_cr_root_token_exists
+        fail_msg: "vault-root field is empty in secret {{ vault_unsealer_secret_name }} (bank-vaults may still be initializing)"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [vault-cr]

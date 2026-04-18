@@ -119,7 +119,7 @@
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ gitlab_runner_helm_timeout }}
+          --timeout {{ gitlab_runner_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
@@ -137,21 +137,31 @@
       tags: [install]
 
     - name: "[gitlab-runner-minio] Get MinIO root username from secret"
-      shell: |
-        kubectl get secret {{ secret_minio_root }} -n {{ gitlab_namespace }} \
-          -o jsonpath='{.data.username}' | base64 -d
-      register: runner_minio_root_user
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-k8s-secret-get.yaml
+      vars:
+        label_name: "gitlab-runner-minio"
+        dto_secret_namespace: "{{ gitlab_namespace }}"
+        dto_secret_name: "{{ secret_minio_root }}"
+        dto_secret_field: "username"
+        dto_secret_res_fact_name: "runner_minio_root_username"
       tags: [install]
 
     - name: "[gitlab-runner-minio] Get MinIO root password from secret"
-      shell: |
-        kubectl get secret {{ secret_minio_root }} -n {{ gitlab_namespace }} \
-          -o jsonpath='{.data.password}' | base64 -d
-      register: runner_minio_root_password
-      changed_when: false
+      include_tasks: tasks/tasks-k8s-secret-get.yaml
+      vars:
+        label_name: "gitlab-runner-minio"
+        dto_secret_namespace: "{{ gitlab_namespace }}"
+        dto_secret_name: "{{ secret_minio_root }}"
+        dto_secret_field: "password"
+        dto_secret_res_fact_name: "runner_minio_root_password"
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Assert MinIO root credentials are present"
+      assert:
+        that:
+          - runner_minio_root_username_exists
+          - runner_minio_root_password_exists
+        fail_msg: "MinIO root credentials not found in secret {{ secret_minio_root }} (namespace {{ gitlab_namespace }})"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -160,8 +170,8 @@
       command: >
         kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
         mc alias set myminio http://localhost:9000
-        '{{ runner_minio_root_user.stdout }}'
-        '{{ runner_minio_root_password.stdout }}'
+        '{{ runner_minio_root_username }}'
+        '{{ runner_minio_root_password }}'
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -178,15 +188,15 @@
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         label_name: "gitlab-runner-minio"
-        vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
-        vault_get_field: access_key
-        vault_get_fact_name: "runner_cache_access_key_vault"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
+        dto_vault_get_field: access_key
+        dto_vault_get_res_fact_name: "runner_cache_access_key_vault"
       tags: [install]
 
     - name: "[gitlab-runner-minio] Create access key for runner-cache"
       command: >
         kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ runner_minio_root_user.stdout }}
+        mc admin accesskey create myminio {{ runner_minio_root_username }}
         --name 'runner-cache-key' --json
       register: runner_cache_accesskey_result
       when: not runner_cache_access_key_vault_exists
@@ -195,19 +205,30 @@
       tags: [install]
 
     - name: "[gitlab-runner-minio] Store runner-cache access key in Vault"
-      include_tasks: tasks/tasks-vault-put-and-sync.yaml
+      include_tasks: tasks/tasks-vault-put.yaml
       vars:
         label_name: "gitlab-runner-minio"
-        vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
-        vault_put_data:
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
+        dto_vault_put_data:
           access_key: "{{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}"
           secret_key: "{{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}"
           bucket_name: runner-cache
-        eso_sync_namespace: "{{ gitlab_runner_namespace }}"
-        eso_sync_es_name: >-
-          {{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'minio_runner_cache') | first).external_secret_name }}
-        eso_wait_secret_name: "{{ secret_minio_cache }}"
       when: not runner_cache_access_key_vault_exists
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Trigger ESO sync"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        label_name: "gitlab-runner-minio"
+        dto_eso_sync_namespace: "{{ gitlab_runner_namespace }}"
+      tags: [install]
+
+    - name: "[gitlab-runner-minio] Wait for secret"
+      include_tasks: tasks/tasks-secret-wait.yaml
+      vars:
+        label_name: "gitlab-runner-minio"
+        dto_wait_secret_name: "{{ secret_minio_cache }}"
+        dto_wait_secret_namespace: "{{ gitlab_runner_namespace }}"
       tags: [install]
 
     # =========================================================================
@@ -218,9 +239,9 @@
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         label_name: "gitlab-runner-token"
-        vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}"
-        vault_get_field: token
-        vault_get_fact_name: "gitlab_runner_token_vault"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}"
+        dto_vault_get_field: token
+        dto_vault_get_res_fact_name: "gitlab_runner_token_vault"
       tags: [install]
 
     - name: "[gitlab-runner-token] Fail if runner token not found in Vault"
@@ -243,20 +264,15 @@
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
         label_name: "gitlab-runner-wait-eso"
-        eso_sync_namespace: "{{ gitlab_runner_namespace }}"
-        eso_sync_es_name: >-
-          {{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'runner_token') | first).external_secret_name }}
+        dto_eso_sync_namespace: "{{ gitlab_runner_namespace }}"
       tags: [install]
 
-    - name: "[gitlab-runner-wait-eso] Wait for runner token secret"
-      command: kubectl get secret {{ secret_runner_token }} -n {{ gitlab_runner_namespace }}
-      register: runner_token_secret_wait
-      until: runner_token_secret_wait.rc == 0
-      retries: 30
-      delay: 5
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-runner-wait-eso] Wait for secret"
+      include_tasks: tasks/tasks-secret-wait.yaml
+      vars:
+        label_name: "gitlab-runner-wait-eso"
+        dto_wait_secret_name: "{{ secret_runner_token }}"
+        dto_wait_secret_namespace: "{{ gitlab_runner_namespace }}"
       tags: [install]
 
     # =========================================================================
@@ -276,8 +292,8 @@
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
         label_name: "gitlab-runner-install"
-        helm_repo_name: "gitlab"
-        helm_repo_url: "https://charts.gitlab.io"
+        helm_repo_name: "{{ gitlab_runner_helm_repo_name }}"
+        helm_repo_url: "{{ gitlab_runner_helm_repo_url }}"
       tags: [install]
 
     - name: "[gitlab-runner-install] Install via Helm (async)"
@@ -285,14 +301,15 @@
       vars:
         label_name: "gitlab-runner-install"
         helm_command: >
-          helm upgrade --install gitlab-runner gitlab/gitlab-runner
+          helm upgrade --install gitlab-runner {{ gitlab_runner_helm_repo_name }}/{{ gitlab_runner_helm_chart_name }}
           --namespace {{ gitlab_runner_namespace }}
+          --create-namespace
           --values {{ remote_charts_dir }}/gitlab-runner/values-override.yaml
           --version {{ gitlab_runner_chart_version }}
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ gitlab_runner_helm_timeout }}
+          --timeout {{ gitlab_runner_install_helm_timeout }}
       tags: [install]
 
     - name: "[gitlab-runner-install] Wait for rollout to be ready"

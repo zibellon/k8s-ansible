@@ -51,21 +51,19 @@
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         label_name: "gitlab-root-password"
-        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
-        vault_get_field: password
-        vault_get_fact_name: "gitlab_root_pw_vault"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
+        dto_vault_get_field: password
+        dto_vault_get_res_fact_name: "gitlab_root_pw_vault"
       tags: [always]
 
     - name: "[gitlab-root-password] Get root password from k8s initial secret"
-      shell: |
-        kubectl get secret gitlab-gitlab-initial-root-password \
-          -n {{ gitlab_namespace }} \
-          -o jsonpath='{.data.password}' 2>/dev/null | base64 -d
-      register: k8s_password_result
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-k8s-secret-get.yaml
+      vars:
+        label_name: "gitlab-root-password"
+        dto_secret_namespace: "{{ gitlab_namespace }}"
+        dto_secret_name: "gitlab-gitlab-initial-root-password"
+        dto_secret_field: "password"
+        dto_secret_res_fact_name: "k8s_gitlab_initial_password"
       tags: [always]
 
     - name: "[gitlab-root-password] Get GitLab toolbox pod name"
@@ -107,11 +105,11 @@
       shell: |
         kubectl exec -n {{ gitlab_namespace }} {{ gitlab_toolbox_pod.stdout }} -- \
           gitlab-rails runner \
-          "puts User.find_by_username('root').valid_password?('{{ k8s_password_result.stdout | trim }}')"
+          "puts User.find_by_username('root').valid_password?('{{ k8s_gitlab_initial_password }}')"
       register: k8s_password_valid_result
       when:
         - active_root_password is not defined
-        - k8s_password_result.stdout | trim | length > 0
+        - k8s_gitlab_initial_password_exists
       failed_when: false
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
@@ -120,11 +118,11 @@
 
     - name: "[gitlab-root-password] Set active password from k8s secret if valid"
       set_fact:
-        active_root_password: "{{ k8s_password_result.stdout | trim }}"
+        active_root_password: "{{ k8s_gitlab_initial_password }}"
         root_password_source: "k8s_secret"
       when:
         - active_root_password is not defined
-        - k8s_password_result.stdout | trim | length > 0
+        - k8s_gitlab_initial_password_exists
         - k8s_password_valid_result.stdout is defined
         - k8s_password_valid_result.stdout | trim == "true"
       delegate_to: "{{ master_manager_fact }}"
@@ -136,23 +134,20 @@
         msg: >
           No valid root password found.
           Vault password: {{ 'present but invalid' if gitlab_root_pw_vault_exists else 'not set' }}.
-          K8s secret password: {{ 'present but invalid' if k8s_password_result.stdout | trim | length > 0 else 'not set' }}.
+          K8s secret password: {{ 'present but invalid' if k8s_gitlab_initial_password_exists else 'not set' }}.
       when: active_root_password is not defined
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
 
     - name: "[gitlab-root-password] Save active password to Vault"
-      include_tasks: tasks/tasks-vault-put-and-sync.yaml
+      include_tasks: tasks/tasks-vault-put.yaml
       vars:
         label_name: "gitlab-root-password"
-        vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
-        vault_put_data:
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
+        dto_vault_put_data:
           username: root
           password: "{{ active_root_password }}"
-        eso_sync_namespace: "{{ gitlab_namespace }}"
-        eso_sync_es_name: >-
-          {{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_root') | first).external_secret_name }}
       when: root_password_source == "k8s_secret"
       tags: [always]
 
@@ -174,27 +169,27 @@
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         label_name: "gitlab-root-pat"
-        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
-        vault_get_field: username
-        vault_get_fact_name: "gitlab_root_username_vault"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
+        dto_vault_get_field: username
+        dto_vault_get_res_fact_name: "gitlab_root_username_vault"
       tags: [always]
 
     - name: "[gitlab-root-pat] Get root password from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         label_name: "gitlab-root-pat"
-        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
-        vault_get_field: password
-        vault_get_fact_name: "gitlab_root_password_vault"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
+        dto_vault_get_field: password
+        dto_vault_get_res_fact_name: "gitlab_root_password_vault"
       tags: [always]
 
     - name: "[gitlab-root-pat] Get PAT field from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         label_name: "gitlab-root-pat"
-        vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
-        vault_get_field: token
-        vault_get_fact_name: "gitlab_root_pat_vault"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
+        dto_vault_get_field: token
+        dto_vault_get_res_fact_name: "gitlab_root_pat_vault"
       tags: [always]
 
     - name: "[gitlab-root-pat] Validate existing PAT via gitlab-rails"
@@ -233,22 +228,26 @@
       tags: [always]
 
     - name: "[gitlab-root-pat] Save new PAT to Vault (full replace preserving username/password)"
-      include_tasks: tasks/tasks-vault-put-and-sync.yaml
+      include_tasks: tasks/tasks-vault-put.yaml
       vars:
         label_name: "gitlab-root-pat"
-        vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
-        vault_put_data:
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_gitlab_root }}"
+        dto_vault_put_data:
           username: "{{ gitlab_root_username_vault | default('root') }}"
           password: "{{ gitlab_root_password_vault | default(active_root_password) }}"
           token: "{{ new_pat_result.stdout | trim }}"
-        eso_sync_namespace: "{{ gitlab_namespace }}"
-        eso_sync_es_name: >-
-          {{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_root') | first).external_secret_name }}
       when:
         - pat_needs_rotation | bool
         - new_pat_result.stdout is defined
         - new_pat_result.stdout | trim | length > 0
       tags: [always]
+
+    - name: "[gitlab-root-pat] Trigger ESO sync"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        label_name: "gitlab-root-pat"
+        dto_eso_sync_namespace: "{{ gitlab_namespace }}"
+      tags: [install]
 
     - name: "[gitlab-root-pat] Print PAT resolution result"
       debug:
