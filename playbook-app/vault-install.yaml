@@ -69,19 +69,12 @@
       tags: [pre]
 
     - name: "[vault-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/vault/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ vault_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          externalSecrets:
-            namespace: {{ external_secrets_namespace }}
-          acmeSolverLabels: {{ vault_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "vault-pre"
+        dto_dir: "{{ remote_charts_dir }}/vault/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ vault_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[vault-pre] Install via Helm (async)"
@@ -160,14 +153,12 @@
       tags: [vault-cr]
 
     - name: "[vault-cr] Create values-override.yaml"
-      copy:
-        dest: "{{ remote_charts_dir }}/vault/cr/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ vault_namespace }}
-          vaultSpec: {{ vault_spec | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "vault-cr"
+        dto_dir: "{{ remote_charts_dir }}/vault/cr"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ vault_cr_helm_values | to_nice_yaml }}"
       tags: [vault-cr]
 
     - name: "[vault-cr] Apply Vault CR via Helm (async)"
@@ -241,27 +232,12 @@
       tags: [post]
 
     - name: "[vault-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/vault/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ vault_namespace }}
-          ingress:
-            ingressClass: {{ vault_ui_ingress_class_name }}
-            domain: {{ vault_ui_domain }}
-            clusterIssuer: {{ vault_ui_cluster_issuer_name }}
-            secretName: {{ vault_ui_https_secret_name }}
-            vpnOnlyEnabled: {{ vault_ui_vpn_only_enabled }}
-            vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-            httpEnable: {{ vault_ui_ingress_http_enable }}
-            httpsEnable: {{ vault_ui_ingress_https_enable }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "vault-post"
+        dto_dir: "{{ remote_charts_dir }}/vault/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ vault_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[vault-post] Install via Helm (async)"

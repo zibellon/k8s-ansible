@@ -72,27 +72,12 @@
       tags: [pre]
 
     - name: "[teleport-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/teleport/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ teleport_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          haproxy:
-            namespace: {{ haproxy_namespace }}
-          teleport:
-            webPort: {{ teleport_web_port }}
-            sshPort: {{ teleport_ssh_port }}
-            reverseTunnelPort: {{ teleport_reverse_tunnel_port }}
-            internalConnectPort: {{ teleport_internal_connect_port }}
-            kubeApiPort: {{ teleport_kube_listen_port }}
-            vpnOnlyEnabled: {{ gitlab_vpn_only_enabled }}
-            vpnIps: {{ vpn_ips | to_json }}
-          acmeSolverLabels: {{ teleport_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "teleport-pre"
+        dto_dir: "{{ remote_charts_dir }}/teleport/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ teleport_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[teleport-pre] Install via Helm (async)"
@@ -210,34 +195,12 @@
       tags: [post]
 
     - name: "[teleport-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/teleport/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ teleport_namespace }}
-          ingress:
-            ingressClass: {{ teleport_ingress_class_name }}
-            domain: {{ teleport_domain }}
-            clusterIssuer: {{ teleport_cluster_issuer_name }}
-            tlsSecretName: {{ teleport_tls_secret_name }}
-            vpnOnlyEnabled: {{ teleport_vpn_only_enabled }}
-            vpnIngressRouteMiddlewares: {{ vpn_ingress_route_middlewares | to_json }}
-            httpEnable: {{ teleport_http_enabled }}
-            httpsEnable: {{ teleport_https_enabled }}
-          webServicePort: {{ teleport_web_service_port }}
-          sshPort: {{ teleport_ssh_port }}
-          reverseTunnelPort: {{ teleport_reverse_tunnel_port }}
-          kubeApiPort: {{ teleport_kube_listen_port }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-          haproxy:
-            namespace: {{ haproxy_namespace }}
-            ingressClass: {{ haproxy_ingress_class }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "teleport-post"
+        dto_dir: "{{ remote_charts_dir }}/teleport/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ teleport_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[teleport-post] Install via Helm (async)"
@@ -269,35 +232,12 @@
       tags: [configure]
 
     - name: "[teleport-configure] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/teleport/configure/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ teleport_namespace }}
-          roles: {{ (teleport_configure_roles + teleport_configure_roles_extra) | to_json }}
-          users: {{ (teleport_configure_users + teleport_configure_users_extra) | to_json }}
-          bots: {{ (teleport_configure_bots + teleport_configure_bots_extra) | to_json }}
-          provisionTokens: {{ (teleport_configure_provision_tokens + teleport_configure_provision_tokens_extra) | to_json }}
-          apps: {{ (teleport_configure_apps + teleport_configure_apps_extra) | to_json }}
-          databases: {{ (teleport_configure_databases + teleport_configure_databases_extra) | to_json }}
-          githubConnectors: {{ (teleport_configure_github_connectors + teleport_configure_github_connectors_extra) | to_json }}
-          oidcConnectors: {{ (teleport_configure_oidc_connectors + teleport_configure_oidc_connectors_extra) | to_json }}
-          samlConnectors: {{ (teleport_configure_saml_connectors + teleport_configure_saml_connectors_extra) | to_json }}
-          accessLists: {{ (teleport_configure_access_lists + teleport_configure_access_lists_extra) | to_json }}
-          trustedClusters: {{ (teleport_configure_trusted_clusters + teleport_configure_trusted_clusters_extra) | to_json }}
-          loginRules: {{ (teleport_configure_login_rules + teleport_configure_login_rules_extra) | to_json }}
-          accessMonitoringRules: {{ (teleport_configure_access_monitoring_rules + teleport_configure_access_monitoring_rules_extra) | to_json }}
-          oktaImportRules: {{ (teleport_configure_okta_import_rules + teleport_configure_okta_import_rules_extra) | to_json }}
-          opensshServers: {{ (teleport_configure_openssh_servers + teleport_configure_openssh_servers_extra) | to_json }}
-          opensshEiceServers: {{ (teleport_configure_openssh_eice_servers + teleport_configure_openssh_eice_servers_extra) | to_json }}
-          workloadIdentities: {{ (teleport_configure_workload_identities + teleport_configure_workload_identities_extra) | to_json }}
-          inferenceModels: {{ (teleport_configure_inference_models + teleport_configure_inference_models_extra) | to_json }}
-          inferencePolicies: {{ (teleport_configure_inference_policies + teleport_configure_inference_policies_extra) | to_json }}
-          inferenceSecrets: {{ (teleport_configure_inference_secrets + teleport_configure_inference_secrets_extra) | to_json }}
-          autoupdateConfigs: {{ (teleport_configure_autoupdate_configs + teleport_configure_autoupdate_configs_extra) | to_json }}
-          autoupdateVersions: {{ (teleport_configure_autoupdate_versions + teleport_configure_autoupdate_versions_extra) | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "teleport-configure"
+        dto_dir: "{{ remote_charts_dir }}/teleport/configure"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ teleport_configure_helm_values | to_nice_yaml }}"
       tags: [configure]
 
     - name: "[teleport-configure] Install via Helm (async)"

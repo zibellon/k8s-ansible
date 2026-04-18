@@ -65,6 +65,25 @@ all:
     teleport_data_storage_class: "lh-major-single-best-effort"
     teleport_data_storage_size: "10Gi"
 
+    # Pre-phase values (NetworkPolicies chart)
+    # acmeSolverLabels — runtime-факт от tasks-resolve-acme-solver.yaml (tags: [always])
+    # Примечание: vpnOnlyEnabled ссылается на gitlab_vpn_only_enabled (сохранить как есть)
+    teleport_pre_helm_values:
+      namespace: "{{ teleport_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      haproxy:
+        namespace: "{{ haproxy_namespace }}"
+      teleport:
+        webPort: "{{ teleport_web_port }}"
+        sshPort: "{{ teleport_ssh_port }}"
+        reverseTunnelPort: "{{ teleport_reverse_tunnel_port }}"
+        internalConnectPort: "{{ teleport_internal_connect_port }}"
+        kubeApiPort: "{{ teleport_kube_listen_port }}"
+        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
+        vpnIps: "{{ vpn_ips }}"
+      acmeSolverLabels: "{{ teleport_acme_solver_pod_labels }}"
     # Helm chart values
     # ВАЖНО: tag для teleport-distroless / teleport-operator НЕ задаётся —
     # teleport-cluster chart автоматически подставляет appVersion (= teleport_chart_version)
@@ -117,6 +136,56 @@ all:
       resources: {}
       ingress:
         enabled: false
+    # Post-phase values (Ingress + HAProxy TCP chart)
+    teleport_post_helm_values:
+      namespace: "{{ teleport_namespace }}"
+      ingress:
+        ingressClass: "{{ teleport_ingress_class_name }}"
+        domain: "{{ teleport_domain }}"
+        clusterIssuer: "{{ teleport_cluster_issuer_name }}"
+        tlsSecretName: "{{ teleport_tls_secret_name }}"
+        vpnOnlyEnabled: "{{ teleport_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+        httpEnable: "{{ teleport_http_enabled }}"
+        httpsEnable: "{{ teleport_https_enabled }}"
+      webServicePort: "{{ teleport_web_service_port }}"
+      sshPort: "{{ teleport_ssh_port }}"
+      reverseTunnelPort: "{{ teleport_reverse_tunnel_port }}"
+      kubeApiPort: "{{ teleport_kube_listen_port }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      haproxy:
+        namespace: "{{ haproxy_namespace }}"
+        ingressClass: "{{ haproxy_ingress_class }}"
+    # Configure-phase values (Teleport Operator CRDs chart)
+    # Все teleport_configure_* переменные определены в hosts-vars/teleport-configure.yaml
+    teleport_configure_helm_values:
+      namespace: "{{ teleport_namespace }}"
+      roles: "{{ teleport_configure_roles + teleport_configure_roles_extra }}"
+      users: "{{ teleport_configure_users + teleport_configure_users_extra }}"
+      bots: "{{ teleport_configure_bots + teleport_configure_bots_extra }}"
+      provisionTokens: "{{ teleport_configure_provision_tokens + teleport_configure_provision_tokens_extra }}"
+      apps: "{{ teleport_configure_apps + teleport_configure_apps_extra }}"
+      databases: "{{ teleport_configure_databases + teleport_configure_databases_extra }}"
+      githubConnectors: "{{ teleport_configure_github_connectors + teleport_configure_github_connectors_extra }}"
+      oidcConnectors: "{{ teleport_configure_oidc_connectors + teleport_configure_oidc_connectors_extra }}"
+      samlConnectors: "{{ teleport_configure_saml_connectors + teleport_configure_saml_connectors_extra }}"
+      accessLists: "{{ teleport_configure_access_lists + teleport_configure_access_lists_extra }}"
+      trustedClusters: "{{ teleport_configure_trusted_clusters + teleport_configure_trusted_clusters_extra }}"
+      loginRules: "{{ teleport_configure_login_rules + teleport_configure_login_rules_extra }}"
+      accessMonitoringRules: "{{ teleport_configure_access_monitoring_rules + teleport_configure_access_monitoring_rules_extra }}"
+      oktaImportRules: "{{ teleport_configure_okta_import_rules + teleport_configure_okta_import_rules_extra }}"
+      opensshServers: "{{ teleport_configure_openssh_servers + teleport_configure_openssh_servers_extra }}"
+      opensshEiceServers: "{{ teleport_configure_openssh_eice_servers + teleport_configure_openssh_eice_servers_extra }}"
+      workloadIdentities: "{{ teleport_configure_workload_identities + teleport_configure_workload_identities_extra }}"
+      inferenceModels: "{{ teleport_configure_inference_models + teleport_configure_inference_models_extra }}"
+      inferencePolicies: "{{ teleport_configure_inference_policies + teleport_configure_inference_policies_extra }}"
+      inferenceSecrets: "{{ teleport_configure_inference_secrets + teleport_configure_inference_secrets_extra }}"
+      autoupdateConfigs: "{{ teleport_configure_autoupdate_configs + teleport_configure_autoupdate_configs_extra }}"
+      autoupdateVersions: "{{ teleport_configure_autoupdate_versions + teleport_configure_autoupdate_versions_extra }}"
 
     # ---------
     # SSH-AGENT

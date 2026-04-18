@@ -65,6 +65,33 @@ all:
     vault_bank_vaults_version: "v1.32.1"
     vault_roles_default_ttl: "1h"
 
+    # Pre-phase values (NetworkPolicies chart)
+    # acmeSolverLabels — runtime-факт от tasks-resolve-acme-solver.yaml (tags: [always])
+    vault_pre_helm_values:
+      namespace: "{{ vault_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      acmeSolverLabels: "{{ vault_acme_solver_pod_labels }}"
+    # Post-phase values (Ingress chart)
+    vault_post_helm_values:
+      namespace: "{{ vault_namespace }}"
+      ingress:
+        ingressClass: "{{ vault_ui_ingress_class_name }}"
+        domain: "{{ vault_ui_domain }}"
+        clusterIssuer: "{{ vault_ui_cluster_issuer_name }}"
+        secretName: "{{ vault_ui_https_secret_name }}"
+        vpnOnlyEnabled: "{{ vault_ui_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+        httpEnable: "{{ vault_ui_ingress_http_enable }}"
+        httpsEnable: "{{ vault_ui_ingress_https_enable }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
     # Operator Helm values (bank-vaults operator chart)
     vault_operator_helm_values:
       image:
@@ -327,3 +354,9 @@ all:
       nodeSelector: {}
       tolerations: []
       affinity: {}
+    # CR-phase values (Vault Custom Resource chart)
+    # vault_spec содержит runtime-факты (vault_policies_final, vault_roles_final),
+    # которые вычисляются tasks-eso-merge.yaml (tags: [always]).
+    vault_cr_helm_values:
+      namespace: "{{ vault_namespace }}"
+      vaultSpec: "{{ vault_spec }}"

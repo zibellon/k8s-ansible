@@ -65,29 +65,12 @@
       tags: [pre]
 
     - name: "[longhorn-pre] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/longhorn/pre/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ longhorn_namespace }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            instanceName: traefik-{{ traefik_namespace }}
-          eso:
-            vaultServerUrl: {{ vault_internal_url }}
-            saName: {{ eso_vault_integration_longhorn.sa_name }}
-            roleName: {{ eso_vault_integration_longhorn.role_name }}
-            secretStoreName: {{ eso_vault_integration_longhorn.secret_store_name }}
-            kvEnginePath: {{ eso_vault_integration_longhorn.kv_engine_path }}
-            isNeedEso: {{ eso_vault_integration_longhorn.is_need_eso | default(true) }}
-            secrets: {{ eso_vault_integration_longhorn_secrets_merged | to_json }}
-          esoResourcesConfig:
-            secretStoreRefreshInterval: {{ eso_resources_config.secret_store_refresh_interval }}
-            externalSecretRefreshInterval: {{ eso_resources_config.external_secret_refresh_interval }}
-            externalSecretRefreshPolicy: {{ eso_resources_config.external_secret_refresh_policy }}
-          acmeSolverLabels: {{ longhorn_acme_solver_pod_labels | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "longhorn-pre"
+        dto_dir: "{{ remote_charts_dir }}/longhorn/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ longhorn_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
     - name: "[longhorn-pre] Install or upgrade via Helm (async)"
@@ -213,28 +196,12 @@
       tags: [post]
 
     - name: "[longhorn-post] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/longhorn/post/values-override.yaml"
-        mode: "0644"
-        content: |
-          namespace: {{ longhorn_namespace }}
-          ingress:
-            ingressClass: {{ longhorn_ui_ingress_class_name }}
-            domain: {{ longhorn_ui_domain }}
-            clusterIssuer: {{ longhorn_ui_cluster_issuer_name }}
-            secretName: {{ longhorn_ui_https_secret_name }}
-            vpnOnlyEnabled: {{ longhorn_ui_vpn_only_enabled }}
-            vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-            httpEnable: {{ longhorn_ui_ingress_http_enable }}
-            httpsEnable: {{ longhorn_ui_ingress_https_enable }}
-          traefik:
-            namespace: {{ traefik_namespace }}
-            entryPoints:
-              web: {{ traefik_web_entrypoint }}
-              websecure: {{ traefik_websecure_entrypoint }}
-          storageClasses: {{ longhorn_storage_classes | to_json }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "longhorn-post"
+        dto_dir: "{{ remote_charts_dir }}/longhorn/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ longhorn_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
     - name: "[longhorn-post] Install or upgrade via Helm (async)"
