@@ -41,9 +41,6 @@ all:
     argocd_ingress_https_enable: true
     # ------
     argocd_admin_username: "admin"
-    argocd_reconciliation_timeout: "30s"
-    argocd_reconciliation_jitter: "10s"
-    argocd_session_duration: "120h"
     argocd_cm_extra:
       url: "{{ argocd_external_url }}"
       timeout.reconciliation: "30s"
@@ -64,17 +61,6 @@ all:
     argocd_cm_rbac_extra: {}
     argocd_cm_ssh_known_hosts_extra: []
     argocd_cm_tls_certs_extra: {}
-    # Tolerations (все ArgoCD workloads)
-    argocd_tolerations: []
-    argocd_node_selector: {}
-    # Resources (по компонентам)
-    argocd_resources_application_controller: {}
-    argocd_resources_applicationset_controller: {}
-    argocd_resources_dex_server: {}
-    argocd_resources_notifications_controller: {}
-    argocd_resources_redis: {}
-    argocd_resources_repo_server: {}
-    argocd_resources_server: {}
     # Prometheus metrics ports (hardcoded in ArgoCD manifests)
     argocd_application_controller_metrics_port: 8082
     argocd_server_metrics_port: 8083
@@ -82,11 +68,6 @@ all:
     argocd_applicationset_controller_metrics_port: 8080
     argocd_dex_server_metrics_port: 5558
     argocd_notifications_controller_metrics_port: 9001
-    # ServiceMonitor (prometheus-operator)
-    argocd_service_monitor_enabled: true
-    argocd_service_monitor_interval: "30s"
-    argocd_service_monitor_scrape_timeout: "15s"
-    argocd_service_monitor_additional_labels: {}
     # ------
     # ArgoCD git-ops setup
     # ------
@@ -148,16 +129,16 @@ all:
           dexTag: "{{ argocd_image_dex_tag }}"
           redisWithRegistry: "{{ argocd_image_redis_with_registry }}"
           redisTag: "{{ argocd_image_redis_tag }}"
-      tolerations: "{{ argocd_tolerations }}"
-      nodeSelector: "{{ argocd_node_selector }}"
+      tolerations: []
+      nodeSelector: {}
       resources:
-        applicationController: "{{ argocd_resources_application_controller }}"
-        applicationsetController: "{{ argocd_resources_applicationset_controller }}"
-        dexServer: "{{ argocd_resources_dex_server }}"
-        notificationsController: "{{ argocd_resources_notifications_controller }}"
-        redis: "{{ argocd_resources_redis }}"
-        repoServer: "{{ argocd_resources_repo_server }}"
-        server: "{{ argocd_resources_server }}"
+        applicationController: {}
+        applicationsetController: {}
+        dexServer: {}
+        notificationsController: {}
+        redis: {}
+        repoServer: {}
+        server: {}
     # Post-phase values (Ingress + ServiceMonitor chart)
     argocd_post_helm_values:
       namespace: "{{ argocd_namespace }}"
@@ -178,10 +159,10 @@ all:
           web: "{{ traefik_web_entrypoint }}"
           websecure: "{{ traefik_websecure_entrypoint }}"
       serviceMonitor:
-        enabled: "{{ argocd_service_monitor_enabled }}"
-        interval: "{{ argocd_service_monitor_interval }}"
-        scrapeTimeout: "{{ argocd_service_monitor_scrape_timeout }}"
-        labels: "{{ argocd_service_monitor_additional_labels }}"
+        enabled: true
+        interval: "30s"
+        scrapeTimeout: "15s"
+        labels: {}
     # GitOps-phase values (AppProject + Applications chart)
     argocd_gitops_helm_values:
       namespace: "{{ argocd_namespace }}"

@@ -30,24 +30,7 @@ all:
     # ---------
     prometheus_operator_ingress_class: "traefik-lb"
     prometheus_operator_cluster_issuer: "acme-prod"
-    prometheus_operator_tolerations: []
-    prometheus_operator_node_selector:
-      kubernetes.io/os: linux
-    prometheus_operator_resources:
-      limits:
-        cpu: 200m
-        memory: 200Mi
-      requests:
-        cpu: 100m
-        memory: 100Mi
     prometheus_operator_port: 8080
-    prometheus_operator_args:
-      - --kubelet-service=kube-system/kubelet
-      - --prometheus-config-reloader={{ prometheus_operator_image_registry }}/prometheus-operator/prometheus-config-reloader:{{ prometheus_config_reloader_image_tag }}
-      - --watch-referenced-objects-in-all-namespaces=true
-      - --disable-unmanaged-prometheus-configuration=true
-      - --kubelet-endpoints=true
-      - --kubelet-endpointslice=false
 
     # -----------------
     # Prometheus Instance
@@ -224,6 +207,70 @@ all:
       receivers:
         - name: "null"
 
+
+    # ---------
+    # ---------
+    # ---------
+    # Pre-phase values (NetworkPolicies chart)
+    # prometheus_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
+    prometheus_operator_pre_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      acmeSolverLabels: "{{ prometheus_acme_solver_pod_labels }}"
+      prometheus:
+        port: "{{ prometheus_port }}"
+      alertmanager:
+        port: "{{ alertmanager_port }}"
+    # ---------
+    # ---------
+    # ---------
+    # Install-phase values (operator deployment chart)
+    prometheus_operator_install_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      imageOperator: "{{ prometheus_operator_image_with_registry }}"
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        limits:
+          cpu: 200m
+          memory: 200Mi
+        requests:
+          cpu: 100m
+          memory: 100Mi
+      port: "{{ prometheus_operator_port }}"
+      args:
+        - --kubelet-service=kube-system/kubelet
+        - --prometheus-config-reloader={{ prometheus_operator_image_registry }}/prometheus-operator/prometheus-config-reloader:{{ prometheus_config_reloader_image_tag }}
+        - --watch-referenced-objects-in-all-namespaces=true
+        - --disable-unmanaged-prometheus-configuration=true
+        - --kubelet-endpoints=true
+        - --kubelet-endpointslice=false
+    # ---------
+    # ---------
+    # ---------
+    # Prometheus-phase values (Prometheus CRD chart)
+    prometheus_operator_prometheus_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      prometheusSpec: "{{ prometheus_spec }}"
+      prometheus:
+        port: "{{ prometheus_port }}"
+        reloaderPort: "{{ prometheus_reloader_port }}"
+    # ---------
+    # ---------
+    # ---------        
+    # Alertmanager-phase values (Alertmanager CRD chart)
+    prometheus_operator_alertmanager_helm_values:
+      namespace: "{{ prometheus_operator_namespace }}"
+      alertmanagerSpec: "{{ alertmanager_spec }}"
+      alertmanagerRootConfigSpec: "{{ alertmanager_root_config_spec }}"
+      alertmanager:
+        port: "{{ alertmanager_port }}"
+        meshTcpPort: "{{ alertmanager_mesh_tcp_port }}"
+        meshUdpPort: "{{ alertmanager_mesh_udp_port }}"
+
     # -----------------
     # System Component Services (for ServiceMonitor scraping)
     # Headless Services in kube-system pointing to static pods.
@@ -388,43 +435,9 @@ all:
             tlsConfig:
               caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               insecureSkipVerify: true
-    # Pre-phase values (NetworkPolicies chart)
-    # prometheus_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
-    prometheus_operator_pre_helm_values:
-      namespace: "{{ prometheus_operator_namespace }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        instanceName: "traefik-{{ traefik_namespace }}"
-      acmeSolverLabels: "{{ prometheus_acme_solver_pod_labels }}"
-      prometheus:
-        port: "{{ prometheus_port }}"
-      alertmanager:
-        port: "{{ alertmanager_port }}"
-    # Install-phase values (operator deployment chart)
-    prometheus_operator_install_helm_values:
-      namespace: "{{ prometheus_operator_namespace }}"
-      imageOperator: "{{ prometheus_operator_image_with_registry }}"
-      tolerations: "{{ prometheus_operator_tolerations }}"
-      nodeSelector: "{{ prometheus_operator_node_selector }}"
-      resources: "{{ prometheus_operator_resources }}"
-      port: "{{ prometheus_operator_port }}"
-      args: "{{ prometheus_operator_args }}"
-    # Prometheus-phase values (Prometheus CRD chart)
-    prometheus_operator_prometheus_helm_values:
-      namespace: "{{ prometheus_operator_namespace }}"
-      prometheusSpec: "{{ prometheus_spec }}"
-      prometheus:
-        port: "{{ prometheus_port }}"
-        reloaderPort: "{{ prometheus_reloader_port }}"
-    # Alertmanager-phase values (Alertmanager CRD chart)
-    prometheus_operator_alertmanager_helm_values:
-      namespace: "{{ prometheus_operator_namespace }}"
-      alertmanagerSpec: "{{ alertmanager_spec }}"
-      alertmanagerRootConfigSpec: "{{ alertmanager_root_config_spec }}"
-      alertmanager:
-        port: "{{ alertmanager_port }}"
-        meshTcpPort: "{{ alertmanager_mesh_tcp_port }}"
-        meshUdpPort: "{{ alertmanager_mesh_udp_port }}"
+    # ---------
+    # ---------
+    # ---------
     # Post-phase values (Ingress + Certificates chart)
     prometheus_operator_post_helm_values:
       namespace: "{{ prometheus_operator_namespace }}"

@@ -32,14 +32,6 @@ all:
     grafana_ingress_https_enable: true
     grafana_vpn_only_enabled: false
     grafana_admin_username: "admin"
-    grafana_storage_class: "lh-major-worker-multi-best-effort"
-    grafana_storage_size: "1Gi"
-    grafana_storage_access_mode: "ReadWriteOnce"
-    grafana_install_plugins: "grafana-piechart-panel"
-    grafana_tolerations: []
-    grafana_node_selector:
-      node-role.kubernetes.io/worker: ""
-    grafana_resources: {}
     # Pre-phase values (NetworkPolicies + ESO chart)
     # eso_vault_integration_grafana_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
     # grafana_acme_solver_pod_labels — runtime-факт от tasks-resolve-acme-solver.yaml [always]
@@ -77,19 +69,20 @@ all:
         image:
           name: "{{ grafana_image_name }}"
           tag: "{{ grafana_image_tag }}"
-        installPlugins: "{{ grafana_install_plugins | default('') }}"
+        installPlugins: "grafana-piechart-panel"
         externalUrl: "{{ grafana_external_url }}"
       adminSecret:
         name: "{{ grafana_admin_secret_name }}"
         usernameKey: username
         passwordKey: password
       pvc:
-        storageClassName: "{{ grafana_storage_class }}"
-        storageSize: "{{ grafana_storage_size }}"
-        accessMode: "{{ grafana_storage_access_mode }}"
-      tolerations: "{{ grafana_tolerations }}"
-      nodeSelector: "{{ grafana_node_selector }}"
-      resources: "{{ grafana_resources }}"
+        storageClassName: "lh-major-worker-multi-best-effort"
+        storageSize: "1Gi"
+        accessMode: "ReadWriteOnce"
+      tolerations: []
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      resources: {}
     # Post-phase values (Ingress + Certificate chart)
     grafana_post_helm_values:
       namespace: "{{ grafana_namespace }}"

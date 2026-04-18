@@ -22,24 +22,6 @@ all:
     kube_state_metrics_rollout_timeout: "60s"
     # ---------
     kube_state_metrics_port: 8080
-    kube_state_metrics_args:
-      - --port=8080
-      - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
-    # ServiceMonitor (prometheus-operator)
-    kube_state_metrics_service_monitor_enabled: true
-    kube_state_metrics_service_monitor_interval: "30s"
-    kube_state_metrics_service_monitor_scrape_timeout: "15s"
-    kube_state_metrics_service_monitor_additional_labels: {}
-    kube_state_metrics_tolerations: []
-    kube_state_metrics_node_selector:
-      kubernetes.io/os: linux
-    kube_state_metrics_resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 200m
-        memory: 256Mi
     # Pre-phase values (NetworkPolicies chart)
     kube_state_metrics_pre_helm_values:
       namespace: "{{ kube_state_metrics_namespace }}"
@@ -53,15 +35,24 @@ all:
           name: "{{ kube_state_metrics_image_name }}"
           tag: "{{ kube_state_metrics_image_tag }}"
         port: "{{ kube_state_metrics_port }}"
-        args: "{{ kube_state_metrics_args }}"
-      tolerations: "{{ kube_state_metrics_tolerations }}"
-      nodeSelector: "{{ kube_state_metrics_node_selector }}"
-      resources: "{{ kube_state_metrics_resources }}"
+        args:
+          - --port=8080
+          - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
     # Post-phase values (ServiceMonitor chart)
     kube_state_metrics_post_helm_values:
       namespace: "{{ kube_state_metrics_namespace }}"
       serviceMonitor:
-        enabled: "{{ kube_state_metrics_service_monitor_enabled }}"
-        interval: "{{ kube_state_metrics_service_monitor_interval }}"
-        scrapeTimeout: "{{ kube_state_metrics_service_monitor_scrape_timeout }}"
-        labels: "{{ kube_state_metrics_service_monitor_additional_labels }}"
+        enabled: true
+        interval: "30s"
+        scrapeTimeout: "15s"
+        labels: {}

@@ -22,35 +22,13 @@ all:
     node_exporter_rollout_timeout: "120s"
     # ---------
     node_exporter_port: 9100
-    node_exporter_args:
-      - --path.procfs=/host/proc
-      - --path.sysfs=/host/sys
-      - --path.rootfs=/host/root
-      - --path.udev.data=/host/root/run/udev/data
-      - '--web.listen-address=0.0.0.0:9100'
-      - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)'
-      - '--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$'
-    # ServiceMonitor (prometheus-operator)
-    node_exporter_service_monitor_enabled: true
-    node_exporter_service_monitor_interval: "30s"
-    node_exporter_service_monitor_scrape_timeout: "15s"
-    node_exporter_service_monitor_additional_labels: {}
-    node_exporter_tolerations:
-      - operator: "Exists"
-    node_exporter_node_selector:
-      kubernetes.io/os: linux
-    node_exporter_resources:
-      requests:
-        cpu: 50m
-        memory: 32Mi
-      limits:
-        cpu: 200m
-        memory: 128Mi
+    # ---------
     # Pre-phase values (NetworkPolicies chart)
     node_exporter_pre_helm_values:
       namespace: "{{ node_exporter_namespace }}"
       node_exporter:
         port: "{{ node_exporter_port }}"
+    # ---------
     # Install-phase values
     node_exporter_install_helm_values:
       namespace: "{{ node_exporter_namespace }}"
@@ -59,15 +37,31 @@ all:
           name: "{{ node_exporter_image_name }}"
           tag: "{{ node_exporter_image_tag }}"
         port: "{{ node_exporter_port }}"
-        args: "{{ node_exporter_args }}"
-      tolerations: "{{ node_exporter_tolerations }}"
-      nodeSelector: "{{ node_exporter_node_selector }}"
-      resources: "{{ node_exporter_resources }}"
+        args:
+          - --path.procfs=/host/proc
+          - --path.sysfs=/host/sys
+          - --path.rootfs=/host/root
+          - --path.udev.data=/host/root/run/udev/data
+          - '--web.listen-address=0.0.0.0:9100'
+          - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)'
+          - '--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$'
+      tolerations:
+        - operator: "Exists"
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+    # ---------
     # Post-phase values (ServiceMonitor chart)
     node_exporter_post_helm_values:
       namespace: "{{ node_exporter_namespace }}"
       serviceMonitor:
-        enabled: "{{ node_exporter_service_monitor_enabled }}"
-        interval: "{{ node_exporter_service_monitor_interval }}"
-        scrapeTimeout: "{{ node_exporter_service_monitor_scrape_timeout }}"
-        labels: "{{ node_exporter_service_monitor_additional_labels }}"
+        enabled: true
+        interval: "30s"
+        scrapeTimeout: "15s"
+        labels: {}
