@@ -1,0 +1,97 @@
+# =============================================================================
+# TELEPORT RESTART
+# Restarts Teleport Deployment
+# =============================================================================
+
+- name: Restart Teleport
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[teleport-restart-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        label_name: "teleport-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify teleport is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[teleport-restart] Check if teleport namespace exists"
+      command: kubectl get namespace {{ teleport_namespace }}
+      register: namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[teleport-restart] Fail if teleport namespace not found"
+      fail:
+        msg: "teleport namespace '{{ teleport_namespace }}' not found. Install teleport first."
+      when: namespace_check.rc != 0
+      run_once: true
+
+    - name: "[teleport-restart] Show current teleport pods"
+      command: kubectl get pods -n {{ teleport_namespace }} -o wide
+      register: pods_before
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[teleport-restart] Display pods before restart"
+      debug:
+        var: pods_before.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[teleport-restart] Restart teleport"
+      command: kubectl rollout restart {{ item }} -n {{ teleport_namespace }}
+      loop:
+        - deployment.apps/teleport-auth
+        - deployment.apps/teleport-proxy
+        - deployment.apps/teleport-operator
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUT TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[teleport-restart] Wait for rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        label_name: "teleport-restart"
+        rollout_namespace: "{{ teleport_namespace }}"
+        rollout_timeout: "{{ teleport_rollout_timeout }}"
+        rollout_resources:
+          - deployment.apps/teleport-auth
+          - deployment.apps/teleport-proxy
+          - deployment.apps/teleport-operator
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[teleport-verify] Show teleport pods after restart"
+      command: kubectl get pods -n {{ teleport_namespace }} -o wide
+      register: pods_after
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[teleport-verify] Display pods after restart"
+      debug:
+        var: pods_after.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[teleport-verify] Restart completed"
+      debug:
+        msg: "teleport restart complete"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

@@ -400,7 +400,9 @@
 ## ---
 
 ## ---
-## Teleport (proxy + auth + operator)
+## Teleport. Официальный helm-chart
+## ---
+## что устанавливается: (proxy + auth + operator)
 ## ---
 ## Важно_1. Все ресурсы teleport управляются через CRD. То есть: если надо добавить новую роль или нового пользователя
 ## Добавляем новые значения в hosts-vars-override и вызываем `... playbook-app/teleport-install.yaml --tags configure`
@@ -431,6 +433,8 @@
   - Установится: auth, proxy, operator
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-ssh-agent-install.yaml`
   - установится на КАЖДУЮ node агента, для доступа к node по SSH
+- Есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-restart.yaml`
 
 ## ---
 ## gitlab. Официальный helm
