@@ -504,7 +504,7 @@
 ## ---
 ##
 - установка + конфигурация
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml --tags pre,install,post`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-configure.yaml`
   - Конфигурация (сбросить права у default-project, достать пароль admin и положить его в Vault)
@@ -545,20 +545,18 @@
 ## Важно_4: последовательность установки
 ## - настроить необходимые конфиги для argo-cd-git-ops (`hosts-vars-override/`)
 ## - `argocd_git_ops_apps` (какие проекты и приложения нужно создать)
-## - `eso_vault_integration_argocd_git_ops_extra`
-## - секреты типа: `git_ops_repo_pattern`/`git_ops_repo_direct`/`git_ops_repo_direct_userpass`/`git_ops_repo_pattern_userpass`/`helm_repo`/`helm_repo_oci`
+## - `eso_vault_integration_argocd_extra`
+## - секреты типа: `git_ops_repo_pattern`/`git_ops_repo_direct`
 ## - установить `argocd-git-ops` + проверить что все ресурсы установились корректно
-## - Создать ssh-keys (private + public) + положить их в vault (ESO - создаст из них k8s.secret)
-## - Создать репозитории (URL которых указаны в `argocd_git_ops_apps`) + добавить к ним deploy-keys (чтобы argocd - имел к ним доступ)
+## - Создать ssh-keys (private + public) + положить их в Vault (ESO - создаст из них k8s.secret)
+## - Создать репозитории (URL которых указаны в `argocd_git_ops_apps`) + добавить к ним deploy-keys (чтобы argocd имел к ним доступ)
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
-## `--tags pre, install, post`
-## ---
 ##
 - установка + обновление (конфиг)
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-git-ops-install.yaml`
-  - Ставится: ESO + argo-proj, argo-application
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml --tags gitops`
+  - Ставится: argo-proj + argo-application
 
 ## ---
 ## prometheus-operator + prometheus. yaml -> helm
