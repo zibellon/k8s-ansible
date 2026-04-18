@@ -8,6 +8,25 @@
 #   - rollout_resources: List of resources (e.g. deployment/name, daemonset/name, statefulset/name)
 # =============================================================================
 
+- name: "[{{ label_name }}] Assert all dto params are provided"
+  assert:
+    that:
+      - label_name is defined
+      - label_name | length > 0
+      - rollout_namespace is defined
+      - rollout_namespace | length > 0
+      - rollout_timeout is defined
+      - rollout_timeout | length > 0
+      - rollout_resources is defined
+      - rollout_resources is sequence
+      - rollout_resources | length > 0
+    fail_msg: >-
+      tasks-wait-rollout: all params required:
+      label_name, rollout_namespace, rollout_timeout, rollout_resources (non-empty list)
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[{{ label_name }}] Wait for rollouts to complete"
   command: kubectl rollout status {{ item }} -n {{ rollout_namespace }} --timeout={{ rollout_timeout }}
   loop: "{{ rollout_resources }}"

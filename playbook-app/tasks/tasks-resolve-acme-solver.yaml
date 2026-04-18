@@ -10,6 +10,29 @@
 #   - acme_pod_labels_result_var:    Variable name to store solver.podLabels
 # =============================================================================
 
+- name: "[{{ label_name }}] Assert all dto params are provided"
+  assert:
+    that:
+      - label_name is defined
+      - label_name | length > 0
+      - cluster_issuer_name is defined
+      - cluster_issuer_name | length > 0
+      - ingress_class_name is defined
+      - ingress_class_name | length > 0
+      - acme_cluster_issuer_result_var is defined
+      - acme_cluster_issuer_result_var | length > 0
+      - acme_solver_result_var is defined
+      - acme_solver_result_var | length > 0
+      - acme_pod_labels_result_var is defined
+      - acme_pod_labels_result_var | length > 0
+    fail_msg: >-
+      tasks-resolve-acme-solver: all params required:
+      label_name, cluster_issuer_name, ingress_class_name,
+      acme_cluster_issuer_result_var, acme_solver_result_var, acme_pod_labels_result_var
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[{{ label_name }}] Resolve ClusterIssuer"
   set_fact:
     _acme_resolved_issuer: >-

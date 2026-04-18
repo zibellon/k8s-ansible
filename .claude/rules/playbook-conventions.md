@@ -148,3 +148,29 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 - [ ] No secret literal in any committed file.
 - [ ] If a new variable was added, it is documented (either in `variables.md` if global or in `components.md` if per-component).
 - [ ] If a new task include was added, it is documented in `reusable-tasks.md`.
+- [ ] If a new task include was added, it starts with an `assert` block validating all required params (Rule 19).
+
+## 19. Parameter Validation in Task Includes
+
+19.1 Every task include file (`tasks/*.yaml`) MUST start with an `assert` block that
+validates ALL required input parameters. No exceptions — if a task takes a parameter,
+it must validate it before doing anything else.
+
+19.2 The assert block MUST be the FIRST task in the file — before any `set_fact`,
+`command`, `shell`, `copy`, `file`, or `include_tasks`.
+
+19.3 Tag the assert task `[always]` so it fires regardless of `--tags` on the caller.
+
+19.4 Use `delegate_to: "{{ master_manager_fact }}" + run_once: true` if `master_manager_fact`
+is guaranteed to be set when the task is called. For tasks that themselves set
+`master_manager_fact` (e.g. `tasks-pre-check.yaml`), use only `run_once: true` without `delegate_to`.
+
+19.5 Standard validation pattern per param type:
+- Required string: `<param> is defined` + `<param> | length > 0`
+- Required list:   `<param> is defined` + `<param> is sequence` + `<param> | length > 0`
+- Required dict:   `<param> is defined` + `<param> is mapping` + `<param> | length > 0`
+- Dict subkey:     `<param>.<field> is defined`
+
+19.6 Reference implementation: `tasks-k8s-secret-get.yaml` — full example with 4 required string params.
+
+19.7 Optional params (controlled by `when:` in the task body) do NOT need validation in the assert block. Only required params are asserted.

@@ -7,6 +7,26 @@
 #   - crds_wait: Dict with timeout, retries, delay (from hosts.yaml)
 # =============================================================================
 
+- name: "[{{ label_name }}] Assert all dto params are provided"
+  assert:
+    that:
+      - label_name is defined
+      - label_name | length > 0
+      - crds_list is defined
+      - crds_list is sequence
+      - crds_list | length > 0
+      - crds_wait is defined
+      - crds_wait is mapping
+      - crds_wait.timeout is defined
+      - crds_wait.retries is defined
+      - crds_wait.delay is defined
+    fail_msg: >-
+      tasks-wait-crds: all params required:
+      label_name, crds_list (non-empty list), crds_wait (dict with timeout/retries/delay)
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[{{ label_name }}] Wait for CRDs to be established"
   command: >
     kubectl wait --for=condition=Established

@@ -8,6 +8,7 @@ General rules for callers:
 - Always pass `label_name` matching the enclosing `[<c>-<action>-<phase>]` prefix — keeps logs aligned.
 - Tag every include with the appropriate phase (`[always]`, `[pre]`, `[install]`, `[post]`, or a bootstrap-specific tag).
 - Tasks that run `kubectl` / `helm` set `delegate_to: "{{ master_manager_fact }}"` + `run_once: true` internally — no need for the caller to set them.
+- **Every task file starts with an `assert` block** that validates all required input parameters before doing any work. The assert is `tags: [always]` so it never silently skips under `--tags`. Reference: `tasks-k8s-secret-get.yaml`. Full pattern in `playbook-conventions.md` Rule 19.
 
 ---
 
@@ -17,6 +18,7 @@ General rules for callers:
 
 - **Purpose.** Entry guard for every install playbook. Resolves `master_manager_fact` and asserts cluster is reachable.
 - **Input.** `label_name` (string — log prefix).
+- **Validates (assert).** `label_name` defined + non-empty. (No `delegate_to` — `master_manager_fact` not yet set at call time.)
 - **Output.** Fact `master_manager_fact`. Fails play if no manager has `is_master: true`.
 - **Callers.** Every `<c>-install.yaml`, also `-configure`, `-restart`, `-rotate` playbooks.
 - **Idempotent.** Read-only; safe to call repeatedly.
@@ -41,6 +43,7 @@ General rules for callers:
 
 - **Purpose.** Package a local chart directory as tar.gz, copy to the master manager, extract. Faster and more idempotent than `synchronize` for many small files.
 - **Input.** `label_name`, `chart_name` (release name — used for the temp archive file), `chart_local_src` (**must** end with `/`), `chart_remote_dest` (**must not** end with `/`).
+- **Validates (assert).** `label_name`, `chart_name`, `chart_local_src`, `chart_remote_dest` all defined + non-empty.
 - **Output.** Chart files at `{{ chart_remote_dest }}/` on the master manager.
 - **Callers.** Every phase of every install playbook.
 - **Idempotent.** Re-extraction overwrites. Old files not pruned — if you rename a template, re-run `server-clean` on chart dir or `rm -rf` the remote dir.
@@ -50,6 +53,7 @@ General rules for callers:
 
 - **Purpose.** Create a remote directory + write `values-override.yaml`. Used for external Helm chart install phases where `tasks-copy-chart.yaml` is not called (no local chart to ship).
 - **Input.** `label_name` (string), `dto_dir` (remote path, no trailing slash), `dto_content` (rendered string — the YAML content to write).
+- **Validates (assert).** `label_name`, `dto_dir`, `dto_content` all defined + non-empty.
 - **Output.** Directory `{{ dto_dir }}` exists on master manager, file `{{ dto_dir }}/values-override.yaml` written (mode 0644).
 - **Callers.** Install-phase blocks in any playbook that uses an external Helm repo: `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `metrics-server-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `teleport-install.yaml`, `vault-install.yaml` (operator phase).
 - **Idempotent.** Yes — `file: state=directory` and `copy` are both idempotent.
@@ -59,6 +63,7 @@ General rules for callers:
 
 - **Purpose.** `helm repo add` + `helm repo update`. Used before installing official external charts.
 - **Input.** `label_name`, `helm_repo_name`, `helm_repo_url`.
+- **Validates (assert).** `label_name`, `helm_repo_name`, `helm_repo_url` all defined + non-empty.
 - **Output.** Helm repo registered on the master manager.
 - **Callers.** `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml` (and any other playbook that installs from an external chart).
 - **Idempotent.** `helm repo add` with same URL is no-op; `update` is always safe.
@@ -67,6 +72,7 @@ General rules for callers:
 
 - **Purpose.** Wait for CRDs to reach `Established` condition before applying workloads that depend on them.
 - **Input.** `label_name`, `crds_list` (list of `"crd/<name>"` strings), `crds_wait` (dict: `timeout`, `retries`, `delay`).
+- **Validates (assert).** `label_name` defined + non-empty; `crds_list` defined, is sequence, non-empty; `crds_wait` defined, is mapping, with `timeout`/`retries`/`delay` subkeys defined.
 - **Output.** None. Fails on timeout.
 - **Callers.** Install playbooks with `crds/` phases (`argocd`, `mon-prometheus-operator`), Vault operator, cert-manager.
 - **Idempotent.** Read-only wait.
@@ -75,6 +81,7 @@ General rules for callers:
 
 - **Purpose.** `kubectl rollout status` for Deployments / DaemonSets / StatefulSets.
 - **Input.** `label_name`, `rollout_namespace`, `rollout_timeout` (e.g. `"120s"`), `rollout_resources` (list of `"<kind>/<name>"`).
+- **Validates (assert).** `label_name`, `rollout_namespace`, `rollout_timeout` defined + non-empty; `rollout_resources` defined, is sequence, non-empty.
 - **Output.** None. Fails on timeout.
 - **Callers.** End of `install` phase on every component; also `-restart` playbooks.
 - **Idempotent.** Read-only wait.
@@ -95,6 +102,7 @@ General rules for callers:
 
 - **Purpose.** Look up a `ClusterIssuer` by name in `cert_manager_cluster_issuers`, find the solver matching a given `ingressClass`, export its `podLabels`. Downstream NetworkPolicies use these labels to admit the cert-manager solver pod.
 - **Input.** `label_name`, `cluster_issuer_name`, `ingress_class_name`, `acme_cluster_issuer_result_var`, `acme_solver_result_var`, `acme_pod_labels_result_var` (three dynamic fact names).
+- **Validates (assert).** All 6 params defined + non-empty (assert block at top of file).
 - **Output (runtime facts, names from input).** Resolved `ClusterIssuer` name, full solver dict, `podLabels` dict.
 - **Callers.** Install playbooks of components with HTTPS ingress that triggers ACME HTTP-01 — typically at `tags: [always]`.
 - **Idempotent.** Pure lookup.
@@ -103,6 +111,7 @@ General rules for callers:
 
 - **Purpose.** Assert a Helm release is in `deployed` status (not `failed`, `pending`, `uninstalling`).
 - **Input.** `label_name`, `helm_namespace` (namespace of the release).
+- **Validates (assert).** `label_name`, `helm_namespace` both defined + non-empty.
 - **Output.** Fails if any release in the namespace is not `deployed`.
 - **Callers.** End of install phase (optional, recommended).
 - **Idempotent.** Read-only.
@@ -110,15 +119,17 @@ General rules for callers:
 ### 1.11 `tasks-eso-force-sync.yaml`
 
 - **Purpose.** Annotate ExternalSecrets with `force-sync=<epoch>` to trigger ESO reconciliation without waiting for `refreshInterval`.
-- **Input.** `label_name`, `namespace`.
-- **Output.** All ExternalSecrets in the namespace annotated.
+- **Input.** `label_name` (required). Optional: `dto_eso_sync_namespace`, `dto_eso_sync_es_name` — control targeting (single ES / all in ns / all namespaces).
+- **Validates (assert).** `label_name` defined + non-empty. Optional params are not validated (governed by `when:` conditions).
+- **Output.** All targeted ExternalSecrets annotated.
 - **Callers.** `eso-force-sync.yaml` standalone; also after `tasks-vault-put.yaml` (internal).
 - **Idempotent.** Annotation bump is always safe.
 
 ### 1.12 `tasks-vault-get.yaml`
 
 - **Purpose.** Read one KV v2 field from Vault into an Ansible fact (plus an `_exists` boolean).
-- **Input.** `label_name`, Vault path, field name, destination fact name.
+- **Input.** `label_name`, `dto_vault_get_path` (full KV path), `dto_vault_get_field` (field name), `dto_vault_get_res_fact_name` (output fact name).
+- **Validates (assert).** `label_name`, `dto_vault_get_path`, `dto_vault_get_field`, `dto_vault_get_res_fact_name` all defined + non-empty.
 - **Output.** `<fact>` + `<fact>_exists`. Missing fields set `_exists: false` without failing the play.
 - **Callers.** `-configure` playbooks (resolve current credentials before rotating), `-rotate` playbooks.
 - **Idempotent.** Read-only.
@@ -126,7 +137,8 @@ General rules for callers:
 ### 1.13 `tasks-vault-put.yaml`
 
 - **Purpose.** `vault kv put`, then annotate the target ExternalSecret to force ESO sync, then wait for the downstream K8s `Secret` to appear.
-- **Input.** Vault path, KV fields, ExternalSecret name, target namespace, target K8s Secret name, timeouts.
+- **Input.** `label_name`, `dto_vault_put_path` (full KV path), `dto_vault_put_data` (non-empty dict of `{field: value}`).
+- **Validates (assert).** `label_name` defined + non-empty; `dto_vault_put_path` defined + non-empty; `dto_vault_put_data` defined, is mapping, non-empty.
 - **Output.** Vault updated, K8s Secret updated.
 - **Callers.** Rotation flows (Postgres, Redis, MinIO, GitLab root, ArgoCD admin, Vault admin-token).
 - **Idempotent.** Re-running re-puts identical values — safe, just a noop in ESO (force-sync annotation bumps once more).
@@ -134,7 +146,8 @@ General rules for callers:
 ### 1.14 `tasks-generate-secret.yaml`
 
 - **Purpose.** Generate a random N-character secret into a named fact.
-- **Input.** `label_name`, length, destination fact name.
+- **Input.** `label_name`, `dto_generate_fact_name` (output fact name). Optional: `generate_length` (default 32), `generate_chars` (default `ascii_letters,digits`).
+- **Validates (assert).** `label_name`, `dto_generate_fact_name` both defined + non-empty. Optional params not asserted.
 - **Output.** Fact with the generated secret.
 - **Callers.** Bootstrap of first-run passwords (GitLab root, Vault admin, Grafana admin).
 - **Idempotent.** No — regenerates on each call. Pair with `tasks-vault-get.yaml` + `_exists` check to avoid regenerating existing secrets.
@@ -150,7 +163,8 @@ General rules for callers:
 ### 1.16 `tasks-helm-upgrade-async.yaml`
 
 - **Purpose.** Run `helm upgrade --install` in async mode for charts that exceed Ansible's synchronous command timeout (notably the GitLab chart family).
-- **Input.** Helm args, async timeout, poll interval.
+- **Input.** `label_name`, `helm_command` (complete helm command string). Async timing from global vars (`helm_async_timeout`, `helm_async_poll`).
+- **Validates (assert).** `label_name`, `helm_command` both defined + non-empty.
 - **Output.** Helm release updated.
 - **Callers.** `gitlab-install.yaml`.
 - **Idempotent.** Same semantics as synchronous helm; async is just about avoiding SSH timeouts.
@@ -159,6 +173,7 @@ General rules for callers:
 
 - **Purpose.** Read a single `.data` field from a K8s Secret into a named fact. Never fails on missing secret or field — callers branch on `<fact>_exists`.
 - **Input.** `label_name`, `dto_secret_namespace`, `dto_secret_name`, `dto_secret_field`, `dto_secret_res_fact_name` (all required).
+- **Validates (assert).** All 4 dto params defined + non-empty. **Reference implementation** — this is the canonical example for the assert pattern.
 - **Output (runtime facts, set on all hosts).**
   - `{{ dto_secret_res_fact_name }}` — decoded string value (`''` if missing).
   - `{{ dto_secret_res_fact_name }}_exists` — bool (true only if field is non-empty).

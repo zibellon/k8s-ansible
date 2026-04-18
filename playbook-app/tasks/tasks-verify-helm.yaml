@@ -6,15 +6,27 @@
 #   - label_name: Label prefix for task names (optional, default: 'verify-helm')
 # =============================================================================
 
-- name: "[{{ label_name | default('verify-helm') }}] Verify Helm releases"
+- name: "[{{ label_name }}] Assert all dto params are provided"
+  assert:
+    that:
+      - label_name is defined
+      - label_name | length > 0
+      - helm_namespace is defined
+      - helm_namespace | length > 0
+    fail_msg: "tasks-verify-helm: all params required: label_name, helm_namespace"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ label_name }}] Verify Helm releases"
   command: helm list -n {{ helm_namespace }}
   register: helm_list
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
-  
-- name: "[{{ label_name | default('verify-helm') }}] Print Helm releases"
+
+- name: "[{{ label_name }}] Print Helm releases"
   debug:
     msg: "{{ helm_list.stdout_lines }}"
   delegate_to: "{{ master_manager_fact }}"

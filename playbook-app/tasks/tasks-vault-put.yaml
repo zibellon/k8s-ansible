@@ -15,11 +15,19 @@
 # Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
 # =============================================================================
 
-- name: "[{{ label_name }}] Assert: dto_vault_put_data must be provided"
+- name: "[{{ label_name }}] Assert all dto params are provided"
   assert:
     that:
-      - (dto_vault_put_data | default({})) | length > 0
-    fail_msg: "tasks-vault-put-and-sync: dto_vault_put_data must be a non-empty dict"
+      - label_name is defined
+      - label_name | length > 0
+      - dto_vault_put_path is defined
+      - dto_vault_put_path | length > 0
+      - dto_vault_put_data is defined
+      - dto_vault_put_data is mapping
+      - dto_vault_put_data | length > 0
+    fail_msg: >-
+      tasks-vault-put: all params required:
+      label_name, dto_vault_put_path, dto_vault_put_data (non-empty dict)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
