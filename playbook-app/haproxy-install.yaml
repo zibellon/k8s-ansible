@@ -105,12 +105,11 @@
       tags: [install]
 
     - name: "[haproxy-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/haproxy/values-override.yaml"
-        mode: "0644"
-        content: "{{ haproxy_helm_values | to_nice_yaml }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "haproxy-install"
+        dto_dir: "{{ remote_charts_dir }}/haproxy/install"
+        dto_content: "{{ haproxy_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[haproxy-install] Install or upgrade HAProxy via Helm (async)"
@@ -122,7 +121,7 @@
           --namespace {{ haproxy_namespace }}
           --create-namespace
           --version {{ haproxy_chart_version }}
-          --values {{ remote_charts_dir }}/haproxy/values-override.yaml
+          --values {{ remote_charts_dir }}/haproxy/install/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait

@@ -103,22 +103,12 @@
     # STEP 2: INSTALL vault-operator (bank-vaults operator via OCI)
     # =========================================================================
 
-    - name: "[vault-operator] Ensure vault operator values dir exists"
-      file:
-        path: "{{ remote_charts_dir }}/vault/operator"
-        state: directory
-        mode: "0755"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [operator]
-
-    - name: "[vault-operator] Create values-override for vault-operator"
-      copy:
-        dest: "{{ remote_charts_dir }}/vault/operator/values-override.yaml"
-        mode: "0644"
-        content: "{{ vault_operator_helm_values | to_nice_yaml }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-operator] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "vault-operator"
+        dto_dir: "{{ remote_charts_dir }}/vault/operator"
+        dto_content: "{{ vault_operator_helm_values | to_nice_yaml }}"
       tags: [operator]
 
     - name: "[vault-operator] Install vault-operator via OCI helm chart (async)"

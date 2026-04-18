@@ -83,22 +83,12 @@
         helm_repo_url: "{{ cert_manager_helm_repo_url }}"
       tags: [install]
 
-    - name: "[cert-manager-install] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/cert-manager/install"
-        state: directory
-        mode: "0755"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
     - name: "[cert-manager-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/cert-manager/install/values-override.yaml"
-        mode: "0644"
-        content: "{{ cert_manager_helm_values | to_nice_yaml }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "cert-manager-install"
+        dto_dir: "{{ remote_charts_dir }}/cert-manager/install"
+        dto_content: "{{ cert_manager_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[cert-manager-install] Install or upgrade via Helm (async)"

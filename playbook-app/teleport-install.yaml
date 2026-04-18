@@ -122,22 +122,12 @@
         helm_repo_url: "{{ teleport_helm_repo_url }}"
       tags: [install]
 
-    - name: "[teleport-install] Create values directory"
-      file:
-        path: "{{ remote_charts_dir }}/teleport/install"
-        state: directory
-        mode: "0755"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
     - name: "[teleport-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/teleport/install/teleport-values-override.yaml"
-        mode: "0644"
-        content: "{{ teleport_helm_values | to_nice_yaml }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "teleport-install"
+        dto_dir: "{{ remote_charts_dir }}/teleport/install"
+        dto_content: "{{ teleport_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[teleport-install] Install via Helm (async)"
@@ -148,7 +138,7 @@
           helm upgrade --install teleport {{ teleport_helm_repo_name }}/{{ teleport_helm_chart_name }}
           --namespace {{ teleport_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/teleport/install/teleport-values-override.yaml
+          --values {{ remote_charts_dir }}/teleport/install/values-override.yaml
           --version {{ teleport_chart_version }}
           --cleanup-on-fail
           --atomic

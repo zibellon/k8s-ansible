@@ -46,6 +46,15 @@ General rules for callers:
 - **Idempotent.** Re-extraction overwrites. Old files not pruned — if you rename a template, re-run `server-clean` on chart dir or `rm -rf` the remote dir.
 - **Gotcha.** Missing trailing slash on `chart_local_src` creates a nested dir.
 
+### 1.4а `tasks-copy-helm-values.yaml`
+
+- **Purpose.** Create a remote directory + write `values-override.yaml`. Used for external Helm chart install phases where `tasks-copy-chart.yaml` is not called (no local chart to ship).
+- **Input.** `label_name` (string), `dto_dir` (remote path, no trailing slash), `dto_content` (rendered string — the YAML content to write).
+- **Output.** Directory `{{ dto_dir }}` exists on master manager, file `{{ dto_dir }}/values-override.yaml` written (mode 0644).
+- **Callers.** Install-phase blocks in any playbook that uses an external Helm repo: `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `metrics-server-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `teleport-install.yaml`, `vault-install.yaml` (operator phase).
+- **Idempotent.** Yes — `file: state=directory` and `copy` are both idempotent.
+- **Gotcha.** `dto_content` is evaluated at include-time in the caller's variable scope. Always pass the fully-rendered string (e.g., `"{{ my_helm_values | to_nice_yaml }}"`).
+
 ### 1.5 `tasks-add-helm-repo.yaml`
 
 - **Purpose.** `helm repo add` + `helm repo update`. Used before installing official external charts.

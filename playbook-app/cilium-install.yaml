@@ -100,22 +100,12 @@
         helm_repo_url: "{{ cilium_helm_repo_url }}"
       tags: [install]
 
-    - name: "[cilium-install] Ensure charts directory exists"
-      file:
-        path: "{{ remote_charts_dir }}/cilium/install"
-        state: directory
-        mode: "0755"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
     - name: "[cilium-install] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/cilium/install/values-override.yaml"
-        mode: "0644"
-        content: "{{ cilium_helm_values | to_nice_yaml }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "cilium-install"
+        dto_dir: "{{ remote_charts_dir }}/cilium/install"
+        dto_content: "{{ cilium_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[cilium-install] Install or upgrade via Helm (async)"

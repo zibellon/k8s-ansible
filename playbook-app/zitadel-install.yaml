@@ -285,12 +285,11 @@
     # ---------
 
     - name: "[zitadel] Create values file"
-      copy:
-        dest: "{{ remote_charts_dir }}/zitadel/zitadel-values-override.yaml"
-        mode: "0644"
-        content: "{{ zitadel_helm_values | to_nice_yaml }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        label_name: "zitadel"
+        dto_dir: "{{ remote_charts_dir }}/zitadel/install"
+        dto_content: "{{ zitadel_helm_values | to_nice_yaml }}"
       tags: [install]
 
     - name: "[zitadel] Add Helm repository"
@@ -309,7 +308,7 @@
           helm upgrade --install zitadel {{ zitadel_helm_repo_name }}/{{ zitadel_helm_chart_name }}
           --namespace {{ zitadel_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/zitadel/zitadel-values-override.yaml
+          --values {{ remote_charts_dir }}/zitadel/install/values-override.yaml
           --version {{ zitadel_chart_version }}
           --cleanup-on-fail
           --atomic
