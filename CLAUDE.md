@@ -132,10 +132,12 @@ Key ones (full catalog in [`.claude/rules/reusable-tasks.md`](.claude/rules/reus
 - `tasks-apply-node-labels.yaml`, `tasks-untaint-control-plane.yaml`.
 - `tasks-kubelet-health-wait.yaml`, `task-apiserver-restart.yaml` (note the **singular** `task-` prefix — it restarts one apiserver by moving its static pod manifest out/in).
 
-### 2.4 `playbook-app/` — 32 playbooks + 20 chart dirs
+### 2.4 `playbook-app/` — 31 playbooks + 20 chart dirs
 
-**Install playbooks (20)** — one per component, standard 3-phase shape:
-`argocd`, `argocd-git-ops`, `cert-manager`, `cilium`, `external-secrets`, `gitlab`, `gitlab-runner`, `haproxy`, `longhorn`, `medik8s`, `metrics-server`, `mon-grafana`, `mon-kube-state-metrics`, `mon-node-exporter`, `mon-prometheus-operator`, `teleport`, `teleport-ssh-agent` (non-k8s, systemd), `traefik`, `vault`, `zitadel`.
+**Install playbooks (19)** — one per component, standard 3-phase shape:
+`argocd`, `cert-manager`, `cilium`, `external-secrets`, `gitlab`, `gitlab-runner`, `haproxy`, `longhorn`, `medik8s`, `metrics-server`, `mon-grafana`, `mon-kube-state-metrics`, `mon-node-exporter`, `mon-prometheus-operator`, `teleport`, `teleport-ssh-agent` (non-k8s, systemd), `traefik`, `vault`, `zitadel`.
+
+`argocd-install.yaml` extends the standard shape with a `[gitops]` tag that runs after `[post]` and installs the AppProject + Application(s) declared in `argocd_git_ops_apps` (uses `charts/argocd-git-ops/install/`).
 
 **Non-install specials (12):**
 
@@ -479,23 +481,23 @@ Called from every ESO-integrated component's install playbook with `tags: [alway
 
 - `vault_policies` + `vault_policies_extra` — Vault ACL policies.
 - `vault_roles` + `vault_roles_extra` — Vault Kubernetes auth roles (bind SA+namespace → policies).
-- `eso_vault_integration_<c>` object — declares `sa_name`, `role_name`, `secret_store_name`, `kv_engine_path`, `is_need_eso` for each of the 9 components (`<c>` ∈ {`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `argocd_git_ops`, `grafana`}).
+- `eso_vault_integration_<c>` object — declares `sa_name`, `role_name`, `secret_store_name`, `kv_engine_path`, `is_need_eso` for each of the 8 components (`<c>` ∈ {`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`}).
 - `eso_vault_integration_<c>_secrets` + `eso_vault_integration_<c>_secrets_extra` — list of secrets per component.
 
 **Produces runtime facts:**
 
 - `vault_policies_final` = `vault_policies + vault_policies_extra`
 - `vault_roles_final` = `vault_roles + vault_roles_extra`
-- `eso_vault_integration_<c>_secrets_merged` for each of the 9 components (base + extra)
+- `eso_vault_integration_<c>_secrets_merged` for each of the 8 components (base + extra)
 
 **Validates:**
 
 - Unique policy names, unique role names within `_final`.
 - Every role's policies exist in `vault_policies_final`.
 - Each `secret_store_name`'s `role_name` exists in `vault_roles_final`.
-- For `argocd` + `argocd_git_ops` (same namespace): no duplicate secret names across the two.
+- `argocd` extras support types `default`, `git_ops_repo_pattern`, `git_ops_repo_direct` (git-ops repo credentials live in the same `eso_vault_integration_argocd` integration).
 
-### 6.3 The nine ESO-integrated components
+### 6.3 The eight ESO-integrated components
 
 | Component | Namespace | Purpose of ESO-managed secrets |
 |---|---|---|
@@ -505,8 +507,7 @@ Called from every ESO-integrated component's install playbook with `tags: [alway
 | `gitlab` | `gitlab` | PostgreSQL, Redis, MinIO root, MinIO registry, GitLab root password & PAT |
 | `gitlab-runner` | `gitlab-runner` | Runner registration token, S3 cache creds |
 | `zitadel` | `zitadel` | PostgreSQL password, `masterkey` |
-| `argocd` | `argocd` | Admin password (root) |
-| `argocd-git-ops` | `argocd` | Git repo credentials (SSH keys or tokens), pattern + direct refs |
+| `argocd` | `argocd` | Admin password (root) + git-ops repo credentials (pattern / direct, via `_extra`) |
 | `grafana` | `grafana` | Admin password, datasource credentials (OIDC via Zitadel) |
 
 ### 6.4 The five Vault/ESO tasks

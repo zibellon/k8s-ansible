@@ -299,25 +299,12 @@ all:
         refresh_interval: "1m"
         type: "default"
 
-    # Дополнительные ExternalSecrets для ArgoCD
-    # Допустимые типы: "default", "git_ops_repo_pattern", "git_ops_repo_direct"
-    # Пример:
-    eso_vault_integration_argocd_secrets_extra:
-      # ── type: default ──────────────────────────────────────────────────────
-      # Произвольный секрет (dataFrom extract), без ArgoCD-специфичных labels
-      - external_secret_name: "eso-argocd-custom"
-        target_secret_name: "eso-argocd-custom"
-        vault_path: "/argocd/custom/creds"
-        refresh_interval: "1m"
-        type: "default"
-
-    # Дополнительные ExternalSecrets для ArgoCD Git-Ops (git repo credentials)
-    # Обрабатываются argocd-git-ops/pre chart (SA: eso-argocd-git-ops, namespace: argocd)
-    # Допустимые типы: "default", "git_ops_repo_pattern", "git_ops_repo_direct"
-    #
-    # git_ops_repo_pattern — label: repo-creds (credential template для всех репо по URL-префиксу)
-    # git_ops_repo_direct  — label: repository (конкретный репозиторий или helm/OCI реестр)
-    # default      — произвольный секрет, без ArgoCD-label
+    # Дополнительные ExternalSecrets для ArgoCD (включая git-ops credentials).
+    # SA eso-main + SecretStore eso-main.vault (namespace argocd).
+    # Допустимые типы:
+    #   default               — произвольный секрет (dataFrom extract), без ArgoCD label
+    #   git_ops_repo_pattern  — label: repo-creds (credential template для URL-префикса)
+    #   git_ops_repo_direct   — label: repository (конкретный репозиторий или helm/OCI реестр)
     #
     # Vault-ключи (имена совпадают с полями ArgoCD Secret напрямую):
     # git SSH (argocd_secret_type: repo-creds или repository)
@@ -338,7 +325,15 @@ all:
     # helm OCI (argocd_secret_type: repository)
     #   - те же поля что helm repo + enableOCI: "true"
     # Пример (все доступные типы):
-    eso_vault_integration_argocd_git_ops_secrets_extra:
+    eso_vault_integration_argocd_secrets_extra:
+      # ── type: default ──────────────────────────────────────────────────────
+      # Произвольный секрет (dataFrom extract), без ArgoCD-специфичных labels
+      - external_secret_name: "eso-argocd-custom"
+        target_secret_name: "eso-argocd-custom"
+        vault_path: "/argocd/custom/creds"
+        refresh_interval: "1m"
+        type: "default"
+
       # ── type: git_ops_repo_pattern ─────────────────────────────────────────
       # SSH-ключ, label: repo-creds (credential template для URL-префикса)
       - external_secret_name: "eso-argocd-git-ops-repo-pattern-ssh"

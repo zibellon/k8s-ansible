@@ -4,12 +4,14 @@
 #   1. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
 #   2. argocd/install: CRDs + ArgoCD manifests
 #   3. argocd/post: Ingress (UI + RPC) + default AppProject
+#   4. argocd-git-ops/install: AppProject + Application(s) from argocd_git_ops_apps
 #
 # Usage (tags):
-#   ansible-playbook argocd-install.yaml              # full install
-#   ansible-playbook argocd-install.yaml --tags pre   # only pre (NetworkPolicies + ESO)
+#   ansible-playbook argocd-install.yaml              # full install (pre + install + post + gitops)
+#   ansible-playbook argocd-install.yaml --tags pre     # only pre (NetworkPolicies + ESO)
 #   ansible-playbook argocd-install.yaml --tags install
-#   ansible-playbook argocd-install.yaml --tags post  # only post (Ingress + AppProject)
+#   ansible-playbook argocd-install.yaml --tags post    # only post (Ingress + AppProject)
+#   ansible-playbook argocd-install.yaml --tags gitops  # only git-ops AppProjects + Applications
 #
 # NOTE: Admin password management → argocd-configure.yaml
 # =============================================================================
@@ -304,6 +306,70 @@
       tags: [post]
 
     # =========================================================================
+    # STEP 5: ARGOCD/GITOPS (AppProject + Application(s) from argocd_git_ops_apps)
+    # =========================================================================
+
+    - name: "[argocd-gitops] Copy git-ops install chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        label_name: "argocd-gitops"
+        dto_chart_name: "gitops"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/gitops/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/gitops"
+      tags: [gitops]
+
+    - name: "[argocd-gitops] Create values file"
+      copy:
+        dest: "{{ remote_charts_dir }}/argocd/gitops/values-override.yaml"
+        mode: "0644"
+        content: |
+          namespace: {{ argocd_namespace }}
+          gitOpsApps: {{ argocd_git_ops_apps | to_json }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [gitops]
+
+    - name: "[argocd-gitops] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        label_name: "argocd-gitops"
+        dto_helm_command: >
+          helm upgrade --install argocd-gitops {{ remote_charts_dir }}/argocd/gitops
+          --namespace {{ argocd_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/argocd/gitops/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ argocd_gitops_helm_timeout }}
+      tags: [gitops]
+
+    - name: "[argocd-gitops] Get Application status"
+      command: >
+        kubectl get application {{ item.1.name }}
+        -n {{ argocd_namespace }}
+        -o jsonpath='{.status.sync.status} / {.status.health.status}'
+      register: argocd_gitops_app_status
+      changed_when: false
+      failed_when: false
+      loop: "{{ argocd_git_ops_apps | subelements('apps') }}"
+      loop_control:
+        label: "{{ item.1.name }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [gitops]
+
+    - name: "[argocd-gitops] Show Application status"
+      debug:
+        msg: "{{ item.item.1.name }}: {{ item.stdout }}"
+      loop: "{{ argocd_gitops_app_status.results }}"
+      loop_control:
+        label: "{{ item.item.1.name }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [gitops]
+
+    # =========================================================================
     # VERIFICATION
     # =========================================================================
 
@@ -347,7 +413,7 @@
     - name: "[argocd-verify] Installation complete"
       debug:
         msg:
-          - "argocd-pre + argocd + argocd-post: OK"
+          - "argocd-pre + argocd + argocd-post + argocd-git-ops: OK"
           - "Run argocd-configure.yaml to save admin password to Vault."
       delegate_to: "{{ master_manager_fact }}"
       run_once: true

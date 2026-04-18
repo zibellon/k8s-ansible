@@ -93,8 +93,8 @@ General rules for callers:
 - **Output (runtime facts).**
   - `vault_policies_final` — `vault_policies + vault_policies_extra`.
   - `vault_roles_final` — `vault_roles + vault_roles_extra`.
-  - `eso_vault_integration_<c>_secrets_merged` for each of 9 components: `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `argocd_git_ops`, `grafana`.
-- **Validates.** Unique policy names; unique role names; every role's policies exist; SecretStore role exists; for `argocd` + `argocd_git_ops` (same ns) no duplicate secret names.
+  - `eso_vault_integration_<c>_secrets_merged` for each of 8 components: `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`.
+- **Validates.** Unique policy names; unique role names; every role's policies exist; SecretStore role exists; per-component uniqueness of `external_secret_name` / `target_secret_name`. `argocd` extras allow types `default`, `git_ops_repo_pattern`, `git_ops_repo_direct` (git-ops git-creds live in the same integration).
 - **Callers.** Every ESO-integrated install playbook AND `vault-install.yaml`. Tag `[always]`.
 - **Idempotent.** Pure merge + validation.
 

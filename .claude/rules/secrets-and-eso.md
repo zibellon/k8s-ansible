@@ -122,7 +122,7 @@ Runtime-produced merged view: `eso_vault_integration_<c>_secrets_merged = base +
 |---|---|---|
 | `vault_policies_final` | `vault_policies + (vault_policies_extra | default([]))` | list of policy dicts |
 | `vault_roles_final` | `vault_roles + (vault_roles_extra | default([]))` | list of role dicts |
-| `eso_vault_integration_<c>_secrets_merged` (× 9 components) | per-component merge | list of ExternalSecret dicts |
+| `eso_vault_integration_<c>_secrets_merged` (× 8 components) | per-component merge | list of ExternalSecret dicts |
 
 **Validation.** Fails the play if any of:
 
@@ -130,7 +130,8 @@ Runtime-produced merged view: `eso_vault_integration_<c>_secrets_merged = base +
 - Duplicate role names within `vault_roles_final`.
 - A role references a policy not in `vault_policies_final`.
 - An `eso_vault_integration_<c>.role_name` is not present in `vault_roles_final`.
-- For `argocd` + `argocd_git_ops` (shared namespace): duplicate K8s `Secret` names across the two lists.
+- Duplicate `external_secret_name` / `target_secret_name` within any component's merged list.
+- For `argocd` extras: `type` must be one of `default`, `git_ops_repo_pattern`, `git_ops_repo_direct` (git-ops repo credentials live in the same `eso_vault_integration_argocd` integration).
 
 **Usage.** Call once, with `tag: [always]`, near the top of:
 
@@ -343,8 +344,7 @@ All under `eso-secret/` KV engine.
 | `gitlab` | `eso-secret/gitlab/*` | `postgresql`, `redis`, `minio-root`, `minio-registry`, `gitlab-root`, PATs |
 | `gitlab-runner` | `eso-secret/gitlab-runner/*` | registration token, S3 cache creds |
 | `zitadel` | `eso-secret/zitadel/*` | `postgresql`, `masterkey` |
-| `argocd` | `eso-secret/argocd/*` | `admin` (password), optional OIDC client-secret |
-| `argocd-git-ops` | `eso-secret/argocd-git-ops/*` | repo credentials (SSH keys or tokens), per-repo and pattern-based |
+| `argocd` | `eso-secret/argocd/*` | `admin` (password), optional OIDC client-secret, plus git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` |
 | `grafana` | `eso-secret/grafana/*` | `admin` (password), `oidc` client-secret, datasource creds |
 
 ---
@@ -359,7 +359,7 @@ All under `eso-secret/` KV engine.
 | Vault sealed after reboot | Auto-unseal CronJob didn't run | Run manually on a manager: `kubectl -n vault exec vault-0 -- vault operator unseal <key>` × threshold |
 | New manager can't unseal | `/etc/kubernetes/vault-unseal.json` missing | Re-run `tasks-vault-distribute-creds.yaml` (part of `manager-join.yaml`) |
 | `tasks-eso-merge.yaml` fails "duplicate policy" | Base + `_extra` both define the same policy name | Remove duplicate from `_extra` |
-| `tasks-eso-merge.yaml` fails "argocd/argocd_git_ops duplicate" | Both lists define a Secret with the same `name` in the shared `argocd` namespace | Rename one |
+| `tasks-eso-merge.yaml` fails "Duplicate external_secret_name in eso_vault_integration_argocd_secrets_merged" | Base + `_extra` (or multiple `_extra` entries) define ExternalSecrets with the same name | Rename one (git-ops repo-creds and regular argocd secrets now share one list) |
 
 ---
 

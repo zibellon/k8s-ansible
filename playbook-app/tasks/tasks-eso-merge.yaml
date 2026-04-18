@@ -15,7 +15,6 @@
 #   - gitlab-install.yaml
 #   - gitlab-runner-install.yaml
 #   - argocd-install.yaml
-#   - argocd-git-ops-install.yaml
 #   - argocd-configure.yaml
 #   - gitlab-configure.yaml
 #   - zitadel-install.yaml
@@ -40,7 +39,6 @@
 #   - eso_vault_integration_gitlab_runner_secrets_merged
 #   - eso_vault_integration_zitadel_secrets_merged
 #   - eso_vault_integration_argocd_secrets_merged
-#   - eso_vault_integration_argocd_git_ops_secrets_merged
 #   - eso_vault_integration_grafana_secrets_merged
 # =============================================================================
 
@@ -114,7 +112,7 @@
 # -------------------------------------------------------------------------
 # STAGE 4: Validate types in *_secrets_extra arrays
 # -------------------------------------------------------------------------
-# Only "default" type allowed in extras for traefik/haproxy/longhorn/gitlab/gitlab_runner
+# Only "default" type allowed in extras for traefik/haproxy/longhorn/gitlab/gitlab_runner/zitadel/grafana
 # "default", "git_ops_repo_pattern", "git_ops_repo_direct" allowed for argocd extras
 
 - name: "[eso-merge] Validate type=default for extra secrets (traefik/haproxy/longhorn/gitlab/gitlab_runner)"
@@ -147,7 +145,7 @@
   run_once: true
   tags: [always]
 
-- name: "[eso-merge] Validate type for extra secrets (argocd/argocd_git_ops)"
+- name: "[eso-merge] Validate type for extra secrets (argocd)"
   fail:
     msg: >-
       Secret '{{ item.1.external_secret_name }}' in eso_vault_integration_{{ item.0.component }}_secrets_extra
@@ -162,8 +160,6 @@
     _argocd_extras:
       - component: argocd
         secrets: "{{ eso_vault_integration_argocd_secrets_extra | default([]) }}"
-      - component: argocd_git_ops
-        secrets: "{{ eso_vault_integration_argocd_git_ops_secrets_extra | default([]) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -235,15 +231,6 @@
   run_once: true
   tags: [always]
 
-- name: "[eso-merge] Merge argocd_git_ops secrets"
-  set_fact:
-    eso_vault_integration_argocd_git_ops_secrets_merged: >-
-      {{ eso_vault_integration_argocd_git_ops_secrets
-         + (eso_vault_integration_argocd_git_ops_secrets_extra | default([])) }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
 - name: "[eso-merge] Merge grafana secrets"
   set_fact:
     eso_vault_integration_grafana_secrets_merged: >-
@@ -283,8 +270,6 @@
       secrets: "{{ eso_vault_integration_zitadel_secrets_merged }}"
     - component: argocd
       secrets: "{{ eso_vault_integration_argocd_secrets_merged }}"
-    - component: argocd_git_ops
-      secrets: "{{ eso_vault_integration_argocd_git_ops_secrets_merged }}"
     - component: grafana
       secrets: "{{ eso_vault_integration_grafana_secrets_merged }}"
   loop_control:
@@ -316,47 +301,10 @@
       secrets: "{{ eso_vault_integration_zitadel_secrets_merged }}"
     - component: argocd
       secrets: "{{ eso_vault_integration_argocd_secrets_merged }}"
-    - component: argocd_git_ops
-      secrets: "{{ eso_vault_integration_argocd_git_ops_secrets_merged }}"
     - component: grafana
       secrets: "{{ eso_vault_integration_grafana_secrets_merged }}"
   loop_control:
     label: "{{ item.component }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# argocd and argocd_git_ops both live in namespace "argocd"
-# Cross-component name collision check for shared namespaces
-
-- name: "[eso-merge] CRITICAL: argocd vs argocd_git_ops - no external_secret_name collision"
-  fail:
-    msg: >-
-      CONFLICT: external_secret_name collision between eso_vault_integration_argocd_secrets_merged
-      and eso_vault_integration_argocd_git_ops_secrets_merged (both namespace=argocd).
-      Colliding names: {{ _overlap }}.
-      This would create duplicate ExternalSecret resources in namespace argocd.
-  vars:
-    _argocd_names: "{{ eso_vault_integration_argocd_secrets_merged | map(attribute='external_secret_name') | list }}"
-    _git_ops_names: "{{ eso_vault_integration_argocd_git_ops_secrets_merged | map(attribute='external_secret_name') | list }}"
-    _overlap: "{{ _argocd_names | intersect(_git_ops_names) }}"
-  when: _overlap | length > 0
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[eso-merge] CRITICAL: argocd vs argocd_git_ops - no target_secret_name collision"
-  fail:
-    msg: >-
-      CONFLICT: target_secret_name collision between eso_vault_integration_argocd_secrets_merged
-      and eso_vault_integration_argocd_git_ops_secrets_merged (both namespace=argocd).
-      Colliding names: {{ _overlap }}.
-      This would create duplicate Secret resources in namespace argocd.
-  vars:
-    _argocd_names: "{{ eso_vault_integration_argocd_secrets_merged | map(attribute='target_secret_name') | list }}"
-    _git_ops_names: "{{ eso_vault_integration_argocd_git_ops_secrets_merged | map(attribute='target_secret_name') | list }}"
-    _overlap: "{{ _argocd_names | intersect(_git_ops_names) }}"
-  when: _overlap | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -387,8 +335,6 @@
         store: "{{ eso_vault_integration_zitadel }}"
       - component: argocd
         store: "{{ eso_vault_integration_argocd }}"
-      - component: argocd_git_ops
-        store: "{{ eso_vault_integration_argocd_git_ops }}"
       - component: grafana
         store: "{{ eso_vault_integration_grafana }}"
   delegate_to: "{{ master_manager_fact }}"
@@ -471,7 +417,6 @@
       - "gitlab-runner secrets: {{ eso_vault_integration_gitlab_runner_secrets_merged | length }}"
       - "zitadel secrets: {{ eso_vault_integration_zitadel_secrets_merged | length }}"
       - "argocd secrets: {{ eso_vault_integration_argocd_secrets_merged | length }}"
-      - "argocd-git-ops secrets: {{ eso_vault_integration_argocd_git_ops_secrets_merged | length }}"
       - "grafana secrets: {{ eso_vault_integration_grafana_secrets_merged | length }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true

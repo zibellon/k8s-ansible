@@ -140,23 +140,12 @@ Template fields:
 - **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`.
 - **External Helm repo.** No — local chart (upstream values embedded).
 - **Required vars.** `argocd_namespace`, `argocd_version`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_session_duration` (120h), `argocd_reconciliation_timeout` (30s), ConfigMap extras (`argocd_cm_extra`, `argocd_cm_cmd_params_extra`, `argocd_cm_gpg_keys_extra`, `argocd_cm_notifications_extra`, `argocd_cm_rbac_extra`, `argocd_cm_ssh_known_hosts_extra`, `argocd_cm_tls_certs_extra`), `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`.
-- **ESO integration.** Yes (via `eso_vault_integration_argocd`; admin password at `eso-secret/argocd/admin`). Note: shares namespace with `argocd-git-ops` — the two must not define duplicate secret names.
+- **ESO integration.** Yes (via `eso_vault_integration_argocd`; admin password at `eso-secret/argocd/admin`). The same integration carries git-ops repo credentials — types `git_ops_repo_pattern` / `git_ops_repo_direct` rendered by `charts/argocd/pre/templates/eso-external-secret.yaml` with ArgoCD labels (`repo-creds` / `repository`).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
 - **Image registry overrides.** `argocd_image_registry`.
 - **Non-install playbooks.** `argocd-configure.yaml` (one-off admin-password resolve/rotate + validation against ArgoCD API), `argocd-restart.yaml`.
-- **Notes.** 7 ConfigMaps (`argocd-cm`, `argocd-cmd-params-cm`, `argocd-gpg-keys-cm`, `argocd-notifications-cm`, `argocd-rbac-cm`, `argocd-ssh-known-hosts-cm`, `argocd-tls-certs-cm`) are applied in `pre/`, not `install/` — so they exist before the first controller reconcile.
-
-## 10. `argocd-git-ops`
-
-- **Chart path.** `charts/argocd-git-ops/{pre,install,post}/`.
-- **Install playbook.** `argocd-git-ops-install.yaml`.
-- **Namespace.** `argocd` (shared with `argocd`).
-- **Releases.** `argocd-git-ops-pre`, `argocd-git-ops`, `argocd-git-ops-post`.
-- **Required vars.** `argocd_git_ops_*` for repo credentials (pattern + per-repo), ESO vault integration object.
-- **ESO integration.** Yes — pulls Git repo credentials (SSH keys, tokens) from Vault. `eso_vault_integration_argocd_git_ops` defines its own secret list.
-- **Dependencies.** `argocd` (uses the `argocd` namespace).
-- **Notes.** Separated from `argocd` because the set of watched repos changes frequently in operations and should not trigger a full ArgoCD chart redeploy.
+- **Notes.** 7 ConfigMaps (`argocd-cm`, `argocd-cmd-params-cm`, `argocd-gpg-keys-cm`, `argocd-notifications-cm`, `argocd-rbac-cm`, `argocd-ssh-known-hosts-cm`, `argocd-tls-certs-cm`) are applied in `pre/`, not `install/` — so they exist before the first controller reconcile. The `argocd-install.yaml` playbook ships with an additional `[gitops]` tag that runs after `[post]` and creates AppProject + Application(s) from `argocd_git_ops_apps` using `charts/argocd-git-ops/install/` (separate Helm release `argocd-git-ops` in the same namespace).
 
 ## 11. `gitlab`
 
@@ -295,7 +284,7 @@ Template fields:
 | `haproxy-lb` | haproxy | no |
 | `traefik-lb` | traefik | no |
 | `longhorn-system` | longhorn, longhorn-s3-restore | **yes** — cannot rename |
-| `argocd` | argocd, argocd-git-ops | **yes** — cannot rename |
+| `argocd` | argocd | **yes** — cannot rename |
 | `gitlab` | gitlab | no |
 | `gitlab-runner` | gitlab-runner | no |
 | `zitadel` | zitadel | no |
@@ -319,13 +308,15 @@ L5  mon-prometheus-operator
 L6  mon-node-exporter   mon-kube-state-metrics
 L7  zitadel
 L8  mon-grafana    argocd    gitlab    teleport    medik8s
-L9  argocd-git-ops    gitlab-runner
+L9  gitlab-runner
 ```
 
-## 23. ESO-integrated Components (9)
+The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L8 as part of `argocd-install.yaml` — no separate playbook.
+
+## 23. ESO-integrated Components (8)
 
 Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-merge.yaml`:
 
-`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `argocd_git_ops`, `grafana`
+`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`
 
 See [`secrets-and-eso.md`](secrets-and-eso.md) for the per-component secret paths and `SecretStore` layout.
