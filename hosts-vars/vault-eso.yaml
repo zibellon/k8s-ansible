@@ -6,6 +6,9 @@ all:
     # Секреты — в отдельном массиве *_secrets (расширяемом через *_secrets_extra в hosts-vars-override/)
     # eso_vault_integration_XXX — не расширяется через extra
     # ---------
+    # NOTE: строки вида {% raw %}{{ .field_name }}{% endraw %} — это ESO-шаблоны (не Jinja2).
+    # Они экранируются через {% raw %}{% endraw %} и проходят через Ansible as-is в Helm values.
+    # ESO подставляет реальные значения из Vault при выполнении ExternalSecret.
 
     # ---------
     # Traefik
@@ -68,33 +71,109 @@ all:
         target_secret_name: "eso-gitlab-postgresql"
         vault_path: "/gitlab/postgresql/creds"
         type: "postgresql"
+        body:
+          target:
+            name: "eso-gitlab-postgresql"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/postgresql/creds"
       - external_secret_name: "eso-gitlab-redis"
         target_secret_name: "eso-gitlab-redis"
         vault_path: "/gitlab/redis/creds"
         type: "redis"
+        body:
+          target:
+            name: "eso-gitlab-redis"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/redis/creds"
       - external_secret_name: "eso-gitlab-minio-root"
         target_secret_name: "eso-gitlab-minio-root"
         vault_path: "/gitlab/minio/root"
         type: "minio_root"
+        body:
+          target:
+            name: "eso-gitlab-minio-root"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/minio/root"
       - external_secret_name: "eso-gitlab-minio-registry"
         target_secret_name: "eso-gitlab-minio-registry"
         vault_path: "/gitlab/minio/registry"
         type: "minio_registry"
+        body:
+          target:
+            name: "eso-gitlab-minio-registry"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/minio/registry"
       # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
       - external_secret_name: "eso-gitlab-registry-minio-connection"
         target_secret_name: "eso-gitlab-registry-minio-connection"
         vault_path: "/gitlab/minio/registry"
         type: "gitlab_registry_minio_connection"
+        body:
+          target:
+            name: "eso-gitlab-registry-minio-connection"
+            template:
+              engineVersion: v2
+              data:
+                config: |
+                  s3:
+                    bucket: registry
+                    accesskey: {% raw %}{{ .access_key }}{% endraw %}
+                    secretkey: {% raw %}{{ .secret_key }}{% endraw %}
+                    regionendpoint: {{ gitlab_minio_s3_endpoint }}
+                    region: {{ gitlab_minio_s3_region }}
+                    v4auth: true
+          data:
+            - secretKey: access_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: access_key
+            - secretKey: secret_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: secret_key
       # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
       - external_secret_name: "eso-gitlab-minio-connection"
         target_secret_name: "eso-gitlab-minio-connection"
         vault_path: "/gitlab/minio/registry"
         type: "gitlab_minio_connection"
+        body:
+          target:
+            name: "eso-gitlab-minio-connection"
+            template:
+              engineVersion: v2
+              data:
+                connection: |
+                  provider: AWS
+                  region: {{ gitlab_minio_s3_region }}
+                  endpoint: {{ gitlab_minio_s3_endpoint }}
+                  path_style: {{ gitlab_minio_s3_path_style | lower }}
+                  aws_access_key_id: {% raw %}{{ .access_key }}{% endraw %}
+                  aws_secret_access_key: {% raw %}{{ .secret_key }}{% endraw %}
+          data:
+            - secretKey: access_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: access_key
+            - secretKey: secret_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: secret_key
+      # never rendered (is_need_eso: false) — body присутствует для консистентности схемы
       - external_secret_name: "eso-gitlab-root"
         target_secret_name: "eso-gitlab-root"
         vault_path: "/gitlab/root/creds"
         type: "gitlab_root"
-        is_need_eso: false  # vault-only: root creds stored in Vault, no k8s Secret needed
+        is_need_eso: false
+        body:
+          target:
+            name: "eso-gitlab-root"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/root/creds"
 
     eso_vault_integration_gitlab_secrets_extra: []
 
@@ -108,14 +187,43 @@ all:
       kv_engine_path: "eso-secret"
 
     eso_vault_integration_gitlab_runner_secrets:
+      # SPECIAL: runner_token maps Vault key 'token' → k8s key 'runner-token'.
+      # runner-registration-token must be present as empty string for chart compatibility.
       - external_secret_name: "eso-gitlab-runner-token"
         target_secret_name: "eso-gitlab-runner-token"
         vault_path: "/gitlab-runner/token"
         type: "runner_token"
+        body:
+          target:
+            name: "eso-gitlab-runner-token"
+            template:
+              engineVersion: v2
+              data:
+                runner-registration-token: ""
+                runner-token: "{% raw %}{{ .token }}{% endraw %}"
+          data:
+            - secretKey: token
+              remoteRef:
+                key: "eso-secret/data/gitlab-runner/token"
+                property: token
+      # SPECIAL: minio_runner_cache remaps access_key/secret_key → accesskey/secretkey
+      # as expected by the official gitlab-runner chart runners.cache.secretName.
       - external_secret_name: "eso-gitlab-runner-minio-cache"
         target_secret_name: "eso-gitlab-runner-minio-cache"
         vault_path: "/gitlab-runner/minio/cache"
         type: "minio_runner_cache"
+        body:
+          target:
+            name: "eso-gitlab-runner-minio-cache"
+          data:
+            - secretKey: accesskey
+              remoteRef:
+                key: "eso-secret/data/gitlab-runner/minio/cache"
+                property: access_key
+            - secretKey: secretkey
+              remoteRef:
+                key: "eso-secret/data/gitlab-runner/minio/cache"
+                property: secret_key
 
     eso_vault_integration_gitlab_runner_secrets_extra: []
 
@@ -133,10 +241,22 @@ all:
         target_secret_name: "eso-zitadel-postgresql"
         vault_path: "/zitadel/postgresql/creds"
         type: "postgresql"
+        body:
+          target:
+            name: "eso-zitadel-postgresql"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/zitadel/postgresql/creds"
       - external_secret_name: "eso-zitadel-masterkey"
         target_secret_name: "eso-zitadel-masterkey"
         vault_path: "/zitadel/masterkey"
         type: "masterkey"
+        body:
+          target:
+            name: "eso-zitadel-masterkey"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/zitadel/masterkey"
 
     eso_vault_integration_zitadel_secrets_extra: []
 
@@ -150,11 +270,18 @@ all:
       kv_engine_path: "eso-secret"
 
     eso_vault_integration_argocd_secrets:
+      # never rendered (is_need_eso: false) — body присутствует для консистентности схемы
       - external_secret_name: "eso-argocd-root"
         target_secret_name: "eso-argocd-root"
         vault_path: "/argocd/root/creds"
         type: "argocd_root"
-        is_need_eso: false  # vault-only: root creds stored in Vault, no k8s Secret needed
+        is_need_eso: false
+        body:
+          target:
+            name: "eso-argocd-root"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/argocd/root/creds"
 
     eso_vault_integration_argocd_secrets_extra: []
 
@@ -172,5 +299,11 @@ all:
         target_secret_name: "eso-grafana-admin"
         vault_path: "/grafana/admin/creds"
         type: "grafana_admin"
+        body:
+          target:
+            name: "eso-grafana-admin"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/grafana/admin/creds"
 
     eso_vault_integration_grafana_secrets_extra: []
