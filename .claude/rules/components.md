@@ -85,7 +85,7 @@ Template fields:
 - **Releases.** `haproxy-pre`, `haproxy`, `haproxy-post`.
 - **External Helm repo.** No — local chart.
 - **Required vars.** `haproxy_namespace`, `haproxy_helm_values`, tolerations/nodeSelector/resources, TLS/ingress vars.
-- **ESO integration.** Yes (via `eso_vault_integration_haproxy`; base `_secrets` empty — users fill via `_extra`).
+- **ESO integration.** Yes (via `eso_vault_integration_haproxy` in `hosts-vars/haproxy.yaml`; base `_secrets` empty — users fill via `_extra`).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
 - **Image registry overrides.** `haproxy_image_registry`.
@@ -100,7 +100,7 @@ Template fields:
 - **Releases.** `traefik-pre`, `traefik`, `traefik-post`.
 - **External Helm repo.** `https://traefik.github.io/charts` → chart `traefik/traefik`, version `traefik_chart_version` (default `38.0.2`, app version `v3.6.2`).
 - **Required vars.** `traefik_namespace`, `traefik_version`, `traefik_chart_version`, `traefik_web_entrypoint`, `traefik_websecure_entrypoint`, `traefik_prometheus_port` (9200), `traefik_dashboard_domain`, DaemonSet tolerations `[{operator: "Exists"}]`.
-- **ESO integration.** Yes (via `eso_vault_integration_traefik`; base `_secrets` empty — users add via `_extra` for custom TLS / basic-auth).
+- **ESO integration.** Yes (via `eso_vault_integration_traefik` in `hosts-vars/traefik.yaml`; base `_secrets` empty — users add via `_extra` for custom TLS / basic-auth).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager.
 - **Image registry overrides.** `traefik_image_registry`.
@@ -115,7 +115,7 @@ Template fields:
 - **Releases.** `longhorn-pre`, `longhorn`, `longhorn-post`.
 - **External Helm repo.** No — local chart (upstream Longhorn values embedded).
 - **Required vars.** `longhorn_namespace`, `longhorn_version`, `longhorn_storage_classes` (list — empty by default; populate in overrides), `longhorn_helm_values`, tolerations/nodeSelector/resources.
-- **ESO integration.** Yes (via `eso_vault_integration_longhorn`; S3 backup creds live under `eso-secret/longhorn/*`).
+- **ESO integration.** Yes (via `eso_vault_integration_longhorn` in `hosts-vars/longhorn.yaml`; base `_secrets` empty — S3 backup creds added via `_extra`).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault. Node prep via `playbook-system/longhorn-prepare.yaml` (kernel modules `iscsi_tcp`, `dm_crypt`; packages `open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`).
 - **Image registry overrides.** `longhorn_image_registry` (and per-sub-component).
@@ -140,7 +140,7 @@ Template fields:
 - **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`.
 - **External Helm repo.** No — local chart (upstream values embedded).
 - **Required vars.** `argocd_namespace`, `argocd_version`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_session_duration` (120h), `argocd_reconciliation_timeout` (30s), ConfigMap extras (`argocd_cm_extra`, `argocd_cm_cmd_params_extra`, `argocd_cm_gpg_keys_extra`, `argocd_cm_notifications_extra`, `argocd_cm_rbac_extra`, `argocd_cm_ssh_known_hosts_extra`, `argocd_cm_tls_certs_extra`), `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`.
-- **ESO integration.** Yes (via `eso_vault_integration_argocd`; admin password at `eso-secret/argocd/admin`). The same integration carries git-ops repo credentials — types `git_ops_repo_pattern` / `git_ops_repo_direct` rendered by `charts/argocd/pre/templates/eso-external-secret.yaml` with ArgoCD labels (`repo-creds` / `repository`).
+- **ESO integration.** Yes (via `eso_vault_integration_argocd` in `hosts-vars/argocd.yaml`; admin password + git-ops repo credentials). The same `_secrets` list carries both types: plain admin-password entries and git-ops repo entries (which set `body.target.template.metadata.labels: argocd.argoproj.io/secret-type: repo-creds` or `repository` to let ArgoCD recognise them as repository credentials).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
 - **Image registry overrides.** `argocd_image_registry`.
@@ -154,7 +154,7 @@ Template fields:
 - **Namespace.** `gitlab`.
 - **Releases.** `gitlab-pre`, `gitlab-postgresql`, `gitlab-redis`, `gitlab-minio`, `gitlab`, `gitlab-post`.
 - **Required vars.** `gitlab_namespace`, `gitlab_version`, per-sibling (`gitlab_postgresql_*`, `gitlab_redis_*`, `gitlab_minio_*`) storage class + size + tolerations/nodeSelector/resources + credentials via ESO. Domain vars (`gitlab_domain`, `gitlab_registry_domain`).
-- **ESO integration.** Yes — Postgres password, Redis password, MinIO root + registry creds, GitLab root password, optional PAT tokens.
+- **ESO integration.** Yes (via `eso_vault_integration_gitlab` in `hosts-vars/gitlab.yaml`) — Postgres password, Redis password, MinIO root + registry creds, GitLab root password, optional PAT tokens. Complex secrets (MinIO connection strings, registry connection YAML) use `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
 - **Image registry overrides.** `gitlab_image_registry`, `gitlab_postgresql_image_registry`, `gitlab_redis_image_registry`, `gitlab_minio_image_registry`.
@@ -168,7 +168,7 @@ Template fields:
 - **Namespace.** `gitlab-runner` (separate from `gitlab` — runners can scale independently).
 - **Releases.** `gitlab-runner-pre`, `gitlab-runner`.
 - **Required vars.** `gitlab_runner_namespace`, `gitlab_runner_version`, `gitlab_runner_helm_values`, tolerations/nodeSelector/resources.
-- **ESO integration.** Yes — registration token + S3 cache creds.
+- **ESO integration.** Yes (via `eso_vault_integration_gitlab_runner` in `hosts-vars/gitlab-runner.yaml`) — registration token + S3 cache creds. The runner-token secret uses `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** No (runner itself doesn't expose metrics worth scraping).
 - **Dependencies.** `gitlab` (for runner registration token).
 - **Image registry overrides.** `gitlab_runner_image_registry`.
@@ -180,7 +180,7 @@ Template fields:
 - **Namespace.** `zitadel`.
 - **Releases.** `zitadel-pre`, `zitadel-postgresql`, `zitadel`, `zitadel-post`.
 - **Required vars.** `zitadel_namespace`, `zitadel_version`, `zitadel_postgresql_*` (storage, creds via ESO), `zitadel_domain`, `zitadel_masterkey` (in Vault via ESO).
-- **ESO integration.** Yes — Postgres password, `masterkey`.
+- **ESO integration.** Yes (via `eso_vault_integration_zitadel` in `hosts-vars/zitadel.yaml`) — Postgres password, `masterkey`.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
 - **Image registry overrides.** `zitadel_image_registry`, `zitadel_postgresql_image_registry`.
@@ -241,7 +241,7 @@ Template fields:
 - **Namespace.** `grafana`.
 - **Releases.** `mon-grafana-pre`, `mon-grafana`, `mon-grafana-post`.
 - **Required vars.** `grafana_namespace` (`grafana`), `grafana_version`, `grafana_domain`, datasources list, dashboards list, OIDC config (Zitadel).
-- **ESO integration.** Yes — admin password, OIDC client-secret, datasource credentials.
+- **ESO integration.** Yes (via `eso_vault_integration_grafana` in `hosts-vars/mon-grafana.yaml`) — admin password, OIDC client-secret, datasource credentials.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, zitadel (for OIDC), mon-prometheus-operator.
 - **Image registry overrides.** `grafana_image_registry`.
@@ -315,8 +315,10 @@ The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in
 
 ## 23. ESO-integrated Components (8)
 
-Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-merge.yaml`:
+Only these have `eso_vault_integration_<c>` objects and are processed by `tasks-eso-secrets-merge.yaml`:
 
 `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`
 
-See [`secrets-and-eso.md`](secrets-and-eso.md) for the per-component secret paths and `SecretStore` layout.
+Each integration object + `_secrets` list + `_secrets_extra` list lives in the corresponding `hosts-vars/<c>.yaml`.
+
+See [`secrets-and-eso.md`](secrets-and-eso.md) for the per-component secret paths, `SecretStore` layout, and canonical `body` item format.

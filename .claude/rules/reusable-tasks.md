@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (16 tasks)
+## 1. `playbook-app/tasks/` (19 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -86,17 +86,44 @@ General rules for callers:
 - **Callers.** End of `install` phase on every component; also `-restart` playbooks.
 - **Idempotent.** Read-only wait.
 
-### 1.8 `tasks-eso-merge.yaml`
+### 1.8a `tasks-vault-policies-roles-merge.yaml`
 
-- **Purpose.** Merge base + `_extra` for all Vault/ESO inventory data. Validate consistency.
-- **Input.** None (reads vars by convention).
+- **Purpose.** Merge base + `_extra` for Vault policies and roles. Validate internal consistency.
+- **Input.** Reads from inventory: `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (all optional — `_extra` default `[]`).
 - **Output (runtime facts).**
-  - `vault_policies_final` — `vault_policies + vault_policies_extra`.
-  - `vault_roles_final` — `vault_roles + vault_roles_extra`.
-  - `eso_vault_integration_<c>_secrets_merged` for each of 8 components: `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`.
-- **Validates.** Unique policy names; unique role names; every role's policies exist; SecretStore role exists; per-component uniqueness of `external_secret_name` / `target_secret_name`. `argocd` extras allow types `default`, `git_ops_repo_pattern`, `git_ops_repo_direct` (git-ops git-creds live in the same integration).
-- **Callers.** Every ESO-integrated install playbook AND `vault-install.yaml`. Tag `[always]`.
+  - `vault_policies_final` — `vault_policies + (vault_policies_extra | default([]))`.
+  - `vault_roles_final` — `vault_roles + (vault_roles_extra | default([]))`.
+- **Validates.**
+  - Unique `name` within `vault_policies_final` — fails with the duplicate name.
+  - Unique `name` within `vault_roles_final` — fails with the duplicate name.
+  - Every role's `policies` list entries exist in `vault_policies_final` — fails with role name + missing policy.
+- **Callers.** Only `playbook-app/vault-install.yaml` (at `tags: [always]`). Not called from component install playbooks.
 - **Idempotent.** Pure merge + validation.
+
+### 1.8b `tasks-eso-secrets-merge.yaml`
+
+- **Purpose.** Merge per-component base + `_extra` secrets lists for all 8 ESO-integrated components. Validate uniqueness within each merged list.
+- **Input.** Reads from inventory: `eso_vault_integration_<c>_secrets` and `eso_vault_integration_<c>_secrets_extra` for each of the 8 components: `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`. `_extra` defaults to `[]` if absent.
+- **Merge order.** Base + extra (extra appended at the end).
+- **Output (runtime facts).**
+  - `eso_vault_integration_<c>_secrets_merged` for each of the 8 components — list of ExternalSecret dicts.
+- **Validates (per-component).** Unique `external_secret_name` across the merged list; unique `body.target.name` across the merged list. Fails with component name + duplicate value.
+- **Callers.** Every ESO-integrated install/configure playbook at `tags: [always]`: `traefik-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-configure.yaml`, `gitlab-runner-install.yaml`, `argocd-install.yaml`, `argocd-configure.yaml`, `zitadel-install.yaml`, `mon-grafana-install.yaml`. Also `vault-install.yaml` (after `tasks-vault-policies-roles-merge.yaml`).
+- **Idempotent.** Pure merge + validation.
+
+### 1.8c `tasks-eso-lookup.yaml`
+
+- **Purpose.** Find one entry in a `*_secrets_merged` list by `external_secret_name`, export its `body.target.name` (as `target_secret_name`) and `vault_path` as named Ansible facts. Fails with a clear message if the entry is not found.
+- **Input.**
+  - `label_name` (required string — log prefix).
+  - `dto_secrets_list` (required sequence — the merged `*_secrets_merged` list to search).
+  - `dto_external_secret_name` (required string — lookup key).
+  - `dto_res_fact_name_secret` (required string — output fact name for `target_secret_name`).
+  - `dto_res_fact_name_vault_path` (required string — output fact name for `vault_path`).
+- **Validates (assert).** All 5 params defined + non-empty; `dto_secrets_list` is a sequence.
+- **Output.** Two named facts (`dto_res_fact_name_secret` → `body.target.name` of the matched item; `dto_res_fact_name_vault_path` → `vault_path` of the matched item). Fails with list size and searched name if no match found.
+- **Callers.** Any playbook that needs to resolve a specific ExternalSecret's target name or Vault path: `gitlab-install.yaml` (7 lookups), `gitlab-configure.yaml` (1), `gitlab-runner-install.yaml` (3), `zitadel-install.yaml` (2), `mon-grafana-install.yaml` (1), `argocd-configure.yaml` (1). Tag `[always]`.
+- **Idempotent.** Pure lookup — no side effects.
 
 ### 1.9 `tasks-resolve-acme-solver.yaml`
 
@@ -315,7 +342,7 @@ General rules for callers:
     namespace_value: "{{ <c>_namespace }}"
   tags: [always]
 
-- include_tasks: tasks/tasks-eso-merge.yaml
+- include_tasks: tasks/tasks-eso-secrets-merge.yaml
   tags: [always]
 
 # If ingress uses ACME:

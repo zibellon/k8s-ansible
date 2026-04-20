@@ -52,8 +52,9 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 
 ### 1.4 ESO integration object
 
-Every ESO-integrated component has an `eso_vault_integration_<c>` object with this shape:
+Every ESO-integrated component has the following variables in its `hosts-vars/<c>.yaml`:
 
+**Integration object:**
 ```yaml
 eso_vault_integration_<c>:
   sa_name: "<c>-eso-sa"
@@ -63,7 +64,18 @@ eso_vault_integration_<c>:
   is_need_eso: true
 ```
 
-Plus `eso_vault_integration_<c>_secrets` (base) and `eso_vault_integration_<c>_secrets_extra` (override layer). At runtime `tasks-eso-merge.yaml` produces `eso_vault_integration_<c>_secrets_merged = base + extra`. See [`secrets-and-eso.md`](secrets-and-eso.md) for the full schema.
+**Named lookup variables** (`<c>_secret_name_<logical>`) — one per logical secret that playbooks need to reference by name (for Vault rotation flows or chart value injection). Example:
+```yaml
+zitadel_secret_name_postgresql: "eso-zitadel-postgresql"
+zitadel_secret_name_masterkey:  "eso-zitadel-masterkey"
+```
+These variables serve two purposes:
+- Used as Jinja-refs in the base `_secrets` list so that `external_secret_name` and `body.target.name` are set from one canonical place.
+- Passed to `tasks-eso-lookup.yaml` at playbook runtime to look up the full entry (returning `body.target.name` + `vault_path` as facts).
+
+For `_extra` entries defined in `hosts-vars-override/`, literal strings are used instead of Jinja-refs (no canonical named variables for user-defined extras).
+
+**Secrets list** (`eso_vault_integration_<c>_secrets`) and **extension layer** (`eso_vault_integration_<c>_secrets_extra`). At runtime `tasks-eso-secrets-merge.yaml` produces `eso_vault_integration_<c>_secrets_merged = base + extra`. See [`secrets-and-eso.md`](secrets-and-eso.md) §2.4 for the full item schema (`external_secret_name`, `vault_path`, `body`, optional `is_need_eso`, `refresh_interval`).
 
 ### 1.5 The `*_extra` concat-merge pattern
 
@@ -80,7 +92,7 @@ Known `_extra` names:
 ```
 vault_policies_extra
 vault_roles_extra
-eso_vault_integration_<c>_secrets_extra    # for each of the 9 ESO-integrated components
+eso_vault_integration_<c>_secrets_extra    # for each of the 8 ESO-integrated components
 argocd_cm_extra
 argocd_cm_cmd_params_extra
 argocd_cm_gpg_keys_extra
@@ -187,7 +199,7 @@ Per-file source of truth in parentheses.
 - `kubeadm_config_template` — full kubeadm `ClusterConfiguration` + `InitConfiguration` + `KubeletConfiguration` + `KubeProxyConfiguration` template. Rendered by `tasks-kubeadm-config-create.yaml`.
 - `kubeadm_config_path` — `/etc/kubernetes/kubeadm-config.yaml`.
 
-### 2.6 Vault & ESO cross-cutting (`hosts-vars/vault.yaml`, `hosts-vars/vault-eso.yaml`)
+### 2.6 Vault & ESO cross-cutting (`hosts-vars/vault.yaml`)
 
 | Variable | Purpose |
 |---|---|
@@ -201,7 +213,7 @@ Per-file source of truth in parentheses.
 | `vault_auto_unseal_schedule` | Cron for auto-unseal CronJob (default `"*/5 * * * *"`) |
 | `vault_policies` / `vault_policies_extra` | Vault ACL policy definitions |
 | `vault_roles` / `vault_roles_extra` | Kubernetes-auth role bindings (SA + ns → policies) |
-| `eso_vault_integration_<c>` | One object per ESO-integrated component — see `secrets-and-eso.md` |
+| `eso_vault_integration_<c>` | One object per ESO-integrated component; lives in `hosts-vars/<c>.yaml` (not `vault.yaml`) — see `secrets-and-eso.md` |
 
 ### 2.7 VPN allowlist (`hosts-vars/vpn-rules.yaml`)
 
@@ -259,9 +271,9 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `is_node_joined` | `tasks-set-is-node-joined.yaml` | Skip re-join logic |
 | `joined_node_ips` | `tasks-gather-cluster-facts.yaml` | Cilium host-firewall `nodeIpsList`, certSANs |
 | `joined_node_hostnames` | same | Logging / validation |
-| `vault_policies_final` | `tasks-eso-merge.yaml` | Rendered into `vault/install/values-override.yaml` |
+| `vault_policies_final` | `tasks-vault-policies-roles-merge.yaml` | Rendered into `vault/install/values-override.yaml` |
 | `vault_roles_final` | same | Same |
-| `eso_vault_integration_<c>_secrets_merged` | same | Rendered into `<c>/pre/values-override.yaml` |
+| `eso_vault_integration_<c>_secrets_merged` | `tasks-eso-secrets-merge.yaml` | Rendered into `<c>/pre/values-override.yaml` |
 | `<c>_acme_cluster_issuer`, `<c>_acme_solver`, `<c>_acme_solver_pod_labels` | `tasks-resolve-acme-solver.yaml` | NetworkPolicy templates in `<c>/pre/` |
 
 ---

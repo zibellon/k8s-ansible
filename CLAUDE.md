@@ -161,7 +161,7 @@ Key ones (full catalog in [`.claude/rules/reusable-tasks.md`](.claude/rules/reus
 
 ### 2.5 `hosts-vars/` vs `hosts-vars-override/` vs `hosts-extra.example.yaml`
 
-- `hosts-vars/` — 26 files. Inventory skeleton (`hosts.yaml`), Ansible/global settings (`ansible.yaml`, `k8s-base.yaml`, `kubeadm-config.yaml`), one file per component (`<c>.yaml`), cross-cutting files (`vault.yaml`, `vault-eso.yaml`, `vpn-rules.yaml`, `teleport-configure.yaml`).
+- `hosts-vars/` — 25 files. Inventory skeleton (`hosts.yaml`), Ansible/global settings (`ansible.yaml`, `k8s-base.yaml`, `kubeadm-config.yaml`), one file per component (`<c>.yaml`), cross-cutting files (`vault.yaml`, `vpn-rules.yaml`, `teleport-configure.yaml`).
 - `hosts-vars-override/` — mirror structure for the specific environment. At minimum contains a real `hosts.yaml` with `ansible_host`, `ansible_user`, `ansible_password`, `internal_ip`, `is_master: true` on exactly one manager. Also: any `_extra` arrays, real domains, real cluster issuer names, real storage class names.
 - `hosts-extra.example.yaml` — committed **template** documenting every `*_extra` extension point. Copy what you need into `hosts-vars-override/`.
 
@@ -313,7 +313,7 @@ Each phase is a **separate Helm release**: `<c>-pre`, `<c>`, `<c>-post`. Benefit
 
 | Phase | Release | Typical resources | Key task includes |
 |---|---|---|---|
-| `pre` | `<c>-pre` | `NetworkPolicy`, `ServiceAccount`, `SecretStore`, `ExternalSecret` | `tasks-pre-check`, `tasks-forbid-kube-system`, `tasks-eso-merge`, `tasks-resolve-acme-solver`, `tasks-copy-chart`, helm upgrade |
+| `pre` | `<c>-pre` | `NetworkPolicy`, `ServiceAccount`, `SecretStore`, `ExternalSecret` | `tasks-pre-check`, `tasks-forbid-kube-system`, `tasks-eso-secrets-merge`, `tasks-resolve-acme-solver`, `tasks-copy-chart`, helm upgrade |
 | `install` | `<c>` | CRDs (often in separate `crds/` phase), workload, operator, HPA, PDB | `tasks-copy-chart`, optional `tasks-add-helm-repo`, `tasks-wait-crds`, helm upgrade, `tasks-wait-rollout`, `tasks-verify-helm` |
 | `post` | `<c>-post` | `IngressRoute`, `ServiceMonitor`, additional `ConfigMap`s, `Certificate`, `ClusterIssuer` | `tasks-copy-chart`, helm upgrade, optional `tasks-eso-force-sync` |
 
@@ -333,7 +333,7 @@ Seen in the wild; all use the same `tasks-copy-chart` + helm-upgrade pattern:
 always:
   tasks-pre-check            → sets master_manager_fact, asserts cluster
   tasks-forbid-kube-system   → refuses <c>_namespace == kube-system
-  tasks-eso-merge            → vault_policies_final / vault_roles_final / *_secrets_merged
+  tasks-eso-secrets-merge    → *_secrets_merged (per-component)
   tasks-resolve-acme-solver  → (if ingress uses ACME) → <c>_acme_solver_pod_labels
 
 --tags crds (if present):
@@ -471,31 +471,25 @@ The most complex subsystem. Read `.claude/rules/secrets-and-eso.md` for depth.
 
 - Vault is installed via `vault-install.yaml` using the bank-vaults operator. Three Vault unseal keys + root token live in `/etc/kubernetes/vault-unseal.json` on every manager (copied by `tasks-vault-distribute-creds.yaml` during `manager-join.yaml`).
 - Two KV engines: `secret/` (human/admin use, `vault-admin` policy can write) and `eso-secret/` (ESO-consumable, per-component policies are read-only on their subtree).
-- Nine components consume secrets from Vault via ESO (see §6.3).
+- Eight components consume secrets from Vault via ESO (see §6.3).
 
-### 6.2 The `tasks-eso-merge.yaml` contract
+### 6.2 Merge tasks — split design
 
-Called from every ESO-integrated component's install playbook with `tags: [always]`. Zero arguments.
+The former `tasks-eso-merge.yaml` was split into two independent tasks. See `.claude/rules/reusable-tasks.md` §1.8a–§1.8b for full contracts.
 
-**Reads from inventory:**
+**`tasks-vault-policies-roles-merge.yaml`** — called only from `vault-install.yaml` (tag `[always]`).
+- Reads: `vault_policies` + `vault_policies_extra`, `vault_roles` + `vault_roles_extra`.
+- Produces: `vault_policies_final`, `vault_roles_final`.
+- Validates: unique names; every role's policies exist in `vault_policies_final`.
 
-- `vault_policies` + `vault_policies_extra` — Vault ACL policies.
-- `vault_roles` + `vault_roles_extra` — Vault Kubernetes auth roles (bind SA+namespace → policies).
-- `eso_vault_integration_<c>` object — declares `sa_name`, `role_name`, `secret_store_name`, `kv_engine_path`, `is_need_eso` for each of the 8 components (`<c>` ∈ {`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`}).
-- `eso_vault_integration_<c>_secrets` + `eso_vault_integration_<c>_secrets_extra` — list of secrets per component.
+**`tasks-eso-secrets-merge.yaml`** — called from every ESO-integrated component install/configure playbook (tag `[always]`).
+- Reads: `eso_vault_integration_<c>_secrets` + `_extra` for each of the 8 components. Each object lives in `hosts-vars/<c>.yaml`.
+- Produces: `eso_vault_integration_<c>_secrets_merged` for each of the 8 components (base + extra, extra at end).
+- Validates: unique `external_secret_name` and `body.target.name` within each merged list.
 
-**Produces runtime facts:**
-
-- `vault_policies_final` = `vault_policies + vault_policies_extra`
-- `vault_roles_final` = `vault_roles + vault_roles_extra`
-- `eso_vault_integration_<c>_secrets_merged` for each of the 8 components (base + extra)
-
-**Validates:**
-
-- Unique policy names, unique role names within `_final`.
-- Every role's policies exist in `vault_policies_final`.
-- Each `secret_store_name`'s `role_name` exists in `vault_roles_final`.
-- `argocd` extras support types `default`, `git_ops_repo_pattern`, `git_ops_repo_direct` (git-ops repo credentials live in the same `eso_vault_integration_argocd` integration).
+**`tasks-eso-lookup.yaml`** — called inline by playbooks that need to resolve a specific ExternalSecret's target name or Vault path.
+- Input: `dto_secrets_list`, `dto_external_secret_name`, two output fact names.
+- Output: `body.target.name` and `vault_path` of the matched item. Fails if not found.
 
 ### 6.3 The eight ESO-integrated components
 
@@ -546,12 +540,13 @@ Called from every ESO-integrated component's install playbook with `tags: [alway
 
 ### 6.6 Adding a new ESO-integrated component
 
-1. Add `eso_vault_integration_<c>` in `hosts-vars/vault-eso.yaml` (or a new file) with `sa_name`, `role_name`, `secret_store_name`, `kv_engine_path: "eso-secret"`, `is_need_eso: true`.
-2. Define `eso_vault_integration_<c>_secrets` (base) and allow `_secrets_extra` in `hosts-extra.example.yaml`.
+1. Add `<c>_secret_name_<logical>` lookup variables + `eso_vault_integration_<c>` object + `eso_vault_integration_<c>_secrets` list in `hosts-vars/<c>.yaml`. All three live in the per-component file, not in `vault.yaml`.
+2. Allow `_secrets_extra` in `hosts-extra.example.yaml`.
 3. Add the role + policy to `vault_policies` / `vault_roles` in `hosts-vars/vault.yaml`.
-4. In the component's `pre/` chart: render `ServiceAccount`, `SecretStore` (references `sa_name` + `role_name`), `ExternalSecret` objects from `eso_vault_integration_<c>_secrets_merged`.
-5. In the component's install playbook, include `tasks-eso-merge.yaml` (`tags: [always]`) — no arguments required; it auto-handles the new component if added to the merge list.
-6. Re-run `vault-install.yaml --tags install` so the new Vault policy/role is applied by the bank-vaults operator.
+4. In the component's `pre/` chart: render `ServiceAccount`, `SecretStore`. Copy the canonical `eso-external-secret.yaml` template from any existing component — it is identical across all 8 and requires no modification.
+5. Update `tasks-eso-secrets-merge.yaml` to include the new `<c>` in its 8-component loop.
+6. In the component's install playbook, include `tasks-eso-secrets-merge.yaml` (`tags: [always]`).
+7. Re-run `vault-install.yaml --tags install` so the new Vault policy/role is applied by the bank-vaults operator.
 
 ---
 
@@ -854,13 +849,14 @@ ansible -i hosts-vars/ -i hosts-vars-override/ <master> -m command \
 - **Adding a node without pre-updating Cilium host firewall** — join handshake hangs. Run `cilium-install.yaml --tags post` first.
 - **Deleting ETCD rotation state files mid-rotation** — loses the ability to resume safely. If interrupted, **always** let the next run pick up via state file; never `rm` them manually.
 - **Forgetting `run_once: true` on delegated tasks** — helm/kubectl runs N times (once per manager in `hosts: managers`), producing confusing Helm history.
-- **`tasks-pre-check.yaml` + `tasks-eso-merge.yaml` are `tags: [always]`** — they run regardless of `--tags`. If you add new tasks that derive facts, tag them `[always]` or they will silently skip in single-phase runs.
+- **`tasks-pre-check.yaml`, `tasks-eso-secrets-merge.yaml`, and `tasks-eso-lookup.yaml` are `tags: [always]`** — they run regardless of `--tags`. If you add new tasks that derive facts, tag them `[always]` or they will silently skip in single-phase runs.
 
 ### 12.3 Anti-patterns
 
 - Inline `kubectl apply -f ...` in a playbook instead of a Helm chart. Use charts; they integrate with `--tags`, `--atomic`, and release history.
 - Hard-coded pod labels for ACME solver `NetworkPolicy`. Always resolve via `tasks-resolve-acme-solver.yaml`.
-- Bypassing `tasks-eso-merge.yaml` (e.g., manually writing `secrets:` in a values file). You'll miss `_extra` merges and validation.
+- Bypassing `tasks-eso-secrets-merge.yaml` by hard-coding a secrets list inline in `values-override.yaml`. You'll miss `_extra` merges and uniqueness validation.
+- Hard-coding a literal `kv_engine_path` string (e.g., `"eso-secret"`) inside a `body.dataFrom.extract.key` value instead of using a Jinja-ref (`{{ eso_vault_integration_<c>.kv_engine_path }}`). Prevents overriding the engine path without touching every item.
 - Putting secrets in `hosts-vars/`. Always `hosts-vars-override/`, never committed.
 - Adding `gather_facts: true` to `playbook-app/` plays. Use `tasks-gather-cluster-facts.yaml` instead — deterministic and cached.
 
