@@ -176,3 +176,50 @@ all:
     # -------
     gitlab_runner_secret_name_token:       "eso-gitlab-runner-token"
     gitlab_runner_secret_name_minio_cache: "eso-gitlab-runner-minio-cache"
+    # ---------
+    # GitLab Runner
+    # ---------
+    eso_vault_integration_gitlab_runner:
+      sa_name: "eso-main"
+      role_name: "gitlab-runner.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_gitlab_runner_secrets:
+      # SPECIAL: runner_token maps Vault key 'token' → k8s key 'runner-token'.
+      # runner-registration-token must be present as empty string for chart compatibility.
+      - external_secret_name: "eso-gitlab-runner-token"
+        target_secret_name: "eso-gitlab-runner-token"
+        vault_path: "/gitlab-runner/token"
+        body:
+          target:
+            name: "eso-gitlab-runner-token"
+            template:
+              engineVersion: v2
+              data:
+                runner-registration-token: ""
+                runner-token: "{% raw %}{{ .token }}{% endraw %}"
+          data:
+            - secretKey: token
+              remoteRef:
+                key: "eso-secret/data/gitlab-runner/token"
+                property: token
+      # SPECIAL: minio_runner_cache remaps access_key/secret_key → accesskey/secretkey
+      # as expected by the official gitlab-runner chart runners.cache.secretName.
+      - external_secret_name: "eso-gitlab-runner-minio-cache"
+        target_secret_name: "eso-gitlab-runner-minio-cache"
+        vault_path: "/gitlab-runner/minio/cache"
+        body:
+          target:
+            name: "eso-gitlab-runner-minio-cache"
+          data:
+            - secretKey: accesskey
+              remoteRef:
+                key: "eso-secret/data/gitlab-runner/minio/cache"
+                property: access_key
+            - secretKey: secretkey
+              remoteRef:
+                key: "eso-secret/data/gitlab-runner/minio/cache"
+                property: secret_key
+
+    eso_vault_integration_gitlab_runner_secrets_extra: []

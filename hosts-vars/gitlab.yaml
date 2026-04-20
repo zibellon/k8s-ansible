@@ -476,3 +476,115 @@ all:
     gitlab_secret_name_registry_minio_connection: "eso-gitlab-registry-minio-connection"
     gitlab_secret_name_minio_connection:          "eso-gitlab-minio-connection"
     gitlab_secret_name_root:                      "eso-gitlab-root"
+    # ---------
+    # GitLab (all secrets: postgresql, redis, minio, gitlab root)
+    # ---------
+    eso_vault_integration_gitlab:
+      sa_name: "eso-main"
+      role_name: "gitlab.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_gitlab_secrets:
+      - external_secret_name: "eso-gitlab-postgresql"
+        target_secret_name: "eso-gitlab-postgresql"
+        vault_path: "/gitlab/postgresql/creds"
+        body:
+          target:
+            name: "eso-gitlab-postgresql"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/postgresql/creds"
+      - external_secret_name: "eso-gitlab-redis"
+        target_secret_name: "eso-gitlab-redis"
+        vault_path: "/gitlab/redis/creds"
+        body:
+          target:
+            name: "eso-gitlab-redis"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/redis/creds"
+      - external_secret_name: "eso-gitlab-minio-root"
+        target_secret_name: "eso-gitlab-minio-root"
+        vault_path: "/gitlab/minio/root"
+        body:
+          target:
+            name: "eso-gitlab-minio-root"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/minio/root"
+      - external_secret_name: "eso-gitlab-minio-registry"
+        target_secret_name: "eso-gitlab-minio-registry"
+        vault_path: "/gitlab/minio/registry"
+        body:
+          target:
+            name: "eso-gitlab-minio-registry"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/minio/registry"
+      # SPECIAL: gitlab_registry_minio_connection uses ESO template to generate registry storage config
+      - external_secret_name: "eso-gitlab-registry-minio-connection"
+        target_secret_name: "eso-gitlab-registry-minio-connection"
+        vault_path: "/gitlab/minio/registry"
+        body:
+          target:
+            name: "eso-gitlab-registry-minio-connection"
+            template:
+              engineVersion: v2
+              data:
+                config: |
+                  s3:
+                    bucket: registry
+                    accesskey: {% raw %}{{ .access_key }}{% endraw %}
+                    secretkey: {% raw %}{{ .secret_key }}{% endraw %}
+                    regionendpoint: {{ gitlab_minio_s3_endpoint }}
+                    region: {{ gitlab_minio_s3_region }}
+                    v4auth: true
+          data:
+            - secretKey: access_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: access_key
+            - secretKey: secret_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: secret_key
+      # SPECIAL: gitlab_minio_connection uses ESO template to generate s3_connection YAML
+      - external_secret_name: "eso-gitlab-minio-connection"
+        target_secret_name: "eso-gitlab-minio-connection"
+        vault_path: "/gitlab/minio/registry"
+        body:
+          target:
+            name: "eso-gitlab-minio-connection"
+            template:
+              engineVersion: v2
+              data:
+                connection: |
+                  provider: AWS
+                  region: {{ gitlab_minio_s3_region }}
+                  endpoint: {{ gitlab_minio_s3_endpoint }}
+                  path_style: {{ gitlab_minio_s3_path_style | lower }}
+                  aws_access_key_id: {% raw %}{{ .access_key }}{% endraw %}
+                  aws_secret_access_key: {% raw %}{{ .secret_key }}{% endraw %}
+          data:
+            - secretKey: access_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: access_key
+            - secretKey: secret_key
+              remoteRef:
+                key: "eso-secret/data/gitlab/minio/registry"
+                property: secret_key
+      # never rendered (is_need_eso: false) — body присутствует для консистентности схемы
+      - external_secret_name: "eso-gitlab-root"
+        target_secret_name: "eso-gitlab-root"
+        vault_path: "/gitlab/root/creds"
+        is_need_eso: false
+        body:
+          target:
+            name: "eso-gitlab-root"
+          dataFrom:
+            - extract:
+                key: "eso-secret/data/gitlab/root/creds"
+
+    eso_vault_integration_gitlab_secrets_extra: []
