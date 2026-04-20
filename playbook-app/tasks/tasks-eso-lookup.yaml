@@ -6,7 +6,7 @@
 # On success, publishes two named facts: body.target.name and vault_path.
 #
 # Required vars:
-#   label_name                    — task label prefix
+#   dto_label_name                    — task label prefix
 #   dto_secrets_list              — merged *_secrets_merged list to search
 #   dto_external_secret_name      — external_secret_name to look up
 #   dto_res_fact_name_secret      — output fact name for body.target.name
@@ -19,11 +19,11 @@
 # Requires global vars: master_manager_fact
 # =============================================================================
 
-- name: "[{{ label_name }}] Assert eso-lookup params"
+- name: "[{{ dto_label_name }}] Assert eso-lookup params"
   assert:
     that:
-      - label_name is defined
-      - label_name | length > 0
+      - dto_label_name is defined
+      - dto_label_name | length > 0
       - dto_secrets_list is defined
       - dto_secrets_list is sequence
       - dto_external_secret_name is defined
@@ -39,7 +39,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Find ExternalSecret in merged list"
+- name: "[{{ dto_label_name }}] Find ExternalSecret in merged list"
   set_fact:
     _eso_lookup_match: >-
       {{ dto_secrets_list
@@ -49,7 +49,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Fail if ExternalSecret not found"
+- name: "[{{ dto_label_name }}] Fail if ExternalSecret not found"
   fail:
     msg: >-
       ExternalSecret '{{ dto_external_secret_name }}' не найден в переданном списке
@@ -60,7 +60,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Export body.target.name and vault_path facts"
+- name: "[{{ dto_label_name }}] Export body.target.name and vault_path facts"
   set_fact:
     "{{ dto_res_fact_name_secret }}": "{{ _eso_lookup_match[0].body.target.name }}"
     "{{ dto_res_fact_name_vault_path }}": "{{ _eso_lookup_match[0].vault_path }}"
@@ -68,7 +68,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Propagate facts to all hosts"
+- name: "[{{ dto_label_name }}] Propagate facts to all hosts"
   set_fact:
     "{{ dto_res_fact_name_secret }}": "{{ hostvars[master_manager_fact][dto_res_fact_name_secret] }}"
     "{{ dto_res_fact_name_vault_path }}": "{{ hostvars[master_manager_fact][dto_res_fact_name_vault_path] }}"

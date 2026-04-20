@@ -25,13 +25,13 @@
     - name: "[prometheus-operator-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "prometheus-operator-install-pre-check"
+        dto_label_name: "prometheus-operator-install-pre-check"
       tags: [always]
 
     - name: "[prometheus-operator-install-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "prometheus-operator-install-pre-check"
+        dto_label_name: "prometheus-operator-install-pre-check"
         dto_target_namespace: "{{ prometheus_operator_namespace }}"
       tags: [always]
 
@@ -42,7 +42,7 @@
     - name: "[prometheus-operator-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: prometheus-operator-init
+        dto_label_name: prometheus-operator-init
         dto_cluster_issuer_name: "{{ prometheus_operator_cluster_issuer }}"
         dto_ingress_class_name: "{{ prometheus_operator_ingress_class }}"
       tags: [always]
@@ -54,7 +54,7 @@
     - name: "[prometheus-operator-crds] Copy CRDs to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "prometheus-operator-crds"
+        dto_label_name: "prometheus-operator-crds"
         dto_chart_name: "crds"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/crds/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/crds"
@@ -70,7 +70,7 @@
     - name: "[prometheus-operator-crds] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "prometheus-operator-crds"
+        dto_label_name: "prometheus-operator-crds"
         dto_crds_list:
           - crd/alertmanagerconfigs.monitoring.coreos.com
           - crd/alertmanagers.monitoring.coreos.com
@@ -91,7 +91,7 @@
     - name: "[prometheus-operator-pre] Copy pre chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "prometheus-operator-pre"
+        dto_label_name: "prometheus-operator-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/pre"
@@ -100,7 +100,7 @@
     - name: "[prometheus-operator-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "prometheus-operator-pre"
+        dto_label_name: "prometheus-operator-pre"
         dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ prometheus_operator_pre_helm_values | to_nice_yaml }}"
@@ -109,7 +109,7 @@
     - name: "[prometheus-operator-pre] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "prometheus-operator-pre"
+        dto_label_name: "prometheus-operator-pre"
         dto_helm_command: >
           helm upgrade --install prometheus-operator-pre {{ remote_charts_dir }}/mon-prometheus-operator/pre
           --namespace {{ prometheus_operator_namespace }}
@@ -129,7 +129,7 @@
     - name: "[prometheus-operator-install] Copy install chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "prometheus-operator-install"
+        dto_label_name: "prometheus-operator-install"
         dto_chart_name: "install"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/install/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/install"
@@ -138,7 +138,7 @@
     - name: "[prometheus-operator-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "prometheus-operator-install"
+        dto_label_name: "prometheus-operator-install"
         dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ prometheus_operator_install_helm_values | to_nice_yaml }}"
@@ -147,7 +147,7 @@
     - name: "[prometheus-operator-install] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "prometheus-operator-install"
+        dto_label_name: "prometheus-operator-install"
         dto_helm_command: >
           helm upgrade --install prometheus-operator {{ remote_charts_dir }}/mon-prometheus-operator/install
           --namespace {{ prometheus_operator_namespace }}
@@ -168,7 +168,7 @@
     - name: "[prometheus-operator-install] Wait for rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "prometheus-operator-install"
+        dto_label_name: "prometheus-operator-install"
         dto_rollout_namespace: "{{ prometheus_operator_namespace }}"
         dto_rollout_timeout: "{{ prometheus_operator_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -182,7 +182,7 @@
     - name: "[prometheus-install] Copy prometheus install chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "prometheus-install"
+        dto_label_name: "prometheus-install"
         dto_chart_name: "prometheus-install"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/prometheus/install/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install"
@@ -191,7 +191,7 @@
     - name: "[prometheus-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "prometheus-install"
+        dto_label_name: "prometheus-install"
         dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ prometheus_operator_prometheus_helm_values | to_nice_yaml }}"
@@ -200,7 +200,7 @@
     - name: "[prometheus-install] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "prometheus-install"
+        dto_label_name: "prometheus-install"
         dto_helm_command: >
           helm upgrade --install prometheus-operator-prometheus {{ remote_charts_dir }}/mon-prometheus-operator/prometheus/install
           --namespace {{ prometheus_operator_namespace }}
@@ -216,7 +216,7 @@
     - name: "[prometheus-install] Wait for prometheus rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "prometheus-install"
+        dto_label_name: "prometheus-install"
         dto_rollout_namespace: "{{ prometheus_operator_namespace }}"
         dto_rollout_timeout: "{{ prometheus_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -230,7 +230,7 @@
     - name: "[alertmanager-install] Copy alertmanager install chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "alertmanager-install"
+        dto_label_name: "alertmanager-install"
         dto_chart_name: "alertmanager-install"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/alertmanager/install/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install"
@@ -239,7 +239,7 @@
     - name: "[alertmanager-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "alertmanager-install"
+        dto_label_name: "alertmanager-install"
         dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ prometheus_operator_alertmanager_helm_values | to_nice_yaml }}"
@@ -248,7 +248,7 @@
     - name: "[alertmanager-install] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "alertmanager-install"
+        dto_label_name: "alertmanager-install"
         dto_helm_command: >
           helm upgrade --install prometheus-operator-alertmanager {{ remote_charts_dir }}/mon-prometheus-operator/alertmanager/install
           --namespace {{ prometheus_operator_namespace }}
@@ -264,7 +264,7 @@
     - name: "[alertmanager-install] Wait for alertmanager rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "alertmanager-install"
+        dto_label_name: "alertmanager-install"
         dto_rollout_namespace: "{{ prometheus_operator_namespace }}"
         dto_rollout_timeout: "{{ alertmanager_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -278,7 +278,7 @@
     - name: "[prometheus-operator-post] Copy post chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "prometheus-operator-post"
+        dto_label_name: "prometheus-operator-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-prometheus-operator/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-prometheus-operator/post"
@@ -287,7 +287,7 @@
     - name: "[prometheus-operator-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "prometheus-operator-post"
+        dto_label_name: "prometheus-operator-post"
         dto_dir: "{{ remote_charts_dir }}/mon-prometheus-operator/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ prometheus_operator_post_helm_values | to_nice_yaml }}"
@@ -296,7 +296,7 @@
     - name: "[prometheus-operator-post] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "prometheus-operator-post"
+        dto_label_name: "prometheus-operator-post"
         dto_helm_command: >
           helm upgrade --install prometheus-operator-post {{ remote_charts_dir }}/mon-prometheus-operator/post
           --namespace {{ prometheus_operator_namespace }}
@@ -317,7 +317,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ prometheus_operator_namespace }}"
-        label_name: "prometheus-operator-verify"
+        dto_label_name: "prometheus-operator-verify"
       tags: [always]
 
     - name: "[prometheus-operator-verify] Get pods status"

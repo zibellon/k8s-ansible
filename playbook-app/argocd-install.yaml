@@ -25,13 +25,13 @@
     - name: "[argocd-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "argocd-install-pre-check"
+        dto_label_name: "argocd-install-pre-check"
       tags: [always]
 
     - name: "[argocd-install-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "argocd-install-pre-check"
+        dto_label_name: "argocd-install-pre-check"
         dto_target_namespace: "{{ argocd_namespace }}"
       tags: [always]
 
@@ -51,7 +51,7 @@
     - name: "[argocd-install-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: argocd-install-init
+        dto_label_name: argocd-install-init
         dto_cluster_issuer_name: "{{ argocd_cluster_issuer_name }}"
         dto_ingress_class_name: "{{ argocd_ingress_class_name }}"
       tags: [always]
@@ -63,7 +63,7 @@
     - name: "[argocd-install-crds] Copy crds chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "argocd-install-crds"
+        dto_label_name: "argocd-install-crds"
         dto_chart_name: "crds"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/crds/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/crds"
@@ -79,7 +79,7 @@
     - name: "[argocd-install-crds] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "argocd-install-crds"
+        dto_label_name: "argocd-install-crds"
         dto_crds_list:
           - crd/applications.argoproj.io
           - crd/applicationsets.argoproj.io
@@ -93,7 +93,7 @@
     - name: "[argocd-pre] Copy pre chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "argocd-pre"
+        dto_label_name: "argocd-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/pre"
@@ -102,7 +102,7 @@
     - name: "[argocd-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "argocd-pre"
+        dto_label_name: "argocd-pre"
         dto_dir: "{{ remote_charts_dir }}/argocd/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ argocd_pre_helm_values | to_nice_yaml }}"
@@ -111,7 +111,7 @@
     - name: "[argocd-pre] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "argocd-pre"
+        dto_label_name: "argocd-pre"
         dto_helm_command: >
           helm upgrade --install argocd-pre {{ remote_charts_dir }}/argocd/pre
           --namespace {{ argocd_namespace }}
@@ -131,7 +131,7 @@
     - name: "[argocd-install] Copy install chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "argocd-install"
+        dto_label_name: "argocd-install"
         dto_chart_name: "install"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/install/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/install"
@@ -140,7 +140,7 @@
     - name: "[argocd-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "argocd-install"
+        dto_label_name: "argocd-install"
         dto_dir: "{{ remote_charts_dir }}/argocd/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"
@@ -149,7 +149,7 @@
     - name: "[argocd-install] Install or upgrade argocd via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "argocd-install"
+        dto_label_name: "argocd-install"
         dto_helm_command: >
           helm upgrade --install argocd {{ remote_charts_dir }}/argocd/install
           --namespace {{ argocd_namespace }}
@@ -170,7 +170,7 @@
     - name: "[argocd-install] Wait for rollouts"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "argocd-install"
+        dto_label_name: "argocd-install"
         dto_rollout_namespace: "{{ argocd_namespace }}"
         dto_rollout_timeout: "{{ argocd_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -190,7 +190,7 @@
     - name: "[argocd-post] Copy post chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "argocd-post"
+        dto_label_name: "argocd-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/post"
@@ -199,7 +199,7 @@
     - name: "[argocd-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "argocd-post"
+        dto_label_name: "argocd-post"
         dto_dir: "{{ remote_charts_dir }}/argocd/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ argocd_post_helm_values | to_nice_yaml }}"
@@ -208,7 +208,7 @@
     - name: "[argocd-post] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "argocd-post"
+        dto_label_name: "argocd-post"
         dto_helm_command: >
           helm upgrade --install argocd-post {{ remote_charts_dir }}/argocd/post
           --namespace {{ argocd_namespace }}
@@ -228,7 +228,7 @@
     - name: "[argocd-gitops] Copy git-ops install chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "argocd-gitops"
+        dto_label_name: "argocd-gitops"
         dto_chart_name: "gitops"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/gitops/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/gitops"
@@ -237,7 +237,7 @@
     - name: "[argocd-gitops] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "argocd-gitops"
+        dto_label_name: "argocd-gitops"
         dto_dir: "{{ remote_charts_dir }}/argocd/gitops"
         dto_filename: "values-override.yaml"
         dto_content: "{{ argocd_gitops_helm_values | to_nice_yaml }}"
@@ -246,7 +246,7 @@
     - name: "[argocd-gitops] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "argocd-gitops"
+        dto_label_name: "argocd-gitops"
         dto_helm_command: >
           helm upgrade --install argocd-gitops {{ remote_charts_dir }}/argocd/gitops
           --namespace {{ argocd_namespace }}
@@ -291,7 +291,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ argocd_namespace }}"
-        label_name: "argocd-verify"
+        dto_label_name: "argocd-verify"
       tags: [always]
 
     - name: "[argocd-verify] Get argocd pods status"

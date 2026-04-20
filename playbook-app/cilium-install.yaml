@@ -24,20 +24,20 @@
     - name: "[cilium-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "cilium-install-pre-check"
+        dto_label_name: "cilium-install-pre-check"
       tags: [always]
 
     - name: "[cilium-install-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "cilium-install-pre-check"
+        dto_label_name: "cilium-install-pre-check"
         dto_target_namespace: "{{ cilium_namespace }}"
       tags: [always]
 
     - name: "[cilium-install-pre-check] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: cilium-install-pre-check
+        dto_label_name: cilium-install-pre-check
         dto_cluster_issuer_name: "{{ cilium_hubble_ui_cluster_issuer_name }}"
         dto_ingress_class_name: "{{ cilium_hubble_ui_ingress_class_name }}"
       tags: [always]
@@ -49,7 +49,7 @@
     - name: "[cilium-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "cilium-pre"
+        dto_label_name: "cilium-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/cilium/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/cilium/pre"
@@ -58,7 +58,7 @@
     - name: "[cilium-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "cilium-pre"
+        dto_label_name: "cilium-pre"
         dto_dir: "{{ remote_charts_dir }}/cilium/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ cilium_pre_helm_values | to_nice_yaml }}"
@@ -67,7 +67,7 @@
     - name: "[cilium-pre] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "cilium-pre"
+        dto_label_name: "cilium-pre"
         dto_helm_command: >
           helm upgrade --install cilium-pre {{ remote_charts_dir }}/cilium/pre
           --namespace {{ cilium_namespace }}
@@ -87,7 +87,7 @@
     - name: "[cilium-install] Add Helm repository"
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
-        label_name: "cilium-install"
+        dto_label_name: "cilium-install"
         dto_helm_repo_name: "{{ cilium_helm_repo_name }}"
         dto_helm_repo_url: "{{ cilium_helm_repo_url }}"
       tags: [install]
@@ -95,7 +95,7 @@
     - name: "[cilium-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "cilium-install"
+        dto_label_name: "cilium-install"
         dto_dir: "{{ remote_charts_dir }}/cilium/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ cilium_helm_values | to_nice_yaml }}"
@@ -104,7 +104,7 @@
     - name: "[cilium-install] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "cilium-install"
+        dto_label_name: "cilium-install"
         dto_helm_command: >
           helm upgrade --install cilium {{ cilium_helm_repo_name }}/{{ cilium_helm_chart_name }}
           --version {{ cilium_chart_version }}
@@ -125,7 +125,7 @@
     - name: "[cilium-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "cilium-install"
+        dto_label_name: "cilium-install"
         dto_crds_list:
           - crd/ciliumcidrgroups.cilium.io
           - crd/ciliumclusterwidenetworkpolicies.cilium.io
@@ -146,7 +146,7 @@
     - name: "[cilium-install] Wait for DaemonSet/Deployment rollouts"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "cilium-install"
+        dto_label_name: "cilium-install"
         dto_rollout_namespace: "{{ cilium_namespace }}"
         dto_rollout_timeout: "{{ cilium_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -164,7 +164,7 @@
     - name: "[cilium-post] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "cilium-post"
+        dto_label_name: "cilium-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/cilium/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/cilium/post"
@@ -173,7 +173,7 @@
     - name: "[cilium-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "cilium-post"
+        dto_label_name: "cilium-post"
         dto_dir: "{{ remote_charts_dir }}/cilium/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ cilium_post_helm_values | to_nice_yaml }}"
@@ -182,7 +182,7 @@
     - name: "[cilium-post] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "cilium-post"
+        dto_label_name: "cilium-post"
         dto_helm_command: >
           helm upgrade --install cilium-post {{ remote_charts_dir }}/cilium/post
           --namespace {{ cilium_namespace }}
@@ -203,7 +203,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ cilium_namespace }}"
-        label_name: "cilium-verify"
+        dto_label_name: "cilium-verify"
       tags: [always]
 
     - name: "[cilium-verify] Get Cilium pods status"

@@ -5,7 +5,7 @@ Every task include, split by repo half. Per task: **purpose**, **input vars**, *
 General rules for callers:
 
 - Always use `include_tasks` (dynamic), never `import_tasks` — tag inheritance breaks with imports.
-- Always pass `label_name` matching the enclosing `[<c>-<action>-<phase>]` prefix — keeps logs aligned.
+- Always pass `dto_label_name` matching the enclosing `[<c>-<action>-<phase>]` prefix — keeps logs aligned.
 - Tag every include with the appropriate phase (`[always]`, `[pre]`, `[install]`, `[post]`, or a bootstrap-specific tag).
 - Tasks that run `kubectl` / `helm` set `delegate_to: "{{ master_manager_fact }}"` + `run_once: true` internally — no need for the caller to set them.
 - **Every task file starts with an `assert` block** that validates all required input parameters before doing any work. The assert is `tags: [always]` so it never silently skips under `--tags`. Reference: `tasks-k8s-secret-get.yaml`. Full pattern in `playbook-conventions.md` Rule 19.
@@ -17,8 +17,8 @@ General rules for callers:
 ### 1.1 `tasks-pre-check.yaml`
 
 - **Purpose.** Entry guard for every install playbook. Resolves `master_manager_fact` and asserts cluster is reachable.
-- **Input.** `label_name` (string — log prefix).
-- **Validates (assert).** `label_name` defined + non-empty. (No `delegate_to` — `master_manager_fact` not yet set at call time.)
+- **Input.** `dto_label_name` (string — log prefix).
+- **Validates (assert).** `dto_label_name` defined + non-empty. (No `delegate_to` — `master_manager_fact` not yet set at call time.)
 - **Output.** Fact `master_manager_fact`. Fails play if no manager has `is_master: true`.
 - **Callers.** Every `<c>-install.yaml`, also `-configure`, `-restart`, `-rotate` playbooks.
 - **Idempotent.** Read-only; safe to call repeatedly.
@@ -34,7 +34,7 @@ General rules for callers:
 ### 1.3 `tasks-forbid-kube-system.yaml`
 
 - **Purpose.** Guardrail — refuses to operate on `kube-system` namespace.
-- **Input.** `label_name`, `namespace_value` (the component's target namespace).
+- **Input.** `dto_label_name`, `namespace_value` (the component's target namespace).
 - **Output.** Fails play if `namespace_value == "kube-system"`.
 - **Callers.** Every `<c>-install.yaml` at `tags: [always]`.
 - **Idempotent.** Assertion only.
@@ -42,8 +42,8 @@ General rules for callers:
 ### 1.4 `tasks-copy-chart.yaml`
 
 - **Purpose.** Package a local chart directory as tar.gz, copy to the master manager, extract. Faster and more idempotent than `synchronize` for many small files.
-- **Input.** `label_name`, `chart_name` (release name — used for the temp archive file), `chart_local_src` (**must** end with `/`), `chart_remote_dest` (**must not** end with `/`).
-- **Validates (assert).** `label_name`, `chart_name`, `chart_local_src`, `chart_remote_dest` all defined + non-empty.
+- **Input.** `dto_label_name`, `chart_name` (release name — used for the temp archive file), `chart_local_src` (**must** end with `/`), `chart_remote_dest` (**must not** end with `/`).
+- **Validates (assert).** `dto_label_name`, `chart_name`, `chart_local_src`, `chart_remote_dest` all defined + non-empty.
 - **Output.** Chart files at `{{ chart_remote_dest }}/` on the master manager.
 - **Callers.** Every phase of every install playbook.
 - **Idempotent.** Re-extraction overwrites. Old files not pruned — if you rename a template, re-run `server-clean` on chart dir or `rm -rf` the remote dir.
@@ -52,8 +52,8 @@ General rules for callers:
 ### 1.4а `tasks-copy-helm-values.yaml`
 
 - **Purpose.** Create a remote directory + write `values-override.yaml`. Used for external Helm chart install phases where `tasks-copy-chart.yaml` is not called (no local chart to ship).
-- **Input.** `label_name` (string), `dto_dir` (remote path, no trailing slash), `dto_content` (rendered string — the YAML content to write).
-- **Validates (assert).** `label_name`, `dto_dir`, `dto_content` all defined + non-empty.
+- **Input.** `dto_label_name` (string), `dto_dir` (remote path, no trailing slash), `dto_content` (rendered string — the YAML content to write).
+- **Validates (assert).** `dto_label_name`, `dto_dir`, `dto_content` all defined + non-empty.
 - **Output.** Directory `{{ dto_dir }}` exists on master manager, file `{{ dto_dir }}/values-override.yaml` written (mode 0644).
 - **Callers.** Install-phase blocks in any playbook that uses an external Helm repo: `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `metrics-server-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `teleport-install.yaml`, `vault-install.yaml` (operator phase).
 - **Idempotent.** Yes — `file: state=directory` and `copy` are both idempotent.
@@ -62,8 +62,8 @@ General rules for callers:
 ### 1.5 `tasks-add-helm-repo.yaml`
 
 - **Purpose.** `helm repo add` + `helm repo update`. Used before installing official external charts.
-- **Input.** `label_name`, `helm_repo_name`, `helm_repo_url`.
-- **Validates (assert).** `label_name`, `helm_repo_name`, `helm_repo_url` all defined + non-empty.
+- **Input.** `dto_label_name`, `helm_repo_name`, `helm_repo_url`.
+- **Validates (assert).** `dto_label_name`, `helm_repo_name`, `helm_repo_url` all defined + non-empty.
 - **Output.** Helm repo registered on the master manager.
 - **Callers.** `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml` (and any other playbook that installs from an external chart).
 - **Idempotent.** `helm repo add` with same URL is no-op; `update` is always safe.
@@ -71,8 +71,8 @@ General rules for callers:
 ### 1.6 `tasks-wait-crds.yaml`
 
 - **Purpose.** Wait for CRDs to reach `Established` condition before applying workloads that depend on them.
-- **Input.** `label_name`, `crds_list` (list of `"crd/<name>"` strings), `crds_wait` (dict: `timeout`, `retries`, `delay`).
-- **Validates (assert).** `label_name` defined + non-empty; `crds_list` defined, is sequence, non-empty; `crds_wait` defined, is mapping, with `timeout`/`retries`/`delay` subkeys defined.
+- **Input.** `dto_label_name`, `crds_list` (list of `"crd/<name>"` strings), `crds_wait` (dict: `timeout`, `retries`, `delay`).
+- **Validates (assert).** `dto_label_name` defined + non-empty; `crds_list` defined, is sequence, non-empty; `crds_wait` defined, is mapping, with `timeout`/`retries`/`delay` subkeys defined.
 - **Output.** None. Fails on timeout.
 - **Callers.** Install playbooks with `crds/` phases (`argocd`, `mon-prometheus-operator`), Vault operator, cert-manager.
 - **Idempotent.** Read-only wait.
@@ -80,8 +80,8 @@ General rules for callers:
 ### 1.7 `tasks-wait-rollout.yaml`
 
 - **Purpose.** `kubectl rollout status` for Deployments / DaemonSets / StatefulSets.
-- **Input.** `label_name`, `rollout_namespace`, `rollout_timeout` (e.g. `"120s"`), `rollout_resources` (list of `"<kind>/<name>"`).
-- **Validates (assert).** `label_name`, `rollout_namespace`, `rollout_timeout` defined + non-empty; `rollout_resources` defined, is sequence, non-empty.
+- **Input.** `dto_label_name`, `rollout_namespace`, `rollout_timeout` (e.g. `"120s"`), `rollout_resources` (list of `"<kind>/<name>"`).
+- **Validates (assert).** `dto_label_name`, `rollout_namespace`, `rollout_timeout` defined + non-empty; `rollout_resources` defined, is sequence, non-empty.
 - **Output.** None. Fails on timeout.
 - **Callers.** End of `install` phase on every component; also `-restart` playbooks.
 - **Idempotent.** Read-only wait.
@@ -115,7 +115,7 @@ General rules for callers:
 
 - **Purpose.** Find one entry in a `*_secrets_merged` list by `external_secret_name`, export its `body.target.name` (as `target_secret_name`) and `vault_path` as named Ansible facts. Fails with a clear message if the entry is not found.
 - **Input.**
-  - `label_name` (required string — log prefix).
+  - `dto_label_name` (required string — log prefix).
   - `dto_secrets_list` (required sequence — the merged `*_secrets_merged` list to search).
   - `dto_external_secret_name` (required string — lookup key).
   - `dto_res_fact_name_secret` (required string — output fact name for `target_secret_name`).
@@ -128,7 +128,7 @@ General rules for callers:
 ### 1.9 `tasks-resolve-acme-solver.yaml`
 
 - **Purpose.** Look up a `ClusterIssuer` by name in `cert_manager_cluster_issuers`, find the solver matching a given `ingressClass`, export its `podLabels`. Downstream NetworkPolicies use these labels to admit the cert-manager solver pod.
-- **Input.** `label_name`, `cluster_issuer_name`, `ingress_class_name`, `acme_cluster_issuer_result_var`, `acme_solver_result_var`, `acme_pod_labels_result_var` (three dynamic fact names).
+- **Input.** `dto_label_name`, `cluster_issuer_name`, `ingress_class_name`, `acme_cluster_issuer_result_var`, `acme_solver_result_var`, `acme_pod_labels_result_var` (three dynamic fact names).
 - **Validates (assert).** All 6 params defined + non-empty (assert block at top of file).
 - **Output (runtime facts, names from input).** Resolved `ClusterIssuer` name, full solver dict, `podLabels` dict.
 - **Callers.** Install playbooks of components with HTTPS ingress that triggers ACME HTTP-01 — typically at `tags: [always]`.
@@ -137,8 +137,8 @@ General rules for callers:
 ### 1.10 `tasks-verify-helm.yaml`
 
 - **Purpose.** Assert a Helm release is in `deployed` status (not `failed`, `pending`, `uninstalling`).
-- **Input.** `label_name`, `helm_namespace` (namespace of the release).
-- **Validates (assert).** `label_name`, `helm_namespace` both defined + non-empty.
+- **Input.** `dto_label_name`, `helm_namespace` (namespace of the release).
+- **Validates (assert).** `dto_label_name`, `helm_namespace` both defined + non-empty.
 - **Output.** Fails if any release in the namespace is not `deployed`.
 - **Callers.** End of install phase (optional, recommended).
 - **Idempotent.** Read-only.
@@ -146,8 +146,8 @@ General rules for callers:
 ### 1.11 `tasks-eso-force-sync.yaml`
 
 - **Purpose.** Annotate ExternalSecrets with `force-sync=<epoch>` to trigger ESO reconciliation without waiting for `refreshInterval`.
-- **Input.** `label_name` (required). Optional: `dto_eso_sync_namespace`, `dto_eso_sync_es_name` — control targeting (single ES / all in ns / all namespaces).
-- **Validates (assert).** `label_name` defined + non-empty. Optional params are not validated (governed by `when:` conditions).
+- **Input.** `dto_label_name` (required). Optional: `dto_eso_sync_namespace`, `dto_eso_sync_es_name` — control targeting (single ES / all in ns / all namespaces).
+- **Validates (assert).** `dto_label_name` defined + non-empty. Optional params are not validated (governed by `when:` conditions).
 - **Output.** All targeted ExternalSecrets annotated.
 - **Callers.** `eso-force-sync.yaml` standalone; also after `tasks-vault-put.yaml` (internal).
 - **Idempotent.** Annotation bump is always safe.
@@ -155,8 +155,8 @@ General rules for callers:
 ### 1.12 `tasks-vault-get.yaml`
 
 - **Purpose.** Read one KV v2 field from Vault into an Ansible fact (plus an `_exists` boolean).
-- **Input.** `label_name`, `dto_vault_get_path` (full KV path), `dto_vault_get_field` (field name), `dto_vault_get_res_fact_name` (output fact name).
-- **Validates (assert).** `label_name`, `dto_vault_get_path`, `dto_vault_get_field`, `dto_vault_get_res_fact_name` all defined + non-empty.
+- **Input.** `dto_label_name`, `dto_vault_get_path` (full KV path), `dto_vault_get_field` (field name), `dto_vault_get_res_fact_name` (output fact name).
+- **Validates (assert).** `dto_label_name`, `dto_vault_get_path`, `dto_vault_get_field`, `dto_vault_get_res_fact_name` all defined + non-empty.
 - **Output.** `<fact>` + `<fact>_exists`. Missing fields set `_exists: false` without failing the play.
 - **Callers.** `-configure` playbooks (resolve current credentials before rotating), `-rotate` playbooks.
 - **Idempotent.** Read-only.
@@ -164,8 +164,8 @@ General rules for callers:
 ### 1.13 `tasks-vault-put.yaml`
 
 - **Purpose.** `vault kv put`, then annotate the target ExternalSecret to force ESO sync, then wait for the downstream K8s `Secret` to appear.
-- **Input.** `label_name`, `dto_vault_put_path` (full KV path), `dto_vault_put_data` (non-empty dict of `{field: value}`).
-- **Validates (assert).** `label_name` defined + non-empty; `dto_vault_put_path` defined + non-empty; `dto_vault_put_data` defined, is mapping, non-empty.
+- **Input.** `dto_label_name`, `dto_vault_put_path` (full KV path), `dto_vault_put_data` (non-empty dict of `{field: value}`).
+- **Validates (assert).** `dto_label_name` defined + non-empty; `dto_vault_put_path` defined + non-empty; `dto_vault_put_data` defined, is mapping, non-empty.
 - **Output.** Vault updated, K8s Secret updated.
 - **Callers.** Rotation flows (Postgres, Redis, MinIO, GitLab root, ArgoCD admin, Vault admin-token).
 - **Idempotent.** Re-running re-puts identical values — safe, just a noop in ESO (force-sync annotation bumps once more).
@@ -173,8 +173,8 @@ General rules for callers:
 ### 1.14 `tasks-generate-secret.yaml`
 
 - **Purpose.** Generate a random N-character secret into a named fact.
-- **Input.** `label_name`, `dto_generate_fact_name` (output fact name). Optional: `generate_length` (default 32), `generate_chars` (default `ascii_letters,digits`).
-- **Validates (assert).** `label_name`, `dto_generate_fact_name` both defined + non-empty. Optional params not asserted.
+- **Input.** `dto_label_name`, `dto_generate_fact_name` (output fact name). Optional: `dto_generate_length` (default 32), `dto_generate_chars` (default `ascii_letters,digits`).
+- **Validates (assert).** `dto_label_name`, `dto_generate_fact_name` both defined + non-empty. Optional params not asserted.
 - **Output.** Fact with the generated secret.
 - **Callers.** Bootstrap of first-run passwords (GitLab root, Vault admin, Grafana admin).
 - **Idempotent.** No — regenerates on each call. Pair with `tasks-vault-get.yaml` + `_exists` check to avoid regenerating existing secrets.
@@ -182,7 +182,7 @@ General rules for callers:
 ### 1.15 `tasks-vault-distribute-creds.yaml`
 
 - **Purpose.** Read the `vault-unsealer-secret` from the live cluster, decode, write to `/etc/kubernetes/vault-unseal.json` on managers.
-- **Input.** `label_name`.
+- **Input.** `dto_label_name`.
 - **Output.** Local file on each manager (0600, root:root).
 - **Callers.** `manager-join.yaml` (so new managers have unseal keys), `vault-install.yaml` post-phase.
 - **Idempotent.** Overwrites if secret changed.
@@ -190,8 +190,8 @@ General rules for callers:
 ### 1.16 `tasks-helm-upgrade-async.yaml`
 
 - **Purpose.** Run `helm upgrade --install` in async mode for charts that exceed Ansible's synchronous command timeout (notably the GitLab chart family).
-- **Input.** `label_name`, `helm_command` (complete helm command string). Async timing from global vars (`helm_async_timeout`, `helm_async_poll`).
-- **Validates (assert).** `label_name`, `helm_command` both defined + non-empty.
+- **Input.** `dto_label_name`, `helm_command` (complete helm command string). Async timing from global vars (`helm_async_timeout`, `helm_async_poll`).
+- **Validates (assert).** `dto_label_name`, `helm_command` both defined + non-empty.
 - **Output.** Helm release updated.
 - **Callers.** `gitlab-install.yaml`.
 - **Idempotent.** Same semantics as synchronous helm; async is just about avoiding SSH timeouts.
@@ -199,7 +199,7 @@ General rules for callers:
 ### 1.17 `tasks-k8s-secret-get.yaml`
 
 - **Purpose.** Read a single `.data` field from a K8s Secret into a named fact. Never fails on missing secret or field — callers branch on `<fact>_exists`.
-- **Input.** `label_name`, `dto_secret_namespace`, `dto_secret_name`, `dto_secret_field`, `dto_secret_res_fact_name` (all required).
+- **Input.** `dto_label_name`, `dto_secret_namespace`, `dto_secret_name`, `dto_secret_field`, `dto_secret_res_fact_name` (all required).
 - **Validates (assert).** All 4 dto params defined + non-empty. **Reference implementation** — this is the canonical example for the assert pattern.
 - **Output (runtime facts, set on all hosts).**
   - `{{ dto_secret_res_fact_name }}` — decoded string value (`''` if missing).
@@ -333,12 +333,12 @@ General rules for callers:
 ```yaml
 - include_tasks: tasks/tasks-pre-check.yaml
   vars:
-    label_name: "<c>-install-pre-check"
+    dto_label_name: "<c>-install-pre-check"
   tags: [always]
 
 - include_tasks: tasks/tasks-forbid-kube-system.yaml
   vars:
-    label_name: "<c>-install-pre-check"
+    dto_label_name: "<c>-install-pre-check"
     namespace_value: "{{ <c>_namespace }}"
   tags: [always]
 
@@ -348,7 +348,7 @@ General rules for callers:
 # If ingress uses ACME:
 - include_tasks: tasks/tasks-resolve-acme-solver.yaml
   vars:
-    label_name: "<c>-install-init"
+    dto_label_name: "<c>-install-init"
     cluster_issuer_name: "{{ <c>_cluster_issuer_name }}"
     ingress_class_name: "{{ <c>_ingress_class_name }}"
     acme_cluster_issuer_result_var: "<c>_acme_cluster_issuer"
@@ -362,7 +362,7 @@ General rules for callers:
 ```yaml
 - include_tasks: tasks/tasks-copy-chart.yaml
   vars:
-    label_name: "<c>-install-<phase>"
+    dto_label_name: "<c>-install-<phase>"
     chart_name: "<c>-<phase>"             # or just "<c>" for install phase
     chart_local_src: "{{ playbook_dir }}/charts/<c>/<phase>/"   # trailing / required
     chart_remote_dest: "{{ remote_charts_dir }}/<c>/<phase>"    # no trailing /

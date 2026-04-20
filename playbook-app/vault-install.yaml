@@ -26,13 +26,13 @@
     - name: "[vault-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "vault-install-pre-check"
+        dto_label_name: "vault-install-pre-check"
       tags: [always]
 
     - name: "[vault-install-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "vault-install-pre-check"
+        dto_label_name: "vault-install-pre-check"
         dto_target_namespace: "{{ vault_namespace }}"
       tags: [always]
 
@@ -47,7 +47,7 @@
     - name: "[vault-install-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: vault-install-init
+        dto_label_name: vault-install-init
         dto_cluster_issuer_name: "{{ vault_ui_cluster_issuer_name }}"
         dto_ingress_class_name: "{{ vault_ui_ingress_class_name }}"
       tags: [always]
@@ -59,7 +59,7 @@
     - name: "[vault-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "vault-pre"
+        dto_label_name: "vault-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/vault/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/vault/pre"
@@ -68,7 +68,7 @@
     - name: "[vault-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "vault-pre"
+        dto_label_name: "vault-pre"
         dto_dir: "{{ remote_charts_dir }}/vault/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ vault_pre_helm_values | to_nice_yaml }}"
@@ -77,7 +77,7 @@
     - name: "[vault-pre] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "vault-pre"
+        dto_label_name: "vault-pre"
         dto_helm_command: >
           helm upgrade --install vault-pre {{ remote_charts_dir }}/vault/pre
           --namespace {{ vault_namespace }}
@@ -96,7 +96,7 @@
     - name: "[vault-operator] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "vault-operator"
+        dto_label_name: "vault-operator"
         dto_dir: "{{ remote_charts_dir }}/vault/operator"
         dto_filename: "values-override.yaml"
         dto_content: "{{ vault_operator_helm_values | to_nice_yaml }}"
@@ -105,7 +105,7 @@
     - name: "[vault-operator] Install vault-operator via OCI helm chart (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "vault-operator"
+        dto_label_name: "vault-operator"
         dto_helm_command: >
           helm upgrade --install vault-operator {{ vault_operator_chart }}
           --namespace {{ vault_namespace }}
@@ -121,7 +121,7 @@
     - name: "[vault-operator] Wait for vault-operator CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "vault-operator"
+        dto_label_name: "vault-operator"
         dto_crds_list:
           - "crd/vaults.vault.banzaicloud.com"
       tags: [operator]
@@ -129,7 +129,7 @@
     - name: "[vault-operator] Wait for vault-operator Deployment rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "vault-operator"
+        dto_label_name: "vault-operator"
         dto_rollout_namespace: "{{ vault_namespace }}"
         dto_rollout_timeout: "{{ vault_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -143,7 +143,7 @@
     - name: "[vault-cr] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "vault-cr"
+        dto_label_name: "vault-cr"
         dto_chart_name: "cr"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/vault/cr/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/vault/cr"
@@ -152,7 +152,7 @@
     - name: "[vault-cr] Create values-override.yaml"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "vault-cr"
+        dto_label_name: "vault-cr"
         dto_dir: "{{ remote_charts_dir }}/vault/cr"
         dto_filename: "values-override.yaml"
         dto_content: "{{ vault_cr_helm_values | to_nice_yaml }}"
@@ -161,7 +161,7 @@
     - name: "[vault-cr] Apply Vault CR via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "vault-cr"
+        dto_label_name: "vault-cr"
         dto_helm_command: >
           helm upgrade --install vault-cr {{ remote_charts_dir }}/vault/cr
           --namespace {{ vault_namespace }}
@@ -176,7 +176,7 @@
     - name: "[vault-cr] Wait for StatefulSet rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "vault-cr"
+        dto_label_name: "vault-cr"
         dto_rollout_namespace: "{{ vault_namespace }}"
         dto_rollout_timeout: "{{ vault_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -186,7 +186,7 @@
     - name: "[vault-cr] Wait for unsealer K8s Secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "vault-cr"
+        dto_label_name: "vault-cr"
         dto_wait_secret_name: "{{ vault_unsealer_secret_name }}"
         dto_wait_secret_namespace: "{{ vault_namespace }}"
       tags: [vault-cr]
@@ -194,7 +194,7 @@
     - name: "[vault-cr] Read vault-root field from unsealer secret"
       include_tasks: tasks/tasks-k8s-secret-get.yaml
       vars:
-        label_name: "vault-cr"
+        dto_label_name: "vault-cr"
         dto_secret_namespace: "{{ vault_namespace }}"
         dto_secret_name: "{{ vault_unsealer_secret_name }}"
         dto_secret_field: "vault-root"
@@ -212,7 +212,7 @@
     - name: "[vault-cr] Distribute credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
-        label_name: "vault-cr"
+        dto_label_name: "vault-cr"
       tags: [vault-cr]
 
     # =========================================================================
@@ -222,7 +222,7 @@
     - name: "[vault-post] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "vault-post"
+        dto_label_name: "vault-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/vault/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/vault/post"
@@ -231,7 +231,7 @@
     - name: "[vault-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "vault-post"
+        dto_label_name: "vault-post"
         dto_dir: "{{ remote_charts_dir }}/vault/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ vault_post_helm_values | to_nice_yaml }}"
@@ -240,7 +240,7 @@
     - name: "[vault-post] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "vault-post"
+        dto_label_name: "vault-post"
         dto_helm_command: >
           helm upgrade --install vault-post {{ remote_charts_dir }}/vault/post
           --namespace {{ vault_namespace }}
@@ -260,7 +260,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ vault_namespace }}"
-        label_name: "vault-verify"
+        dto_label_name: "vault-verify"
       tags: [always]
 
     - name: "[vault-verify] Get vault pods status"

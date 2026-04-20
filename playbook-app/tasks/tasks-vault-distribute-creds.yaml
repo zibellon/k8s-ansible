@@ -16,7 +16,7 @@
 #   }
 # =============================================================================
 
-- name: "[{{ label_name | default('vault-distribute-creds') }}] Read credentials from K8s Secret"
+- name: "[{{ dto_label_name | default('vault-distribute-creds') }}] Read credentials from K8s Secret"
   command: >
     kubectl get secret {{ vault_unsealer_secret_name }}
     -n {{ vault_namespace }} -o json
@@ -26,7 +26,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name | default('vault-distribute-creds') }}] Build decoded credentials dict"
+- name: "[{{ dto_label_name | default('vault-distribute-creds') }}] Build decoded credentials dict"
   set_fact:
     _vault_creds_json: >-
       {{ dict(
@@ -40,12 +40,12 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name | default('vault-distribute-creds') }}] Broadcast credentials to all managers"
+- name: "[{{ dto_label_name | default('vault-distribute-creds') }}] Broadcast credentials to all managers"
   set_fact:
     _vault_creds_json: "{{ hostvars[master_manager_fact]._vault_creds_json }}"
   tags: [always]
 
-- name: "[{{ label_name | default('vault-distribute-creds') }}] Ensure credentials directory exists"
+- name: "[{{ dto_label_name | default('vault-distribute-creds') }}] Ensure credentials directory exists"
   file:
     path: "{{ vault_creds_host_path | dirname }}"
     state: directory
@@ -54,7 +54,7 @@
     group: root
   tags: [always]
 
-- name: "[{{ label_name | default('vault-distribute-creds') }}] Write vault-unseal.json to all managers"
+- name: "[{{ dto_label_name | default('vault-distribute-creds') }}] Write vault-unseal.json to all managers"
   copy:
     content: "{{ _vault_creds_json | to_nice_json }}"
     dest: "{{ vault_creds_host_path }}"
@@ -63,7 +63,7 @@
     group: root
   tags: [always]
 
-- name: "[{{ label_name | default('vault-distribute-creds') }}] Show distribution summary"
+- name: "[{{ dto_label_name | default('vault-distribute-creds') }}] Show distribution summary"
   debug:
     msg:
       - "=============================================="

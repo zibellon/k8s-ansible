@@ -57,7 +57,7 @@ Add `--create-namespace` on the first release that targets the namespace (usuall
 ## 7. Task Naming
 
 7.1 Human task name pattern: `[<c>-<action>-<phase>] <description>`. Examples: `[argocd-install-pre] Copy chart to remote`, `[vault-rotate] Generate new root token`, `[cluster-init] kubeadm init`.
-7.2 `label_name` parameter passed to every `include_tasks` MUST match the enclosing action/phase prefix. This is how logs line up across includes.
+7.2 `dto_label_name` parameter passed to every `include_tasks` MUST match the enclosing action/phase prefix. This is how logs line up across includes.
 
 ## 8. Include Strategy
 

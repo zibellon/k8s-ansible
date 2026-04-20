@@ -2,7 +2,7 @@
 # Resolve ACME solver pod labels from cert-manager ClusterIssuer
 # =============================================================================
 # Params:
-#   - label_name:                   Label prefix for task names (e.g. "longhorn-install-init")
+#   - dto_label_name:                   Label prefix for task names (e.g. "longhorn-install-init")
 #   - dto_cluster_issuer_name:          Name of ClusterIssuer to look up in cert_manager_cluster_issuers
 #   - dto_ingress_class_name:           ingressClass to match inside issuer.solvers
 # Result:
@@ -11,23 +11,23 @@
 #   - acme_pod_labels_result_fact: "{{ _acme_resolved_solver.podLabels }}"
 # =============================================================================
 
-- name: "[{{ label_name }}] Assert all dto params are provided"
+- name: "[{{ dto_label_name }}] Assert all dto params are provided"
   assert:
     that:
-      - label_name is defined
-      - label_name | length > 0
+      - dto_label_name is defined
+      - dto_label_name | length > 0
       - dto_cluster_issuer_name is defined
       - dto_cluster_issuer_name | length > 0
       - dto_ingress_class_name is defined
       - dto_ingress_class_name | length > 0
     fail_msg: >-
       tasks-resolve-acme-solver: all params required:
-      label_name, dto_cluster_issuer_name, dto_ingress_class_name
+      dto_label_name, dto_cluster_issuer_name, dto_ingress_class_name
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Resolve ClusterIssuer"
+- name: "[{{ dto_label_name }}] Resolve ClusterIssuer"
   set_fact:
     _acme_resolved_issuer: >-
       {{ cert_manager_cluster_issuers
@@ -37,7 +37,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Validate ClusterIssuer exists"
+- name: "[{{ dto_label_name }}] Validate ClusterIssuer exists"
   assert:
     that: _acme_resolved_issuer is not none
     fail_msg: >-
@@ -47,7 +47,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Resolve ACME solver by ingressClass"
+- name: "[{{ dto_label_name }}] Resolve ACME solver by ingressClass"
   set_fact:
     _acme_resolved_solver: >-
       {{ _acme_resolved_issuer.solvers
@@ -57,7 +57,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Validate ACME solver exists"
+- name: "[{{ dto_label_name }}] Validate ACME solver exists"
   assert:
     that: _acme_resolved_solver is not none
     fail_msg: >-
@@ -67,7 +67,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Set ACME solver result vars"
+- name: "[{{ dto_label_name }}] Set ACME solver result vars"
   set_fact:
     acme_cluster_issuer_result_fact: "{{ _acme_resolved_issuer }}"
     acme_solver_result_fact: "{{ _acme_resolved_solver }}"

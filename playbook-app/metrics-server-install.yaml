@@ -21,13 +21,13 @@
     - name: "[metrics-server-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "metrics-server-install-pre-check"
+        dto_label_name: "metrics-server-install-pre-check"
       tags: [always]
 
     - name: "[metrics-server-install-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "metrics-server-install-pre-check"
+        dto_label_name: "metrics-server-install-pre-check"
         dto_target_namespace: "{{ metrics_server_namespace }}"
       tags: [always]
 
@@ -38,7 +38,7 @@
     - name: "[metrics-server-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "metrics-server-pre"
+        dto_label_name: "metrics-server-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/metrics-server/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/metrics-server/pre"
@@ -47,7 +47,7 @@
     - name: "[metrics-server-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "metrics-server-pre"
+        dto_label_name: "metrics-server-pre"
         dto_dir: "{{ remote_charts_dir }}/metrics-server/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ metrics_server_pre_helm_values | to_nice_yaml }}"
@@ -56,7 +56,7 @@
     - name: "[metrics-server-pre] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "metrics-server-pre"
+        dto_label_name: "metrics-server-pre"
         dto_helm_command: >
           helm upgrade --install metrics-server-pre {{ remote_charts_dir }}/metrics-server/pre
           --namespace {{ metrics_server_namespace }}
@@ -76,7 +76,7 @@
     - name: "[metrics-server-install] Add Helm repository"
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
-        label_name: "metrics-server-install"
+        dto_label_name: "metrics-server-install"
         dto_helm_repo_name: "{{ metrics_server_helm_repo_name }}"
         dto_helm_repo_url: "{{ metrics_server_helm_repo_url }}"
       tags: [install]
@@ -84,7 +84,7 @@
     - name: "[metrics-server-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "metrics-server-install"
+        dto_label_name: "metrics-server-install"
         dto_dir: "{{ remote_charts_dir }}/metrics-server/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ metrics_server_helm_values | to_nice_yaml }}"
@@ -93,7 +93,7 @@
     - name: "[metrics-server-install] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "metrics-server-install"
+        dto_label_name: "metrics-server-install"
         dto_helm_command: >
           helm upgrade --install metrics-server {{ metrics_server_helm_repo_name }}/{{ metrics_server_helm_chart_name }}
           --namespace {{ metrics_server_namespace }}
@@ -114,7 +114,7 @@
     - name: "[metrics-server-install] Wait for rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "metrics-server-install"
+        dto_label_name: "metrics-server-install"
         dto_rollout_namespace: "{{ metrics_server_namespace }}"
         dto_rollout_timeout: "{{ metrics_server_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -135,7 +135,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ metrics_server_namespace }}"
-        label_name: "metrics-server-verify"
+        dto_label_name: "metrics-server-verify"
       tags: [always]
 
     - name: "[metrics-server-verify] Get metrics-server pods status"

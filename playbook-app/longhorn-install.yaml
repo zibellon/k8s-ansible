@@ -22,13 +22,13 @@
     - name: "[longhorn-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "longhorn-install-pre-check"
+        dto_label_name: "longhorn-install-pre-check"
       tags: [always]
 
     - name: "[longhorn-install-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "longhorn-install-pre-check"
+        dto_label_name: "longhorn-install-pre-check"
         dto_target_namespace: "{{ longhorn_namespace }}"
       tags: [always]
 
@@ -48,14 +48,14 @@
     - name: "[longhorn-install-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: longhorn-install-init
+        dto_label_name: longhorn-install-init
         dto_cluster_issuer_name: "{{ longhorn_ui_cluster_issuer_name }}"
         dto_ingress_class_name: "{{ longhorn_ui_ingress_class_name }}"
 
     - name: "[longhorn-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "longhorn-pre"
+        dto_label_name: "longhorn-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/longhorn/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/longhorn/pre"
@@ -64,7 +64,7 @@
     - name: "[longhorn-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "longhorn-pre"
+        dto_label_name: "longhorn-pre"
         dto_dir: "{{ remote_charts_dir }}/longhorn/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ longhorn_pre_helm_values | to_nice_yaml }}"
@@ -73,7 +73,7 @@
     - name: "[longhorn-pre] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "longhorn-pre"
+        dto_label_name: "longhorn-pre"
         dto_helm_command: >
           helm upgrade --install longhorn-pre {{ remote_charts_dir }}/longhorn/pre
           --namespace {{ longhorn_namespace }}
@@ -93,7 +93,7 @@
     - name: "[longhorn-install] Add Helm repository"
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
-        label_name: "longhorn-install"
+        dto_label_name: "longhorn-install"
         dto_helm_repo_name: "{{ longhorn_helm_repo_name }}"
         dto_helm_repo_url: "{{ longhorn_helm_repo_url }}"
       tags: [install]
@@ -101,7 +101,7 @@
     - name: "[longhorn-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "longhorn-install"
+        dto_label_name: "longhorn-install"
         dto_dir: "{{ remote_charts_dir }}/longhorn/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ longhorn_helm_values | to_nice_yaml }}"
@@ -110,7 +110,7 @@
     - name: "[longhorn-install] Install or upgrade Longhorn via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "longhorn-install"
+        dto_label_name: "longhorn-install"
         dto_helm_command: >
           helm upgrade --install longhorn {{ longhorn_helm_repo_name }}/{{ longhorn_helm_chart_name }}
           --namespace {{ longhorn_namespace }}
@@ -127,7 +127,7 @@
     - name: "[longhorn-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "longhorn-install"
+        dto_label_name: "longhorn-install"
         dto_crds_list:
           - crd/backingimagedatasources.longhorn.io
           - crd/backingimagemanagers.longhorn.io
@@ -156,7 +156,7 @@
     - name: "[longhorn-install] Wait for HelmMainComponents rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "longhorn-install"
+        dto_label_name: "longhorn-install"
         dto_rollout_namespace: "{{ longhorn_namespace }}"
         dto_rollout_timeout: "{{ longhorn_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -168,7 +168,7 @@
     - name: "[longhorn-install] Wait for ManagedComponents rollout (csi)"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "longhorn-install"
+        dto_label_name: "longhorn-install"
         dto_rollout_namespace: "{{ longhorn_namespace }}"
         dto_rollout_timeout: "{{ longhorn_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -186,7 +186,7 @@
     - name: "[longhorn-post] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "longhorn-post"
+        dto_label_name: "longhorn-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/longhorn/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/longhorn/post"
@@ -195,7 +195,7 @@
     - name: "[longhorn-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "longhorn-post"
+        dto_label_name: "longhorn-post"
         dto_dir: "{{ remote_charts_dir }}/longhorn/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ longhorn_post_helm_values | to_nice_yaml }}"
@@ -204,7 +204,7 @@
     - name: "[longhorn-post] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "longhorn-post"
+        dto_label_name: "longhorn-post"
         dto_helm_command: >
           helm upgrade --install longhorn-post {{ remote_charts_dir }}/longhorn/post
           --namespace {{ longhorn_namespace }}
@@ -225,7 +225,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ longhorn_namespace }}"
-        label_name: "longhorn-verify"
+        dto_label_name: "longhorn-verify"
       tags: [always]
 
     - name: "[longhorn-verify] Get longhorn pods status"

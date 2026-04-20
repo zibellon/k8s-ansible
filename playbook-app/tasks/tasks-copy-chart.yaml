@@ -3,29 +3,29 @@
 # Copies chart directory to remote server using tar archive for better performance
 #
 # Params:
-#   - label_name: Label for task names (used in logs)
+#   - dto_label_name: Label for task names (used in logs)
 #   - dto_chart_name: Name of the chart (used for archive filename and logs)
 #   - dto_chart_local_src: Local path to chart directory (with trailing /)
 #   - dto_chart_remote_dest: Remote destination path
 # =============================================================================
 
-- name: "[{{ label_name }}] Assert all dto params are provided"
+- name: "[{{ dto_label_name }}] Assert all dto params are provided"
   assert:
     that:
-      - label_name is defined
-      - label_name | length > 0
+      - dto_label_name is defined
+      - dto_label_name | length > 0
       - dto_chart_name is defined
       - dto_chart_name | length > 0
       - dto_chart_local_src is defined
       - dto_chart_local_src | length > 0
       - dto_chart_remote_dest is defined
       - dto_chart_remote_dest | length > 0
-    fail_msg: "tasks-copy-chart: all params required: label_name, dto_chart_name, dto_chart_local_src, dto_chart_remote_dest"
+    fail_msg: "tasks-copy-chart: all params required: dto_label_name, dto_chart_name, dto_chart_local_src, dto_chart_remote_dest"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Ensure remote charts directory exists"
+- name: "[{{ dto_label_name }}] Ensure remote charts directory exists"
   file:
     path: "{{ dto_chart_remote_dest | dirname }}"
     state: directory
@@ -34,7 +34,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Archive chart locally"
+- name: "[{{ dto_label_name }}] Archive chart locally"
   archive:
     path: "{{ dto_chart_local_src }}"
     dest: "{{ dto_chart_local_src | dirname }}/{{ dto_chart_name }}.tar.gz"
@@ -44,7 +44,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Remove old chart from remote"
+- name: "[{{ dto_label_name }}] Remove old chart from remote"
   file:
     path: "{{ dto_chart_remote_dest }}"
     state: absent
@@ -52,7 +52,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Create remote directory"
+- name: "[{{ dto_label_name }}] Create remote directory"
   file:
     path: "{{ dto_chart_remote_dest }}"
     state: directory
@@ -61,7 +61,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Copy archive to remote"
+- name: "[{{ dto_label_name }}] Copy archive to remote"
   copy:
     src: "{{ dto_chart_local_src | dirname }}/{{ dto_chart_name }}.tar.gz"
     dest: "{{ dto_chart_remote_dest }}.tar.gz"
@@ -69,7 +69,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Unarchive on remote"
+- name: "[{{ dto_label_name }}] Unarchive on remote"
   unarchive:
     src: "{{ dto_chart_remote_dest }}.tar.gz"
     dest: "{{ dto_chart_remote_dest }}"
@@ -78,7 +78,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Cleanup remote archive"
+- name: "[{{ dto_label_name }}] Cleanup remote archive"
   file:
     path: "{{ dto_chart_remote_dest }}.tar.gz"
     state: absent
@@ -86,7 +86,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Cleanup local archive"
+- name: "[{{ dto_label_name }}] Cleanup local archive"
   file:
     path: "{{ dto_chart_local_src | dirname }}/{{ dto_chart_name }}.tar.gz"
     state: absent

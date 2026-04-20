@@ -6,7 +6,7 @@
 # <fact_name>_exists.
 #
 # Required vars:
-#   label_name          — task label prefix
+#   dto_label_name          — task label prefix
 #   dto_vault_get_path      — full KV path incl. mount, e.g. "eso-secret/gitlab/root"
 #   dto_vault_get_field     — field to extract (required; one field per call)
 #   dto_vault_get_res_fact_name — output fact name (sets <name> and <name>_exists)
@@ -18,11 +18,11 @@
 # Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
 # =============================================================================
 
-- name: "[{{ label_name }}] Assert all dto params are provided"
+- name: "[{{ dto_label_name }}] Assert all dto params are provided"
   assert:
     that:
-      - label_name is defined
-      - label_name | length > 0
+      - dto_label_name is defined
+      - dto_label_name | length > 0
       - dto_vault_get_path is defined
       - dto_vault_get_path | length > 0
       - dto_vault_get_field is defined
@@ -31,12 +31,12 @@
       - dto_vault_get_res_fact_name | length > 0
     fail_msg: >-
       tasks-vault-get: all params required:
-      label_name, dto_vault_get_path, dto_vault_get_field, dto_vault_get_res_fact_name
+      dto_label_name, dto_vault_get_path, dto_vault_get_field, dto_vault_get_res_fact_name
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Read Vault root token"
+- name: "[{{ dto_label_name }}] Read Vault root token"
   shell: "jq -r '.\"vault-root\"' {{ vault_creds_host_path }}"
   register: _vault_get_token
   changed_when: false
@@ -44,7 +44,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Fetch secret from Vault"
+- name: "[{{ dto_label_name }}] Fetch secret from Vault"
   shell: |
     kubectl exec -n {{ vault_namespace }} vault-0 -- \
       env VAULT_TOKEN="{{ _vault_get_token.stdout }}" \
@@ -56,7 +56,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Parse Vault response"
+- name: "[{{ dto_label_name }}] Parse Vault response"
   set_fact:
     _vault_get_data: >-
       {{
@@ -68,7 +68,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Set result fact"
+- name: "[{{ dto_label_name }}] Set result fact"
   set_fact:
     "{{ dto_vault_get_res_fact_name }}": "{{ _vault_get_data[dto_vault_get_field] | default('') | string }}"
     "{{ dto_vault_get_res_fact_name + '_exists' }}": >-
@@ -80,7 +80,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Set fact to all host"
+- name: "[{{ dto_label_name }}] Set fact to all host"
   set_fact:
     "{{ dto_vault_get_res_fact_name }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_fact_name] }}"
     "{{ dto_vault_get_res_fact_name + '_exists' }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_fact_name + '_exists'] }}"

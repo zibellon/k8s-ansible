@@ -22,13 +22,13 @@
     - name: "[grafana-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "grafana-pre-check"
+        dto_label_name: "grafana-pre-check"
       tags: [always]
 
     - name: "[grafana-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "grafana-pre-check"
+        dto_label_name: "grafana-pre-check"
         dto_target_namespace: "{{ grafana_namespace }}"
       tags: [always]
 
@@ -43,7 +43,7 @@
     - name: "[grafana-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: grafana-init
+        dto_label_name: grafana-init
         dto_cluster_issuer_name: "{{ grafana_cluster_issuer }}"
         dto_ingress_class_name: "{{ grafana_ingress_class }}"
       tags: [always]
@@ -55,7 +55,7 @@
     - name: "[grafana-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "grafana-pre"
+        dto_label_name: "grafana-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-grafana/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-grafana/pre"
@@ -64,7 +64,7 @@
     - name: "[grafana-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "grafana-pre"
+        dto_label_name: "grafana-pre"
         dto_dir: "{{ remote_charts_dir }}/mon-grafana/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ grafana_pre_helm_values | to_nice_yaml }}"
@@ -73,7 +73,7 @@
     - name: "[grafana-pre] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "grafana-pre"
+        dto_label_name: "grafana-pre"
         dto_helm_command: >
           helm upgrade --install grafana-pre {{ remote_charts_dir }}/mon-grafana/pre
           --namespace {{ grafana_namespace }}
@@ -92,7 +92,7 @@
     - name: "[grafana-vault-secrets] Lookup admin secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "grafana-vault-secrets"
+        dto_label_name: "grafana-vault-secrets"
         dto_secrets_list: "{{ eso_vault_integration_grafana_secrets_merged }}"
         dto_external_secret_name: "{{ grafana_secret_name_admin }}"
         dto_res_fact_name_secret: "grafana_admin_secret_name"
@@ -102,7 +102,7 @@
     - name: "[grafana-vault-secrets] Get admin credentials from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
-        label_name: "grafana-vault-secrets"
+        dto_label_name: "grafana-vault-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "grafana_admin_vault"
@@ -111,7 +111,7 @@
     - name: "[grafana-vault-secrets] Generate admin password"
       include_tasks: tasks/tasks-generate-secret.yaml
       vars:
-        label_name: "grafana-vault-secrets"
+        dto_label_name: "grafana-vault-secrets"
         dto_generate_fact_name: "_grafana_admin_password_generated"
       when: not grafana_admin_vault_exists
       tags: [install]
@@ -119,7 +119,7 @@
     - name: "[grafana-vault-secrets] Store admin credentials in Vault"
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
-        label_name: "grafana-vault-secrets"
+        dto_label_name: "grafana-vault-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
         dto_vault_put_data:
           username: "{{ grafana_admin_username }}"
@@ -130,14 +130,14 @@
     - name: "[grafana-vault-secrets] Trigger ESO sync"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
-        label_name: "grafana-vault-secrets"
+        dto_label_name: "grafana-vault-secrets"
         dto_eso_sync_namespace: "{{ grafana_namespace }}"
       tags: [install]
 
     - name: "[grafana-vault-secrets] Wait for secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "grafana-vault-secrets"
+        dto_label_name: "grafana-vault-secrets"
         dto_wait_secret_name: "{{ grafana_admin_secret_name }}"
         dto_wait_secret_namespace: "{{ grafana_namespace }}"
       tags: [install]
@@ -149,7 +149,7 @@
     - name: "[grafana-install] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "grafana-install"
+        dto_label_name: "grafana-install"
         dto_chart_name: "install"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-grafana/install/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-grafana/install"
@@ -158,7 +158,7 @@
     - name: "[grafana-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "grafana-install"
+        dto_label_name: "grafana-install"
         dto_dir: "{{ remote_charts_dir }}/mon-grafana/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ grafana_install_helm_values | to_nice_yaml }}"
@@ -167,7 +167,7 @@
     - name: "[grafana-install] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "grafana-install"
+        dto_label_name: "grafana-install"
         dto_helm_command: >
           helm upgrade --install grafana {{ remote_charts_dir }}/mon-grafana/install
           --namespace {{ grafana_namespace }}
@@ -183,7 +183,7 @@
     - name: "[grafana-install] Wait for rollout"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "grafana-install"
+        dto_label_name: "grafana-install"
         dto_rollout_namespace: "{{ grafana_namespace }}"
         dto_rollout_timeout: "{{ grafana_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -197,7 +197,7 @@
     - name: "[grafana-post] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "grafana-post"
+        dto_label_name: "grafana-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-grafana/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-grafana/post"
@@ -206,7 +206,7 @@
     - name: "[grafana-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "grafana-post"
+        dto_label_name: "grafana-post"
         dto_dir: "{{ remote_charts_dir }}/mon-grafana/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ grafana_post_helm_values | to_nice_yaml }}"
@@ -215,7 +215,7 @@
     - name: "[grafana-post] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "grafana-post"
+        dto_label_name: "grafana-post"
         dto_helm_command: >
           helm upgrade --install grafana-post {{ remote_charts_dir }}/mon-grafana/post
           --namespace {{ grafana_namespace }}
@@ -235,7 +235,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ grafana_namespace }}"
-        label_name: "grafana-verify"
+        dto_label_name: "grafana-verify"
       tags: [always]
 
     - name: "[grafana-verify] Get pods status"

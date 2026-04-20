@@ -22,13 +22,13 @@
     - name: "[traefik-install-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "traefik-install-pre-check"
+        dto_label_name: "traefik-install-pre-check"
       tags: [always]
 
     - name: "[traefik-install-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "traefik-install-pre-check"
+        dto_label_name: "traefik-install-pre-check"
         dto_target_namespace: "{{ traefik_namespace }}"
       tags: [always]
 
@@ -43,7 +43,7 @@
     - name: "[traefik-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: traefik-init
+        dto_label_name: traefik-init
         dto_cluster_issuer_name: "{{ traefik_dashboard_cluster_issuer_name }}"
         dto_ingress_class_name: "{{ traefik_dashboard_ingress_class_name }}"
 
@@ -54,7 +54,7 @@
     - name: "[traefik-pre] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "traefik-pre"
+        dto_label_name: "traefik-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/traefik/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/traefik/pre"
@@ -63,7 +63,7 @@
     - name: "[traefik-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "traefik-pre"
+        dto_label_name: "traefik-pre"
         dto_dir: "{{ remote_charts_dir }}/traefik/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ traefik_pre_helm_values | to_nice_yaml }}"
@@ -72,7 +72,7 @@
     - name: "[traefik-pre] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "traefik-pre"
+        dto_label_name: "traefik-pre"
         dto_helm_command: >
           helm upgrade --install traefik-pre {{ remote_charts_dir }}/traefik/pre
           --namespace {{ traefik_namespace }}
@@ -92,7 +92,7 @@
     - name: "[traefik-install] Add Helm repository"
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
-        label_name: "traefik-install"
+        dto_label_name: "traefik-install"
         dto_helm_repo_name: "{{ traefik_helm_repo_name }}"
         dto_helm_repo_url: "{{ traefik_helm_repo_url }}"
       tags: [install]
@@ -100,7 +100,7 @@
     - name: "[traefik-install] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "traefik-install"
+        dto_label_name: "traefik-install"
         dto_dir: "{{ remote_charts_dir }}/traefik/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ traefik_helm_values | to_nice_yaml }}"
@@ -109,7 +109,7 @@
     - name: "[traefik-install] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "traefik-install"
+        dto_label_name: "traefik-install"
         dto_helm_command: >
           helm upgrade --install traefik {{ traefik_helm_repo_name }}/{{ traefik_helm_chart_name }}
           --namespace {{ traefik_namespace }}
@@ -130,7 +130,7 @@
     - name: "[traefik-install] Wait for CRDs"
       include_tasks: tasks/tasks-wait-crds.yaml
       vars:
-        label_name: "traefik-install"
+        dto_label_name: "traefik-install"
         dto_crds_list:
           - crd/ingressroutes.traefik.io
           - crd/ingressroutetcps.traefik.io
@@ -164,7 +164,7 @@
     - name: "[traefik-install] Wait for rollouts"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "traefik-install"
+        dto_label_name: "traefik-install"
         dto_rollout_namespace: "{{ traefik_namespace }}"
         dto_rollout_timeout: "{{ traefik_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -178,7 +178,7 @@
     - name: "[traefik-post] Copy chart to server"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "traefik-post"
+        dto_label_name: "traefik-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/traefik/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/traefik/post"
@@ -187,7 +187,7 @@
     - name: "[traefik-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "traefik-post"
+        dto_label_name: "traefik-post"
         dto_dir: "{{ remote_charts_dir }}/traefik/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ traefik_post_helm_values | to_nice_yaml }}"
@@ -196,7 +196,7 @@
     - name: "[traefik-post] Install or upgrade via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "traefik-post"
+        dto_label_name: "traefik-post"
         dto_helm_command: >
           helm upgrade --install traefik-post {{ remote_charts_dir }}/traefik/post
           --namespace {{ traefik_namespace }}
@@ -217,7 +217,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ traefik_namespace }}"
-        label_name: "traefik-verify"
+        dto_label_name: "traefik-verify"
       tags: [always]
 
     - name: "[traefik-verify] Get traefik pods status"

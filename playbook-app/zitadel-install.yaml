@@ -31,13 +31,13 @@
     - name: "[zitadel-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "zitadel-pre-check"
+        dto_label_name: "zitadel-pre-check"
       tags: [always]
 
     - name: "[zitadel-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "zitadel-pre-check"
+        dto_label_name: "zitadel-pre-check"
         dto_target_namespace: "{{ zitadel_namespace }}"
       tags: [always]
 
@@ -52,7 +52,7 @@
     - name: "[zitadel-install-init] Lookup postgresql secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "zitadel-install-init"
+        dto_label_name: "zitadel-install-init"
         dto_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
         dto_external_secret_name: "{{ zitadel_secret_name_postgresql }}"
         dto_res_fact_name_secret: "secret_postgresql"
@@ -62,7 +62,7 @@
     - name: "[zitadel-install-init] Lookup masterkey secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "zitadel-install-init"
+        dto_label_name: "zitadel-install-init"
         dto_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
         dto_external_secret_name: "{{ zitadel_secret_name_masterkey }}"
         dto_res_fact_name_secret: "secret_masterkey"
@@ -76,7 +76,7 @@
     - name: "[zitadel-install-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: zitadel-install-init
+        dto_label_name: zitadel-install-init
         dto_cluster_issuer_name: "{{ zitadel_cluster_issuer_name }}"
         dto_ingress_class_name: "{{ zitadel_ingress_class_name }}"
       tags: [always]
@@ -88,7 +88,7 @@
     - name: "[zitadel-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "zitadel-pre"
+        dto_label_name: "zitadel-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/zitadel/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/zitadel/pre"
@@ -97,7 +97,7 @@
     - name: "[zitadel-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "zitadel-pre"
+        dto_label_name: "zitadel-pre"
         dto_dir: "{{ remote_charts_dir }}/zitadel/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ zitadel_pre_helm_values | to_nice_yaml }}"
@@ -106,7 +106,7 @@
     - name: "[zitadel-pre] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "zitadel-pre"
+        dto_label_name: "zitadel-pre"
         dto_helm_command: >
           helm upgrade --install zitadel-pre {{ remote_charts_dir }}/zitadel/pre
           --namespace {{ zitadel_namespace }}
@@ -129,7 +129,7 @@
     - name: "[zitadel-postgresql-secrets] Get PostgreSQL credentials from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
-        label_name: "zitadel-postgresql-secrets"
+        dto_label_name: "zitadel-postgresql-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_postgresql }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "zitadel_postgresql_vault"
@@ -138,7 +138,7 @@
     - name: "[zitadel-postgresql-secrets] Generate PostgreSQL password"
       include_tasks: tasks/tasks-generate-secret.yaml
       vars:
-        label_name: "zitadel-postgresql-secrets"
+        dto_label_name: "zitadel-postgresql-secrets"
         dto_generate_fact_name: "_zitadel_postgresql_password_generated"
       when: not zitadel_postgresql_vault_exists
       tags: [postgresql]
@@ -146,7 +146,7 @@
     - name: "[zitadel-postgresql-secrets] Store PostgreSQL credentials in Vault"
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
-        label_name: "zitadel-postgresql-secrets"
+        dto_label_name: "zitadel-postgresql-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_postgresql }}"
         dto_vault_put_data:
           username: "{{ zitadel_postgresql_username }}"
@@ -157,14 +157,14 @@
     - name: "[zitadel-postgresql-secrets] Trigger ESO sync"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
-        label_name: "zitadel-postgresql-secrets"
+        dto_label_name: "zitadel-postgresql-secrets"
         dto_eso_sync_namespace: "{{ zitadel_namespace }}"
       tags: [postgresql]
 
     - name: "[zitadel-postgresql-secrets] Wait for secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "zitadel-postgresql-secrets"
+        dto_label_name: "zitadel-postgresql-secrets"
         dto_wait_secret_name: "{{ secret_postgresql }}"
         dto_wait_secret_namespace: "{{ zitadel_namespace }}"
       tags: [postgresql]
@@ -176,7 +176,7 @@
     - name: "[zitadel-postgresql] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "zitadel-postgresql"
+        dto_label_name: "zitadel-postgresql"
         dto_chart_name: "postgresql"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/zitadel/postgresql/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/zitadel/postgresql"
@@ -185,7 +185,7 @@
     - name: "[zitadel-postgresql] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "zitadel-postgresql"
+        dto_label_name: "zitadel-postgresql"
         dto_dir: "{{ remote_charts_dir }}/zitadel/postgresql"
         dto_filename: "values-override.yaml"
         dto_content: "{{ zitadel_postgresql_helm_values | to_nice_yaml }}"
@@ -194,7 +194,7 @@
     - name: "[zitadel-postgresql] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "zitadel-postgresql"
+        dto_label_name: "zitadel-postgresql"
         dto_helm_command: >
           helm upgrade --install zitadel-postgresql {{ remote_charts_dir }}/zitadel/postgresql
           --namespace {{ zitadel_namespace }}
@@ -209,7 +209,7 @@
     - name: "[zitadel-postgresql] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "zitadel-postgresql"
+        dto_label_name: "zitadel-postgresql"
         dto_rollout_namespace: "{{ zitadel_namespace }}"
         dto_rollout_timeout: "{{ zitadel_postgresql_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -224,7 +224,7 @@
     - name: "[zitadel-masterkey-secrets] Get masterkey from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
-        label_name: "zitadel-masterkey-secrets"
+        dto_label_name: "zitadel-masterkey-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_masterkey }}"
         dto_vault_get_field: masterkey
         dto_vault_get_res_fact_name: "zitadel_masterkey_vault"
@@ -233,7 +233,7 @@
     - name: "[zitadel-masterkey-secrets] Generate masterkey"
       include_tasks: tasks/tasks-generate-secret.yaml
       vars:
-        label_name: "zitadel-masterkey-secrets"
+        dto_label_name: "zitadel-masterkey-secrets"
         dto_generate_fact_name: "_zitadel_masterkey_generated"
       when: not zitadel_masterkey_vault_exists
       tags: [install]
@@ -241,7 +241,7 @@
     - name: "[zitadel-masterkey-secrets] Store masterkey in Vault"
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
-        label_name: "zitadel-masterkey-secrets"
+        dto_label_name: "zitadel-masterkey-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ vault_path_masterkey }}"
         dto_vault_put_data:
           masterkey: "{{ _zitadel_masterkey_generated }}"
@@ -251,14 +251,14 @@
     - name: "[zitadel-masterkey-secrets] Trigger ESO sync"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
-        label_name: "zitadel-masterkey-secrets"
+        dto_label_name: "zitadel-masterkey-secrets"
         dto_eso_sync_namespace: "{{ zitadel_namespace }}"
       tags: [install]
 
     - name: "[zitadel-masterkey-secrets] Wait for secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "zitadel-masterkey-secrets"
+        dto_label_name: "zitadel-masterkey-secrets"
         dto_wait_secret_name: "{{ secret_masterkey }}"
         dto_wait_secret_namespace: "{{ zitadel_namespace }}"
       tags: [install]
@@ -270,7 +270,7 @@
     - name: "[zitadel] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "zitadel"
+        dto_label_name: "zitadel"
         dto_dir: "{{ remote_charts_dir }}/zitadel/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ zitadel_helm_values | to_nice_yaml }}"
@@ -279,7 +279,7 @@
     - name: "[zitadel] Add Helm repository"
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
-        label_name: "zitadel"
+        dto_label_name: "zitadel"
         dto_helm_repo_name: "{{ zitadel_helm_repo_name }}"
         dto_helm_repo_url: "{{ zitadel_helm_repo_url }}"
       tags: [install]
@@ -287,7 +287,7 @@
     - name: "[zitadel] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "zitadel"
+        dto_label_name: "zitadel"
         dto_helm_command: >
           helm upgrade --install zitadel {{ zitadel_helm_repo_name }}/{{ zitadel_helm_chart_name }}
           --namespace {{ zitadel_namespace }}
@@ -303,7 +303,7 @@
     - name: "[zitadel] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "zitadel"
+        dto_label_name: "zitadel"
         dto_rollout_namespace: "{{ zitadel_namespace }}"
         dto_rollout_timeout: "{{ zitadel_install_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -317,7 +317,7 @@
     - name: "[zitadel-post] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "zitadel-post"
+        dto_label_name: "zitadel-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/zitadel/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/zitadel/post"
@@ -326,7 +326,7 @@
     - name: "[zitadel-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "zitadel-post"
+        dto_label_name: "zitadel-post"
         dto_dir: "{{ remote_charts_dir }}/zitadel/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ zitadel_post_helm_values | to_nice_yaml }}"
@@ -335,7 +335,7 @@
     - name: "[zitadel-post] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "zitadel-post"
+        dto_label_name: "zitadel-post"
         dto_helm_command: >
           helm upgrade --install zitadel-post {{ remote_charts_dir }}/zitadel/post
           --namespace {{ zitadel_namespace }}
@@ -354,7 +354,7 @@
     - name: "[zitadel-verify] Verify Helm releases"
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
-        label_name: "zitadel-verify"
+        dto_label_name: "zitadel-verify"
         dto_helm_namespace: "{{ zitadel_namespace }}"
       tags: [always]
 

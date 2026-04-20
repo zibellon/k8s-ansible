@@ -29,13 +29,13 @@
     - name: "[gitlab-pre-check] Validate target"
       include_tasks: tasks/tasks-pre-check.yaml
       vars:
-        label_name: "gitlab-pre-check"
+        dto_label_name: "gitlab-pre-check"
       tags: [always]
 
     - name: "[gitlab-pre-check] Forbid kube-system namespace"
       include_tasks: tasks/tasks-forbid-kube-system.yaml
       vars:
-        label_name: "gitlab-pre-check"
+        dto_label_name: "gitlab-pre-check"
         dto_target_namespace: "{{ gitlab_namespace }}"
       tags: [always]
 
@@ -50,7 +50,7 @@
     - name: "[gitlab-install-init] Lookup postgresql secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "gitlab-install-init"
+        dto_label_name: "gitlab-install-init"
         dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_postgresql }}"
         dto_res_fact_name_secret: "secret_postgresql"
@@ -60,7 +60,7 @@
     - name: "[gitlab-install-init] Lookup redis secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "gitlab-install-init"
+        dto_label_name: "gitlab-install-init"
         dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_redis }}"
         dto_res_fact_name_secret: "secret_redis"
@@ -70,7 +70,7 @@
     - name: "[gitlab-install-init] Lookup minio-root secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "gitlab-install-init"
+        dto_label_name: "gitlab-install-init"
         dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_minio_root }}"
         dto_res_fact_name_secret: "secret_minio_root"
@@ -80,7 +80,7 @@
     - name: "[gitlab-install-init] Lookup minio-registry secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "gitlab-install-init"
+        dto_label_name: "gitlab-install-init"
         dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_minio_registry }}"
         dto_res_fact_name_secret: "secret_minio_registry"
@@ -90,7 +90,7 @@
     - name: "[gitlab-install-init] Lookup registry-minio-connection secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "gitlab-install-init"
+        dto_label_name: "gitlab-install-init"
         dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_registry_minio_connection }}"
         dto_res_fact_name_secret: "secret_gitlab_registry_minio_connection"
@@ -100,7 +100,7 @@
     - name: "[gitlab-install-init] Lookup minio-connection secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "gitlab-install-init"
+        dto_label_name: "gitlab-install-init"
         dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_minio_connection }}"
         dto_res_fact_name_secret: "secret_gitlab_minio_connection"
@@ -110,7 +110,7 @@
     - name: "[gitlab-install-init] Lookup gitlab-root secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
-        label_name: "gitlab-install-init"
+        dto_label_name: "gitlab-install-init"
         dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_root }}"
         dto_res_fact_name_secret: "secret_gitlab_root"
@@ -124,7 +124,7 @@
     - name: "[gitlab-install-init] Resolve ACME solver"
       include_tasks: tasks/tasks-resolve-acme-solver.yaml
       vars:
-        label_name: gitlab-install-init
+        dto_label_name: gitlab-install-init
         dto_cluster_issuer_name: "{{ gitlab_cluster_issuer_name }}"
         dto_ingress_class_name: "{{ gitlab_ingress_class_name }}"
       tags: [always]
@@ -136,7 +136,7 @@
     - name: "[gitlab-pre] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-pre"
+        dto_label_name: "gitlab-pre"
         dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/gitlab/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab/pre"
@@ -145,7 +145,7 @@
     - name: "[gitlab-pre] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "gitlab-pre"
+        dto_label_name: "gitlab-pre"
         dto_dir: "{{ remote_charts_dir }}/gitlab/pre"
         dto_filename: "values-override.yaml"
         dto_content: "{{ gitlab_pre_helm_values | to_nice_yaml }}"
@@ -154,7 +154,7 @@
     - name: "[gitlab-pre] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "gitlab-pre"
+        dto_label_name: "gitlab-pre"
         dto_helm_command: >
           helm upgrade --install gitlab-pre {{ remote_charts_dir }}/gitlab/pre
           --namespace {{ gitlab_namespace }}
@@ -174,7 +174,7 @@
     - name: "[gitlab-postgresql-secrets] Get PostgreSQL credentials from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
-        label_name: "gitlab-postgresql-secrets"
+        dto_label_name: "gitlab-postgresql-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "gitlab_postgresql_vault"
@@ -183,7 +183,7 @@
     - name: "[gitlab-postgresql-secrets] Generate PostgreSQL password"
       include_tasks: tasks/tasks-generate-secret.yaml
       vars:
-        label_name: "gitlab-postgresql-secrets"
+        dto_label_name: "gitlab-postgresql-secrets"
         dto_generate_fact_name: "_gitlab_postgresql_password_generated"
       when: not gitlab_postgresql_vault_exists
       tags: [postgresql]
@@ -191,7 +191,7 @@
     - name: "[gitlab-postgresql-secrets] Store PostgreSQL credentials in Vault"
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
-        label_name: "gitlab-postgresql-secrets"
+        dto_label_name: "gitlab-postgresql-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_postgresql }}"
         dto_vault_put_data:
           username: gitlab
@@ -202,14 +202,14 @@
     - name: "[gitlab-postgresql-secrets] Trigger ESO sync"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
-        label_name: "gitlab-postgresql-secrets"
+        dto_label_name: "gitlab-postgresql-secrets"
         dto_eso_sync_namespace: "{{ gitlab_namespace }}"
       tags: [postgresql]
 
     - name: "[gitlab-postgresql-secrets] Wait for secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "gitlab-postgresql-secrets"
+        dto_label_name: "gitlab-postgresql-secrets"
         dto_wait_secret_name: "{{ secret_postgresql }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [postgresql]
@@ -221,7 +221,7 @@
     - name: "[gitlab-postgresql] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-postgresql"
+        dto_label_name: "gitlab-postgresql"
         dto_chart_name: "postgresql"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/gitlab/postgresql/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab/postgresql"
@@ -230,7 +230,7 @@
     - name: "[gitlab-postgresql] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "gitlab-postgresql"
+        dto_label_name: "gitlab-postgresql"
         dto_dir: "{{ remote_charts_dir }}/gitlab/postgresql"
         dto_filename: "values-override.yaml"
         dto_content: "{{ gitlab_postgresql_helm_values | to_nice_yaml }}"
@@ -239,7 +239,7 @@
     - name: "[gitlab-postgresql] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "gitlab-postgresql"
+        dto_label_name: "gitlab-postgresql"
         dto_helm_command: >
           helm upgrade --install gitlab-postgresql {{ remote_charts_dir }}/gitlab/postgresql
           --namespace {{ gitlab_namespace }}
@@ -254,7 +254,7 @@
     - name: "[gitlab-postgresql] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "gitlab-postgresql"
+        dto_label_name: "gitlab-postgresql"
         dto_rollout_namespace: "{{ gitlab_namespace }}"
         dto_rollout_timeout: "{{ gitlab_postgresql_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -269,7 +269,7 @@
     - name: "[gitlab-redis-secrets] Get Redis credentials from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
-        label_name: "gitlab-redis-secrets"
+        dto_label_name: "gitlab-redis-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "gitlab_redis_vault"
@@ -287,7 +287,7 @@
     - name: "[gitlab-redis-secrets] Store Redis credentials in Vault"
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
-        label_name: "gitlab-redis-secrets"
+        dto_label_name: "gitlab-redis-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_redis }}"
         dto_vault_put_data:
           password: "{{ _gitlab_redis_password }}"
@@ -298,14 +298,14 @@
     - name: "[gitlab-redis-secrets] Trigger ESO sync"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
-        label_name: "gitlab-redis-secrets"
+        dto_label_name: "gitlab-redis-secrets"
         dto_eso_sync_namespace: "{{ gitlab_namespace }}"
       tags: [redis]
 
     - name: "[gitlab-redis-secrets] Wait for secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "gitlab-redis-secrets"
+        dto_label_name: "gitlab-redis-secrets"
         dto_wait_secret_name: "{{ secret_redis }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [redis]
@@ -317,7 +317,7 @@
     - name: "[gitlab-redis] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-redis"
+        dto_label_name: "gitlab-redis"
         dto_chart_name: "redis"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/gitlab/redis/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab/redis"
@@ -326,7 +326,7 @@
     - name: "[gitlab-redis] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "gitlab-redis"
+        dto_label_name: "gitlab-redis"
         dto_dir: "{{ remote_charts_dir }}/gitlab/redis"
         dto_filename: "values-override.yaml"
         dto_content: "{{ gitlab_redis_helm_values | to_nice_yaml }}"
@@ -335,7 +335,7 @@
     - name: "[gitlab-redis] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "gitlab-redis"
+        dto_label_name: "gitlab-redis"
         dto_helm_command: >
           helm upgrade --install gitlab-redis {{ remote_charts_dir }}/gitlab/redis
           --namespace {{ gitlab_namespace }}
@@ -350,7 +350,7 @@
     - name: "[gitlab-redis] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "gitlab-redis"
+        dto_label_name: "gitlab-redis"
         dto_rollout_namespace: "{{ gitlab_namespace }}"
         dto_rollout_timeout: "{{ gitlab_redis_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -365,7 +365,7 @@
     - name: "[gitlab-minio-secrets] Get MinIO root credentials from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
-        label_name: "gitlab-minio-secrets"
+        dto_label_name: "gitlab-minio-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "gitlab_minio_root_vault"
@@ -374,7 +374,7 @@
     - name: "[gitlab-minio-secrets] Generate MinIO root password"
       include_tasks: tasks/tasks-generate-secret.yaml
       vars:
-        label_name: "gitlab-minio-secrets"
+        dto_label_name: "gitlab-minio-secrets"
         dto_generate_fact_name: "_gitlab_minio_root_password_generated"
       when: not gitlab_minio_root_vault_exists
       tags: [minio]
@@ -382,7 +382,7 @@
     - name: "[gitlab-minio-secrets] Store MinIO root credentials in Vault"
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
-        label_name: "gitlab-minio-secrets"
+        dto_label_name: "gitlab-minio-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_root }}"
         dto_vault_put_data:
           username: "{{ gitlab_minio_root_user }}"
@@ -393,14 +393,14 @@
     - name: "[gitlab-minio-secrets] Trigger ESO sync"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
-        label_name: "gitlab-minio-secrets"
+        dto_label_name: "gitlab-minio-secrets"
         dto_eso_sync_namespace: "{{ gitlab_namespace }}"
       tags: [minio]
 
     - name: "[gitlab-minio-secrets] Wait for secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "gitlab-minio-secrets"
+        dto_label_name: "gitlab-minio-secrets"
         dto_wait_secret_name: "{{ secret_minio_root }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [minio]
@@ -412,7 +412,7 @@
     - name: "[gitlab-minio] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-minio"
+        dto_label_name: "gitlab-minio"
         dto_chart_name: "minio"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/gitlab/minio/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab/minio"
@@ -421,7 +421,7 @@
     - name: "[gitlab-minio] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "gitlab-minio"
+        dto_label_name: "gitlab-minio"
         dto_dir: "{{ remote_charts_dir }}/gitlab/minio"
         dto_filename: "values-override.yaml"
         dto_content: "{{ gitlab_minio_helm_values | to_nice_yaml }}"
@@ -430,7 +430,7 @@
     - name: "[gitlab-minio] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "gitlab-minio"
+        dto_label_name: "gitlab-minio"
         dto_helm_command: >
           helm upgrade --install gitlab-minio {{ remote_charts_dir }}/gitlab/minio
           --namespace {{ gitlab_namespace }}
@@ -445,7 +445,7 @@
     - name: "[gitlab-minio] Wait for rollout to be ready"
       include_tasks: tasks/tasks-wait-rollout.yaml
       vars:
-        label_name: "gitlab-minio"
+        dto_label_name: "gitlab-minio"
         dto_rollout_namespace: "{{ gitlab_namespace }}"
         dto_rollout_timeout: "{{ gitlab_minio_rollout_timeout }}"
         dto_rollout_resources_list:
@@ -469,7 +469,7 @@
     - name: "[gitlab-minio-setup] Get MinIO root username from secret"
       include_tasks: tasks/tasks-k8s-secret-get.yaml
       vars:
-        label_name: "gitlab-minio-setup"
+        dto_label_name: "gitlab-minio-setup"
         dto_secret_namespace: "{{ gitlab_namespace }}"
         dto_secret_name: "{{ secret_minio_root }}"
         dto_secret_field: "username"
@@ -479,7 +479,7 @@
     - name: "[gitlab-minio-setup] Get MinIO root password from secret"
       include_tasks: tasks/tasks-k8s-secret-get.yaml
       vars:
-        label_name: "gitlab-minio-setup"
+        dto_label_name: "gitlab-minio-setup"
         dto_secret_namespace: "{{ gitlab_namespace }}"
         dto_secret_name: "{{ secret_minio_root }}"
         dto_secret_field: "password"
@@ -525,7 +525,7 @@
     - name: "[gitlab-minio-setup] Get registry access key from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
-        label_name: "gitlab-minio-setup"
+        dto_label_name: "gitlab-minio-setup"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_registry }}"
         dto_vault_get_field: access_key
         dto_vault_get_res_fact_name: "gitlab_registry_access_key_vault"
@@ -545,7 +545,7 @@
     - name: "[gitlab-minio-setup] Store registry access key in Vault"
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
-        label_name: "gitlab-minio-setup"
+        dto_label_name: "gitlab-minio-setup"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ vault_path_minio_registry }}"
         dto_vault_put_data:
           access_key: "{{ (registry_accesskey_result.stdout | from_json).accessKey }}"
@@ -557,14 +557,14 @@
     - name: "[gitlab-minio-setup] Trigger ESO sync"
       include_tasks: tasks/tasks-eso-force-sync.yaml
       vars:
-        label_name: "gitlab-minio-setup"
+        dto_label_name: "gitlab-minio-setup"
         dto_eso_sync_namespace: "{{ gitlab_namespace }}"
       tags: [minio]
 
     - name: "[gitlab-minio-setup] Wait for secret"
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
-        label_name: "gitlab-minio-setup"
+        dto_label_name: "gitlab-minio-setup"
         dto_wait_secret_name: "{{ secret_minio_registry }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [minio]
@@ -576,7 +576,7 @@
     - name: "[gitlab] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "gitlab"
+        dto_label_name: "gitlab"
         dto_dir: "{{ remote_charts_dir }}/gitlab/install"
         dto_filename: "values-override.yaml"
         dto_content: "{{ gitlab_helm_values | to_nice_yaml }}"
@@ -585,7 +585,7 @@
     - name: "[gitlab] Add Helm repository"
       include_tasks: tasks/tasks-add-helm-repo.yaml
       vars:
-        label_name: "gitlab"
+        dto_label_name: "gitlab"
         dto_helm_repo_name: "{{ gitlab_helm_repo_name }}"
         dto_helm_repo_url: "{{ gitlab_helm_repo_url }}"
       tags: [install]
@@ -593,7 +593,7 @@
     - name: "[gitlab] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "gitlab"
+        dto_label_name: "gitlab"
         dto_helm_command: >
           helm upgrade --install gitlab {{ gitlab_helm_repo_name }}/{{ gitlab_helm_chart_name }}
           --namespace {{ gitlab_namespace }}
@@ -622,7 +622,7 @@
     - name: "[gitlab-post] Copy chart to remote"
       include_tasks: tasks/tasks-copy-chart.yaml
       vars:
-        label_name: "gitlab-post"
+        dto_label_name: "gitlab-post"
         dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/gitlab/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab/post"
@@ -631,7 +631,7 @@
     - name: "[gitlab-post] Create values file"
       include_tasks: tasks/tasks-copy-helm-values.yaml
       vars:
-        label_name: "gitlab-post"
+        dto_label_name: "gitlab-post"
         dto_dir: "{{ remote_charts_dir }}/gitlab/post"
         dto_filename: "values-override.yaml"
         dto_content: "{{ gitlab_post_helm_values | to_nice_yaml }}"
@@ -640,7 +640,7 @@
     - name: "[gitlab-post] Install via Helm (async)"
       include_tasks: tasks/tasks-helm-upgrade-async.yaml
       vars:
-        label_name: "gitlab-post"
+        dto_label_name: "gitlab-post"
         dto_helm_command: >
           helm upgrade --install gitlab-post {{ remote_charts_dir }}/gitlab/post
           --namespace {{ gitlab_namespace }}
@@ -660,7 +660,7 @@
       include_tasks: tasks/tasks-verify-helm.yaml
       vars:
         dto_helm_namespace: "{{ gitlab_namespace }}"
-        label_name: "gitlab-verify"
+        dto_label_name: "gitlab-verify"
       tags: [always]
 
     - name: "[gitlab-verify] Get gitlab pods status"

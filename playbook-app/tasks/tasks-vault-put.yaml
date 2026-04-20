@@ -5,7 +5,7 @@
 # Generation of secret values is the caller's responsibility — use tasks-generate-secret.yaml.
 #
 # Required vars:
-#   label_name     — task label prefix
+#   dto_label_name     — task label prefix
 #   dto_vault_put_path — full KV path incl. mount, e.g. "eso-secret/gitlab/postgresql"
 #   dto_vault_put_data — dict { field: value } to write (must be non-empty)
 #
@@ -15,11 +15,11 @@
 # Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
 # =============================================================================
 
-- name: "[{{ label_name }}] Assert all dto params are provided"
+- name: "[{{ dto_label_name }}] Assert all dto params are provided"
   assert:
     that:
-      - label_name is defined
-      - label_name | length > 0
+      - dto_label_name is defined
+      - dto_label_name | length > 0
       - dto_vault_put_path is defined
       - dto_vault_put_path | length > 0
       - dto_vault_put_data is defined
@@ -27,12 +27,12 @@
       - dto_vault_put_data | length > 0
     fail_msg: >-
       tasks-vault-put: all params required:
-      label_name, dto_vault_put_path, dto_vault_put_data (non-empty dict)
+      dto_label_name, dto_vault_put_path, dto_vault_put_data (non-empty dict)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Read Vault root token"
+- name: "[{{ dto_label_name }}] Read Vault root token"
   shell: "jq -r '.\"vault-root\"' {{ vault_creds_host_path }}"
   register: _vault_put_token
   changed_when: false
@@ -40,7 +40,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ label_name }}] Write secret to Vault"
+- name: "[{{ dto_label_name }}] Write secret to Vault"
   shell: |
     printf '%s' {{ dto_vault_put_data | to_json | quote }} | \
       kubectl exec -i -n {{ vault_namespace }} vault-0 -- \
