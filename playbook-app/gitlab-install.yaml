@@ -47,24 +47,74 @@
       include_tasks: tasks/tasks-eso-secrets-merge.yaml
       tags: [always]
 
-    - name: "[gitlab-install-init] Find secret names and vault paths by type"
-      set_fact:
-        # Secret names
-        secret_postgresql: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'postgresql') | first).target_secret_name }}"
-        secret_redis: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'redis') | first).target_secret_name }}"
-        secret_minio_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_root') | first).target_secret_name }}"
-        secret_minio_registry: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_registry') | first).target_secret_name }}"
-        secret_gitlab_registry_minio_connection: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_registry_minio_connection') | first).target_secret_name }}"
-        secret_gitlab_minio_connection: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_minio_connection') | first).target_secret_name }}"
-        secret_gitlab_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_root') | first).target_secret_name }}"
-        # Vault paths
-        vault_path_postgresql: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'postgresql') | first).vault_path }}"
-        vault_path_redis: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'redis') | first).vault_path }}"
-        vault_path_minio_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_root') | first).vault_path }}"
-        vault_path_minio_registry: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_registry') | first).vault_path }}"
-        vault_path_gitlab_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'gitlab_root') | first).vault_path }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-install-init] Lookup postgresql secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_postgresql }}"
+        dto_res_fact_name_secret: "secret_postgresql"
+        dto_res_fact_name_vault_path: "vault_path_postgresql"
+      tags: [always]
+
+    - name: "[gitlab-install-init] Lookup redis secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_redis }}"
+        dto_res_fact_name_secret: "secret_redis"
+        dto_res_fact_name_vault_path: "vault_path_redis"
+      tags: [always]
+
+    - name: "[gitlab-install-init] Lookup minio-root secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_minio_root }}"
+        dto_res_fact_name_secret: "secret_minio_root"
+        dto_res_fact_name_vault_path: "vault_path_minio_root"
+      tags: [always]
+
+    - name: "[gitlab-install-init] Lookup minio-registry secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_minio_registry }}"
+        dto_res_fact_name_secret: "secret_minio_registry"
+        dto_res_fact_name_vault_path: "vault_path_minio_registry"
+      tags: [always]
+
+    - name: "[gitlab-install-init] Lookup registry-minio-connection secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_registry_minio_connection }}"
+        dto_res_fact_name_secret: "secret_gitlab_registry_minio_connection"
+        dto_res_fact_name_vault_path: "vault_path_registry_minio_connection"
+      tags: [always]
+
+    - name: "[gitlab-install-init] Lookup minio-connection secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_minio_connection }}"
+        dto_res_fact_name_secret: "secret_gitlab_minio_connection"
+        dto_res_fact_name_vault_path: "vault_path_minio_connection"
+      tags: [always]
+
+    - name: "[gitlab-install-init] Lookup gitlab-root secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_root }}"
+        dto_res_fact_name_secret: "secret_gitlab_root"
+        dto_res_fact_name_vault_path: "vault_path_gitlab_root"
       tags: [always]
 
     # =========================================================================

@@ -50,15 +50,34 @@
       include_tasks: tasks/tasks-eso-secrets-merge.yaml
       tags: [always]
 
-    - name: "[gitlab-runner-init] Find secret names and vault paths by type"
-      set_fact:
-        secret_runner_token: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'runner_token') | first).target_secret_name }}"
-        vault_path_runner_token: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'runner_token') | first).vault_path }}"
-        secret_minio_cache: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'minio_runner_cache') | first).target_secret_name }}"
-        vault_path_minio_cache: "{{ (eso_vault_integration_gitlab_runner_secrets_merged | selectattr('type', 'equalto', 'minio_runner_cache') | first).vault_path }}"
-        secret_minio_root: "{{ (eso_vault_integration_gitlab_secrets_merged | selectattr('type', 'equalto', 'minio_root') | first).target_secret_name }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[gitlab-runner-init] Lookup runner-token secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-runner-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_runner_secret_name_token }}"
+        dto_res_fact_name_secret: "secret_runner_token"
+        dto_res_fact_name_vault_path: "vault_path_runner_token"
+      tags: [always]
+
+    - name: "[gitlab-runner-init] Lookup minio-cache secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-runner-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_runner_secret_name_minio_cache }}"
+        dto_res_fact_name_secret: "secret_minio_cache"
+        dto_res_fact_name_vault_path: "vault_path_minio_cache"
+      tags: [always]
+
+    - name: "[gitlab-runner-init] Lookup minio-root secret (cross-component from gitlab)"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "gitlab-runner-init"
+        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_minio_root }}"
+        dto_res_fact_name_secret: "secret_minio_root"
+        dto_res_fact_name_vault_path: "vault_path_gitlab_minio_root"
       tags: [always]
 
     # =========================================================================

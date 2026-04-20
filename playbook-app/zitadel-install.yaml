@@ -49,14 +49,24 @@
       include_tasks: tasks/tasks-eso-secrets-merge.yaml
       tags: [always]
 
-    - name: "[zitadel-install-init] Find secret names and vault paths by type"
-      set_fact:
-        secret_postgresql: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'postgresql') | first).target_secret_name }}"
-        secret_masterkey: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'masterkey') | first).target_secret_name }}"
-        vault_path_postgresql: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'postgresql') | first).vault_path }}"
-        vault_path_masterkey: "{{ (eso_vault_integration_zitadel_secrets_merged | selectattr('type', 'equalto', 'masterkey') | first).vault_path }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[zitadel-install-init] Lookup postgresql secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "zitadel-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
+        dto_external_secret_name: "{{ zitadel_secret_name_postgresql }}"
+        dto_res_fact_name_secret: "secret_postgresql"
+        dto_res_fact_name_vault_path: "vault_path_postgresql"
+      tags: [always]
+
+    - name: "[zitadel-install-init] Lookup masterkey secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        label_name: "zitadel-install-init"
+        dto_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
+        dto_external_secret_name: "{{ zitadel_secret_name_masterkey }}"
+        dto_res_fact_name_secret: "secret_masterkey"
+        dto_res_fact_name_vault_path: "vault_path_masterkey"
       tags: [always]
 
     # =========================================================================
