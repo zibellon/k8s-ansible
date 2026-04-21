@@ -126,11 +126,11 @@ Note: `external_secret_name` and `body.target.name` both reference the same `<c>
 **Complex example (ESO template rendering for multi-field secret):**
 
 ```yaml
-  - external_secret_name: "{{ gitlab_secret_name_registry_minio_connection }}"
+  - external_secret_name: "{{ gitlab_secret_name_registry_connection_config }}"
     vault_path: "/gitlab/minio/registry"
     body:
       target:
-        name: "{{ gitlab_secret_name_registry_minio_connection }}"
+        name: "{{ gitlab_secret_name_registry_connection_config }}"
         template:
           engineVersion: v2
           data:
@@ -153,7 +153,7 @@ Note: `external_secret_name` and `body.target.name` both reference the same `<c>
             property: secret_key
 ```
 
-**`{% raw %}{% endraw %}` rule:** ESO template placeholders like `{{ .access_key }}` inside `body` values must be wrapped in `{% raw %}...{% endraw %}` to prevent Ansible/Jinja2 from interpreting them during inventory loading. Affects: `gitlab` (registry_minio_connection, minio_connection) and `gitlab-runner` (runner_token).
+**`{% raw %}{% endraw %}` rule:** ESO template placeholders like `{{ .access_key }}` inside `body` values must be wrapped in `{% raw %}...{% endraw %}` to prevent Ansible/Jinja2 from interpreting them during inventory loading. Affects: `gitlab` (registry_connection_config, backup_s3_connection_config) and `gitlab-runner` (runner_token).
 
 **Special ArgoCD `body.target.template.metadata.labels`:** Git-ops repo credentials require ArgoCD-specific labels so that ArgoCD recognises them as repository credentials:
 - Pattern credentials (wildcard URL match): `argocd.argoproj.io/secret-type: repo-creds`

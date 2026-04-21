@@ -1,13 +1,13 @@
 # =============================================================================
 # ESO Lookup — Find an ExternalSecret in a merged list by external_secret_name
 # =============================================================================
-# Searches dto_secrets_list for an entry whose external_secret_name matches
+# Searches dto_eso_secrets_list for an entry whose external_secret_name matches
 # dto_external_secret_name. Fails with a clear message if not found.
 # On success, publishes two named facts: body.target.name and vault_path.
 #
 # Required vars:
 #   dto_label_name                    — task label prefix
-#   dto_secrets_list              — merged *_secrets_merged list to search
+#   dto_eso_secrets_list          — merged *_secrets_merged list to search
 #   dto_external_secret_name      — external_secret_name to look up
 #   dto_res_fact_name_secret      — output fact name for body.target.name
 #   dto_res_fact_name_vault_path  — output fact name for vault_path
@@ -24,8 +24,8 @@
     that:
       - dto_label_name is defined
       - dto_label_name | length > 0
-      - dto_secrets_list is defined
-      - dto_secrets_list is sequence
+      - dto_eso_secrets_list is defined
+      - dto_eso_secrets_list is sequence
       - dto_external_secret_name is defined
       - dto_external_secret_name | length > 0
       - dto_res_fact_name_secret is defined
@@ -34,7 +34,7 @@
       - dto_res_fact_name_vault_path | length > 0
     fail_msg: >-
       tasks-eso-lookup: all params are required
-      (dto_secrets_list, dto_external_secret_name, dto_res_fact_name_secret, dto_res_fact_name_vault_path)
+      (dto_eso_secrets_list, dto_external_secret_name, dto_res_fact_name_secret, dto_res_fact_name_vault_path)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -42,7 +42,7 @@
 - name: "[{{ dto_label_name }}] Find ExternalSecret in merged list"
   set_fact:
     _eso_lookup_match: >-
-      {{ dto_secrets_list
+      {{ dto_eso_secrets_list
          | selectattr('external_secret_name', 'equalto', dto_external_secret_name)
          | list }}
   delegate_to: "{{ master_manager_fact }}"
@@ -53,7 +53,7 @@
   fail:
     msg: >-
       ExternalSecret '{{ dto_external_secret_name }}' не найден в переданном списке
-      (список содержит {{ dto_secrets_list | length }} записей).
+      (список содержит {{ dto_eso_secrets_list | length }} записей).
       Проверь значение переменной dto_external_secret_name и содержимое merged-списка.
   when: _eso_lookup_match | length == 0
   delegate_to: "{{ master_manager_fact }}"

@@ -116,11 +116,11 @@ General rules for callers:
 - **Purpose.** Find one entry in a `*_secrets_merged` list by `external_secret_name`, export its `body.target.name` (as `target_secret_name`) and `vault_path` as named Ansible facts. Fails with a clear message if the entry is not found.
 - **Input.**
   - `dto_label_name` (required string — log prefix).
-  - `dto_secrets_list` (required sequence — the merged `*_secrets_merged` list to search).
+  - `dto_eso_secrets_list` (required sequence — the merged `*_secrets_merged` list to search).
   - `dto_external_secret_name` (required string — lookup key).
   - `dto_res_fact_name_secret` (required string — output fact name for `target_secret_name`).
   - `dto_res_fact_name_vault_path` (required string — output fact name for `vault_path`).
-- **Validates (assert).** All 5 params defined + non-empty; `dto_secrets_list` is a sequence.
+- **Validates (assert).** All 5 params defined + non-empty; `dto_eso_secrets_list` is a sequence.
 - **Output.** Two named facts (`dto_res_fact_name_secret` → `body.target.name` of the matched item; `dto_res_fact_name_vault_path` → `vault_path` of the matched item). Fails with list size and searched name if no match found.
 - **Callers.** Any playbook that needs to resolve a specific ExternalSecret's target name or Vault path: `gitlab-install.yaml` (7 lookups), `gitlab-configure.yaml` (1), `gitlab-runner-install.yaml` (3), `zitadel-install.yaml` (2), `mon-grafana-install.yaml` (1), `argocd-configure.yaml` (1). Tag `[always]`.
 - **Idempotent.** Pure lookup — no side effects.

@@ -488,7 +488,7 @@ The former `tasks-eso-merge.yaml` was split into two independent tasks. See `.cl
 - Validates: unique `external_secret_name` and `body.target.name` within each merged list.
 
 **`tasks-eso-lookup.yaml`** — called inline by playbooks that need to resolve a specific ExternalSecret's target name or Vault path.
-- Input: `dto_secrets_list`, `dto_external_secret_name`, two output fact names.
+- Input: `dto_eso_secrets_list`, `dto_external_secret_name`, two output fact names.
 - Output: `body.target.name` and `vault_path` of the matched item. Fails if not found.
 
 ### 6.3 The eight ESO-integrated components

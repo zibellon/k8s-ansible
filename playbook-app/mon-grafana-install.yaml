@@ -93,17 +93,17 @@
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
         dto_label_name: "grafana-vault-secrets"
-        dto_secrets_list: "{{ eso_vault_integration_grafana_secrets_merged }}"
-        dto_external_secret_name: "{{ grafana_secret_name_admin }}"
-        dto_res_fact_name_secret: "grafana_admin_secret_name"
-        dto_res_fact_name_vault_path: "vault_path_grafana_admin"
+        dto_eso_secrets_list: "{{ eso_vault_integration_grafana_secrets_merged }}"
+        dto_external_secret_name: "{{ grafana_secret_name_admin_creds }}"
+        dto_res_fact_name_secret: "_local_grafana_secret_name_admin_creds"
+        dto_res_fact_name_vault_path: "_local_grafana_vault_path_admin_creds"
       tags: [always]
 
     - name: "[grafana-vault-secrets] Get admin credentials from Vault"
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         dto_label_name: "grafana-vault-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+        dto_vault_get_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ _local_grafana_vault_path_admin_creds }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "grafana_admin_vault"
       tags: [install]
@@ -120,7 +120,7 @@
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
         dto_label_name: "grafana-vault-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin }}"
+        dto_vault_put_path: "{{ eso_vault_integration_grafana.kv_engine_path }}{{ _local_grafana_vault_path_admin_creds }}"
         dto_vault_put_data:
           username: "{{ grafana_admin_username }}"
           password: "{{ _grafana_admin_password_generated }}"
@@ -138,7 +138,7 @@
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
         dto_label_name: "grafana-vault-secrets"
-        dto_wait_secret_name: "{{ grafana_admin_secret_name }}"
+        dto_wait_secret_name: "{{ _local_grafana_secret_name_admin_creds }}"
         dto_wait_secret_namespace: "{{ grafana_namespace }}"
       tags: [install]
 
@@ -274,7 +274,7 @@
           - "grafana-pre + grafana + grafana-post: OK"
           - "Grafana UI: https://{{ grafana_domain }}"
           - "Namespace: {{ grafana_namespace }}"
-          - "Admin credentials stored in Vault: {{ eso_vault_integration_grafana.kv_engine_path }}{{ vault_path_grafana_admin | default('') }}"
+          - "Admin credentials stored in Vault: {{ eso_vault_integration_grafana.kv_engine_path }}{{ _local_grafana_vault_path_admin_creds | default('') }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

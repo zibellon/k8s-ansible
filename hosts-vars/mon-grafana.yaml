@@ -61,7 +61,7 @@ all:
         port: "{{ grafana_port }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
     # Install-phase values
-    # grafana_admin_secret_name — runtime-факт от set_fact [install] в playbook
+    # _local_grafana_secret_name_admin_creds — runtime-факт от set_fact [install] в playbook
     grafana_install_helm_values:
       namespace: "{{ grafana_namespace }}"
       grafana:
@@ -72,7 +72,7 @@ all:
         installPlugins: "grafana-piechart-panel"
         externalUrl: "{{ grafana_external_url }}"
       adminSecret:
-        name: "{{ grafana_admin_secret_name }}"
+        name: "{{ _local_grafana_secret_name_admin_creds }}"
         usernameKey: username
         passwordKey: password
       pvc:
@@ -106,7 +106,7 @@ all:
     # Secret name lookups — used by tasks-eso-lookup.yaml in mon-grafana-install.yaml
     # Values must match external_secret_name of corresponding eso_vault_integration_grafana_secrets entry
     # -------
-    grafana_secret_name_admin: "eso-grafana-admin"
+    grafana_secret_name_admin_creds: "eso-grafana-admin-creds"
     # ---------
     # Grafana (admin credentials)
     # ---------
@@ -117,11 +117,11 @@ all:
       kv_engine_path: "eso-secret"
 
     eso_vault_integration_grafana_secrets:
-      - external_secret_name: "{{ grafana_secret_name_admin }}"
+      - external_secret_name: "{{ grafana_secret_name_admin_creds }}"
         vault_path: "/grafana/admin/creds"
         body:
           target:
-            name: "{{ grafana_secret_name_admin }}"
+            name: "{{ grafana_secret_name_admin_creds }}"
           dataFrom:
             - extract:
                 key: "{{ eso_vault_integration_grafana.kv_engine_path }}/data/grafana/admin/creds"

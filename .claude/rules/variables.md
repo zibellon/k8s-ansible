@@ -66,8 +66,8 @@ eso_vault_integration_<c>:
 
 **Named lookup variables** (`<c>_secret_name_<logical>`) — one per logical secret that playbooks need to reference by name (for Vault rotation flows or chart value injection). Example:
 ```yaml
-zitadel_secret_name_postgresql: "eso-zitadel-postgresql"
-zitadel_secret_name_masterkey:  "eso-zitadel-masterkey"
+zitadel_secret_name_postgresql_creds: "eso-zitadel-postgresql-creds"
+zitadel_secret_name_masterkey:       "eso-zitadel-masterkey"
 ```
 These variables serve two purposes:
 - Used as Jinja-refs in the base `_secrets` list so that `external_secret_name` and `body.target.name` are set from one canonical place.

@@ -54,30 +54,30 @@
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
         dto_label_name: "gitlab-runner-init"
-        dto_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_runner_secret_name_token }}"
-        dto_res_fact_name_secret: "secret_runner_token"
-        dto_res_fact_name_vault_path: "vault_path_runner_token"
+        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_runner_secret_name_auth_token }}"
+        dto_res_fact_name_secret: "_local_gitlab_runner_secret_name_auth_token"
+        dto_res_fact_name_vault_path: "_local_gitlab_runner_vault_path_auth_token"
       tags: [always]
 
     - name: "[gitlab-runner-init] Lookup minio-cache secret"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
         dto_label_name: "gitlab-runner-init"
-        dto_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_runner_secret_name_minio_cache }}"
-        dto_res_fact_name_secret: "secret_minio_cache"
-        dto_res_fact_name_vault_path: "vault_path_minio_cache"
+        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_runner_secret_name_minio_cache_creds }}"
+        dto_res_fact_name_secret: "_local_gitlab_runner_secret_name_minio_cache_creds"
+        dto_res_fact_name_vault_path: "_local_gitlab_runner_vault_path_minio_cache_creds"
       tags: [always]
 
     - name: "[gitlab-runner-init] Lookup minio-root secret (cross-component from gitlab)"
       include_tasks: tasks/tasks-eso-lookup.yaml
       vars:
         dto_label_name: "gitlab-runner-init"
-        dto_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_minio_root }}"
-        dto_res_fact_name_secret: "secret_minio_root"
-        dto_res_fact_name_vault_path: "vault_path_gitlab_minio_root"
+        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
+        dto_external_secret_name: "{{ gitlab_secret_name_minio_root_creds }}"
+        dto_res_fact_name_secret: "_local_gitlab_runner_secret_name_minio_root_creds"
+        dto_res_fact_name_vault_path: "_local_gitlab_runner_vault_path_minio_root_creds"
       tags: [always]
 
     # =========================================================================
@@ -136,7 +136,7 @@
       vars:
         dto_label_name: "gitlab-runner-minio"
         dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ secret_minio_root }}"
+        dto_secret_name: "{{ _local_gitlab_runner_secret_name_minio_root_creds }}"
         dto_secret_field: "username"
         dto_secret_res_fact_name: "runner_minio_root_username"
       tags: [install]
@@ -146,7 +146,7 @@
       vars:
         dto_label_name: "gitlab-runner-minio"
         dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ secret_minio_root }}"
+        dto_secret_name: "{{ _local_gitlab_runner_secret_name_minio_root_creds }}"
         dto_secret_field: "password"
         dto_secret_res_fact_name: "runner_minio_root_password"
       tags: [install]
@@ -156,7 +156,7 @@
         that:
           - runner_minio_root_username_exists
           - runner_minio_root_password_exists
-        fail_msg: "MinIO root credentials not found in secret {{ secret_minio_root }} (namespace {{ gitlab_namespace }})"
+        fail_msg: "MinIO root credentials not found in secret {{ _local_gitlab_runner_secret_name_minio_root_creds }} (namespace {{ gitlab_namespace }})"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -183,7 +183,7 @@
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         dto_label_name: "gitlab-runner-minio"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ _local_gitlab_runner_vault_path_minio_cache_creds }}"
         dto_vault_get_field: access_key
         dto_vault_get_res_fact_name: "runner_cache_access_key_vault"
       tags: [install]
@@ -203,7 +203,7 @@
       include_tasks: tasks/tasks-vault-put.yaml
       vars:
         dto_label_name: "gitlab-runner-minio"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_minio_cache }}"
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ _local_gitlab_runner_vault_path_minio_cache_creds }}"
         dto_vault_put_data:
           access_key: "{{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}"
           secret_key: "{{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}"
@@ -222,7 +222,7 @@
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
         dto_label_name: "gitlab-runner-minio"
-        dto_wait_secret_name: "{{ secret_minio_cache }}"
+        dto_wait_secret_name: "{{ _local_gitlab_runner_secret_name_minio_cache_creds }}"
         dto_wait_secret_namespace: "{{ gitlab_runner_namespace }}"
       tags: [install]
 
@@ -234,7 +234,7 @@
       include_tasks: tasks/tasks-vault-get.yaml
       vars:
         dto_label_name: "gitlab-runner-token"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ _local_gitlab_runner_vault_path_auth_token }}"
         dto_vault_get_field: token
         dto_vault_get_res_fact_name: "gitlab_runner_token_vault"
       tags: [install]
@@ -243,9 +243,9 @@
       fail:
         msg: >
           Runner token not found in Vault at
-          {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }}.
+          {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ _local_gitlab_runner_vault_path_auth_token }}.
           Create a runner in GitLab UI (Admin → CI/CD → Runners) and store the token manually:
-          vault kv put {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ vault_path_runner_token }} token=<value>
+          vault kv put {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ _local_gitlab_runner_vault_path_auth_token }} token=<value>
       when: not gitlab_runner_token_vault_exists
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -266,7 +266,7 @@
       include_tasks: tasks/tasks-wait-secret.yaml
       vars:
         dto_label_name: "gitlab-runner-wait-eso"
-        dto_wait_secret_name: "{{ secret_runner_token }}"
+        dto_wait_secret_name: "{{ _local_gitlab_runner_secret_name_auth_token }}"
         dto_wait_secret_namespace: "{{ gitlab_runner_namespace }}"
       tags: [install]
 
@@ -355,8 +355,8 @@
           - "Executor:        kubernetes"
           - "Cache:           S3 (gitlab-minio.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:9000)"
           - ""
-          - "Runner token secret:     {{ secret_runner_token }}"
-          - "MinIO cache secret:      {{ secret_minio_cache }}"
+          - "Runner token secret:     {{ _local_gitlab_runner_secret_name_auth_token }}"
+          - "MinIO cache secret:      {{ _local_gitlab_runner_secret_name_minio_cache_creds }}"
           - ""
           - "Verify registration in GitLab:"
           - "  Admin → CI/CD → Runners"
