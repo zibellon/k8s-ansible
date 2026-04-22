@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (20 tasks)
+## 1. `playbook-app/tasks/` (21 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -214,6 +214,15 @@ General rules for callers:
 - **Validates (assert).** `dto_label_name` defined + non-empty. `dto_helm_list_namespace` not validated (optional, controlled via `when:`).
 - **Output.** No facts exported. Stdout (`stdout_lines` of `helm list`) printed via debug. As-is formatting (default Helm table output).
 - **Callers.** None (utility task for ad-hoc debugging).
+- **Idempotent.** Read-only (`changed_when: false`).
+
+### 1.19 `tasks-k8s-list-pods.yaml`
+
+- **Purpose.** Utility task — run `kubectl get pods -n <ns> -o wide` and print the result to the Ansible log via the `debug` module.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_pods_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_pods_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get pods`) printed via debug (`var:` form). Register fact `k8s_list_pods_result` is local to the include scope.
+- **Callers.** 23 playbooks in `playbook-app/` — all `<c>-install.yaml` playbooks with a verify block (tag `[always]`), plus all `<c>-restart.yaml` playbooks (before/after the rollout; without tags).
 - **Idempotent.** Read-only (`changed_when: false`).
 
 ---
