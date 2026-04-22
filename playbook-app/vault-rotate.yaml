@@ -1,8 +1,17 @@
 # =============================================================================
-# Rotate Vault Unseal Keys (Rekey) — bank-vaults operator
+# Rotate Vault Unseal Keys (Rekey) — bank-vaults operator, resume-safe
 # =============================================================================
 # Performs Vault rekey operation, replaces K8s Secret with new keys,
 # and distributes them to all manager nodes.
+#
+# Resume safety via temp-file on master_manager_fact:
+#   - After `vault operator rekey` succeeds, new keys + root token are
+#     written to {{ vault_rekey_temp_file_path }} (mode 0600, root) BEFORE
+#     any K8s-Secret / distribute operation.
+#   - If the playbook crashes between rekey and distribute, the temp-file
+#     remains on disk. Re-run detects it and resumes: replace K8s Secret
+#     from temp-file, distribute, delete temp-file. NO second rekey.
+#   - The temp-file is deleted only after distribute succeeds.
 #
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-rotate.yaml
@@ -68,140 +77,250 @@
 
     - name: "[vault-rotate] Show current status"
       debug:
-        msg: "Vault is initialized and unsealed. Proceeding with rekey."
+        msg: "Vault is initialized and unsealed. Proceeding."
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
     # =========================================================================
-    # STEP 2: READ CURRENT KEYS FROM K8S SECRET
+    # STEP 2: CHECK TEMP-FILE EXISTENCE (resume detection)
     # =========================================================================
 
-    - name: "[vault-rotate] Read current credentials from K8s Secret"
-      command: >
-        kubectl get secret {{ vault_unsealer_secret_name }}
-        -n {{ vault_namespace }} -o json
-      register: _vault_secret_raw
-      changed_when: false
+    - name: "[vault-rotate] Stat temp-file on master"
+      stat:
+        path: "{{ vault_rekey_temp_file_path }}"
+      register: _vault_rekey_temp_stat
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    - name: "[vault-rotate] Decode credentials dict"
+    - name: "[vault-rotate] Set temp-file flag"
       set_fact:
-        _vault_creds: >-
-          {{ dict(
-               (_vault_secret_raw.stdout | from_json).data.keys() | list
-               | zip(
-                   (_vault_secret_raw.stdout | from_json).data.values()
-                   | map('b64decode') | list
-                 )
-             ) }}
+        _vault_rekey_temp_exists: "{{ _vault_rekey_temp_stat.stat.exists }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    - name: "[vault-rotate] Extract unseal keys and root token"
-      set_fact:
-        _current_unseal_keys: >-
-          {{ _vault_creds
-             | dict2items
-             | selectattr('key', 'match', 'vault-unseal-.*')
-             | sort(attribute='key')
-             | map(attribute='value')
-             | list }}
-        _vault_root_token: "{{ _vault_creds['vault-root'] }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[vault-rotate] Show current key count"
+    - name: "[vault-rotate] Show detected branch"
       debug:
-        msg: "Found {{ _current_unseal_keys | length }} unseal keys in K8s Secret."
+        msg: >-
+          {{ 'RECOVERY branch: temp-file exists at '
+             + vault_rekey_temp_file_path
+             + ' — will skip rekey and resume from it.'
+             if _vault_rekey_temp_exists
+             else 'ROTATE branch: no temp-file — will perform full rekey.' }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
     # =========================================================================
-    # STEP 3: INIT REKEY → nonce + required count
+    # STEP 3A: ROTATE BRANCH (no temp-file → full rekey)
     # =========================================================================
 
-    - name: "[vault-rotate] Initialize rekey operation"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
-        vault operator rekey
-        -init
-        -key-shares={{ vault_rekey_shares }}
-        -key-threshold={{ vault_rekey_threshold }}
-        -format=json
-      register: _rekey_init_raw
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-rotate] STEP 3A: normal rotate"
+      when: not _vault_rekey_temp_exists | bool
+      block:
 
-    - name: "[vault-rotate] Parse rekey nonce and required count"
-      set_fact:
-        _rekey_nonce: "{{ (_rekey_init_raw.stdout | from_json).nonce }}"
-        _rekey_required: "{{ (_rekey_init_raw.stdout | from_json).required }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+        - name: "[vault-rotate-3A] Read current credentials from K8s Secret"
+          command: >
+            kubectl get secret {{ vault_unsealer_secret_name }}
+            -n {{ vault_namespace }} -o json
+          register: _vault_secret_raw
+          changed_when: false
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
 
-    - name: "[vault-rotate] Show rekey init info"
-      debug:
-        msg:
-          - "Rekey initiated. Nonce: {{ _rekey_nonce }}"
-          - "Keys required: {{ _rekey_required }}"
-          - "New shares: {{ vault_rekey_shares }}, new threshold: {{ vault_rekey_threshold }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+        - name: "[vault-rotate-3A] Decode credentials dict"
+          set_fact:
+            _vault_creds: >-
+              {{ dict(
+                   (_vault_secret_raw.stdout | from_json).data.keys() | list
+                   | zip(
+                       (_vault_secret_raw.stdout | from_json).data.values()
+                       | map('b64decode') | list
+                     )
+                 ) }}
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Extract current unseal keys and root token"
+          set_fact:
+            _current_unseal_keys: >-
+              {{ _vault_creds
+                 | dict2items
+                 | selectattr('key', 'match', 'vault-unseal-.*')
+                 | sort(attribute='key')
+                 | map(attribute='value')
+                 | list }}
+            _vault_root_token: "{{ _vault_creds['vault-root'] }}"
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Show current key count"
+          debug:
+            msg: "Found {{ _current_unseal_keys | length }} unseal keys in K8s Secret."
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Initialize rekey operation"
+          command: >
+            kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
+            vault operator rekey
+            -init
+            -key-shares={{ vault_rekey_shares }}
+            -key-threshold={{ vault_rekey_threshold }}
+            -format=json
+          register: _rekey_init_raw
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Parse rekey nonce and required count"
+          set_fact:
+            _rekey_nonce: "{{ (_rekey_init_raw.stdout | from_json).nonce }}"
+            _rekey_required: "{{ (_rekey_init_raw.stdout | from_json).required }}"
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Show rekey init info"
+          debug:
+            msg:
+              - "Rekey initiated. Nonce: {{ _rekey_nonce }}"
+              - "Keys required: {{ _rekey_required }}"
+              - "New shares: {{ vault_rekey_shares }}, new threshold: {{ vault_rekey_threshold }}"
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Submit unseal keys for rekey"
+          command: >
+            kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
+            vault operator rekey
+            -nonce={{ _rekey_nonce }}
+            -format=json
+            {{ item }}
+          loop: "{{ _current_unseal_keys[:(_rekey_required | int)] }}"
+          loop_control:
+            index_var: idx
+            loop_var: item
+            label: "Key {{ idx + 1 }} of {{ _rekey_required }}"
+          register: _rekey_results
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Extract new keys from rekey result"
+          set_fact:
+            _new_keys_hex: "{{ (_rekey_results.results[-1].stdout | from_json)['keys'] }}"
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Fail if no new keys returned"
+          fail:
+            msg: "Rekey failed — new keys not returned. Check Vault logs."
+          when: _new_keys_hex is not defined or _new_keys_hex | length == 0
+          run_once: true
+
+        - name: "[vault-rotate-3A] Build rekey payload dict"
+          set_fact:
+            _vault_rekey_payload: >-
+              {{ {'vault-root': _vault_root_token}
+                 | combine(dict(
+                     range(_new_keys_hex | length)
+                     | map('string')
+                     | map('regex_replace', '^', 'vault-unseal-')
+                     | zip(_new_keys_hex)
+                   )) }}
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] CRITICAL — print new keys to console (operator capture)"
+          debug:
+            msg:
+              - "=============================================="
+              - "NEW VAULT UNSEAL KEYS — COPY THESE NOW"
+              - "=============================================="
+              - "If this playbook crashes before finishing, the keys below"
+              - "are your only recovery material besides the temp-file"
+              - "at {{ vault_rekey_temp_file_path }} on {{ master_manager_fact }}."
+              - "Re-running vault-rotate.yaml will resume from temp-file"
+              - "automatically — no second rekey."
+              - "----------------------------------------------"
+              - "{{ _vault_rekey_payload | to_nice_json }}"
+              - "=============================================="
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Ensure temp-file parent directory exists"
+          file:
+            path: "{{ vault_rekey_temp_file_path | dirname }}"
+            state: directory
+            mode: "0755"
+            owner: root
+            group: root
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3A] Write temp-file with new keys + root token"
+          copy:
+            content: "{{ _vault_rekey_payload | to_nice_json }}"
+            dest: "{{ vault_rekey_temp_file_path }}"
+            mode: "0600"
+            owner: root
+            group: root
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
 
     # =========================================================================
-    # STEP 4: SUBMIT CURRENT KEYS → new keys
+    # STEP 3B: RECOVERY BRANCH (temp-file exists → load + validate)
     # =========================================================================
 
-    - name: "[vault-rotate] Submit unseal keys for rekey"
-      command: >
-        kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
-        vault operator rekey
-        -nonce={{ _rekey_nonce }}
-        -format=json
-        {{ item }}
-      loop: "{{ _current_unseal_keys[:(_rekey_required | int)] }}"
-      loop_control:
-        index_var: idx
-        loop_var: item
-        label: "Key {{ idx + 1 }} of {{ _rekey_required }}"
-      register: _rekey_results
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[vault-rotate] STEP 3B: recovery from temp-file"
+      when: _vault_rekey_temp_exists | bool
+      block:
 
-    - name: "[vault-rotate] Extract new keys from rekey result"
-      set_fact:
-        _new_keys_hex: "{{ (_rekey_results.results[-1].stdout | from_json)['keys'] }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+        - name: "[vault-rotate-3B] Announce recovery"
+          debug:
+            msg:
+              - "Resuming from temp-file {{ vault_rekey_temp_file_path }}."
+              - "Skipping rekey (Vault already has the new keys from the previous attempt)."
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
 
-    - name: "[vault-rotate] Fail if no new keys returned"
-      fail:
-        msg: "Rekey failed — new keys not returned. Check Vault logs."
-      when: _new_keys_hex is not defined or _new_keys_hex | length == 0
-      run_once: true
+        - name: "[vault-rotate-3B] Slurp temp-file contents"
+          slurp:
+            src: "{{ vault_rekey_temp_file_path }}"
+          register: _vault_rekey_temp_slurp
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
 
-    - name: "[vault-rotate] Show new keys generated"
-      debug:
-        msg: "Rekey successful. {{ _new_keys_hex | length }} new keys generated (hex format)."
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+        - name: "[vault-rotate-3B] Parse temp-file JSON"
+          set_fact:
+            _vault_rekey_payload: "{{ _vault_rekey_temp_slurp.content | b64decode | from_json }}"
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
+
+        - name: "[vault-rotate-3B] Validate temp-file structure"
+          assert:
+            that:
+              - _vault_rekey_payload is mapping
+              - "'vault-root' in _vault_rekey_payload"
+              - _vault_rekey_payload.keys() | select('match', '^vault-unseal-[0-9]+$') | list | length > 0
+            fail_msg: >-
+              Temp file {{ vault_rekey_temp_file_path }} is corrupted or incomplete.
+              Expected JSON dict with 'vault-root' and at least one 'vault-unseal-<N>' key.
+              Inspect the file manually; if rekey did not actually happen,
+              remove it and re-run the playbook.
+          delegate_to: "{{ master_manager_fact }}"
+          run_once: true
 
     # =========================================================================
-    # STEP 5: REPLACE K8S SECRET (full replacement)
+    # STEP 4: REPLACE K8S SECRET (from _vault_rekey_payload — both branches)
     # =========================================================================
 
-    - name: "[vault-rotate] Build --from-literal args for new secret"
+    - name: "[vault-rotate] Build --from-literal args from payload"
       set_fact:
         _rekey_from_literals: >-
-          --from-literal=vault-root={{ _vault_root_token }}
-          {% for i in range(_new_keys_hex | length) %}
-          --from-literal=vault-unseal-{{ i }}={{ _new_keys_hex[i] }}
+          {% for k, v in _vault_rekey_payload.items() %}
+          --from-literal={{ k }}={{ v }}
           {% endfor %}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    - name: "[vault-rotate] Replace K8s Secret with new keys"
+    - name: "[vault-rotate] Replace K8s Secret with payload"
       shell: >
         kubectl create secret generic {{ vault_unsealer_secret_name }}
         -n {{ vault_namespace }}
@@ -211,19 +330,30 @@
       run_once: true
 
     # =========================================================================
-    # STEP 6: DISTRIBUTE TO ALL MANAGERS
+    # STEP 5: DISTRIBUTE TO ALL MANAGERS
     # =========================================================================
 
-    - name: "[vault-rotate] Distribute new credentials to all managers"
+    - name: "[vault-rotate] Distribute credentials to all managers"
       include_tasks: tasks/tasks-vault-distribute-creds.yaml
       vars:
         dto_label_name: "vault-rotate"
 
     # =========================================================================
+    # STEP 6: DELETE TEMP-FILE (only after distribute succeeded)
+    # =========================================================================
+
+    - name: "[vault-rotate] Delete temp-file"
+      file:
+        path: "{{ vault_rekey_temp_file_path }}"
+        state: absent
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # =========================================================================
     # STEP 7: VERIFY
     # =========================================================================
 
-    - name: "[vault-rotate] Verify Vault status after rekey"
+    - name: "[vault-rotate] Verify Vault status after rotate"
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
         vault status -format=json
@@ -243,7 +373,8 @@
           - "New key shares: {{ vault_rekey_shares }}"
           - "New key threshold: {{ vault_rekey_threshold }}"
           - "Distributed to: {{ groups['managers'] | join(', ') }}"
-          - "Credentials file: {{ vault_creds_host_path }}"
+          - "Distributed file: {{ vault_creds_host_path }}"
+          - "Temp-file removed: {{ vault_rekey_temp_file_path }}"
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
