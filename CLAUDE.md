@@ -108,13 +108,11 @@ Details in [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) §3 and [`re
 k8s-ansible/
 ├── CLAUDE.md                  ← this file (map)
 ├── README.md, readme-*.md     ← human docs (not modified by Claude)
-├── QWEN.md                    ← orthogonal LLM guidance (not touched)
 ├── todo.md                    ← user's TODO list
 ├── hosts-extra.example.yaml   ← template for extensible *_extra arrays
 ├── .claude/
 │   ├── prompts/               ← cold-start prompts for manual chat workflow
-│   ├── rules/                 ← deep reference catalogs (atlas)
-│   └── agents/                ← (legacy, unused — manual chat workflow supersedes)
+│   └── rules/                 ← deep reference catalogs (atlas)
 ├── playbook-system/           ← node-scoped, imperative
 │   └── tasks/
 ├── playbook-app/              ← cluster-scoped, declarative
@@ -198,7 +196,6 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 
 ### 3.4 Orthogonal files
 
-- `QWEN.md` — guidance for a different LLM assistant. Do not modify.
 - `docs/`, `sources/` — explicitly out of scope by user instruction.
 
 ---
