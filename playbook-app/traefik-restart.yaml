@@ -35,18 +35,11 @@
       when: namespace_check.rc != 0
       run_once: true
 
-    - name: "[traefik-restart] Show current Traefik pods"
-      command: kubectl get pods -n {{ traefik_namespace }} -o wide
-      register: pods_before
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[traefik-restart] Display pods before restart"
-      debug:
-        var: pods_before.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[traefik-restart] Show pods in {{ traefik_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "traefik-restart"
+        dto_pods_namespace: "{{ traefik_namespace }}"
 
     # -------------------------------------------------------------------------
     # RESTART DAEMONSET
@@ -74,18 +67,11 @@
     # VERIFY RESTART
     # -------------------------------------------------------------------------
 
-    - name: "[traefik-verify] Show Traefik pods after restart"
-      command: kubectl get pods -n {{ traefik_namespace }} -o wide
-      register: pods_after
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[traefik-verify] Display pods after restart"
-      debug:
-        var: pods_after.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[traefik-verify] Show pods in {{ traefik_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "traefik-verify"
+        dto_pods_namespace: "{{ traefik_namespace }}"
 
     - name: "[traefik-verify] Restart completed"
       debug:

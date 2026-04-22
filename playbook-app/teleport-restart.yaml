@@ -32,18 +32,11 @@
       when: namespace_check.rc != 0
       run_once: true
 
-    - name: "[teleport-restart] Show current teleport pods"
-      command: kubectl get pods -n {{ teleport_namespace }} -o wide
-      register: pods_before
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[teleport-restart] Display pods before restart"
-      debug:
-        var: pods_before.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[teleport-restart] Show pods in {{ teleport_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "teleport-restart"
+        dto_pods_namespace: "{{ teleport_namespace }}"
 
     # -------------------------------------------------------------------------
     # RESTART
@@ -77,18 +70,11 @@
     # VERIFY RESTART
     # -------------------------------------------------------------------------
 
-    - name: "[teleport-verify] Show teleport pods after restart"
-      command: kubectl get pods -n {{ teleport_namespace }} -o wide
-      register: pods_after
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[teleport-verify] Display pods after restart"
-      debug:
-        var: pods_after.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[teleport-verify] Show pods in {{ teleport_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "teleport-verify"
+        dto_pods_namespace: "{{ teleport_namespace }}"
 
     - name: "[teleport-verify] Restart completed"
       debug:

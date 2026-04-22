@@ -35,18 +35,11 @@
       when: namespace_check.rc != 0
       run_once: true
 
-    - name: "[haproxy-restart] Show current HAProxy pods"
-      command: kubectl get pods -n {{ haproxy_namespace }} -o wide
-      register: pods_before
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[haproxy-restart] Display pods before restart"
-      debug:
-        var: pods_before.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[haproxy-restart] Show pods in {{ haproxy_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "haproxy-restart"
+        dto_pods_namespace: "{{ haproxy_namespace }}"
 
     # -------------------------------------------------------------------------
     # RESTART DAEMONSET
@@ -74,18 +67,11 @@
     # VERIFY RESTART
     # -------------------------------------------------------------------------
 
-    - name: "[haproxy-verify] Show HAProxy pods after restart"
-      command: kubectl get pods -n {{ haproxy_namespace }} -o wide
-      register: pods_after
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[haproxy-verify] Display pods after restart"
-      debug:
-        var: pods_after.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[haproxy-verify] Show pods in {{ haproxy_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "haproxy-verify"
+        dto_pods_namespace: "{{ haproxy_namespace }}"
 
     - name: "[haproxy-verify] Restart completed"
       debug:

@@ -40,18 +40,11 @@
       when: namespace_check.rc != 0
       run_once: true
 
-    - name: "[cilium-restart] Show current Cilium pods"
-      command: kubectl get pods -n {{ cilium_namespace }} -l app.kubernetes.io/part-of=cilium -o wide
-      register: pods_before
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[cilium-restart] Display pods before restart"
-      debug:
-        var: pods_before.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[cilium-restart] Show pods in {{ cilium_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "cilium-restart"
+        dto_pods_namespace: "{{ cilium_namespace }}"
 
     # -------------------------------------------------------------------------
     # RESTART DAEMONSETS
@@ -99,18 +92,11 @@
     # VERIFY RESTART
     # -------------------------------------------------------------------------
 
-    - name: "[cilium-verify] Show Cilium pods after restart"
-      command: kubectl get pods -n {{ cilium_namespace }} -l app.kubernetes.io/part-of=cilium -o wide
-      register: pods_after
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[cilium-verify] Display pods after restart"
-      debug:
-        var: pods_after.stdout_lines
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[cilium-verify] Show pods in {{ cilium_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "cilium-verify"
+        dto_pods_namespace: "{{ cilium_namespace }}"
 
     - name: "[cilium-verify] Restart completed"
       debug:
