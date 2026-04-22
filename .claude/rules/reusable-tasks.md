@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (19 tasks)
+## 1. `playbook-app/tasks/` (20 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -206,6 +206,15 @@ General rules for callers:
   - `{{ dto_secret_res_fact_name }}_exists` — bool (true only if field is non-empty).
 - **Callers.** `argocd-configure.yaml`, `gitlab-configure.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `vault-install.yaml`.
 - **Idempotent.** Read-only; safe to call repeatedly.
+
+### 1.18 `tasks-helm-list-releases.yaml`
+
+- **Purpose.** Utility task — print list of Helm releases to Ansible log (debug). Either scoped to a single namespace or cluster-wide.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_helm_list_namespace` (optional string — if defined and non-empty, `helm list -n <ns>`; otherwise `helm list -A`).
+- **Validates (assert).** `dto_label_name` defined + non-empty. `dto_helm_list_namespace` not validated (optional, controlled via `when:`).
+- **Output.** No facts exported. Stdout (`stdout_lines` of `helm list`) printed via debug. As-is formatting (default Helm table output).
+- **Callers.** None (utility task for ad-hoc debugging).
+- **Idempotent.** Read-only (`changed_when: false`).
 
 ---
 

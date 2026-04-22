@@ -141,6 +141,41 @@ Skipping step 2 causes join timeouts that appear as "TLS handshake timeout" in k
 
 **Pre-condition.** Same Cilium host-firewall requirement as managers (§1.5).
 
+### 1.7 Bootstrap flow diagram (fact & state propagation)
+
+```
+Master manager                 Manager 2..N                  Worker 1..M
+─────────────                  ────────────                  ────────────
+cluster-init:
+  generate ETCD key ─┐
+  write encryption-config
+  kubeadm init       │
+  /root/.kube/config │
+  labels + untaint   │
+                     │
+                     ├──────► manager-join:
+                     │         upload-certs on master
+                     │         fetch encryption-config
+                     │         (optional) vault-unseal.json
+                     │         kubeadm join --control-plane
+                     │         wait kubelet + node Ready
+                     │
+                     └────────────────────────────────► worker-join:
+                                                         kubeadm join
+                                                         wait kubelet + node Ready
+
+After all nodes joined:
+  haproxy-apiserver-lb-update.yaml         (serial: 1 refresh on every node)
+  apiserver-sans-update.yaml    (if SANs changed; serial: 1 apiserver restart)
+```
+
+Key state items that propagate:
+
+- **ETCD encryption key** (`/etc/kubernetes/pki/encryption-config.yaml`) — identical across all managers, distributed during manager-join
+- **Vault unseal creds** (`/etc/kubernetes/vault-unseal.json`) — distributed during manager-join if Vault is installed
+- **HAProxy backend list** (`/etc/haproxy/haproxy.cfg`) — present on every node (managers + workers), refreshed via `haproxy-apiserver-lb-update.yaml` after topology changes
+- **Apiserver cert SANs** — regenerated via `apiserver-sans-update.yaml` when managers are added/removed or new DNS names are added
+
 ---
 
 ## 2. Apiserver SANs Update
