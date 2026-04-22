@@ -112,8 +112,9 @@ k8s-ansible/
 ├── todo.md                    ← user's TODO list
 ├── hosts-extra.example.yaml   ← template for extensible *_extra arrays
 ├── .claude/
-│   ├── agents/                ← TeamLead + executors (team workflow)
-│   └── rules/                 ← deep reference catalogs (atlas)
+│   ├── prompts/               ← cold-start prompts for manual chat workflow
+│   ├── rules/                 ← deep reference catalogs (atlas)
+│   └── agents/                ← (legacy, unused — manual chat workflow supersedes)
 ├── playbook-system/           ← node-scoped, imperative
 │   └── tasks/
 ├── playbook-app/              ← cluster-scoped, declarative
@@ -160,9 +161,21 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | [`variables.md`](.claude/rules/variables.md) | Variable patterns (Tier 1 — per-component suffix conventions, `*_extra` concat-merge, inventory precedence) and global cross-cutting catalog (Tier 2 — k8s-base, HAProxy LB, ETCD encryption, kubelet, kubeadm template, Vault, VPN, cert-manager, Teleport, inventory host vars, output facts) |
 | [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) | Vault + ESO topology, inventory contracts (`vault_policies`, `vault_roles`, `eso_vault_integration_<c>`, `<c>_secrets`), merge tasks, SecretStore + ExternalSecret templates, seed vs rotation flows, adding a new ESO-integrated component, per-component Vault paths, troubleshooting |
 | [`commands-reference.md`](.claude/rules/commands-reference.md) | Canonical invocations — bootstrap sequence, app install order, single-phase re-runs, operational tasks (node add, drain, remove, ETCD rotation, SAN update, HAProxy update, Vault rotate, ESO force-sync), component restart, debugging one-liners, dry-run flags |
-| [`team-workflow.md`](.claude/rules/team-workflow.md) | Правила взаимодействия TeamLead ↔ исполнители (DevOps, DevOps-docs): 7-шаговый workflow задачи, форматы assignment/report, verify-протокол, escalation, границы ответственности TeamLead |
+| [`team-workflow.md`](.claude/rules/team-workflow.md) | **Manual chat mode workflow** — как user переносит SUB-task спеки и отчёты между Opus (TeamLead) и Sonnet (DevOps / DevOps-docs) chat-окнами. Роли и границы, 10-шаговый жизненный цикл, формат SUB-спеки (§4), формат отчёта (§5), verify-протокол (§6), commit-протокол (§7), TeamLead self-discipline (§8, включая §8.7 «архитектурно, не заплатки»), escalation (§9), нерушимые принципы (§10) |
 
-### 3.1 Finding the right file (cheat sheet)
+### 3.1 Manual chat workflow — bootstrap prompts
+
+Для ручного multi-chat workflow (Opus TeamLead + Sonnet DevOps/DevOps-docs) используются готовые bootstrap-промпты:
+
+| Файл | Вставлять куда | Когда |
+|---|---|---|
+| [`.claude/prompts/teamlead-cold-start.md`](.claude/prompts/teamlead-cold-start.md) | Opus 4.7 chat | При холодном старте — первое сообщение TeamLead-у |
+| [`.claude/prompts/devops-bootstrap.md`](.claude/prompts/devops-bootstrap.md) | Sonnet 4.6 chat (DevOps) | Первое сообщение DevOps chat-окну |
+| [`.claude/prompts/devops-docs-bootstrap.md`](.claude/prompts/devops-docs-bootstrap.md) | Sonnet 4.6 chat (DevOps-docs) | Первое сообщение DevOps-docs chat-окну |
+
+Подробности workflow — в [`team-workflow.md`](.claude/rules/team-workflow.md).
+
+### 3.2 Finding the right file (cheat sheet)
 
 | Task | Start with |
 |---|---|
@@ -175,15 +188,15 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | Understand a variable suffix | [`variables.md`](.claude/rules/variables.md) §1 |
 | Find a task include by function | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) |
 | Debug a failing install | [`commands-reference.md`](.claude/rules/commands-reference.md) §5 + per-topic "Troubleshooting" tables in other files |
-| Work via agent team (Lead / DevOps / DevOps-docs) | [`team-workflow.md`](.claude/rules/team-workflow.md) |
+| Setup a manual chat session (TeamLead + DevOps + DevOps-docs) | §3.1 above + [`team-workflow.md`](.claude/rules/team-workflow.md) |
 
-### 3.2 Human-facing docs (not modified by Claude)
+### 3.3 Human-facing docs (not modified by Claude)
 
 - `README.md` — quickstart in Russian.
 - `readme-vault.md`, `readme-monitoring.md`, `readme-helpers.md` — topic deep-dives in Russian.
 - `todo.md` — user's TODO list (planned Reloader install, Zitadel hardening, backup/rotation improvements).
 
-### 3.3 Orthogonal files
+### 3.4 Orthogonal files
 
 - `QWEN.md` — guidance for a different LLM assistant. Do not modify.
 - `docs/`, `sources/` — explicitly out of scope by user instruction.
