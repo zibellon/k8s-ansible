@@ -394,11 +394,15 @@ Checklist — keep strictly in order.
 
 ### 8.1 `vault-rotate.yaml`
 
-- Rekey Shamir shares (generates new shares, threshold preserved).
-- Rotate root token.
-- Update `vault-unsealer-secret` in cluster.
-- Redistribute `/etc/kubernetes/vault-unseal.json` on every manager via `tasks-vault-distribute-creds.yaml`.
-- Uses state files in `{{ etcd_rotation_state_dir }}` for resume safety; see `bootstrap-and-ha.md` §3 for the state-file resume pattern.
+- Rekey Shamir shares via `vault operator rekey` — меняет unseal keys, сохраняя `vault_key_threshold`.
+- **Root token не меняется** при rekey.
+- Обновляет K8s Secret `{{ vault_unsealer_secret_name }}` в namespace `{{ vault_namespace }}`.
+- Раздаёт `{{ vault_creds_host_path }}` на все managers через `tasks-vault-distribute-creds.yaml`.
+- **Resume-safe через temp-файл** `{{ vault_rekey_temp_file_path }}` (default `/etc/kubernetes/vault-rekey-in-progress.json`), который пишется на `master_manager_fact` сразу после `vault operator rekey` и удаляется только в самом конце. Логика старта playbook'а:
+  1. Если temp-файла **нет** → ROTATE branch: rekey → вывести новые ключи в ansible-лог → записать temp-файл → заменить K8s Secret → distribute → удалить temp-файл.
+  2. Если temp-файл **есть** → RECOVERY branch: прочитать и проверить формат → заменить K8s Secret → distribute → удалить temp-файл. Rekey **не** повторяется (старые unseal keys уже невалидны после первого rekey).
+- Формат temp-файла совпадает с distributed `{{ vault_creds_host_path }}`: `{"vault-root": "...", "vault-unseal-0": "...", ..., "vault-unseal-N": "..."}`. При полном сбое оператор может вручную скопировать temp-файл поверх `vault-unseal.json` на каждом manager'е.
+- Если temp-файл повреждён (не JSON, нет `vault-root`, нет ни одного `vault-unseal-<N>`) — playbook падает с инструкцией: «починить файл вручную или удалить, если уверен, что rekey не прошёл».
 
 ### 8.2 Component credential rotation
 
