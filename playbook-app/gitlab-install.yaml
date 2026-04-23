@@ -606,11 +606,34 @@
           --timeout {{ gitlab_install_helm_timeout }}
       tags: [install]
 
-    - name: "[gitlab] Wait for webservice deployment to be ready"
+    # Wait for every active GitLab workload to finish rollout.
+    # Active set is derived from current gitlab_helm_values:
+    #   - enabled subcharts → webservice, sidekiq, gitlab-shell,
+    #     gitlab-exporter, gitlab-pages, toolbox
+    #   - gitaly → StatefulSet
+    #   - top-level registry subchart (registry.enabled: true)
+    # Disabled subcharts are intentionally omitted (kas, mailroom, spamcheck,
+    # praefect, geo-logcursor, gitlab-runner, nginx-ingress, minio).
+    # Label pattern `app=<subchart-name>` is stable across upstream versions —
+    # resource names with suffixes (webservice-default, sidekiq-*-v2) are not.
+    - name: "[gitlab] Wait for workload rollout ({{ item.kind }} l={{ item.selector }})"
       command: >
-        kubectl rollout status deployment -l app=webservice
+        kubectl rollout status {{ item.kind }}
+        -l {{ item.selector }}
         -n {{ gitlab_namespace }}
         --timeout={{ gitlab_rollout_timeout }}
+      changed_when: false
+      loop:
+        - { kind: deployment,  selector: "app=webservice" }
+        - { kind: deployment,  selector: "app=sidekiq" }
+        - { kind: deployment,  selector: "app=gitlab-shell" }
+        - { kind: deployment,  selector: "app=gitlab-exporter" }
+        - { kind: deployment,  selector: "app=gitlab-pages" }
+        - { kind: deployment,  selector: "app=registry" }
+        - { kind: deployment,  selector: "app=toolbox" }
+        - { kind: statefulset, selector: "app=gitaly" }
+      loop_control:
+        label: "{{ item.kind }} l={{ item.selector }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
