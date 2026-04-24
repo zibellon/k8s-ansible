@@ -152,13 +152,19 @@ Per-file source of truth in parentheses.
 | `k8s_version` | `"1.35"` | Short version (for apt repo URL) |
 | `k8s_full_version` | `"v1.35.3"` | Full version pin in kubeadm config |
 | `containerd_version` | `"2.2.2"` | Container runtime |
+| `containerd_download_host` | `"https://github.com"` | Download host for containerd tarball — AirGap override |
+| `containerd_service_download_host` | `"https://raw.githubusercontent.com"` | Download host for containerd.service unit — AirGap override |
 | `containerd_sandbox_image_registry` | `"registry.k8s.io"` | Registry for containerd sandbox (pause) image — AirGap override |
 | `containerd_sandbox_image_name` | `"pause"` | Image name for containerd sandbox (pause) |
 | `containerd_sandbox_image_tag` | `"3.10.1"` | Tag for containerd sandbox (pause) image |
 | `runc_version` | `"v1.4.2"` | OCI runtime |
+| `runc_download_host` | `"https://github.com"` | Download host for runc binary — AirGap override |
 | `cni_plugins_version` | `"v1.9.1"` | CNI plugins bundle |
+| `cni_plugins_download_host` | `"https://github.com"` | Download host for CNI plugins bundle — AirGap override |
 | `helm_version` | `"v3.20.2"` | Helm binary version |
+| `helm_download_host` | `"https://get.helm.sh"` | Download host for Helm tarball — AirGap override |
 | `k9s_version` | `"v0.50.18"` | k9s binary version |
+| `k9s_download_host` | `"https://github.com"` | Download host for k9s .deb — AirGap override |
 | `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |
 | `pod_subnet` | `"10.64.0.0/10"` | Pod CIDR (Cilium IPAM) |
 | `cluster_dns_domain` | `"cluster.local"` | Cluster DNS suffix |
