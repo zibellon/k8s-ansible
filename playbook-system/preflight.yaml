@@ -46,26 +46,32 @@
       when: preflight_cloud_init_check.rc == 0
 
     # =========================================================================
-    # UNATTENDED-UPGRADES — stop unattended-upgrades.service, then mask permanently
-    # (pgrep returns rc=1 if no process found → treat as "nothing to stop")
+    # APT/DPKG LOCKS — wait for any running background upgrade to release them
     # =========================================================================
-    - name: Stop unattended-upgrade process (if running) and wait
-      shell: |
-        set -e
-        if pgrep -f unattended-upgrade >/dev/null; then
-          systemctl stop unattended-upgrades.service || true
-          # Wait up to 5 min for the process to exit cleanly.
-          for _ in $(seq 1 60); do
-            pgrep -f unattended-upgrade >/dev/null || exit 0
-            sleep 5
-          done
-          echo "unattended-upgrade still running after 5m" >&2
-          exit 1
-        fi
-      register: preflight_stop_unattended
-      changed_when: "'unattended-upgrade still running' not in (preflight_stop_unattended.stderr | default(''))"
-      failed_when: preflight_stop_unattended.rc != 0
+    # If cloud-init / unattended-upgrades / apt-daily-upgrade is currently
+    # holding any of the apt or dpkg lock files, proceeding (especially the
+    # `systemd mask + stop` in the next block) may interrupt a transaction
+    # mid-way and leave dpkg half-configured. Wait cooperatively up to 5 min
+    # for the locks to free up.
 
+    - name: Wait for apt/dpkg locks to be released (up to 5m)
+      command: fuser -s /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock
+      register: preflight_apt_locks
+      until: preflight_apt_locks.rc != 0
+      retries: 60
+      delay: 5
+      changed_when: false
+      ignore_errors: true
+
+    - name: Assert apt/dpkg locks are now free
+      assert:
+        that: preflight_apt_locks.rc != 0
+        fail_msg: "apt/dpkg locks still held after 5 minutes — another process is still running apt; investigate before retrying"
+
+    # =========================================================================
+    # UNATTENDED-UPGRADES + APT-DAILY — mask permanently (policy: OS updates
+    # via rolling upgrade, not in background)
+    # =========================================================================
     - name: Disable + mask unattended-upgrades and apt-daily timers
       systemd:
         name: "{{ item }}"
