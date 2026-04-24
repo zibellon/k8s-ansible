@@ -1,5 +1,36 @@
 all:
   vars:
+    # ------
+    # binaries (AirGap) — downloadable packages
+    # ------
+    # 6 внешних бинарников тянутся с публичных источников на этапе
+    # node-install.yaml (playbook-system/main-components.yaml,
+    # install-helm.yaml, install-k9s.yaml). Каждый URL собирается как
+    # `{{ <c>_download_host }}/<upstream-path>/{{ <c>_version }}/...`
+    # Для airgap достаточно переопределить только `<c>_download_host`
+    # в hosts-vars-override/k8s-base.yaml — путь соберётся автоматически.
+    # Работает для passthrough-зеркал (reverse proxy с сохранением
+    # upstream path). Если у mirror'а другая структура — переопределяй
+    # `<c>_url` целиком.
+    #
+    # СБ должна подложить на mirror следующие 6 файлов:
+    #   <containerd_download_host>/containerd/containerd/releases/download/v<ver>/containerd-<ver>-linux-amd64.tar.gz
+    #   <containerd_service_download_host>/containerd/containerd/main/containerd.service
+    #   <runc_download_host>/opencontainers/runc/releases/download/<ver>/runc.amd64
+    #   <cni_plugins_download_host>/containernetworking/plugins/releases/download/<ver>/cni-plugins-linux-amd64-<ver>.tgz
+    #   <helm_download_host>/helm-<ver>-linux-amd64.tar.gz
+    #   <k9s_download_host>/derailed/k9s/releases/download/<ver>/k9s_linux_amd64.deb
+    #
+    # Пример airgap-override (hosts-vars-override/k8s-base.yaml):
+    #   containerd_download_host:         "https://my-mirror.local/github.com"
+    #   containerd_service_download_host: "https://my-mirror.local/raw.githubusercontent.com"
+    #   runc_download_host:               "https://my-mirror.local/github.com"
+    #   cni_plugins_download_host:        "https://my-mirror.local/github.com"
+    #   helm_download_host:               "https://my-mirror.local/get.helm.sh"
+    #   k9s_download_host:                "https://my-mirror.local/github.com"
+    # ---------
+    # ---------
+
     # LLVM/Clang version for Cilium eBPF
     llvm_version: 20
 
@@ -14,8 +45,10 @@ all:
 
     # Containerd version
     containerd_version: "2.2.2"
-    containerd_url: "https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
-    containerd_service_url: "https://raw.githubusercontent.com/containerd/containerd/main/containerd.service"
+    containerd_download_host: "https://github.com"
+    containerd_url: "{{ containerd_download_host }}/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+    containerd_service_download_host: "https://raw.githubusercontent.com"
+    containerd_service_url: "{{ containerd_service_download_host }}/containerd/containerd/main/containerd.service"
 
     # Force regenerate containerd config (set to true to update config after containerd upgrade)
     force_containerd_config_regenerate: false
@@ -62,19 +95,23 @@ all:
 
     # runc version
     runc_version: "v1.4.2"
-    runc_url: "https://github.com/opencontainers/runc/releases/download/{{ runc_version }}/runc.amd64"
+    runc_download_host: "https://github.com"
+    runc_url: "{{ runc_download_host }}/opencontainers/runc/releases/download/{{ runc_version }}/runc.amd64"
 
     # CNI plugins version
     cni_plugins_version: "v1.9.1"
-    cni_plugins_url: "https://github.com/containernetworking/plugins/releases/download/{{ cni_plugins_version }}/cni-plugins-linux-amd64-{{ cni_plugins_version }}.tgz"
+    cni_plugins_download_host: "https://github.com"
+    cni_plugins_url: "{{ cni_plugins_download_host }}/containernetworking/plugins/releases/download/{{ cni_plugins_version }}/cni-plugins-linux-amd64-{{ cni_plugins_version }}.tgz"
 
     # Helm version
     helm_version: "v3.20.2"
-    helm_url: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    helm_download_host: "https://get.helm.sh"
+    helm_url: "{{ helm_download_host }}/helm-{{ helm_version }}-linux-amd64.tar.gz"
 
     # k9s version
     k9s_version: "v0.50.18"
-    k9s_url: "https://github.com/derailed/k9s/releases/download/{{ k9s_version }}/k9s_linux_amd64.deb"
+    k9s_download_host: "https://github.com"
+    k9s_url: "{{ k9s_download_host }}/derailed/k9s/releases/download/{{ k9s_version }}/k9s_linux_amd64.deb"
 
     # Cluster networking
     service_subnet: "10.128.0.0/12"
