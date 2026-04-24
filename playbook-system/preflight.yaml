@@ -36,8 +36,13 @@
       failed_when: false
 
     - name: Wait for cloud-init to complete
+      # cloud-init exit codes: 0 = done, 1 = error, 2 = recoverable error
+      # (degraded done — completed with non-fatal warnings, e.g. schema
+      # validation). Accept both 0 and 2; only 1 means real failure.
       command: cloud-init status --wait
       changed_when: false
+      register: preflight_cloud_init_wait
+      failed_when: preflight_cloud_init_wait.rc not in [0, 2]
       when: preflight_cloud_init_check.rc == 0
 
     # =========================================================================
