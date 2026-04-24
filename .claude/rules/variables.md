@@ -148,26 +148,28 @@ Per-file source of truth in parentheses.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `k8s_version` | `"1.34"` | Short version (for apt repo URL) |
-| `k8s_full_version` | `"v1.34.0"` | Full version pin in kubeadm config |
-| `containerd_version` | `"2.2.1"` | Container runtime |
+| `llvm_version` | `20` | LLVM/Clang version for Cilium eBPF |
+| `k8s_version` | `"1.35"` | Short version (for apt repo URL) |
+| `k8s_full_version` | `"v1.35.3"` | Full version pin in kubeadm config |
+| `containerd_version` | `"2.2.2"` | Container runtime |
 | `containerd_sandbox_image_registry` | `"registry.k8s.io"` | Registry for containerd sandbox (pause) image — AirGap override |
 | `containerd_sandbox_image_name` | `"pause"` | Image name for containerd sandbox (pause) |
 | `containerd_sandbox_image_tag` | `"3.10.1"` | Tag for containerd sandbox (pause) image |
-| `runc_version` | `"1.4.0"` | OCI runtime |
-| `cni_plugins_version` | `"1.9.0"` | CNI plugins bundle |
-| `helm_version` | `"3.19.2"` | Helm binary version |
-| `k9s_version` | `"0.50.18"` | k9s binary version |
+| `runc_version` | `"v1.4.2"` | OCI runtime |
+| `cni_plugins_version` | `"v1.9.1"` | CNI plugins bundle |
+| `helm_version` | `"v3.20.2"` | Helm binary version |
+| `k9s_version` | `"v0.50.18"` | k9s binary version |
 | `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |
 | `pod_subnet` | `"10.64.0.0/10"` | Pod CIDR (Cilium IPAM) |
 | `cluster_dns_domain` | `"cluster.local"` | Cluster DNS suffix |
 | `node_port_start`, `node_port_end` | `1`, `50000` | NodePort range (apiserver `service-node-port-range`) |
-| `crd_wait_timeout` | `"60s"` | Used by `tasks-wait-crds.yaml` |
-| `crd_wait_retries` | `15` | Same |
-| `crd_wait_delay` | `"5s"` | Same |
-| `node_drain_timeout` | `"10m"` | Default `kubectl drain --timeout` |
 | `node_monitor_grace_period` | `"30s"` | kube-controller-manager flag |
-| `remote_charts_dir` | `"/opt/helm-charts"` | Where charts are rsynced on the master manager |
+| `node_drain_timeout` | `"10m"` | Default `kubectl drain --timeout` |
+| `softdog_timeout` | `30` | Watchdog (softdog) reboot timeout in seconds — used by medik8s |
+| `crds_wait` | `{timeout: "60s", retries: 15, delay: 5}` | CRD wait config — used by `tasks-wait-crds.yaml` |
+| `secret_wait` | `{retries: 15, delay: 5}` | K8s Secret wait config — used by ESO sync tasks |
+| `rollout_wait` | `{retries: 15, delay: 5}` | Rollout wait config — used by `tasks-wait-rollout.yaml` |
+| `helm_async` | `{timeout: 1800, poll: 5}` | Async Helm upgrade config — resilient to SSH disconnects on long upgrades |
 
 ### 2.2 HAProxy apiserver LB (`hosts-vars/k8s-base.yaml`)
 
@@ -280,6 +282,12 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `vault_roles_final` | same | Same |
 | `eso_vault_integration_<c>_secrets_merged` | `tasks-eso-secrets-merge.yaml` | Rendered into `<c>/pre/values-override.yaml` |
 | `<c>_acme_cluster_issuer`, `<c>_acme_solver`, `<c>_acme_solver_pod_labels` | `tasks-resolve-acme-solver.yaml` | NetworkPolicy templates in `<c>/pre/` |
+
+### 2.12 Ansible runtime settings (`hosts-vars/ansible.yaml`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `remote_charts_dir` | `"/opt/helm-charts"` | Where charts are rsynced on the master manager |
 
 ---
 
