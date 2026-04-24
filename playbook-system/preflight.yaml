@@ -1,0 +1,95 @@
+# =============================================================================
+# Preflight — eliminate package-manager races before provisioning starts
+# =============================================================================
+# Runs as Step 2 in node-install.yaml (after setup-ssh-keys.yaml, before any
+# apt-operations and before the first reboot in server-prepare.yaml).
+# Idempotent on already-provisioned hosts.
+#
+# Purpose:
+#   - Wait for cloud-init to finish if it is installed (cloud-init itself
+#     kicks off unattended-upgrade runs on first boot; entering provisioning
+#     before it finishes is a recipe for apt-lock contention + reboot
+#     interrupting a dpkg transaction).
+#   - Stop any running unattended-upgrade and wait for it to exit cleanly.
+#   - Mask + disable unattended-upgrades / apt-daily.timer /
+#     apt-daily-upgrade.timer permanently. OS updates on k8s nodes are
+#     handled by rolling update, not in the background.
+#   - Recover from any interrupted dpkg transaction via configure-all.
+#     Also fixes hosts whose provider-supplied image was snapshotted
+#     mid-config.
+# =============================================================================
+
+---
+- name: Preflight — package-manager hygiene
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # CLOUD-INIT (skip cleanly if cloud-init is not installed)
+    # =========================================================================
+    - name: Check if cloud-init binary exists
+      command: which cloud-init
+      register: preflight_cloud_init_check
+      changed_when: false
+      failed_when: false
+
+    - name: Wait for cloud-init to complete
+      command: cloud-init status --wait
+      changed_when: false
+      when: preflight_cloud_init_check.rc == 0
+
+    # =========================================================================
+    # UNATTENDED-UPGRADES — stop unattended-upgrades.service, then mask permanently
+    # (pgrep returns rc=1 if no process found → treat as "nothing to stop")
+    # =========================================================================
+    - name: Stop unattended-upgrade process (if running) and wait
+      shell: |
+        set -e
+        if pgrep -f unattended-upgrade >/dev/null; then
+          systemctl stop unattended-upgrades.service || true
+          # Wait up to 5 min for the process to exit cleanly.
+          for _ in $(seq 1 60); do
+            pgrep -f unattended-upgrade >/dev/null || exit 0
+            sleep 5
+          done
+          echo "unattended-upgrade still running after 5m" >&2
+          exit 1
+        fi
+      register: preflight_stop_unattended
+      changed_when: "'unattended-upgrade still running' not in (preflight_stop_unattended.stderr | default(''))"
+      failed_when: preflight_stop_unattended.rc != 0
+
+    - name: Disable + mask unattended-upgrades and apt-daily timers
+      systemd:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+        masked: true
+      loop:
+        - unattended-upgrades.service
+        - apt-daily.timer
+        - apt-daily.service
+        - apt-daily-upgrade.timer
+        - apt-daily-upgrade.service
+      failed_when: false   # some units may not exist on this distro; mask whichever do
+
+    # =========================================================================
+    # DPKG STATE RECOVERY
+    # =========================================================================
+    - name: Detect interrupted dpkg transaction
+      command: dpkg --audit
+      register: preflight_dpkg_audit
+      changed_when: false
+
+    - name: Recover interrupted dpkg transaction
+      command: dpkg --configure -a
+      when: preflight_dpkg_audit.stdout | length > 0
+      register: preflight_dpkg_recover
+
+    - name: Verify dpkg is now clean
+      command: dpkg --audit
+      register: preflight_dpkg_verify
+      changed_when: false
+      failed_when: preflight_dpkg_verify.stdout | length > 0
