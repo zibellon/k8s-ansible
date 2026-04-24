@@ -156,6 +156,13 @@
         replace: 'SystemdCgroup = true'
       register: containerd_cgroup_result
 
+    - name: Override sandbox (pause) image in containerd config
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: '^(\s*)sandbox\s*=\s*[''"][^''"]+[''"]'
+        replace: "\\1sandbox = '{{ containerd_sandbox_image_registry }}/{{ containerd_sandbox_image_name }}:{{ containerd_sandbox_image_tag }}'"
+      register: containerd_sandbox_result
+
     # =========================================================================
     # REGISTRY MIRRORS / ADDITIONAL CONFIGS
     # =========================================================================
@@ -184,6 +191,7 @@
         state: restarted
       when: >-
         containerd_cgroup_result.changed or
+        containerd_sandbox_result.changed or
         (containerd_additional_config_result is defined and containerd_additional_config_result.changed) or
         containerd_config_result.changed
 
