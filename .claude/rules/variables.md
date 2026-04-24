@@ -151,6 +151,9 @@ Per-file source of truth in parentheses.
 | `k8s_version` | `"1.34"` | Short version (for apt repo URL) |
 | `k8s_full_version` | `"v1.34.0"` | Full version pin in kubeadm config |
 | `containerd_version` | `"2.2.1"` | Container runtime |
+| `containerd_sandbox_image_registry` | `"registry.k8s.io"` | Registry for containerd sandbox (pause) image — AirGap override |
+| `containerd_sandbox_image_name` | `"pause"` | Image name for containerd sandbox (pause) |
+| `containerd_sandbox_image_tag` | `"3.10.1"` | Tag for containerd sandbox (pause) image |
 | `runc_version` | `"1.4.0"` | OCI runtime |
 | `cni_plugins_version` | `"1.9.0"` | CNI plugins bundle |
 | `helm_version` | `"3.19.2"` | Helm binary version |
@@ -198,6 +201,7 @@ Per-file source of truth in parentheses.
 
 - `kubeadm_config_template` — full kubeadm `ClusterConfiguration` + `InitConfiguration` + `KubeletConfiguration` + `KubeProxyConfiguration` template. Rendered by `tasks-kubeadm-config-create.yaml`.
 - `kubeadm_config_path` — `/etc/kubernetes/kubeadm-config.yaml`.
+- `kubeadm_image_registry` — `ClusterConfiguration.imageRepository` prefix for all kubeadm-pulled control-plane images (kube-apiserver, kube-controller-manager, kube-scheduler, etcd, coredns). AirGap override; default `"registry.k8s.io"`.
 
 ### 2.6 Vault & ESO cross-cutting (`hosts-vars/vault.yaml`)
 
