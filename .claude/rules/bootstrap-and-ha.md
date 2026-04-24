@@ -21,11 +21,12 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 
 ### 1.2 `node-install.yaml` (step 1)
 
-**Role.** Prepare a host for kubeadm join. Orchestrates nine sub-plays, each idempotent.
+**Role.** Prepare a host for kubeadm join. Orchestrates ten sub-plays, each idempotent.
 
 | Sub-play | What it does |
 |---|---|
 | `setup-ssh-keys.yaml` | Ensures `authorized_keys` contains the operator's pubkey. |
+| `preflight.yaml` | Waits for cloud-init to finish (if installed), stops any running `unattended-upgrade` cooperatively, masks `unattended-upgrades.service` and `apt-daily*` timers permanently (policy: OS updates via rolling upgrade, not in background), runs `dpkg --configure -a` to recover any interrupted transaction. |
 | `set-hostname.yaml` | Persists `hostname` + `/etc/hosts` entry. |
 | `server-prepare.yaml` | Disable swap, load kernel modules (`br_netfilter`, `overlay`, `softdog`), sysctls (`net.ipv4.ip_forward`, `net.bridge.bridge-nf-call-*`, IPv6 counterparts), time sync. Blacklisted modules re-enabled via unit-service wrapping `modprobe` (survives reboots despite blacklists). |
 | `longhorn-prepare.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`), modules (`iscsi_tcp`, `dm_crypt`). |
@@ -344,3 +345,4 @@ All three rely on `tasks-gather-cluster-facts.yaml` at the top to skip un-joined
 | `/etc/kubernetes/pki/encryption-config.yaml` missing on a manager | Re-run `manager-join.yaml` for that manager (distributes from the master); or manually `scp` from master (mode 0600). |
 | `/etc/kubernetes/vault-unseal.json` missing on a manager | Re-run `tasks-vault-distribute-creds.yaml` (standalone by running `vault-install.yaml --tags post` or via `manager-join.yaml`). |
 | Vault rekey прервался посередине | Temp-файл `{{ vault_rekey_temp_file_path }}` на `master_manager_fact` остался с новыми ключами. Повторный запуск `vault-rotate.yaml` детектирует его и довыполнит recovery (K8s Secret + distribute). Если в Vault висит незавершённый rekey, а temp-файла нет (ручной rekey помимо playbook'а) — сделать `vault operator rekey -cancel` и запустить playbook заново. |
+| Interrupted dpkg transaction on a host (`E: dpkg was interrupted`) | Run `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/preflight.yaml --limit <host>` — the `dpkg --configure -a` step recovers the transaction. Happens automatically on any re-run of `node-install.yaml` (preflight is Step 2). |
