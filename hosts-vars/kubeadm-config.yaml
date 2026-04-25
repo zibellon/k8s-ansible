@@ -21,7 +21,7 @@ all:
     #   kubeadm config images list --kubernetes-version {{ k8s_full_version }}
     #
     # СБ должна загрузить перечисленные выше 5 образов в приватный registry.
-    # kube-proxy отключён (--skip-phases=addon/kube-proxy) — образ не нужен.
+    # kube-proxy отключён (proxy.disabled: true в ClusterConfiguration) — образ не нужен.
     kubeadm_image_registry: "registry.k8s.io"
     # ---------
     # ---------
@@ -71,6 +71,8 @@ all:
             value: "false"
           - name: node-monitor-grace-period
             value: "{{ node_monitor_grace_period }}"
+      proxy:
+        disabled: true
       ---
       apiVersion: kubelet.config.k8s.io/v1beta1
       kind: KubeletConfiguration
@@ -87,7 +89,3 @@ all:
       evictionSoft: {{ kubelet_eviction_soft | to_json }}
       evictionSoftGracePeriod: {{ kubelet_eviction_soft_grace_period | to_json }}
       evictionHard: {{ kubelet_eviction_hard | to_json }}
-      ---
-      apiVersion: kubeproxy.config.k8s.io/v1alpha1
-      kind: KubeProxyConfiguration
-      mode: ipvs
