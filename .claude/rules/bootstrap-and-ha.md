@@ -57,7 +57,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 2. `tasks-gather-cluster-facts` — reports `is_cluster_init: false`.
 3. Generate 32-byte ETCD encryption key → write `/etc/kubernetes/pki/encryption-config.yaml`. Key name `key{{ lookup('pipe','date +%s') }}`. Provider `aescbc` with `identity` fallback (read-compat).
 4. `tasks-kubeadm-config-create` — render `/etc/kubernetes/kubeadm-config.yaml` from `kubeadm_config_template`. `certSANs` = every manager's `ansible_host` + `api_server_advertise_address` + `haproxy_apiserver_lb_host` + `localhost`.
-5. `kubeadm init --config /etc/kubernetes/kubeadm-config.yaml --skip-phases=addon/kube-proxy`. Note: kube-proxy never installed — Cilium will replace it.
+5. `kubeadm init --config /etc/kubernetes/kubeadm-config.yaml`. The kubeadm config has `ClusterConfiguration.proxy.disabled: true`, so kube-proxy is never installed — Cilium will replace it.
 6. `tasks-kubectl-configure` — set up `/root/.kube/config`.
 7. `tasks-apply-node-labels` — apply per-host `node_labels`.
 8. (optional) `tasks-untaint-control-plane` — remove `node-role.kubernetes.io/control-plane:NoSchedule` if the cluster is small / dev.

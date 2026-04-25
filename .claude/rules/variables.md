@@ -209,7 +209,7 @@ Per-file source of truth in parentheses.
 
 ### 2.5 kubeadm template (`hosts-vars/kubeadm-config.yaml`)
 
-- `kubeadm_config_template` — full kubeadm `ClusterConfiguration` + `InitConfiguration` + `KubeletConfiguration` + `KubeProxyConfiguration` template. Rendered by `tasks-kubeadm-config-create.yaml`.
+- `kubeadm_config_template` — full kubeadm `InitConfiguration` + `ClusterConfiguration` (with `proxy.disabled: true` to skip kube-proxy) + `KubeletConfiguration` template. Rendered by `tasks-kubeadm-config-create.yaml`.
 - `kubeadm_config_path` — `/etc/kubernetes/kubeadm-config.yaml`.
 - `kubeadm_image_registry` — `ClusterConfiguration.imageRepository` prefix for all kubeadm-pulled control-plane images (kube-apiserver, kube-controller-manager, kube-scheduler, etcd, coredns). AirGap override; default `"registry.k8s.io"`.
 

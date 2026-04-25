@@ -8,7 +8,7 @@ For the big picture, see `CLAUDE.md` §1 (mental model, L2 CNI layer). For compo
 
 ## 1. Why Cilium replaces kube-proxy
 
-At `kubeadm init` we pass `--skip-phases=addon/kube-proxy`. No `kube-proxy` DaemonSet is ever created. Cilium's eBPF datapath implements Service IP routing. Gains:
+At `kubeadm init` the kubeadm config sets `proxy.disabled: true` in `ClusterConfiguration` (kubeadm.k8s.io/v1beta4, available since Kubernetes 1.31). No `kube-proxy` DaemonSet is ever created. Cilium's eBPF datapath implements Service IP routing. Gains:
 
 - One fewer DaemonSet, no iptables NAT overhead.
 - Host firewall becomes available (not possible with kube-proxy).
@@ -152,5 +152,5 @@ From `hosts-vars/k8s-base.yaml` (see [`variables.md`](variables.md) §2.1):
 | New node join times out at "TLS handshake" | Cilium host firewall policy doesn't include the new node's IPs | Run `cilium-install.yaml --tags post` with updated inventory first (§2) |
 | `NetworkPolicy` blocks ACME HTTP-01 challenge | Hardcoded solver pod labels; cert-manager config changed | Use `tasks-resolve-acme-solver.yaml` instead of hardcoding (§4) |
 | Ingress works inside VPN but not outside (expected) or outside but not inside (not expected) | Middleware attachment inverted, or `vpn_ips` misconfigured | Check `hosts-vars/vpn-rules.yaml` and `<c>_vpn_only_enabled` flag |
-| Cilium agent pods fail with "kube-proxy conflict" | Someone re-enabled kube-proxy addon | Re-run `kubeadm init` without `--skip-phases=addon/kube-proxy`? — NO, remove kube-proxy DaemonSet instead. See `CLAUDE.md` §0 |
+| Cilium agent pods fail with "kube-proxy conflict" | Someone re-enabled kube-proxy addon | Re-run `kubeadm init` after flipping `proxy.disabled` to `false`? — NO, remove kube-proxy DaemonSet instead. See `CLAUDE.md` §0 |
 | `kubectl` to apiserver fails with TLS verification error | certSANs missing a manager's IP/DNS | `apiserver-sans-update.yaml` (see [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §2) |

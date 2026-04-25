@@ -14,7 +14,7 @@ This file is the **map** of the project. Detailed **catalogs** live under `.clau
 Violating any of these will break the cluster or leak secrets.
 
 - `argocd` and `longhorn-system` namespaces are **upstream-fixed** — never rename.
-- `kube-proxy` is **disabled at `kubeadm init`** (`--skip-phases=addon/kube-proxy`). Cilium replaces it. Do not re-enable.
+- `kube-proxy` is **disabled at `kubeadm init`** via declarative `proxy.disabled: true` in `ClusterConfiguration`. Cilium replaces it. Do not re-enable.
 - `hosts-vars-override/` is **never committed**. It contains `ansible_password`, real IPs, Vault unseal keys, and all secrets.
 - Always run Ansible with **both** inventories: `-i hosts-vars/ -i hosts-vars-override/`. Running with only one is always a bug.
 - **System playbooks require `--limit`**. Forgetting `--limit` on `node-install.yaml` / `cluster-init.yaml` / `manager-join.yaml` / `worker-join.yaml` will fail a `tasks-require-limit.yaml` gate (by design).
