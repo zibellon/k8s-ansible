@@ -2,7 +2,7 @@
 
 Depth reference for the observability layer. Four components coordinate to provide metrics, dashboards, and alerting: `mon-prometheus-operator`, `mon-kube-state-metrics`, `mon-node-exporter`, `mon-grafana`.
 
-For the big picture, see `CLAUDE.md` §1 (mental model, L7 Observability layer). For per-component install detail (namespaces, charts, dependencies, ESO integration), see [`components.md`](components.md) §17–§20.
+For the big picture, see `CLAUDE.md` §1 (mental model, L7 Observability layer). For per-component install detail (namespaces, charts, dependencies, ESO integration), see [`components.md`](components.md) §17–§21.
 
 ---
 
@@ -138,7 +138,7 @@ L1 control plane → L2 Cilium → L4 Longhorn → L5 Vault+ESO → L7 Prometheu
   mon-node-exporter, mon-kube-state-metrics → Grafana (needs Zitadel for OIDC)
 ```
 
-See [`components.md`](components.md) §22 for the full dependency tier listing.
+See [`components.md`](components.md) §23 for the full dependency tier listing.
 
 ---
 

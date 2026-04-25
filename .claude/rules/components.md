@@ -271,9 +271,23 @@ Template fields:
 - **Image registry overrides.** `node_exporter_image_registry`.
 - **Notes.** DaemonSet on every node including managers.
 
+## 21. `mon-loki`
+
+- **Chart path.** `charts/mon-loki/{pre,install,post}/`.
+- **Install playbook.** `mon-loki-install.yaml`.
+- **Namespace.** `loki`.
+- **Releases.** `loki-pre`, `loki`, `loki-post` (без префикса `mon-` в release names — соответствует паттерну `kube-state-metrics-pre`/`kube-state-metrics`/`kube-state-metrics-post`; chart-каталог при этом называется `mon-loki`).
+- **Required vars.** `loki_namespace` (`loki`), `loki_version` (image tag, default `3.5.0`), `loki_port` (3100), `loki_storage_class`, `loki_storage_size`, `loki_pvc_subpath`, Loki config tunables (`loki_schema_from_date`, `loki_retention_period`, `loki_max_line_size`, `loki_ingestion_rate_mb`, `loki_ingestion_burst_size_mb`), три helm-values блока (`loki_pre_helm_values`, `loki_install_helm_values`, `loki_post_helm_values`).
+- **ESO integration.** No.
+- **ServiceMonitor.** Yes (port `api`, named).
+- **Dependencies.** Cilium (CNI), longhorn (PVC), mon-prometheus-operator (ServiceMonitor scrape). cert-manager / external-secrets / vault / traefik не используются.
+- **Image registry overrides.** `loki_image_registry` (default `docker.io`).
+- **Non-install playbooks.** None.
+- **Notes.** Single-binary Loki с filesystem storage. Внешний ingress отсутствует — Grafana подключается через in-cluster DNS `http://loki.loki.svc.cluster.local:3100` (datasource добавляется вручную в Grafana UI). NetworkPolicy для ingress из Grafana создаётся со стороны chart'а Grafana (mon-loki не знает о существовании Grafana).
+
 ---
 
-## 21. Namespaces Matrix
+## 22. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
 |---|---|---|
@@ -293,8 +307,9 @@ Template fields:
 | `kube-system` | metrics-server (exceptional) | upstream |
 | `mon` | mon-prometheus-operator, mon-kube-state-metrics, mon-node-exporter | no |
 | `grafana` | mon-grafana | no |
+| `loki` | mon-loki | no |
 
-## 22. Cross-cutting Dependency Order
+## 23. Cross-cutting Dependency Order
 
 Install in roughly this order (first → last). Parallel installation within a dependency tier is safe.
 
@@ -307,13 +322,13 @@ L4  traefik        haproxy
 L5  mon-prometheus-operator
 L6  mon-node-exporter   mon-kube-state-metrics
 L7  zitadel
-L8  mon-grafana    argocd    gitlab    teleport    medik8s
+L8  mon-grafana    mon-loki    argocd    gitlab    teleport    medik8s
 L9  gitlab-runner
 ```
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L8 as part of `argocd-install.yaml` — no separate playbook.
 
-## 23. ESO-integrated Components (8)
+## 24. ESO-integrated Components (8)
 
 Only these have `eso_vault_integration_<c>` objects and are processed by `tasks-eso-secrets-merge.yaml`:
 
