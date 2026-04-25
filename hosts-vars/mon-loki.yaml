@@ -1,0 +1,80 @@
+all:
+  vars:
+    # ------
+    # registry+images (AirGap)
+    # ------
+    # Registry для образов Loki. По умолчанию — docker.io.
+    # Для airgap — переопределить в hosts-vars-override/mon-loki.yaml:
+    #   loki_image_registry: "my-private-registry.local"
+    #
+    # СБ должна загрузить:
+    #   <registry>/grafana/loki:3.5.0
+    loki_image_registry: "docker.io"
+    loki_image_name: "{{ loki_image_registry }}/grafana/loki"
+    loki_image_tag: "3.5.0"
+    # ---------
+    # ---------
+    loki_namespace: "loki"
+    # Timeouts
+    loki_pre_helm_timeout: "3m"
+    loki_install_helm_timeout: "5m"
+    loki_post_helm_timeout: "3m"
+    loki_rollout_timeout: "120s"
+    # ---------
+    # API
+    loki_port: 3100
+    # ---------
+    # Storage
+    loki_storage_class: "lh-major-worker-multi-best-effort"
+    loki_storage_size: "30Gi"
+    loki_pvc_subpath: "some-data"
+    # ---------
+    # Loki config tunables
+    loki_schema_from_date: "2025-05-15"
+    loki_retention_period: "744h"
+    loki_max_line_size: "512KB"
+    loki_ingestion_rate_mb: 30
+    loki_ingestion_burst_size_mb: 60
+    # ---------
+    # Pre-phase values (NetworkPolicies chart)
+    loki_pre_helm_values:
+      namespace: "{{ loki_namespace }}"
+      loki:
+        port: "{{ loki_port }}"
+      monitoring_namespace: "{{ prometheus_operator_namespace }}"
+    # Install-phase values (PVC + ConfigMap + Deployment + Service)
+    loki_install_helm_values:
+      namespace: "{{ loki_namespace }}"
+      loki:
+        image:
+          name: "{{ loki_image_name }}"
+          tag: "{{ loki_image_tag }}"
+        port: "{{ loki_port }}"
+        pvc_subpath: "{{ loki_pvc_subpath }}"
+      storage:
+        class: "{{ loki_storage_class }}"
+        size: "{{ loki_storage_size }}"
+      config:
+        schema_from_date: "{{ loki_schema_from_date }}"
+        retention_period: "{{ loki_retention_period }}"
+        max_line_size: "{{ loki_max_line_size }}"
+        ingestion_rate_mb: "{{ loki_ingestion_rate_mb }}"
+        ingestion_burst_size_mb: "{{ loki_ingestion_burst_size_mb }}"
+      tolerations: []
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "256Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+    # Post-phase values (ServiceMonitor chart)
+    loki_post_helm_values:
+      namespace: "{{ loki_namespace }}"
+      serviceMonitor:
+        enabled: true
+        interval: "30s"
+        scrapeTimeout: "15s"
+        labels: {}
