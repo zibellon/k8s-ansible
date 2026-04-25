@@ -104,3 +104,29 @@
       register: preflight_dpkg_verify
       changed_when: false
       failed_when: preflight_dpkg_verify.stdout | length > 0
+
+    # =========================================================================
+    # INVENTORY SANITY (managers only) — api_server_advertise_address must be
+    # on a real network interface, otherwise etcd fails to bind on first
+    # kubeadm init/join with `EADDRNOTAVAIL` (cluster-init then hangs 4min on
+    # wait-control-plane and dies with a confusing "context deadline exceeded"
+    # from kube-apiserver healthcheck — ask me how I know).
+    # =========================================================================
+    - name: Discover IPv4 addresses on this host
+      command: ip -4 -o addr show
+      register: preflight_host_ipv4
+      changed_when: false
+      when: "'managers' in group_names"
+
+    - name: Assert api_server_advertise_address is configured on this manager
+      assert:
+        that:
+          - api_server_advertise_address in (preflight_host_ipv4.stdout | regex_findall('inet (\d+\.\d+\.\d+\.\d+)/'))
+        fail_msg: |
+          Inventory error: api_server_advertise_address={{ api_server_advertise_address }}
+          is not present on any network interface of {{ inventory_hostname }}.
+          Available IPv4 addresses on this host:
+            {{ preflight_host_ipv4.stdout | regex_findall('inet (\d+\.\d+\.\d+\.\d+)/') | join(', ') }}
+          Fix hosts-vars-override/hosts.yaml — set api_server_advertise_address
+          to one of the addresses above.
+      when: "'managers' in group_names"
