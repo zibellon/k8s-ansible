@@ -277,13 +277,13 @@ Template fields:
 - **Install playbook.** `mon-loki-install.yaml`.
 - **Namespace.** `loki`.
 - **Releases.** `loki-pre`, `loki`, `loki-post` (без префикса `mon-` в release names — соответствует паттерну `kube-state-metrics-pre`/`kube-state-metrics`/`kube-state-metrics-post`; chart-каталог при этом называется `mon-loki`).
-- **Required vars.** `loki_namespace` (`loki`), `loki_version` (image tag, default `3.5.0`), `loki_port` (3100), `loki_storage_class`, `loki_storage_size`, `loki_pvc_subpath`, Loki config tunables (`loki_schema_from_date`, `loki_retention_period`, `loki_max_line_size`, `loki_ingestion_rate_mb`, `loki_ingestion_burst_size_mb`), три helm-values блока (`loki_pre_helm_values`, `loki_install_helm_values`, `loki_post_helm_values`).
+- **Required vars.** `loki_namespace` (`loki`), `loki_version` (image tag, default `3.5.0`), `loki_port` (3100), `loki_storage_class`, `loki_storage_size`, `loki_pvc_subpath`, `loki_config_yaml` (полный loki-config.yaml как block scalar `|`), три helm-values блока (`loki_pre_helm_values`, `loki_install_helm_values`, `loki_post_helm_values`).
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes (port `api`, named).
 - **Dependencies.** Cilium (CNI), longhorn (PVC), mon-prometheus-operator (ServiceMonitor scrape). cert-manager / external-secrets / vault / traefik не используются.
 - **Image registry overrides.** `loki_image_registry` (default `docker.io`).
 - **Non-install playbooks.** None.
-- **Notes.** Single-binary Loki с filesystem storage. Внешний ingress отсутствует — Grafana подключается через in-cluster DNS `http://loki.loki.svc.cluster.local:3100` (datasource добавляется вручную в Grafana UI). NetworkPolicy для ingress из Grafana создаётся со стороны chart'а Grafana (mon-loki не знает о существовании Grafana).
+- **Notes.** Single-binary Loki с filesystem storage. Внешний ingress отсутствует — Grafana подключается через in-cluster DNS `http://loki.loki.svc.cluster.local:3100` (datasource добавляется вручную в Grafana UI). NetworkPolicy для ingress из Grafana создаётся со стороны chart'а Grafana (mon-loki не знает о существовании Grafana). Полный loki-config.yaml живёт в одной переменной `loki_config_yaml` (block scalar) — для override любого параметра достаточно скопировать переменную в `hosts-vars-override/mon-loki.yaml` и отредактировать. Единственная Jinja-подстановка внутри — `{{ loki_port }}` (нужна, чтобы `http_listen_port` оставался в синхроне с `loki_port`, который также используется в Deployment containerPort и Service port).
 
 ---
 
