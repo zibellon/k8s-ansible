@@ -201,9 +201,11 @@ Per-file source of truth in parentheses.
 | `kubelet_container_log_max_size` | Per-container log size cap |
 | `kubelet_container_log_max_files` | Log rotation file count |
 | `kubelet_crashloop_max_backoff` | Caps `CrashLoopBackOff` (feature gate `KubeletCrashLoopBackOffMax`) |
-| `kubelet_eviction_soft_memory_available`, `kubelet_eviction_soft_nodefs_available` | Soft eviction thresholds |
-| `kubelet_eviction_hard_memory_available`, `kubelet_eviction_hard_nodefs_available` | Hard eviction thresholds |
 | `kubelet_image_gc_high_threshold`, `kubelet_image_gc_low_threshold` | Image GC thresholds (%) |
+| `kubelet_image_minimum_gc_age` | Minimum age of an unused image before GC may remove it |
+| `kubelet_eviction_soft` | Soft eviction thresholds — dict, keys are resources (`memory.available`, `nodefs.available`, `imagefs.available`), values are thresholds |
+| `kubelet_eviction_soft_grace_period` | Grace periods for soft eviction — dict, same keys as `kubelet_eviction_soft`, values are durations |
+| `kubelet_eviction_hard` | Hard eviction thresholds — dict, keys are resources (`memory.available`, `nodefs.available`, `nodefs.inodesFree`, `imagefs.available`, `pid.available`), values are thresholds |
 
 ### 2.5 kubeadm template (`hosts-vars/kubeadm-config.yaml`)
 
