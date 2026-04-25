@@ -29,12 +29,52 @@ all:
     loki_storage_size: "30Gi"
     loki_pvc_subpath: "some-data"
     # ---------
-    # Loki config tunables
-    loki_schema_from_date: "2025-05-15"
-    loki_retention_period: "744h"
-    loki_max_line_size: "512KB"
-    loki_ingestion_rate_mb: 30
-    loki_ingestion_burst_size_mb: 60
+    # Loki config (full loki-config.yaml — override the whole block in
+    # hosts-vars-override/mon-loki.yaml to change any parameter)
+    loki_config_yaml: |
+      auth_enabled: false
+
+      server:
+        http_listen_port: {{ loki_port }}
+
+      common:
+        instance_addr: 127.0.0.1
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+
+      schema_config:
+        configs:
+          - from: 2025-05-15
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      compactor:
+        working_directory: /loki/retention
+        delete_request_store: filesystem
+        compaction_interval: 10m
+        retention_enabled: true
+        retention_delete_delay: 2h
+        retention_delete_worker_count: 100
+
+      limits_config:
+        retention_period: 744h
+        max_line_size: 512KB
+        ingestion_rate_mb: 30
+        ingestion_burst_size_mb: 60
+
+      analytics:
+        reporting_enabled: false
     # ---------
     # Pre-phase values (NetworkPolicies chart)
     loki_pre_helm_values:
@@ -54,12 +94,7 @@ all:
       storage:
         class: "{{ loki_storage_class }}"
         size: "{{ loki_storage_size }}"
-      config:
-        schema_from_date: "{{ loki_schema_from_date }}"
-        retention_period: "{{ loki_retention_period }}"
-        max_line_size: "{{ loki_max_line_size }}"
-        ingestion_rate_mb: "{{ loki_ingestion_rate_mb }}"
-        ingestion_burst_size_mb: "{{ loki_ingestion_burst_size_mb }}"
+      config_yaml: "{{ loki_config_yaml }}"
       tolerations: []
       nodeSelector:
         node-role.kubernetes.io/worker: ""
