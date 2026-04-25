@@ -92,14 +92,15 @@
 ## Версия пакета зафиксирована в hosts.yaml (haproxy_apiserver_lb_package_version) и заморожена через apt-mark hold
 ## Чтобы обновить конфиг на всех нодах (например при добавлении нового manager):
 - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
-  - Обновляет /etc/haproxy/haproxy.cfg и делает `systemctl reload haproxy` последовательно (serial: 1)
+  - Обновляет /etc/haproxy/haproxy.cfg
+  - делает `systemctl reload haproxy` последовательно (serial: 1)
   - reload — graceful, без разрыва TCP соединений
 
 # ------
 # Важно про VAULT + ESO
 # ------
 ## Во все конфиги ESO (SecretStore + ExternalSecret) добавен параметр is_need_eso: true | false
-## Зачем: Это контроль - нужно ли создавать объекты ESO + vault-policy
+## Зачем: Это контроль - нужно создавать объекты ESO + vault-policy
 ## Например: есть GitLab.root (user + pass), их надо обязаиельно положить в vault. Но они не нужны как k8s-secret
 ## Чтобы положить в vault - нужен путь
 ## Но для таких секретов не нужно ESO -> политики доступа для них не нужны
