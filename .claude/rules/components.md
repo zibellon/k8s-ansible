@@ -277,7 +277,7 @@ Template fields:
 - **Install playbook.** `mon-loki-install.yaml`.
 - **Namespace.** `loki`.
 - **Releases.** `loki-pre`, `loki`, `loki-post` (без префикса `mon-` в release names — соответствует паттерну `kube-state-metrics-pre`/`kube-state-metrics`/`kube-state-metrics-post`; chart-каталог при этом называется `mon-loki`).
-- **Required vars.** `loki_namespace` (`loki`), `loki_version` (image tag, default `3.5.0`), `loki_port` (3100), `loki_storage_class`, `loki_storage_size`, `loki_pvc_subpath`, `loki_config_yaml` (полный loki-config.yaml как block scalar `|`), три helm-values блока (`loki_pre_helm_values`, `loki_install_helm_values`, `loki_post_helm_values`).
+- **Required vars.** `loki_namespace` (`loki`), `loki_image_tag` (default `3.5.0`), `loki_port` (3100), `loki_storage_class`, `loki_storage_size`, `loki_pvc_subpath`, `loki_config_yaml` (полный loki-config.yaml как block scalar `|`), три helm-values блока (`loki_pre_helm_values`, `loki_install_helm_values`, `loki_post_helm_values`).
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes (port `api`, named).
 - **Dependencies.** Cilium (CNI), longhorn (PVC), mon-prometheus-operator (ServiceMonitor scrape). cert-manager / external-secrets / vault / traefik не используются.
