@@ -207,16 +207,7 @@ General rules for callers:
 - **Callers.** `argocd-configure.yaml`, `gitlab-configure.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `vault-install.yaml`.
 - **Idempotent.** Read-only; safe to call repeatedly.
 
-### 1.18 `tasks-helm-list-releases.yaml`
-
-- **Purpose.** Utility task — print list of Helm releases to Ansible log (debug). Either scoped to a single namespace or cluster-wide.
-- **Input.** `dto_label_name` (required string, log prefix). `dto_helm_list_namespace` (optional string — if defined and non-empty, `helm list -n <ns>`; otherwise `helm list -A`).
-- **Validates (assert).** `dto_label_name` defined + non-empty. `dto_helm_list_namespace` not validated (optional, controlled via `when:`).
-- **Output.** No facts exported. Stdout (`stdout_lines` of `helm list`) printed via debug. As-is formatting (default Helm table output).
-- **Callers.** None (utility task for ad-hoc debugging).
-- **Idempotent.** Read-only (`changed_when: false`).
-
-### 1.19 `tasks-k8s-list-pods.yaml`
+### 1.18 `tasks-k8s-list-pods.yaml`
 
 - **Purpose.** Utility task — run `kubectl get pods -n <ns> -o wide` and print the result to the Ansible log via the `debug` module.
 - **Input.** `dto_label_name` (required string, log prefix). `dto_pods_namespace` (required string, K8s namespace).
