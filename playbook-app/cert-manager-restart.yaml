@@ -1,0 +1,91 @@
+# =============================================================================
+# CERT-MANAGER RESTART
+# Restarts all cert-manager components to apply ConfigMap/configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts.yaml playbook-app/cert-manager-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Deployments: cert-manager, cert-manager-cainjector, cert-manager-webhook
+# =============================================================================
+
+- name: Restart cert-manager components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[cert-manager-restart-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        dto_label_name: "cert-manager-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify cert-manager is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[cert-manager-restart] Check if cert-manager namespace exists"
+      command: kubectl get namespace {{ cert_manager_namespace }}
+      register: namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[cert-manager-restart] Fail if cert-manager namespace not found"
+      fail:
+        msg: "cert-manager namespace '{{ cert_manager_namespace }}' not found. Install cert-manager first."
+      when: namespace_check.rc != 0
+      run_once: true
+
+    - name: "[cert-manager-restart] Show pods in {{ cert_manager_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "cert-manager-restart"
+        dto_pods_namespace: "{{ cert_manager_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: "[cert-manager-restart] Restart cert-manager Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ cert_manager_namespace }}
+      loop:
+        - deployment.apps/cert-manager
+        - deployment.apps/cert-manager-cainjector
+        - deployment.apps/cert-manager-webhook
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[cert-manager-restart] Wait for Deployment rollouts"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "cert-manager-restart"
+        dto_rollout_namespace: "{{ cert_manager_namespace }}"
+        dto_rollout_timeout: "{{ cert_manager_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/cert-manager
+          - deployment.apps/cert-manager-cainjector
+          - deployment.apps/cert-manager-webhook
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[cert-manager-verify] Show pods in {{ cert_manager_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "cert-manager-verify"
+        dto_pods_namespace: "{{ cert_manager_namespace }}"
+
+    - name: "[cert-manager-verify] Restart completed"
+      debug:
+        msg:
+          - "=== cert-manager Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

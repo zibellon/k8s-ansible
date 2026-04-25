@@ -245,6 +245,8 @@
 ## 
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cert-manager-install.yaml`
+- Есть дополнительный playbook, для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cert-manager-restart.yaml`
 
 ## ---
 ## ExternalSecret. Официальный helm
