@@ -745,6 +745,32 @@ all:
           cpu: "1"
           memory: "1Gi"
 
+    # ---------
+    # Grafana Helm values (Deployment + PVC + Service)
+    # adminSecret.name — K8s Secret created by ESO (mon-system/pre/), populated
+    # from Vault path /mon-system/grafana/admin/creds with keys username + password
+    mon_system_grafana_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      grafana:
+        port: "{{ mon_system_grafana_port }}"
+        image:
+          name: "{{ mon_system_grafana_image_name }}"
+          tag: "{{ mon_system_grafana_image_tag }}"
+        installPlugins: "grafana-piechart-panel"
+        externalUrl: "{{ mon_system_grafana_external_url }}"
+      adminSecret:
+        name: "{{ mon_system_secret_name_grafana_admin_creds }}"
+        usernameKey: username
+        passwordKey: password
+      pvc:
+        storageClassName: "lh-major-worker-multi-best-effort"
+        storageSize: "1Gi"
+        accessMode: "ReadWriteOnce"
+      tolerations: []
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      resources: {}
+
     eso_vault_integration_mon_system:
       sa_name: "eso-main"
       role_name: "mon-system.eso-main"
