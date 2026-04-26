@@ -56,6 +56,38 @@ all:
     mon_system_grafana_helm_timeout: "3m"
     mon_system_post_helm_timeout: "3m"
 
+    # ============================================================================
+    # ESO integration — mon-system namespace (Grafana is the only consumer)
+    # ============================================================================
+    # SA name + SecretStore name follow project convention: constants `eso-main`
+    # and `eso-main.vault` shared across all 8 ESO-integrated namespaces.
+    # Role name follows `<namespace>.eso-main` pattern.
+    # See secrets-and-eso.md §2.3 for canonical pattern.
+    eso_vault_integration_mon_system:
+      sa_name: "eso-main"
+      role_name: "mon-system.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+      is_need_eso: true
+
+    # ----------------------------------------------------------------------------
+    # ESO secret-name lookups — used by tasks-eso-lookup.yaml in mon-system-install.yaml.
+    # Values must match external_secret_name of corresponding eso_vault_integration_mon_system_secrets entry.
+    # ----------------------------------------------------------------------------
+    mon_system_secret_name_grafana_admin_creds: "eso-mon-system-grafana-admin-creds"
+
+    eso_vault_integration_mon_system_secrets:
+      - external_secret_name: "{{ mon_system_secret_name_grafana_admin_creds }}"
+        vault_path: "/mon-system/grafana/admin/creds"
+        body:
+          target:
+            name: "{{ mon_system_secret_name_grafana_admin_creds }}"
+          dataFrom:
+            - extract:
+                key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/admin/creds"
+
+    eso_vault_integration_mon_system_secrets_extra: []
+
     # ----------------------------------------------------------------------------
     # Prometheus-Operator stack: operator + Prometheus instance + Alertmanager
     # ----------------------------------------------------------------------------
@@ -398,82 +430,26 @@ all:
               insecureSkipVerify: true
 
     # ----------------------------------------------------------------------------
-    # Grafana — Deployment + PVC + Service (with Vault/ESO admin password lifecycle)
+    # node-exporter — DaemonSet + Service (host-level metrics)
     # ----------------------------------------------------------------------------
     # СБ должна загрузить:
-    #   {{ mon_system_grafana_image_registry }}/grafana/grafana:{{ mon_system_grafana_image_tag }}
-    mon_system_grafana_image_registry: "docker.io"
-    mon_system_grafana_image_name: "{{ mon_system_grafana_image_registry }}/grafana/grafana"
-    mon_system_grafana_image_tag: "12.4.2"
-    mon_system_grafana_rollout_timeout: "120s"
-    mon_system_grafana_port: 3000
-    mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
-    mon_system_grafana_external_url: "https://grafana-k8s-v2.drawapp.ru"
-    mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
-    mon_system_grafana_ingress_http_enable: false
-    mon_system_grafana_ingress_https_enable: true
-    mon_system_grafana_vpn_only_enabled: false
-    mon_system_grafana_admin_username: "admin"
+    #   {{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter:{{ mon_system_node_exporter_image_tag }}
+    mon_system_node_exporter_image_registry: "quay.io"
+    mon_system_node_exporter_image_name: "{{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter"
+    mon_system_node_exporter_image_tag: "v1.11.1"
+    mon_system_node_exporter_rollout_timeout: "120s"
+    mon_system_node_exporter_port: 9100
 
     # ----------------------------------------------------------------------------
-    # Loki — single-binary Deployment + PVC + ConfigMap + Service (log store)
+    # kube-state-metrics — Deployment + RBAC + Service (Kubernetes object metrics)
     # ----------------------------------------------------------------------------
     # СБ должна загрузить:
-    #   {{ mon_system_loki_image_registry }}/grafana/loki:{{ mon_system_loki_image_tag }}
-    mon_system_loki_image_registry: "docker.io"
-    mon_system_loki_image_name: "{{ mon_system_loki_image_registry }}/grafana/loki"
-    mon_system_loki_image_tag: "3.5.0"
-    mon_system_loki_rollout_timeout: "120s"
-    mon_system_loki_port: 3100
-    # ---------
-    # Full loki-config.yaml as block scalar — override entire variable in
-    # hosts-vars-override/mon-system.yaml to change any parameter.
-    # Single Jinja substitution: {{ mon_system_loki_port }} keeps http_listen_port
-    # in sync with the port used by Deployment containerPort and Service port.
-    mon_system_loki_config_yaml: |
-      auth_enabled: false
-
-      server:
-        http_listen_port: {{ mon_system_loki_port }}
-
-      common:
-        instance_addr: 127.0.0.1
-        path_prefix: /loki
-        storage:
-          filesystem:
-            chunks_directory: /loki/chunks
-            rules_directory: /loki/rules
-        replication_factor: 1
-        ring:
-          kvstore:
-            store: inmemory
-
-      schema_config:
-        configs:
-          - from: 2025-05-15
-            store: tsdb
-            object_store: filesystem
-            schema: v13
-            index:
-              prefix: index_
-              period: 24h
-
-      compactor:
-        working_directory: /loki/retention
-        delete_request_store: filesystem
-        compaction_interval: 10m
-        retention_enabled: true
-        retention_delete_delay: 2h
-        retention_delete_worker_count: 100
-
-      limits_config:
-        retention_period: 744h
-        max_line_size: 512KB
-        ingestion_rate_mb: 30
-        ingestion_burst_size_mb: 60
-
-      analytics:
-        reporting_enabled: false
+    #   {{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics:{{ mon_system_ksm_image_tag }}
+    mon_system_ksm_image_registry: "registry.k8s.io"
+    mon_system_ksm_image_name: "{{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics"
+    mon_system_ksm_image_tag: "v2.18.0"
+    mon_system_ksm_rollout_timeout: "60s"
+    mon_system_ksm_port: 8080
 
     # ----------------------------------------------------------------------------
     # Vector — DaemonSet + RBAC + ConfigMap (log shipper, no Service by design)
@@ -623,32 +599,82 @@ all:
             codec: text
 
     # ----------------------------------------------------------------------------
-    # node-exporter — DaemonSet + Service (host-level metrics)
+    # Loki — single-binary Deployment + PVC + ConfigMap + Service (log store)
     # ----------------------------------------------------------------------------
     # СБ должна загрузить:
-    #   {{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter:{{ mon_system_node_exporter_image_tag }}
-    mon_system_node_exporter_image_registry: "quay.io"
-    mon_system_node_exporter_image_name: "{{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter"
-    mon_system_node_exporter_image_tag: "v1.11.1"
-    mon_system_node_exporter_rollout_timeout: "120s"
-    mon_system_node_exporter_port: 9100
+    #   {{ mon_system_loki_image_registry }}/grafana/loki:{{ mon_system_loki_image_tag }}
+    mon_system_loki_image_registry: "docker.io"
+    mon_system_loki_image_name: "{{ mon_system_loki_image_registry }}/grafana/loki"
+    mon_system_loki_image_tag: "3.5.0"
+    mon_system_loki_rollout_timeout: "120s"
+    mon_system_loki_port: 3100
+    # ---------
+    # Full loki-config.yaml as block scalar — override entire variable in
+    # hosts-vars-override/mon-system.yaml to change any parameter.
+    # Single Jinja substitution: {{ mon_system_loki_port }} keeps http_listen_port
+    # in sync with the port used by Deployment containerPort and Service port.
+    mon_system_loki_config_yaml: |
+      auth_enabled: false
+
+      server:
+        http_listen_port: {{ mon_system_loki_port }}
+
+      common:
+        instance_addr: 127.0.0.1
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+
+      schema_config:
+        configs:
+          - from: 2025-05-15
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      compactor:
+        working_directory: /loki/retention
+        delete_request_store: filesystem
+        compaction_interval: 10m
+        retention_enabled: true
+        retention_delete_delay: 2h
+        retention_delete_worker_count: 100
+
+      limits_config:
+        retention_period: 744h
+        max_line_size: 512KB
+        ingestion_rate_mb: 30
+        ingestion_burst_size_mb: 60
+
+      analytics:
+        reporting_enabled: false
 
     # ----------------------------------------------------------------------------
-    # kube-state-metrics — Deployment + RBAC + Service (Kubernetes object metrics)
+    # Grafana — Deployment + PVC + Service (with Vault/ESO admin password lifecycle)
     # ----------------------------------------------------------------------------
     # СБ должна загрузить:
-    #   {{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics:{{ mon_system_ksm_image_tag }}
-    mon_system_ksm_image_registry: "registry.k8s.io"
-    mon_system_ksm_image_name: "{{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics"
-    mon_system_ksm_image_tag: "v2.18.0"
-    mon_system_ksm_rollout_timeout: "60s"
-    mon_system_ksm_port: 8080
-
-    # ----------------------------------------------------------------------------
-    # ESO secret-name lookups — used by tasks-eso-lookup.yaml in mon-system-install.yaml.
-    # Values must match external_secret_name of corresponding eso_vault_integration_mon_system_secrets entry.
-    # ----------------------------------------------------------------------------
-    mon_system_secret_name_grafana_admin_creds: "eso-mon-system-grafana-admin-creds"
+    #   {{ mon_system_grafana_image_registry }}/grafana/grafana:{{ mon_system_grafana_image_tag }}
+    mon_system_grafana_image_registry: "docker.io"
+    mon_system_grafana_image_name: "{{ mon_system_grafana_image_registry }}/grafana/grafana"
+    mon_system_grafana_image_tag: "12.4.2"
+    mon_system_grafana_rollout_timeout: "120s"
+    mon_system_grafana_port: 3000
+    mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
+    mon_system_grafana_external_url: "https://grafana-k8s-v2.drawapp.ru"
+    mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
+    mon_system_grafana_ingress_http_enable: false
+    mon_system_grafana_ingress_https_enable: true
+    mon_system_grafana_vpn_only_enabled: false
+    mon_system_grafana_admin_username: "admin"
 
     # ============================================================================
     # Helm values dicts — one per Helm release (10 + post = 11 phases)
@@ -926,29 +952,3 @@ all:
           labels: {}
       systemServices: "{{ mon_system_prometheus_system_services }}"
       systemServiceMonitors: "{{ mon_system_prometheus_system_service_monitors }}"
-
-    # ============================================================================
-    # ESO integration — mon-system namespace (Grafana is the only consumer)
-    # ============================================================================
-    # SA name + SecretStore name follow project convention: constants `eso-main`
-    # and `eso-main.vault` shared across all 8 ESO-integrated namespaces.
-    # Role name follows `<namespace>.eso-main` pattern.
-    # See secrets-and-eso.md §2.3 for canonical pattern.
-    eso_vault_integration_mon_system:
-      sa_name: "eso-main"
-      role_name: "mon-system.eso-main"
-      secret_store_name: "eso-main.vault"
-      kv_engine_path: "eso-secret"
-      is_need_eso: true
-
-    eso_vault_integration_mon_system_secrets:
-      - external_secret_name: "{{ mon_system_secret_name_grafana_admin_creds }}"
-        vault_path: "/mon-system/grafana/admin/creds"
-        body:
-          target:
-            name: "{{ mon_system_secret_name_grafana_admin_creds }}"
-          dataFrom:
-            - extract:
-                key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/admin/creds"
-
-    eso_vault_integration_mon_system_secrets_extra: []
