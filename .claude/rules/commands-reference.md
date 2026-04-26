@@ -69,20 +69,20 @@ ansible-playbook ... --limit w1,w2,w3
 
 ```bash
 for c in cilium cert-manager external-secrets vault traefik metrics-server longhorn \
-         mon-prometheus-operator mon-grafana mon-kube-state-metrics mon-node-exporter \
+         mon-system \
          argocd gitlab gitlab-runner zitadel teleport medik8s haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/$c-install.yaml
 done
 ```
 
-**Dependency highlights** (see [`components.md`](components.md) §22 for full tier diagram):
+**Dependency highlights** (see [`components.md`](components.md) §19 for full tier diagram):
 
 - `cilium` first (CNI — nothing networks until it's up)
 - `cert-manager` before anything with TLS
 - `external-secrets` before anything with ESO
 - `vault` before anything whose ESO pulls from it
 - `traefik` before anything with ingress
-- `zitadel` before `mon-grafana` (for OIDC)
+- `zitadel` before `mon-system` (for Grafana OIDC inside mon-system stack)
 
 ---
 
@@ -102,9 +102,11 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install
 
 **Extra phase tags (where applicable):**
 
-- `--tags crds` — for `argocd`, `mon-prometheus-operator` (applies CRDs before main chart)
-- `--tags prometheus` — for `mon-prometheus-operator` (Prometheus CR)
-- `--tags alertmanager` — for `mon-prometheus-operator` (Alertmanager CR)
+- `--tags crds` — for `argocd`, `mon-system` (applies CRDs before main chart)
+- `--tags prometheus-operator` — for `mon-system` (operator Deployment + RBAC + Service)
+- `--tags prometheus` — for `mon-system` (Prometheus CR)
+- `--tags alertmanager` — for `mon-system` (Alertmanager CR)
+- `--tags node-exporter`, `--tags ksm`, `--tags loki`, `--tags vector`, `--tags grafana` — for `mon-system` (per-workload phases)
 - `--tags cr` — for `vault` (Vault Custom Resource)
 - `--tags configure` — for `teleport` (declarative resources)
 - `--tags gitops` — for `argocd` (AppProjects + Applications)

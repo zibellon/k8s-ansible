@@ -70,7 +70,7 @@ Merge order: `hosts-vars/` → `hosts-vars-override/` → inline play vars. Arra
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  L7 Observability (mon, grafana, kube-state-metrics, node-exp)  │  playbook-app/mon-*
+│  L7 Observability (mon-system — 8 workloads)                    │  playbook-app/mon-system-*
 │  L6 Applications (argocd, gitlab, teleport, zitadel, medik8s)   │  playbook-app/
 │  L5 Platform    (vault, external-secrets, cert-manager)         │  playbook-app/
 │  L4 Storage     (longhorn)                                      │  playbook-app/
@@ -117,7 +117,7 @@ k8s-ansible/
 │   └── tasks/
 ├── playbook-app/              ← cluster-scoped, declarative
 │   ├── tasks/
-│   └── charts/                ← 20 local Helm-chart dirs, one per component
+│   └── charts/                ← 16 local Helm-chart dirs, one per component
 ├── hosts-vars/                ← base defaults (in git)
 ├── hosts-vars-override/       ← secrets + real inventory (gitignored)
 ├── docs/                      ← DO NOT TOUCH (user constraint)
@@ -130,10 +130,10 @@ k8s-ansible/
 |---|---|---|
 | `playbook-system/` | 22 playbooks (node prep, bootstrap, operational, rolling updates) | [`bootstrap-and-ha.md`](.claude/rules/bootstrap-and-ha.md) |
 | `playbook-system/tasks/` | 16 reusable task includes (guards, cluster-facts, kubeadm, HAProxy, kubelet) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §2 |
-| `playbook-app/` | 31 playbooks (19 install + 12 specials: configure, restart, rotate, sync, DR) | [`components.md`](.claude/rules/components.md) |
+| `playbook-app/` | 30 playbooks (16 install + 14 specials: configure, restart, rotate, sync, DR) | [`components.md`](.claude/rules/components.md) |
 | `playbook-app/tasks/` | 21 reusable task includes (pre-check, copy-chart, helm, wait, Vault/ESO) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1 |
-| `playbook-app/charts/` | 20 local Helm-chart directories, one per component, each with phase subdirs (`pre/`, `install/`, `post/`, plus extras) | [`components.md`](.claude/rules/components.md) per-component |
-| `hosts-vars/` | 25 files — inventory skeleton, global settings, per-component vars, cross-cutting (vault, vpn-rules, teleport-configure) | [`variables.md`](.claude/rules/variables.md) |
+| `playbook-app/charts/` | 16 local Helm-chart directories, one per component (mon-system has 11 phase subdirs; others have `pre/`, `install/`, `post/`) | [`components.md`](.claude/rules/components.md) per-component |
+| `hosts-vars/` | 21 files — inventory skeleton, global settings, per-component vars, cross-cutting (vault, vpn-rules, teleport-configure) | [`variables.md`](.claude/rules/variables.md) |
 | `hosts-vars-override/` | Mirror structure with real environment values. `ansible_password`, real IPs, Vault unseal keys, real domains — **gitignored** | — |
 
 ### 2.3 Inventory layering
@@ -152,7 +152,7 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 |---|---|
 | [`bootstrap-and-ha.md`](.claude/rules/bootstrap-and-ha.md) | Cluster lifecycle: 4-step bootstrap (node-install → cluster-init → manager-join → worker-join), ETCD key rotation with state-file resume, apiserver SANs update, HAProxy LB update, node drain/remove/clean, `serial: 1` pattern, recovery matrix |
 | [`networking.md`](.claude/rules/networking.md) | Cilium as CNI + kube-proxy replacement, `CiliumClusterwideNetworkPolicy` host firewall, VPN allowlist middleware (`vpn_ips`, Traefik middleware), ACME HTTP-01 solver label resolution via `tasks-resolve-acme-solver.yaml` |
-| [`observability.md`](.claude/rules/observability.md) | Prometheus Operator install phases (`crds/`, `prometheus/`, `alertmanager/`), per-component `ServiceMonitor` in `post/` phase, Grafana ESO integration (admin password, OIDC, datasources), Alertmanager routing |
+| [`observability.md`](.claude/rules/observability.md) | Mon-system consolidated stack: install phases (`crds`, `prometheus-operator`, `prometheus`, `alertmanager`, `node-exporter`, `ksm`, `loki`, `vector`, `grafana`, `post`), centralized ServiceMonitors in `post/`, Grafana ESO integration (admin password from Vault), Alertmanager routing |
 | [`components.md`](.claude/rules/components.md) | Per-component reference — chart path, namespace, releases, required vars, ESO integration, dependencies, ServiceMonitor, image-registry overrides. One section per component. Namespaces matrix + dependency tiers |
 | [`playbook-conventions.md`](.claude/rules/playbook-conventions.md) | Imperative authoring rules for new playbooks (19 numbered rules): file location & naming, play header, required guards, fact gathering, delegation, 3-phase install structure, task naming, include strategy, values-override pattern, chart copy, ESO integration, ACME, rollout verification, variables contract, non-install patterns, anti-patterns, commit checklist, parameter validation assert blocks |
 | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) | Full catalog of task includes (system + app) with purpose / input / validation / output / callers / idempotency for every one |
@@ -161,17 +161,15 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | [`commands-reference.md`](.claude/rules/commands-reference.md) | Canonical invocations — bootstrap sequence, app install order, single-phase re-runs, operational tasks (node add, drain, remove, ETCD rotation, SAN update, HAProxy update, Vault rotate, ESO force-sync), component restart, debugging one-liners, dry-run flags |
 | [`team-workflow.md`](.claude/rules/team-workflow.md) | **Manual chat mode workflow** — как user переносит SUB-task спеки и отчёты между Opus (TeamLead) и Sonnet (DevOps / DevOps-docs) chat-окнами. Роли и границы, 10-шаговый жизненный цикл, формат SUB-спеки (§4), формат отчёта (§5), verify-протокол (§6), commit-протокол (§7), TeamLead self-discipline (§8, включая §8.7 «архитектурно, не заплатки»), escalation (§9), нерушимые принципы (§10) |
 
-### 3.1 Manual chat workflow — bootstrap prompts
+### 3.1 Manual chat workflow — entry point
 
-Для ручного multi-chat workflow (Opus TeamLead + Sonnet DevOps/DevOps-docs) используются готовые bootstrap-промпты:
+Workflow: один долгоживущий Opus 4.7 chat (TeamLead) + новое чистое Sonnet 4.6 chat-окно на каждый SUB-task (DevOps или DevOps-docs). Bootstrap-промпт нужен только для TeamLead'а — Sonnet работает с холодным контекстом, всё что ему нужно для конкретной SUB живёт внутри SUB-промпта (mini-bootstrap-prefix через секцию «Контекст и правила» в skeleton'е [`team-workflow.md`](.claude/rules/team-workflow.md) §4.1).
 
 | Файл | Вставлять куда | Когда |
 |---|---|---|
 | [`.claude/prompts/teamlead-cold-start.md`](.claude/prompts/teamlead-cold-start.md) | Opus 4.7 chat | При холодном старте — первое сообщение TeamLead-у |
-| [`.claude/prompts/devops-bootstrap.md`](.claude/prompts/devops-bootstrap.md) | Sonnet 4.6 chat (DevOps) | Первое сообщение DevOps chat-окну |
-| [`.claude/prompts/devops-docs-bootstrap.md`](.claude/prompts/devops-docs-bootstrap.md) | Sonnet 4.6 chat (DevOps-docs) | Первое сообщение DevOps-docs chat-окну |
 
-Подробности workflow — в [`team-workflow.md`](.claude/rules/team-workflow.md).
+Подробности workflow — в [`team-workflow.md`](.claude/rules/team-workflow.md) §3 (cold-start) и §4 (формат SUB-промпта). User-checklist 7 шагов — [`manual-agents-prompts.md`](manual-agents-prompts.md).
 
 ### 3.2 Finding the right file (cheat sheet)
 
@@ -186,7 +184,7 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | Understand a variable suffix | [`variables.md`](.claude/rules/variables.md) §1 |
 | Find a task include by function | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) |
 | Debug a failing install | [`commands-reference.md`](.claude/rules/commands-reference.md) §5 + per-topic "Troubleshooting" tables in other files |
-| Setup a manual chat session (TeamLead + DevOps + DevOps-docs) | §3.1 above + [`team-workflow.md`](.claude/rules/team-workflow.md) |
+| Setup a manual chat session (TeamLead Opus + Sonnet per SUB) | §3.1 above + [`team-workflow.md`](.claude/rules/team-workflow.md) §3 |
 
 ### 3.3 Human-facing docs (not modified by Claude)
 

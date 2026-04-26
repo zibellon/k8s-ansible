@@ -1,0 +1,685 @@
+# =============================================================================
+# Install consolidated mon-system stack via local Helm charts
+# Replaces 6 separate mon-* install playbooks (mon-prometheus-operator,
+# mon-grafana, mon-loki, mon-vector, mon-node-exporter, mon-kube-state-metrics).
+# Single namespace: mon-system. Per-component enable flags gate each phase.
+#
+# Phases (--tags):
+#   crds                  prometheus-operator CRDs (kubectl create)
+#   pre                   namespace + NetworkPolicies + ESO (SA, SecretStore, ExternalSecret)
+#   prometheus-operator   operator workload (Deployment + RBAC + Service)
+#   prometheus            Prometheus CR + RBAC + Service
+#   alertmanager          Alertmanager CR + AlertmanagerConfig + Service
+#   node-exporter         DaemonSet + Service
+#   ksm                   kube-state-metrics Deployment + RBAC + Service
+#   loki                  Loki Deployment + PVC + ConfigMap + Service
+#   vector                Vector DaemonSet + RBAC + ConfigMap (no Service)
+#   grafana               Grafana Deployment + PVC + Service (with Vault/ESO lifecycle)
+#   post                  Ingresses + Certificates + ServiceMonitors + system-* (always rendered)
+#
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-install.yaml
+#   ansible-playbook ... --tags pre        # only NetworkPolicies + ESO
+#   ansible-playbook ... --tags grafana    # only Grafana phase
+# =============================================================================
+
+- name: Install mon-system consolidated stack via local Helm charts
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[mon-system-pre-check] Validate target"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        dto_label_name: "mon-system-pre-check"
+      tags: [always]
+
+    - name: "[mon-system-pre-check] Forbid kube-system namespace"
+      include_tasks: tasks/tasks-forbid-kube-system.yaml
+      vars:
+        dto_label_name: "mon-system-pre-check"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations + resolve ACME solver labels
+    # =========================================================================
+
+    - name: "[mon-system-init] Merge ESO secrets"
+      include_tasks: tasks/tasks-eso-secrets-merge.yaml
+      tags: [always]
+
+    - name: "[mon-system-init] Resolve ACME solver"
+      include_tasks: tasks/tasks-resolve-acme-solver.yaml
+      vars:
+        dto_label_name: "mon-system-init"
+        dto_cluster_issuer_name: "{{ mon_system_cluster_issuer_name }}"
+        dto_ingress_class_name: "{{ mon_system_ingress_class_name }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: CRDs (kubectl create — not helm)
+    # =========================================================================
+
+    - name: "[mon-system-crds] Copy CRDs to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-crds"
+        dto_chart_name: "crds"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/crds/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/crds"
+      when: mon_system_prometheus_operator_enabled
+      tags: [crds]
+
+    - name: "[mon-system-crds] Install prometheus-operator CRDs via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/mon-system/crds/crds.yaml
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      when: mon_system_prometheus_operator_enabled
+      tags: [crds]
+
+    - name: "[mon-system-crds] Wait for CRDs"
+      include_tasks: tasks/tasks-wait-crds.yaml
+      vars:
+        dto_label_name: "mon-system-crds"
+        dto_crds_list:
+          - crd/alertmanagerconfigs.monitoring.coreos.com
+          - crd/alertmanagers.monitoring.coreos.com
+          - crd/podmonitors.monitoring.coreos.com
+          - crd/probes.monitoring.coreos.com
+          - crd/prometheusagents.monitoring.coreos.com
+          - crd/prometheuses.monitoring.coreos.com
+          - crd/prometheusrules.monitoring.coreos.com
+          - crd/scrapeconfigs.monitoring.coreos.com
+          - crd/servicemonitors.monitoring.coreos.com
+          - crd/thanosrulers.monitoring.coreos.com
+      when: mon_system_prometheus_operator_enabled
+      tags: [crds]
+
+    # =========================================================================
+    # STEP 2: pre (NetworkPolicies + ESO)
+    # =========================================================================
+
+    - name: "[mon-system-pre] Copy pre chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/pre"
+      tags: [pre]
+
+    - name: "[mon-system-pre] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-pre"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[mon-system-pre] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-pre"
+        dto_helm_command: >
+          helm upgrade --install mon-system-pre {{ remote_charts_dir }}/mon-system/pre
+          --namespace {{ mon_system_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/mon-system/pre/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 3: prometheus-operator (operator Deployment + RBAC + Service)
+    # =========================================================================
+
+    - name: "[mon-system-prometheus-operator] Copy prometheus-operator chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus-operator"
+        dto_chart_name: "prometheus-operator"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/prometheus-operator/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/prometheus-operator"
+      when: mon_system_prometheus_operator_enabled
+      tags: [prometheus-operator]
+
+    - name: "[mon-system-prometheus-operator] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus-operator"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/prometheus-operator"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_prometheus_operator_helm_values | to_nice_yaml }}"
+      when: mon_system_prometheus_operator_enabled
+      tags: [prometheus-operator]
+
+    - name: "[mon-system-prometheus-operator] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus-operator"
+        dto_helm_command: >
+          helm upgrade --install mon-system-prometheus-operator {{ remote_charts_dir }}/mon-system/prometheus-operator
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/prometheus-operator/values-override.yaml
+          --cleanup-on-fail
+          --skip-crds
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_prometheus_operator_helm_timeout }}
+      when: mon_system_prometheus_operator_enabled
+      tags: [prometheus-operator]
+
+    - name: "[mon-system-prometheus-operator] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus-operator"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_prometheus_operator_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/prometheus-operator
+      when: mon_system_prometheus_operator_enabled
+      tags: [prometheus-operator]
+
+    # =========================================================================
+    # STEP 4: prometheus (Prometheus CR + RBAC + Service)
+    # =========================================================================
+
+    - name: "[mon-system-prometheus] Copy prometheus chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus"
+        dto_chart_name: "prometheus"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/prometheus/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/prometheus"
+      when: mon_system_prometheus_operator_enabled and mon_system_prometheus_enabled
+      tags: [prometheus]
+
+    - name: "[mon-system-prometheus] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/prometheus"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_prometheus_helm_values | to_nice_yaml }}"
+      when: mon_system_prometheus_operator_enabled and mon_system_prometheus_enabled
+      tags: [prometheus]
+
+    - name: "[mon-system-prometheus] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus"
+        dto_helm_command: >
+          helm upgrade --install mon-system-prometheus {{ remote_charts_dir }}/mon-system/prometheus
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/prometheus/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_prometheus_helm_timeout }}
+      when: mon_system_prometheus_operator_enabled and mon_system_prometheus_enabled
+      tags: [prometheus]
+
+    - name: "[mon-system-prometheus] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-prometheus"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_prometheus_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - statefulset/prometheus-prometheus-instance
+      when: mon_system_prometheus_operator_enabled and mon_system_prometheus_enabled
+      tags: [prometheus]
+
+    # =========================================================================
+    # STEP 5: alertmanager (Alertmanager CR + AlertmanagerConfig + Service)
+    # =========================================================================
+
+    - name: "[mon-system-alertmanager] Copy alertmanager chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-alertmanager"
+        dto_chart_name: "alertmanager"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/alertmanager/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/alertmanager"
+      when: mon_system_prometheus_operator_enabled and mon_system_alertmanager_enabled
+      tags: [alertmanager]
+
+    - name: "[mon-system-alertmanager] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-alertmanager"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/alertmanager"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_alertmanager_helm_values | to_nice_yaml }}"
+      when: mon_system_prometheus_operator_enabled and mon_system_alertmanager_enabled
+      tags: [alertmanager]
+
+    - name: "[mon-system-alertmanager] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-alertmanager"
+        dto_helm_command: >
+          helm upgrade --install mon-system-alertmanager {{ remote_charts_dir }}/mon-system/alertmanager
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/alertmanager/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_alertmanager_helm_timeout }}
+      when: mon_system_prometheus_operator_enabled and mon_system_alertmanager_enabled
+      tags: [alertmanager]
+
+    - name: "[mon-system-alertmanager] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-alertmanager"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_alertmanager_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - statefulset/alertmanager-alertmanager-instance
+      when: mon_system_prometheus_operator_enabled and mon_system_alertmanager_enabled
+      tags: [alertmanager]
+
+    # =========================================================================
+    # STEP 6: node-exporter (DaemonSet + Service)
+    # =========================================================================
+
+    - name: "[mon-system-node-exporter] Copy node-exporter chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-node-exporter"
+        dto_chart_name: "node-exporter"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/node-exporter/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/node-exporter"
+      when: mon_system_node_exporter_enabled
+      tags: [node-exporter]
+
+    - name: "[mon-system-node-exporter] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-node-exporter"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/node-exporter"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_node_exporter_helm_values | to_nice_yaml }}"
+      when: mon_system_node_exporter_enabled
+      tags: [node-exporter]
+
+    - name: "[mon-system-node-exporter] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-node-exporter"
+        dto_helm_command: >
+          helm upgrade --install mon-system-node-exporter {{ remote_charts_dir }}/mon-system/node-exporter
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/node-exporter/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_node_exporter_helm_timeout }}
+      when: mon_system_node_exporter_enabled
+      tags: [node-exporter]
+
+    - name: "[mon-system-node-exporter] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-node-exporter"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_node_exporter_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - daemonset.apps/node-exporter
+      when: mon_system_node_exporter_enabled
+      tags: [node-exporter]
+
+    # =========================================================================
+    # STEP 7: ksm (kube-state-metrics Deployment + RBAC + Service)
+    # =========================================================================
+
+    - name: "[mon-system-ksm] Copy ksm chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-ksm"
+        dto_chart_name: "ksm"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/ksm/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/ksm"
+      when: mon_system_ksm_enabled
+      tags: [ksm]
+
+    - name: "[mon-system-ksm] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-ksm"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/ksm"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_ksm_helm_values | to_nice_yaml }}"
+      when: mon_system_ksm_enabled
+      tags: [ksm]
+
+    - name: "[mon-system-ksm] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-ksm"
+        dto_helm_command: >
+          helm upgrade --install mon-system-ksm {{ remote_charts_dir }}/mon-system/ksm
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/ksm/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_ksm_helm_timeout }}
+      when: mon_system_ksm_enabled
+      tags: [ksm]
+
+    - name: "[mon-system-ksm] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-ksm"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_ksm_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/kube-state-metrics
+      when: mon_system_ksm_enabled
+      tags: [ksm]
+
+    # =========================================================================
+    # STEP 8: loki (Loki Deployment + PVC + ConfigMap + Service)
+    # =========================================================================
+
+    - name: "[mon-system-loki] Copy loki chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-loki"
+        dto_chart_name: "loki"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/loki/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/loki"
+      when: mon_system_loki_enabled
+      tags: [loki]
+
+    - name: "[mon-system-loki] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-loki"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/loki"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_loki_helm_values | to_nice_yaml }}"
+      when: mon_system_loki_enabled
+      tags: [loki]
+
+    - name: "[mon-system-loki] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-loki"
+        dto_helm_command: >
+          helm upgrade --install mon-system-loki {{ remote_charts_dir }}/mon-system/loki
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/loki/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_loki_helm_timeout }}
+      when: mon_system_loki_enabled
+      tags: [loki]
+
+    - name: "[mon-system-loki] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-loki"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_loki_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/loki
+      when: mon_system_loki_enabled
+      tags: [loki]
+
+    # =========================================================================
+    # STEP 9: vector (Vector DaemonSet + RBAC + ConfigMap)
+    # =========================================================================
+
+    - name: "[mon-system-vector] Copy vector chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-vector"
+        dto_chart_name: "vector"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/vector/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/vector"
+      when: mon_system_vector_enabled
+      tags: [vector]
+
+    - name: "[mon-system-vector] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-vector"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/vector"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_vector_helm_values | to_nice_yaml }}"
+      when: mon_system_vector_enabled
+      tags: [vector]
+
+    - name: "[mon-system-vector] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-vector"
+        dto_helm_command: >
+          helm upgrade --install mon-system-vector {{ remote_charts_dir }}/mon-system/vector
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/vector/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_vector_helm_timeout }}
+      when: mon_system_vector_enabled
+      tags: [vector]
+
+    - name: "[mon-system-vector] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-vector"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_vector_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - daemonset.apps/vector
+      when: mon_system_vector_enabled
+      tags: [vector]
+
+    # =========================================================================
+    # STEP 10: grafana (Grafana Deployment + PVC + Service, with Vault/ESO lifecycle)
+    # =========================================================================
+
+    - name: "[mon-system-grafana-vault-secrets] Lookup admin secret"
+      include_tasks: tasks/tasks-eso-lookup.yaml
+      vars:
+        dto_label_name: "mon-system-grafana-vault-secrets"
+        dto_eso_secrets_list: "{{ eso_vault_integration_mon_system_secrets_merged }}"
+        dto_external_secret_name: "{{ mon_system_secret_name_grafana_admin_creds }}"
+        dto_res_fact_name_secret: "_local_grafana_secret_name_admin_creds"
+        dto_res_fact_name_vault_path: "_local_grafana_vault_path_admin_creds"
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    - name: "[mon-system-grafana-vault-secrets] Get admin credentials from Vault"
+      include_tasks: tasks/tasks-vault-get.yaml
+      vars:
+        dto_label_name: "mon-system-grafana-vault-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_admin_creds }}"
+        dto_vault_get_field: password
+        dto_vault_get_res_fact_name: "grafana_admin_vault"
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    - name: "[mon-system-grafana-vault-secrets] Generate admin password"
+      include_tasks: tasks/tasks-generate-secret.yaml
+      vars:
+        dto_label_name: "mon-system-grafana-vault-secrets"
+        dto_generate_fact_name: "_grafana_admin_password_generated"
+      when: mon_system_grafana_enabled and not grafana_admin_vault_exists
+      tags: [grafana]
+
+    - name: "[mon-system-grafana-vault-secrets] Store admin credentials in Vault"
+      include_tasks: tasks/tasks-vault-put.yaml
+      vars:
+        dto_label_name: "mon-system-grafana-vault-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_admin_creds }}"
+        dto_vault_put_data:
+          username: "{{ mon_system_grafana_admin_username }}"
+          password: "{{ _grafana_admin_password_generated }}"
+      when: mon_system_grafana_enabled and not grafana_admin_vault_exists
+      tags: [grafana]
+
+    - name: "[mon-system-grafana-vault-secrets] Trigger ESO sync"
+      include_tasks: tasks/tasks-eso-force-sync.yaml
+      vars:
+        dto_label_name: "mon-system-grafana-vault-secrets"
+        dto_eso_sync_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    - name: "[mon-system-grafana-vault-secrets] Wait for secret"
+      include_tasks: tasks/tasks-wait-secret.yaml
+      vars:
+        dto_label_name: "mon-system-grafana-vault-secrets"
+        dto_wait_secret_name: "{{ _local_grafana_secret_name_admin_creds }}"
+        dto_wait_secret_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    - name: "[mon-system-grafana] Copy grafana chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-grafana"
+        dto_chart_name: "grafana"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/grafana/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/grafana"
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    - name: "[mon-system-grafana] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-grafana"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/grafana"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_grafana_helm_values | to_nice_yaml }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    - name: "[mon-system-grafana] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-grafana"
+        dto_helm_command: >
+          helm upgrade --install mon-system-grafana {{ remote_charts_dir }}/mon-system/grafana
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/grafana/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_grafana_helm_timeout }}
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    - name: "[mon-system-grafana] Wait for rollout"
+      include_tasks: tasks/tasks-wait-rollout.yaml
+      vars:
+        dto_label_name: "mon-system-grafana"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_grafana_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/grafana
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
+    # =========================================================================
+    # STEP 11: post (Ingresses + Certificates + ServiceMonitors + system-*)
+    # =========================================================================
+
+    - name: "[mon-system-post] Copy post chart to remote"
+      include_tasks: tasks/tasks-copy-chart.yaml
+      vars:
+        dto_label_name: "mon-system-post"
+        dto_chart_name: "post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/post"
+      tags: [post]
+
+    - name: "[mon-system-post] Create values file"
+      include_tasks: tasks/tasks-copy-helm-values.yaml
+      vars:
+        dto_label_name: "mon-system-post"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[mon-system-post] Install or upgrade via Helm (async)"
+      include_tasks: tasks/tasks-helm-upgrade-async.yaml
+      vars:
+        dto_label_name: "mon-system-post"
+        dto_helm_command: >
+          helm upgrade --install mon-system-post {{ remote_charts_dir }}/mon-system/post
+          --namespace {{ mon_system_namespace }}
+          --values {{ remote_charts_dir }}/mon-system/post/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ mon_system_post_helm_timeout }}
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[mon-system-verify] Verify Helm releases"
+      include_tasks: tasks/tasks-verify-helm.yaml
+      vars:
+        dto_helm_namespace: "{{ mon_system_namespace }}"
+        dto_label_name: "mon-system-verify"
+      tags: [always]
+
+    - name: "[mon-system-verify] Show pods in {{ mon_system_namespace }}"
+      include_tasks: tasks/tasks-k8s-list-pods.yaml
+      vars:
+        dto_label_name: "mon-system-verify"
+        dto_pods_namespace: "{{ mon_system_namespace }}"
+      tags: [always]
+
+    - name: "[mon-system-verify] Verify NetworkPolicies"
+      command: kubectl get networkpolicies -n {{ mon_system_namespace }}
+      register: np_verify
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[mon-system-verify] Show NetworkPolicies"
+      debug:
+        var: np_verify.stdout_lines
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[mon-system-verify] Installation complete"
+      debug:
+        msg:
+          - "mon-system-pre + mon-system-prometheus-operator + mon-system-prometheus + mon-system-alertmanager + mon-system-node-exporter + mon-system-ksm + mon-system-loki + mon-system-vector + mon-system-grafana + mon-system-post: OK"
+          - "Grafana UI: https://{{ mon_system_grafana_domain }}"
+          - "Prometheus UI: https://{{ mon_system_prometheus_domain }}"
+          - "Alertmanager UI: https://{{ mon_system_alertmanager_domain }}"
+          - "Namespace: {{ mon_system_namespace }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

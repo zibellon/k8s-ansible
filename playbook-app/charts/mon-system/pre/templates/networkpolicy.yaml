@@ -1,0 +1,346 @@
+# =============================================================================
+# NETWORK POLICIES FOR MON-SYSTEM
+# =============================================================================
+# All NetworkPolicy resources for the consolidated mon-system namespace plus
+# one cross-namespace NP in the traefik namespace for UI ingress.
+# Per-component rules are gated by .Values.<c>.enabled.
+# Composite gates (e.g. prometheus_operator.enabled AND prometheus.enabled)
+# are evaluated below — disabling the operator skips the dependent CRs.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Baseline (always — independent of per-component flags)
+# -----------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+# =============================================================================
+# PROMETHEUS-OPERATOR (egress to kube-apiserver for watch/manage CRs)
+# =============================================================================
+{{- if .Values.prometheus_operator.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-operator
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-operator
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443
+{{- end }}
+
+# =============================================================================
+# PROMETHEUS INSTANCE (combined ingress from Traefik + unrestricted egress)
+# =============================================================================
+{{- if and .Values.prometheus_operator.enabled .Values.prometheus.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: prometheus-instance
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik (UI/API)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.prometheus.port }}
+  egress:
+    - {}
+{{- end }}
+
+# =============================================================================
+# ALERTMANAGER INSTANCE (combined ingress from Traefik + unrestricted egress)
+# =============================================================================
+{{- if and .Values.prometheus_operator.enabled .Values.alertmanager.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alertmanager
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+      app.kubernetes.io/instance: alertmanager-instance
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik (UI/API)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.alertmanager.port }}
+  egress:
+    - {}
+{{- end }}
+
+# =============================================================================
+# GRAFANA (combined ingress from Traefik + egress to external HTTP/HTTPS)
+# =============================================================================
+{{- if .Values.grafana.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik (UI/API)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.grafana.port }}
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+{{- end }}
+
+# =============================================================================
+# VECTOR (egress to kube-apiserver for kubernetes_logs source)
+# =============================================================================
+{{- if .Values.vector.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vector
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vector
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443
+{{- end }}
+
+# =============================================================================
+# KUBE-STATE-METRICS (egress to kube-apiserver for list/watch)
+# =============================================================================
+{{- if .Values.ksm.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-state-metrics
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kube-state-metrics
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 6443
+{{- end }}
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge — needed if any UI Ingress is up)
+# =============================================================================
+{{- $anyUI := or .Values.grafana.enabled (and .Values.prometheus_operator.enabled .Values.prometheus.enabled) }}
+{{- $anyUI = or $anyUI (and .Values.prometheus_operator.enabled .Values.alertmanager.enabled) }}
+{{- if $anyUI }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- .Values.acmeSolverLabels | toYaml | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: 8089
+{{- end }}
+
+# =============================================================================
+# CROSS-NS: TRAEFIK egress to mon-system UI ports + ACME solver
+# Rendered in {{ .Values.traefik.namespace }}, allows traefik instance to reach
+# the enabled UIs (Grafana / Prometheus / Alertmanager) and the ACME solver pod.
+# =============================================================================
+{{- if $anyUI }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ .Values.namespace }}-allow-traefik"
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.grafana.enabled }}
+    # Grafana UI
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: {{ .Values.grafana.port }}
+    {{- end }}
+    {{- if and .Values.prometheus_operator.enabled .Values.prometheus.enabled }}
+    # Prometheus UI
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/instance: prometheus-instance
+      ports:
+        - protocol: TCP
+          port: {{ .Values.prometheus.port }}
+    {{- end }}
+    {{- if and .Values.prometheus_operator.enabled .Values.alertmanager.enabled }}
+    # Alertmanager UI
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+              app.kubernetes.io/instance: alertmanager-instance
+      ports:
+        - protocol: TCP
+          port: {{ .Values.alertmanager.port }}
+    {{- end }}
+    # ACME solver (always under $anyUI gate)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- .Values.acmeSolverLabels | toYaml | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8089
+{{- end }}
