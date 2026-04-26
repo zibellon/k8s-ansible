@@ -69,13 +69,13 @@ ansible-playbook ... --limit w1,w2,w3
 
 ```bash
 for c in cilium cert-manager external-secrets vault traefik metrics-server longhorn \
-         mon-prometheus-operator mon-grafana mon-kube-state-metrics mon-node-exporter mon-loki \
+         mon-prometheus-operator mon-grafana mon-kube-state-metrics mon-node-exporter mon-loki mon-vector \
          argocd gitlab gitlab-runner zitadel teleport medik8s haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/$c-install.yaml
 done
 ```
 
-**Dependency highlights** (see [`components.md`](components.md) §23 for full tier diagram):
+**Dependency highlights** (see [`components.md`](components.md) §24 for full tier diagram):
 
 - `cilium` first (CNI — nothing networks until it's up)
 - `cert-manager` before anything with TLS

@@ -285,9 +285,23 @@ Template fields:
 - **Non-install playbooks.** None.
 - **Notes.** Single-binary Loki с filesystem storage. Внешний ingress отсутствует — Grafana подключается через in-cluster DNS `http://loki.loki.svc.cluster.local:3100` (datasource добавляется вручную в Grafana UI). NetworkPolicy для ingress из Grafana создаётся со стороны chart'а Grafana (mon-loki не знает о существовании Grafana). Полный loki-config.yaml живёт в одной переменной `loki_config_yaml` (block scalar) — для override любого параметра достаточно скопировать переменную в `hosts-vars-override/mon-loki.yaml` и отредактировать. Единственная Jinja-подстановка внутри — `{{ loki_port }}` (нужна, чтобы `http_listen_port` оставался в синхроне с `loki_port`, который также используется в Deployment containerPort и Service port).
 
+## 22. `mon-vector`
+
+- **Chart path.** `charts/mon-vector/{pre,install}/` (без post/).
+- **Install playbook.** `mon-vector-install.yaml`.
+- **Namespace.** `vector`.
+- **Releases.** `vector-pre`, `vector` (без префикса `mon-` — паттерн mon-loki). Post-фаза отсутствует — у компонента нет ServiceMonitor / Ingress.
+- **Required vars.** `vector_namespace` (`vector`), `vector_image_tag` (default `0.50.0-debian`), `vector_config_yaml` (полный vector-config.yaml как block scalar `|`), два helm-values блока (`vector_pre_helm_values`, `vector_install_helm_values`).
+- **ESO integration.** No.
+- **ServiceMonitor.** No (метрики Vector не собираем по дизайну).
+- **Dependencies.** Cilium (CNI), mon-loki (Vector пишет логи в Loki по in-cluster DNS `loki.loki.svc.cluster.local:3100`). cert-manager / external-secrets / vault / traefik не используются.
+- **Image registry overrides.** `vector_image_registry` (default `docker.io`).
+- **Non-install playbooks.** None.
+- **Notes.** DaemonSet (по одному pod на ноду) с `runAsUser: 0` + capability `DAC_READ_SEARCH` + `readOnlyRootFilesystem: true` — root нужен для чтения hostPath логов разных UID, DAC_READ_SEARCH ограничивает root до «читать любой файл независимо от прав». Полный vector-config.yaml живёт в одной переменной `vector_config_yaml` (block scalar) — для override любого параметра достаточно скопировать переменную в `hosts-vars-override/mon-vector.yaml` и отредактировать. Внутри vector_config_yaml одна Jinja-подстановка `{{ loki_namespace }}/{{ loki_port }}` для endpoint Loki + единый `{% raw %}{% endraw %}` блок вокруг семи Loki-template label-плейсхолдеров (containerName, level, pod, namespace, app, env, node) — они должны попасть в финальный ConfigMap как литералы и обрабатываться Vector'ом, не Ansible'ом. NetworkPolicy для ingress в Loki создаётся со стороны chart'а Vector cross-namespace (`vector-allow-loki` в loki ns) — паттерн из mon-grafana, поскольку vector ставится после loki.
+
 ---
 
-## 22. Namespaces Matrix
+## 23. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
 |---|---|---|
@@ -308,8 +322,9 @@ Template fields:
 | `mon` | mon-prometheus-operator, mon-kube-state-metrics, mon-node-exporter | no |
 | `grafana` | mon-grafana | no |
 | `loki` | mon-loki | no |
+| `vector` | mon-vector | no |
 
-## 23. Cross-cutting Dependency Order
+## 24. Cross-cutting Dependency Order
 
 Install in roughly this order (first → last). Parallel installation within a dependency tier is safe.
 
@@ -323,12 +338,12 @@ L5  mon-prometheus-operator
 L6  mon-node-exporter   mon-kube-state-metrics
 L7  zitadel
 L8  mon-grafana    mon-loki    argocd    gitlab    teleport    medik8s
-L9  gitlab-runner
+L9  mon-vector    gitlab-runner
 ```
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L8 as part of `argocd-install.yaml` — no separate playbook.
 
-## 24. ESO-integrated Components (8)
+## 25. ESO-integrated Components (8)
 
 Only these have `eso_vault_integration_<c>` objects and are processed by `tasks-eso-secrets-merge.yaml`:
 
