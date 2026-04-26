@@ -1,0 +1,26 @@
+{{- if .Values.node_exporter.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: node-exporter
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: monitoring
+    {{- with .Values.node_exporter.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    - port: http-metrics
+      interval: {{ .Values.node_exporter.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.node_exporter.serviceMonitor.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: node-exporter
+{{- end }}
