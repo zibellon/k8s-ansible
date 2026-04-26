@@ -603,6 +603,30 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
 
+    # ---------
+    # Prometheus Operator workload Helm values (operator Deployment + RBAC)
+    mon_system_prometheus_operator_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      imageOperator: "{{ mon_system_prometheus_operator_image_with_registry }}"
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        limits:
+          cpu: 200m
+          memory: 200Mi
+        requests:
+          cpu: 100m
+          memory: 100Mi
+      port: "{{ mon_system_prometheus_operator_port }}"
+      args:
+        - --kubelet-service=kube-system/kubelet
+        - --prometheus-config-reloader={{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-config-reloader:{{ mon_system_prometheus_config_reloader_image_tag }}
+        - --watch-referenced-objects-in-all-namespaces=true
+        - --disable-unmanaged-prometheus-configuration=true
+        - --kubelet-endpoints=true
+        - --kubelet-endpointslice=false
+
     eso_vault_integration_mon_system:
       sa_name: "eso-main"
       role_name: "mon-system.eso-main"
