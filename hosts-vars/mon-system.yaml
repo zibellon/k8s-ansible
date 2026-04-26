@@ -700,6 +700,51 @@ all:
           cpu: 200m
           memory: 256Mi
 
+    # ---------
+    # Loki Helm values (Deployment + PVC + ConfigMap + Service)
+    mon_system_loki_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      loki:
+        image:
+          name: "{{ mon_system_loki_image_name }}"
+          tag: "{{ mon_system_loki_image_tag }}"
+        port: "{{ mon_system_loki_port }}"
+      pvc:
+        accessMode: "ReadWriteOnce"
+        storageClassName: "lh-major-worker-multi-best-effort"
+        storageSize: "30Gi"
+        subpath: "some-data"
+      config_yaml: "{{ mon_system_loki_config_yaml }}"
+      tolerations: []
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "256Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+    # ---------
+    # Vector Helm values (DaemonSet + RBAC + ConfigMap; no Service by design)
+    mon_system_vector_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      vector:
+        image:
+          name: "{{ mon_system_vector_image_name }}"
+          tag: "{{ mon_system_vector_image_tag }}"
+        serviceAccount: "vector"
+      config_yaml: "{{ mon_system_vector_config_yaml }}"
+      tolerations: []
+      nodeSelector: {}
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "256Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+
     eso_vault_integration_mon_system:
       sa_name: "eso-main"
       role_name: "mon-system.eso-main"
