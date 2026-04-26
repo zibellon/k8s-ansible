@@ -188,7 +188,7 @@
 ## Если не создать prometheus-operator-CRD = то установки компонентов упадут с ошибкой
 ##
 - установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-prometheus-operator-install.yaml --tags crds`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-install.yaml --tags crds`
 
 ## ---
 ## Cilium. Официальный helm
