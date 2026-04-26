@@ -646,6 +646,60 @@ all:
         meshTcpPort: "{{ mon_system_alertmanager_mesh_tcp_port }}"
         meshUdpPort: "{{ mon_system_alertmanager_mesh_udp_port }}"
 
+    # ---------
+    # node-exporter Helm values (DaemonSet + Service)
+    mon_system_node_exporter_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      node_exporter:
+        image:
+          name: "{{ mon_system_node_exporter_image_name }}"
+          tag: "{{ mon_system_node_exporter_image_tag }}"
+        port: "{{ mon_system_node_exporter_port }}"
+        args:
+          - --path.procfs=/host/proc
+          - --path.sysfs=/host/sys
+          - --path.rootfs=/host/root
+          - --path.udev.data=/host/root/run/udev/data
+          - '--web.listen-address=0.0.0.0:9100'
+          - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)'
+          - '--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$'
+      tolerations:
+        - operator: "Exists"
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+    # ---------
+    # kube-state-metrics Helm values (Deployment + RBAC + Service)
+    # NOTE: chart template uses .Values.kube_state_metrics.* (with underscore),
+    # so the dict here keeps that key, even though inventory primitives are
+    # mon_system_ksm_* and the chart subdir is ksm/.
+    mon_system_ksm_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      kube_state_metrics:
+        image:
+          name: "{{ mon_system_ksm_image_name }}"
+          tag: "{{ mon_system_ksm_image_tag }}"
+        port: "{{ mon_system_ksm_port }}"
+        args:
+          - --port=8080
+          - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
     eso_vault_integration_mon_system:
       sa_name: "eso-main"
       role_name: "mon-system.eso-main"
