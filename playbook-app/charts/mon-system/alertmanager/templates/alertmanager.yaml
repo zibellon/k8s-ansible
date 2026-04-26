@@ -1,0 +1,80 @@
+# =============================================================================
+# ALERTMANAGER ROOT CONFIG — AlertmanagerConfig CRD
+#
+# Acts as the root configuration for the Alertmanager instance.
+# Referenced via spec.alertmanagerConfiguration.name in the Alertmanager CRD.
+# Per-namespace AlertmanagerConfig resources are merged as child routes
+# via spec.alertmanagerConfigSelector: {} on the Alertmanager CRD.
+# =============================================================================
+
+# =============================================================================
+# ALERTMANAGER INSTANCE — CRD + Service
+# =============================================================================
+
+---
+# =============================================================================
+# ALERTMANAGER CRD — spec passed entirely from values
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: Alertmanager
+metadata:
+  name: alertmanager-instance
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/instance: alertmanager-instance
+    app.kubernetes.io/component: alertmanager
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+spec:
+  {{- .Values.alertmanagerSpec | toYaml | nindent 2 }}
+
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: alertmanager-root-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/instance: alertmanager-instance
+    app.kubernetes.io/component: alertmanager
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+spec:
+  {{- .Values.alertmanagerRootConfigSpec | toYaml | nindent 2 }}
+
+---
+# =============================================================================
+# SERVICE — ClusterIP exposing Alertmanager UI + mesh
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-instance
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/instance: alertmanager-instance
+    app.kubernetes.io/component: alertmanager
+    app.kubernetes.io/part-of: monitoring
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-web
+      port: {{ .Values.alertmanager.port }}
+      targetPort: {{ .Values.alertmanager.port }}
+    - name: mesh-tcp
+      port: {{ .Values.alertmanager.meshTcpPort }}
+      targetPort: {{ .Values.alertmanager.meshTcpPort }}
+      protocol: TCP
+    - name: mesh-udp
+      port: {{ .Values.alertmanager.meshUdpPort }}
+      targetPort: {{ .Values.alertmanager.meshUdpPort }}
+      protocol: UDP
+  selector:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/instance: alertmanager-instance
+  publishNotReadyAddresses: false
+  sessionAffinity: None
