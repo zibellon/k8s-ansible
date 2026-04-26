@@ -79,25 +79,36 @@ all:
             }
 
             # Определяем containerName из Kubernetes metadata
-            .containerName = .kubernetes.container_name || "unknown"
 
             # Добавляем дополнительные labels для Loki
-            .pod_name = .kubernetes.pod_name || "unknown"
+            .podName = .kubernetes.pod_name || "unknown"
             .namespace = .kubernetes.namespace_name || "default"
-            .node_name = .kubernetes.pod_node_name || "unknown"
+            .nodeName = .kubernetes.pod_node_name || "unknown"
+            .containerName = .kubernetes.container_name || "unknown"
 
-            # Извлекаем app label если есть (стандартный k8s label)
+            # Извлекаем стандартные k8s labels (app.kubernetes.io/*)
             if exists(.kubernetes.pod_labels."app.kubernetes.io/name") {
-              .app = .kubernetes.pod_labels."app.kubernetes.io/name"
+              .name = .kubernetes.pod_labels."app.kubernetes.io/name"
             } else {
-              .app = "unknown"
+              .name = "unknown"
             }
 
-            # Извлекаем instance label если есть (стандартный k8s label)
             if exists(.kubernetes.pod_labels."app.kubernetes.io/instance") {
-              .env = .kubernetes.pod_labels."app.kubernetes.io/instance"
+              .instance = .kubernetes.pod_labels."app.kubernetes.io/instance"
             } else {
-              .env = "unknown"
+              .instance = "unknown"
+            }
+
+            if exists(.kubernetes.pod_labels."app.kubernetes.io/component") {
+              .component = .kubernetes.pod_labels."app.kubernetes.io/component"
+            } else {
+              .component = "unknown"
+            }
+
+            if exists(.kubernetes.pod_labels."app.kubernetes.io/part-of") {
+              .partOf = .kubernetes.pod_labels."app.kubernetes.io/part-of"
+            } else {
+              .partOf = "unknown"
             }
 
         # 2. Форматирование финального сообщения
@@ -130,13 +141,15 @@ all:
           remove_timestamp: false
           labels:
             {% raw %}
-            containerName: "{{ containerName }}"
             level: "{{ level }}"
-            pod: "{{ pod_name }}"
+            nodeName: "{{ nodeName }}"
+            containerName: "{{ containerName }}"
+            pod: "{{ podName }}"
             namespace: "{{ namespace }}"
-            app: "{{ app }}"
-            env: "{{ env }}"
-            node: "{{ node_name }}"
+            name: "{{ name }}"
+            instance: "{{ instance }}"
+            component: "{{ component }}"
+            partOf: "{{ partOf }}"
             {% endraw %}
 
           healthcheck:
