@@ -1,7 +1,32 @@
 all:
   vars:
+    # ============================================================================
+    # registry+images (AirGap)
+    # ============================================================================
+    # mon-system stack — 8 workloads делят namespace `mon-system`. Каждый workload
+    # имеет отдельную переменную mon_system_<c>_image_registry. Default'ы взяты
+    # из исходных mon-* (quay.io / docker.io / registry.k8s.io). Для airgap —
+    # переопределить нужные переменные в hosts-vars-override/mon-system.yaml.
+    #
+    # СБ должна загрузить следующие 9 образов (путь после хоста сохраняется):
+    #   quay.io/prometheus-operator/prometheus-operator:v0.90.1
+    #   quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1
+    #   quay.io/prometheus/prometheus:v3.7.2
+    #   quay.io/prometheus/alertmanager:v0.28.1
+    #   quay.io/prometheus/node-exporter:v1.11.1
+    #   registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0
+    #   docker.io/grafana/loki:3.5.0
+    #   docker.io/timberio/vector:0.50.0-debian
+    #   docker.io/grafana/grafana:12.4.2
+    # ============================================================================
+    # ----------------------------------------------------------------------------
+    # General: namespace + per-component enable flags + common ingress + helm timeouts
+    # ----------------------------------------------------------------------------
+
     mon_system_namespace: "mon-system"
 
+    # Per-component enable flags. Composite gate: prometheus/alertmanager skipped if
+    # mon_system_prometheus_operator_enabled: false (regardless of own flag).
     mon_system_prometheus_operator_enabled: true
     mon_system_prometheus_enabled: true
     mon_system_alertmanager_enabled: true
@@ -11,9 +36,11 @@ all:
     mon_system_vector_enabled: true
     mon_system_grafana_enabled: true
 
+    # Common ingress (unified for grafana / prometheus / alertmanager UIs).
     mon_system_ingress_class_name: "traefik-lb"
     mon_system_cluster_issuer_name: "acme-prod"
 
+    # Helm phase timeouts (one per --tags phase).
     mon_system_crds_helm_timeout: "5m"
     mon_system_pre_helm_timeout: "3m"
     mon_system_prometheus_operator_helm_timeout: "3m"
@@ -26,6 +53,14 @@ all:
     mon_system_grafana_helm_timeout: "3m"
     mon_system_post_helm_timeout: "3m"
 
+    # ----------------------------------------------------------------------------
+    # Prometheus-Operator stack: operator + Prometheus instance + Alertmanager
+    # ----------------------------------------------------------------------------
+    # СБ должна загрузить (4 образа под одним registry):
+    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-operator:{{ mon_system_prometheus_operator_image_tag }}
+    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-config-reloader:{{ mon_system_prometheus_config_reloader_image_tag }}
+    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus/prometheus:{{ mon_system_prometheus_image_tag }}
+    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus/alertmanager:{{ mon_system_alertmanager_image_tag }}
     mon_system_prometheus_operator_image_registry: "quay.io"
     mon_system_prometheus_operator_image_tag: "v0.90.1"
     mon_system_prometheus_config_reloader_image_tag: "v0.90.1"
@@ -35,6 +70,8 @@ all:
     mon_system_prometheus_operator_rollout_timeout: "300s"
     mon_system_prometheus_operator_port: 8080
 
+    # ---------
+    # Prometheus instance — Ingress + ports
     mon_system_prometheus_rollout_timeout: "300s"
     mon_system_prometheus_domain: "prom-k8s-v2.drawapp.ru"
     mon_system_prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
@@ -45,6 +82,8 @@ all:
     mon_system_prometheus_port: 9090
     mon_system_prometheus_reloader_port: 8080
 
+    # ---------
+    # Prometheus CR spec — passed verbatim to monitoring.coreos.com/v1 Prometheus
     mon_system_prometheus_spec:
       podMetadata:
         labels:
@@ -116,6 +155,8 @@ all:
             name: alertmanager-instance
             port: http-web
 
+    # ---------
+    # Alertmanager instance — Ingress + ports + mesh
     mon_system_alertmanager_rollout_timeout: "300s"
     mon_system_alertmanager_domain: "alertmanager-k8s-v2.drawapp.ru"
     mon_system_alertmanager_external_url: "https://alertmanager-k8s-v2.drawapp.ru"
@@ -127,6 +168,8 @@ all:
     mon_system_alertmanager_mesh_tcp_port: 9094
     mon_system_alertmanager_mesh_udp_port: 9094
 
+    # ---------
+    # Alertmanager CR spec — passed verbatim to monitoring.coreos.com/v1 Alertmanager
     mon_system_alertmanager_spec:
       podMetadata:
         labels:
@@ -176,6 +219,8 @@ all:
           cpu: 200m
           memory: 256Mi
 
+    # ---------
+    # AlertmanagerConfig root spec (referenced via spec.alertmanagerConfiguration.name)
     mon_system_alertmanager_root_config_spec:
       route:
         receiver: "null"
@@ -188,6 +233,9 @@ all:
       receivers:
         - name: "null"
 
+    # ---------
+    # Headless Services in kube-system for system-component scraping
+    # (kube-controller-manager, kube-etcd, kube-scheduler, coredns)
     mon_system_prometheus_system_services:
       - name: kube-controller-manager
         namespace: kube-system
@@ -241,6 +289,9 @@ all:
             targetPort: 9153
             protocol: TCP
 
+    # ---------
+    # ServiceMonitors for system components (apiserver, kubelet, etcd,
+    # controller-manager, scheduler, coredns) — created in mon-system namespace
     mon_system_prometheus_system_service_monitors:
       - name: kube-apiserver
         namespace: "{{ mon_system_namespace }}"
@@ -342,6 +393,11 @@ all:
               caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               insecureSkipVerify: true
 
+    # ----------------------------------------------------------------------------
+    # Grafana — Deployment + PVC + Service (with Vault/ESO admin password lifecycle)
+    # ----------------------------------------------------------------------------
+    # СБ должна загрузить:
+    #   {{ mon_system_grafana_image_registry }}/grafana/grafana:{{ mon_system_grafana_image_tag }}
     mon_system_grafana_image_registry: "docker.io"
     mon_system_grafana_image_name: "{{ mon_system_grafana_image_registry }}/grafana/grafana"
     mon_system_grafana_image_tag: "12.4.2"
@@ -355,11 +411,21 @@ all:
     mon_system_grafana_vpn_only_enabled: false
     mon_system_grafana_admin_username: "admin"
 
+    # ----------------------------------------------------------------------------
+    # Loki — single-binary Deployment + PVC + ConfigMap + Service (log store)
+    # ----------------------------------------------------------------------------
+    # СБ должна загрузить:
+    #   {{ mon_system_loki_image_registry }}/grafana/loki:{{ mon_system_loki_image_tag }}
     mon_system_loki_image_registry: "docker.io"
     mon_system_loki_image_name: "{{ mon_system_loki_image_registry }}/grafana/loki"
     mon_system_loki_image_tag: "3.5.0"
     mon_system_loki_rollout_timeout: "120s"
     mon_system_loki_port: 3100
+    # ---------
+    # Full loki-config.yaml as block scalar — override entire variable in
+    # hosts-vars-override/mon-system.yaml to change any parameter.
+    # Single Jinja substitution: {{ mon_system_loki_port }} keeps http_listen_port
+    # in sync with the port used by Deployment containerPort and Service port.
     mon_system_loki_config_yaml: |
       auth_enabled: false
 
@@ -405,17 +471,22 @@ all:
       analytics:
         reporting_enabled: false
 
+    # ----------------------------------------------------------------------------
+    # Vector — DaemonSet + RBAC + ConfigMap (log shipper, no Service by design)
+    # ----------------------------------------------------------------------------
+    # СБ должна загрузить:
+    #   {{ mon_system_vector_image_registry }}/timberio/vector:{{ mon_system_vector_image_tag }}
     mon_system_vector_image_registry: "docker.io"
     mon_system_vector_image_name: "{{ mon_system_vector_image_registry }}/timberio/vector"
     mon_system_vector_image_tag: "0.50.0-debian"
     mon_system_vector_rollout_timeout: "180s"
-    # Vector config (full vector-config.yaml — override the whole block in
-    # hosts-vars-override/mon-vector.yaml to change any parameter).
-    # Endpoint Loki резолвится Ansible'ом (`{{ mon_system_namespace }}`, `{{ mon_system_loki_port }}`
-    # из этого файла). Все Loki labels вида {{ containerName }}
-    # обёрнуты единым {% raw %}{% endraw %} блоком, чтобы Ansible/Jinja2 не
-    # пытался их резолвить — они должны попасть в финальный ConfigMap как
-    # литерал и обрабатываться Vector'ом во время выполнения.
+    # ---------
+    # Full vector-config.yaml as block scalar — override entire variable in
+    # hosts-vars-override/mon-system.yaml to change any parameter.
+    # Endpoint Loki resolved by Ansible: loki.{{ mon_system_namespace }}.svc.cluster.local:{{ mon_system_loki_port }}
+    # — intra-namespace after consolidation, no cross-ns DNS needed.
+    # Loki labels ({{ containerName }}, etc.) wrapped in {% raw %}{% endraw %} so
+    # Ansible/Jinja2 leaves them as literals — Vector resolves them at runtime.
     mon_system_vector_config_yaml: |
       # Источник логов - Kubernetes pods
       sources:
@@ -547,20 +618,37 @@ all:
           encoding:
             codec: text
 
+    # ----------------------------------------------------------------------------
+    # node-exporter — DaemonSet + Service (host-level metrics)
+    # ----------------------------------------------------------------------------
+    # СБ должна загрузить:
+    #   {{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter:{{ mon_system_node_exporter_image_tag }}
     mon_system_node_exporter_image_registry: "quay.io"
     mon_system_node_exporter_image_name: "{{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter"
     mon_system_node_exporter_image_tag: "v1.11.1"
     mon_system_node_exporter_rollout_timeout: "120s"
     mon_system_node_exporter_port: 9100
 
+    # ----------------------------------------------------------------------------
+    # kube-state-metrics — Deployment + RBAC + Service (Kubernetes object metrics)
+    # ----------------------------------------------------------------------------
+    # СБ должна загрузить:
+    #   {{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics:{{ mon_system_ksm_image_tag }}
     mon_system_ksm_image_registry: "registry.k8s.io"
     mon_system_ksm_image_name: "{{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics"
     mon_system_ksm_image_tag: "v2.18.0"
     mon_system_ksm_rollout_timeout: "60s"
     mon_system_ksm_port: 8080
 
+    # ----------------------------------------------------------------------------
+    # ESO secret-name lookups — used by tasks-eso-lookup.yaml in mon-system-install.yaml.
+    # Values must match external_secret_name of corresponding eso_vault_integration_mon_system_secrets entry.
+    # ----------------------------------------------------------------------------
     mon_system_secret_name_grafana_admin_creds: "eso-mon-system-grafana-admin-creds"
 
+    # ============================================================================
+    # Helm values dicts — one per Helm release (10 + post = 11 phases)
+    # ============================================================================
     # ---------
     # Pre-phase Helm values (NetworkPolicies + ESO chart)
     # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
@@ -833,6 +921,13 @@ all:
       systemServices: "{{ mon_system_prometheus_system_services }}"
       systemServiceMonitors: "{{ mon_system_prometheus_system_service_monitors }}"
 
+    # ============================================================================
+    # ESO integration — mon-system namespace (Grafana is the only consumer)
+    # ============================================================================
+    # SA name + SecretStore name follow project convention: constants `eso-main`
+    # and `eso-main.vault` shared across all 8 ESO-integrated namespaces.
+    # Role name follows `<namespace>.eso-main` pattern.
+    # See secrets-and-eso.md §2.3 for canonical pattern.
     eso_vault_integration_mon_system:
       sa_name: "eso-main"
       role_name: "mon-system.eso-main"
