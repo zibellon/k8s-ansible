@@ -1,0 +1,581 @@
+all:
+  vars:
+    mon_system_namespace: "mon-system"
+
+    mon_system_prometheus_operator_enabled: true
+    mon_system_prometheus_enabled: true
+    mon_system_alertmanager_enabled: true
+    mon_system_node_exporter_enabled: true
+    mon_system_ksm_enabled: true
+    mon_system_loki_enabled: true
+    mon_system_vector_enabled: true
+    mon_system_grafana_enabled: true
+
+    mon_system_ingress_class_name: "traefik-lb"
+    mon_system_cluster_issuer_name: "acme-prod"
+
+    mon_system_crds_helm_timeout: "5m"
+    mon_system_pre_helm_timeout: "3m"
+    mon_system_prometheus_operator_helm_timeout: "3m"
+    mon_system_prometheus_helm_timeout: "5m"
+    mon_system_alertmanager_helm_timeout: "5m"
+    mon_system_node_exporter_helm_timeout: "3m"
+    mon_system_ksm_helm_timeout: "3m"
+    mon_system_loki_helm_timeout: "5m"
+    mon_system_vector_helm_timeout: "5m"
+    mon_system_grafana_helm_timeout: "3m"
+    mon_system_post_helm_timeout: "3m"
+
+    mon_system_prometheus_operator_image_registry: "quay.io"
+    mon_system_prometheus_operator_image_tag: "v0.90.1"
+    mon_system_prometheus_config_reloader_image_tag: "v0.90.1"
+    mon_system_prometheus_image_tag: "v3.7.2"
+    mon_system_alertmanager_image_tag: "v0.28.1"
+    mon_system_prometheus_operator_image_with_registry: "{{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-operator:{{ mon_system_prometheus_operator_image_tag }}"
+    mon_system_prometheus_operator_rollout_timeout: "300s"
+    mon_system_prometheus_operator_port: 8080
+
+    mon_system_prometheus_rollout_timeout: "300s"
+    mon_system_prometheus_domain: "prom-k8s-v2.drawapp.ru"
+    mon_system_prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
+    mon_system_prometheus_https_secret_name: "cert-prometheus"
+    mon_system_prometheus_vpn_only_enabled: false
+    mon_system_prometheus_ingress_http_enable: false
+    mon_system_prometheus_ingress_https_enable: true
+    mon_system_prometheus_port: 9090
+    mon_system_prometheus_reloader_port: 8080
+
+    mon_system_prometheus_spec:
+      podMetadata:
+        labels:
+          app.kubernetes.io/name: prometheus
+          app.kubernetes.io/instance: prometheus-instance
+          app.kubernetes.io/version: "v3.7.2"
+          app.kubernetes.io/component: server
+          app.kubernetes.io/part-of: monitoring
+          app.kubernetes.io/managed-by: Helm
+      serviceAccountName: prometheus-instance
+      automountServiceAccountToken: true
+      image: "{{ mon_system_prometheus_operator_image_registry }}/prometheus/prometheus:{{ mon_system_prometheus_image_tag }}"
+      imagePullPolicy: IfNotPresent
+      version: "{{ mon_system_prometheus_image_tag }}"
+      replicas: 1
+      logLevel: info
+      logFormat: json
+      retention: "60d"
+      walCompression: true
+      enableAdminAPI: false
+      enableOTLPReceiver: false
+      listenLocal: false
+      hostNetwork: false
+      portName: http-web
+      externalUrl: "{{ mon_system_prometheus_external_url }}"
+      routePrefix: "/"
+      paused: false
+      serviceMonitorSelector: {}
+      serviceMonitorNamespaceSelector: {}
+      podMonitorSelector: {}
+      podMonitorNamespaceSelector: {}
+      probeSelector: {}
+      probeNamespaceSelector: {}
+      ruleSelector: {}
+      ruleNamespaceSelector: {}
+      scrapeConfigSelector: {}
+      scrapeConfigNamespaceSelector: {}
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: lh-major-single-best-effort
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 15Gi
+      tsdb:
+        outOfOrderTimeWindow: 0s
+      securityContext:
+        fsGroup: 2000
+        runAsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+      alerting:
+        alertmanagers:
+          - namespace: mon-system
+            name: alertmanager-instance
+            port: http-web
+
+    mon_system_alertmanager_rollout_timeout: "300s"
+    mon_system_alertmanager_domain: "alertmanager-k8s-v2.drawapp.ru"
+    mon_system_alertmanager_external_url: "https://alertmanager-k8s-v2.drawapp.ru"
+    mon_system_alertmanager_https_secret_name: "cert-alertmanager"
+    mon_system_alertmanager_vpn_only_enabled: false
+    mon_system_alertmanager_ingress_http_enable: false
+    mon_system_alertmanager_ingress_https_enable: true
+    mon_system_alertmanager_port: 9093
+    mon_system_alertmanager_mesh_tcp_port: 9094
+    mon_system_alertmanager_mesh_udp_port: 9094
+
+    mon_system_alertmanager_spec:
+      podMetadata:
+        labels:
+          app.kubernetes.io/name: alertmanager
+          app.kubernetes.io/instance: alertmanager-instance
+          app.kubernetes.io/component: alertmanager
+          app.kubernetes.io/part-of: monitoring
+          app.kubernetes.io/managed-by: Helm
+      image: "{{ mon_system_prometheus_operator_image_registry }}/prometheus/alertmanager:{{ mon_system_alertmanager_image_tag }}"
+      imagePullPolicy: IfNotPresent
+      version: "{{ mon_system_alertmanager_image_tag }}"
+      replicas: 1
+      logLevel: info
+      logFormat: json
+      portName: http-web
+      externalUrl: "{{ mon_system_alertmanager_external_url }}"
+      routePrefix: "/"
+      paused: false
+      alertmanagerConfiguration:
+        name: alertmanager-root-config
+      alertmanagerConfigSelector: {}
+      alertmanagerConfigNamespaceSelector: {}
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: lh-major-single-best-effort
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+      securityContext:
+        fsGroup: 2000
+        runAsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+    mon_system_alertmanager_root_config_spec:
+      route:
+        receiver: "null"
+        groupBy:
+          - alertname
+          - namespace
+        groupWait: 30s
+        groupInterval: 5m
+        repeatInterval: 4h
+      receivers:
+        - name: "null"
+
+    mon_system_prometheus_system_services:
+      - name: kube-controller-manager
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-controller-manager
+        clusterIP: None
+        podSelector:
+          component: kube-controller-manager
+        ports:
+          - name: https-metrics
+            port: 10257
+            targetPort: 10257
+            protocol: TCP
+
+      - name: kube-etcd
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-etcd
+        clusterIP: None
+        podSelector:
+          component: etcd
+        ports:
+          - name: http-metrics
+            port: 2381
+            targetPort: 2381
+            protocol: TCP
+
+      - name: kube-scheduler
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-scheduler
+        clusterIP: None
+        podSelector:
+          component: kube-scheduler
+        ports:
+          - name: https-metrics
+            port: 10259
+            targetPort: 10259
+            protocol: TCP
+
+      - name: coredns
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: coredns
+        clusterIP: None
+        podSelector:
+          k8s-app: kube-dns
+        ports:
+          - name: http-metrics
+            port: 9153
+            targetPort: 9153
+            protocol: TCP
+
+    mon_system_prometheus_system_service_monitors:
+      - name: kube-apiserver
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-apiserver
+        namespaceSelector:
+          matchNames: [default]
+        selector:
+          matchLabels:
+            component: apiserver
+            provider: kubernetes
+        endpoints:
+          - port: https
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              serverName: kubernetes
+              insecureSkipVerify: false
+
+      - name: kube-controller-manager
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-controller-manager
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-controller-manager
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
+      - name: kube-etcd
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-etcd
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-etcd
+        endpoints:
+          - port: http-metrics
+            scheme: http
+
+      - name: kube-scheduler
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-scheduler
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-scheduler
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
+      - name: coredns
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: coredns
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: coredns
+        endpoints:
+          - port: http-metrics
+            scheme: http
+
+      - name: kubelet
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: k8s-app
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kubelet
+            k8s-app: kubelet
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            honorLabels: true
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+          - port: https-metrics
+            scheme: https
+            path: /metrics/cadvisor
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            honorLabels: true
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
+    mon_system_grafana_image_registry: "docker.io"
+    mon_system_grafana_image_name: "{{ mon_system_grafana_image_registry }}/grafana/grafana"
+    mon_system_grafana_image_tag: "12.4.2"
+    mon_system_grafana_rollout_timeout: "120s"
+    mon_system_grafana_port: 3000
+    mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
+    mon_system_grafana_external_url: "https://grafana-k8s-v2.drawapp.ru"
+    mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
+    mon_system_grafana_ingress_http_enable: false
+    mon_system_grafana_ingress_https_enable: true
+    mon_system_grafana_vpn_only_enabled: false
+    mon_system_grafana_admin_username: "admin"
+
+    mon_system_loki_image_registry: "docker.io"
+    mon_system_loki_image_name: "{{ mon_system_loki_image_registry }}/grafana/loki"
+    mon_system_loki_image_tag: "3.5.0"
+    mon_system_loki_rollout_timeout: "120s"
+    mon_system_loki_port: 3100
+    mon_system_loki_config_yaml: |
+      auth_enabled: false
+
+      server:
+        http_listen_port: {{ mon_system_loki_port }}
+
+      common:
+        instance_addr: 127.0.0.1
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+
+      schema_config:
+        configs:
+          - from: 2025-05-15
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      compactor:
+        working_directory: /loki/retention
+        delete_request_store: filesystem
+        compaction_interval: 10m
+        retention_enabled: true
+        retention_delete_delay: 2h
+        retention_delete_worker_count: 100
+
+      limits_config:
+        retention_period: 744h
+        max_line_size: 512KB
+        ingestion_rate_mb: 30
+        ingestion_burst_size_mb: 60
+
+      analytics:
+        reporting_enabled: false
+
+    mon_system_vector_image_registry: "docker.io"
+    mon_system_vector_image_name: "{{ mon_system_vector_image_registry }}/timberio/vector"
+    mon_system_vector_image_tag: "0.50.0-debian"
+    mon_system_vector_rollout_timeout: "180s"
+    # Vector config (full vector-config.yaml — override the whole block in
+    # hosts-vars-override/mon-vector.yaml to change any parameter).
+    # Endpoint Loki резолвится Ansible'ом (`{{ mon_system_namespace }}`, `{{ mon_system_loki_port }}`
+    # из этого файла). Все Loki labels вида {{ containerName }}
+    # обёрнуты единым {% raw %}{% endraw %} блоком, чтобы Ansible/Jinja2 не
+    # пытался их резолвить — они должны попасть в финальный ConfigMap как
+    # литерал и обрабатываться Vector'ом во время выполнения.
+    mon_system_vector_config_yaml: |
+      # Источник логов - Kubernetes pods
+      sources:
+        kubernetes_logs:
+          type: kubernetes_logs
+          # Vector автоматически добавляет metadata:
+          # - .kubernetes.pod_name
+          # - .kubernetes.namespace_name
+          # - .kubernetes.pod_labels
+          # - .kubernetes.container_name
+          # - .kubernetes.pod_node_name
+          auto_partial_merge: true
+
+      transforms:
+        # 1. Попытка распарсить JSON логи
+        parse_json_logs:
+          type: remap
+          inputs:
+            - kubernetes_logs
+          source: |
+            # Удаляем ANSI escape codes (цвета в терминале)
+            .message = replace!(.message, r'\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]', "")
+
+            # Пытаемся распарсить JSON
+            parsed, err = parse_json(.message)
+
+            if err == null {
+              # Успешно распарсили JSON
+              .is_json = true
+              .parsed_message = parsed
+
+              # Извлекаем level из JSON если есть
+              if exists(.parsed_message.level) {
+                .level = downcase(string!(.parsed_message.level))
+              } else {
+                .level = "info"
+              }
+
+              # Извлекаем timestamp из JSON если есть
+              if exists(.parsed_message.timestamp) {
+                # Формат: 2024-04-27T18:34:45.249230292Z (ISO 8601 с наносекундами)
+                ts, ts_err = parse_timestamp(.parsed_message.timestamp, format: "%+")
+                if ts_err == null {
+                  .timestamp = ts
+                }
+              }
+            } else {
+              # Не JSON - обычная строка
+              .is_json = false
+              .level = "info"
+            }
+
+            # Определяем containerName из Kubernetes metadata
+
+            # Добавляем дополнительные labels для Loki
+            .podName = .kubernetes.pod_name || "unknown"
+            .namespace = .kubernetes.namespace_name || "default"
+            .nodeName = .kubernetes.pod_node_name || "unknown"
+            .containerName = .kubernetes.container_name || "unknown"
+
+            # Извлекаем стандартные k8s labels (app.kubernetes.io/*)
+            if exists(.kubernetes.pod_labels."app.kubernetes.io/name") {
+              .name = .kubernetes.pod_labels."app.kubernetes.io/name"
+            } else {
+              .name = "unknown"
+            }
+
+            if exists(.kubernetes.pod_labels."app.kubernetes.io/instance") {
+              .instance = .kubernetes.pod_labels."app.kubernetes.io/instance"
+            } else {
+              .instance = "unknown"
+            }
+
+            if exists(.kubernetes.pod_labels."app.kubernetes.io/component") {
+              .component = .kubernetes.pod_labels."app.kubernetes.io/component"
+            } else {
+              .component = "unknown"
+            }
+
+            if exists(.kubernetes.pod_labels."app.kubernetes.io/part-of") {
+              .partOf = .kubernetes.pod_labels."app.kubernetes.io/part-of"
+            } else {
+              .partOf = "unknown"
+            }
+
+        # 2. Форматирование финального сообщения
+        format_message:
+          type: remap
+          inputs:
+            - parse_json_logs
+          source: |
+            # Для JSON логов - убираем timestamp и level из message (чтобы не дублировать)
+            if .is_json == true {
+              # Удаляем поля timestamp и level из JSON строки
+              .message = replace!(.message, r',\s*"timestamp"\s*:\s*"[^"]*"|"timestamp"\s*:\s*"[^"]*",?', "")
+              .message = replace(.message, r',\s*"level"\s*:\s*"[^"]*"|"level"\s*:\s*"[^"]*",?', "")
+            }
+            # Для plain text логов - оставляем как есть
+
+            # Удаляем временное поле
+            del(.is_json)
+            del(.parsed_message)
+
+      sinks:
+        loki_output:
+          type: loki
+          inputs:
+            - format_message
+          endpoint: "http://loki.{{ mon_system_namespace }}.svc.cluster.local:{{ mon_system_loki_port }}"
+          compression: gzip
+          remove_label_fields: true
+          out_of_order_action: accept
+          remove_timestamp: false
+          labels:
+            {% raw %}
+            level: "{{ level }}"
+            nodeName: "{{ nodeName }}"
+            containerName: "{{ containerName }}"
+            pod: "{{ podName }}"
+            namespace: "{{ namespace }}"
+            name: "{{ name }}"
+            instance: "{{ instance }}"
+            component: "{{ component }}"
+            partOf: "{{ partOf }}"
+            {% endraw %}
+
+          healthcheck:
+            enabled: true
+          encoding:
+            codec: text
+
+    mon_system_node_exporter_image_registry: "quay.io"
+    mon_system_node_exporter_image_name: "{{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter"
+    mon_system_node_exporter_image_tag: "v1.11.1"
+    mon_system_node_exporter_rollout_timeout: "120s"
+    mon_system_node_exporter_port: 9100
+
+    mon_system_ksm_image_registry: "registry.k8s.io"
+    mon_system_ksm_image_name: "{{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics"
+    mon_system_ksm_image_tag: "v2.18.0"
+    mon_system_ksm_rollout_timeout: "60s"
+    mon_system_ksm_port: 8080
+
+    mon_system_secret_name_grafana_admin_creds: "eso-mon-system-grafana-admin-creds"
+
+    eso_vault_integration_mon_system:
+      sa_name: "mon-system-eso-sa"
+      role_name: "eso-mon-system"
+      secret_store_name: "mon-system.eso-secret-store"
+      kv_engine_path: "eso-secret"
+      is_need_eso: true
+
+    eso_vault_integration_mon_system_secrets:
+      - external_secret_name: "{{ mon_system_secret_name_grafana_admin_creds }}"
+        vault_path: "/mon-system/grafana/admin/creds"
+        body:
+          target:
+            name: "{{ mon_system_secret_name_grafana_admin_creds }}"
+          dataFrom:
+            - extract:
+                key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/admin/creds"
+
+    eso_vault_integration_mon_system_secrets_extra: []
