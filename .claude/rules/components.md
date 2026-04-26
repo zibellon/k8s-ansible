@@ -221,87 +221,29 @@ Template fields:
 - **Dependencies.** Cilium.
 - **Image registry overrides.** `metrics_server_image_registry`.
 
-## 17. `mon-prometheus-operator`
+## 17. `mon-system`
 
-- **Chart path.** `charts/mon-prometheus-operator/{crds,pre,install,prometheus,alertmanager,post}/`.
-- **Install playbook.** `mon-prometheus-operator-install.yaml`.
-- **Namespace.** `mon` (value of `prometheus_operator_namespace`).
-- **Releases.** `mon-prometheus-operator-crds`, `mon-prometheus-operator-pre`, `mon-prometheus-operator`, `mon-prometheus-operator-prometheus` (Prometheus CR), `mon-prometheus-operator-alertmanager` (Alertmanager CR), `mon-prometheus-operator-post`.
-- **Required vars.** `prometheus_operator_namespace` (`mon`), `prometheus_operator_version`, Prometheus CR config (retention, storage class, selectors, `additionalScrapeConfigs`), Alertmanager CR config (routes, receivers), tolerations/nodeSelector/resources per CR.
-- **ESO integration.** No (but depends on ESO being present — Grafana joins the stack and uses ESO).
-- **ServiceMonitor.** Yes — operator self-monitors.
-- **Dependencies.** Cilium, cert-manager, longhorn (for Prometheus PVC on `lh-major-single-best-effort`).
-- **Image registry overrides.** `prometheus_operator_image_registry` (per sub-image).
-- **Notes.** ServiceMonitor selector is cluster-wide — discovers SMs in any namespace.
+Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager + Grafana + Loki + Vector + node-exporter + kube-state-metrics. All eight workloads share namespace `mon-system`, one inventory file, one chart tree, and one install playbook. Per-component enable flags gate each phase.
 
-## 18. `mon-grafana`
-
-- **Chart path.** `charts/mon-grafana/{pre,install,post}/`.
-- **Install playbook.** `mon-grafana-install.yaml`.
-- **Namespace.** `grafana`.
-- **Releases.** `mon-grafana-pre`, `mon-grafana`, `mon-grafana-post`.
-- **Required vars.** `grafana_namespace` (`grafana`), `grafana_version`, `grafana_domain`, datasources list, dashboards list, OIDC config (Zitadel).
-- **ESO integration.** Yes (via `eso_vault_integration_grafana` in `hosts-vars/mon-grafana.yaml`) — admin password, OIDC client-secret, datasource credentials.
-- **ServiceMonitor.** Yes.
-- **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, zitadel (for OIDC), mon-prometheus-operator.
-- **Image registry overrides.** `grafana_image_registry`.
-
-## 19. `mon-kube-state-metrics`
-
-- **Chart path.** `charts/mon-kube-state-metrics/{pre,install,post}/`.
-- **Install playbook.** `mon-kube-state-metrics-install.yaml`.
-- **Namespace.** `mon`.
-- **Releases.** `mon-kube-state-metrics-pre`, `mon-kube-state-metrics`, `mon-kube-state-metrics-post`.
-- **Required vars.** `kube_state_metrics_namespace` (`mon`), `kube_state_metrics_version`, tolerations/nodeSelector/resources.
-- **ESO integration.** No.
-- **ServiceMonitor.** Yes.
-- **Dependencies.** mon-prometheus-operator.
-- **Image registry overrides.** `kube_state_metrics_image_registry`.
-
-## 20. `mon-node-exporter`
-
-- **Chart path.** `charts/mon-node-exporter/{pre,install,post}/`.
-- **Install playbook.** `mon-node-exporter-install.yaml`.
-- **Namespace.** `mon`.
-- **Releases.** `mon-node-exporter-pre`, `mon-node-exporter`, `mon-node-exporter-post`.
-- **Required vars.** `node_exporter_namespace` (`mon`), `node_exporter_version`, DaemonSet tolerations `[{operator: "Exists"}]`.
-- **ESO integration.** No.
-- **ServiceMonitor.** Yes.
-- **Dependencies.** mon-prometheus-operator.
-- **Image registry overrides.** `node_exporter_image_registry`.
-- **Notes.** DaemonSet on every node including managers.
-
-## 21. `mon-loki`
-
-- **Chart path.** `charts/mon-loki/{pre,install,post}/`.
-- **Install playbook.** `mon-loki-install.yaml`.
-- **Namespace.** `loki`.
-- **Releases.** `loki-pre`, `loki`, `loki-post` (без префикса `mon-` в release names — соответствует паттерну `kube-state-metrics-pre`/`kube-state-metrics`/`kube-state-metrics-post`; chart-каталог при этом называется `mon-loki`).
-- **Required vars.** `loki_namespace` (`loki`), `loki_image_tag` (default `3.5.0`), `loki_port` (3100), `loki_config_yaml` (полный loki-config.yaml как block scalar `|`), три helm-values блока (`loki_pre_helm_values`, `loki_install_helm_values`, `loki_post_helm_values`).
-- **ESO integration.** No.
-- **ServiceMonitor.** Yes (port `api`, named).
-- **Dependencies.** Cilium (CNI), longhorn (PVC), mon-prometheus-operator (ServiceMonitor scrape). cert-manager / external-secrets / vault / traefik не используются.
-- **Image registry overrides.** `loki_image_registry` (default `docker.io`).
+- **Chart path.** `charts/mon-system/{crds,pre,prometheus-operator,prometheus,alertmanager,node-exporter,ksm,loki,vector,grafana,post}/` — 11 subdirs.
+- **Install playbook.** `mon-system-install.yaml`.
+- **Namespace.** `mon-system` (single).
+- **Helm releases.** Ten releases: `mon-system-pre`, `mon-system-prometheus-operator`, `mon-system-prometheus`, `mon-system-alertmanager`, `mon-system-node-exporter`, `mon-system-ksm`, `mon-system-loki`, `mon-system-vector`, `mon-system-grafana`, `mon-system-post`. Plus the `crds` phase which is deployed via `kubectl create -f` (not Helm) — same pattern as the legacy `mon-prometheus-operator/crds/` chart.
+- **Tags.** `crds`, `pre`, `prometheus-operator`, `prometheus`, `alertmanager`, `node-exporter`, `ksm`, `loki`, `vector`, `grafana`, `post`. Plus `always` for pre-checks and verification.
+- **Per-component enable flags.** All boolean, default `true`:
+  `mon_system_prometheus_operator_enabled`, `mon_system_prometheus_enabled`, `mon_system_alertmanager_enabled`, `mon_system_node_exporter_enabled`, `mon_system_ksm_enabled`, `mon_system_loki_enabled`, `mon_system_vector_enabled`, `mon_system_grafana_enabled`. Composite gate: if `mon_system_prometheus_operator_enabled: false`, both prometheus and alertmanager phases are skipped regardless of their own flags.
+- **Required vars.** Single inventory file `hosts-vars/mon-system.yaml` (~700 lines) with unified `mon_system_<c>_*` prefix for all per-component primitives, plus 11 helm phase timeouts (`mon_system_<phase>_helm_timeout`), 11 helm-values dicts (`mon_system_<phase>_helm_values` and `mon_system_<c>_helm_values`), and the ESO integration block (see §20). Block scalars: `mon_system_loki_config_yaml`, `mon_system_vector_config_yaml`, `mon_system_prometheus_spec`, `mon_system_alertmanager_spec`, `mon_system_alertmanager_root_config_spec`, `mon_system_prometheus_system_services` (list), `mon_system_prometheus_system_service_monitors` (list).
+- **ESO integration.** Yes (single `eso_vault_integration_mon_system` object — only Grafana consumes ESO inside the namespace). See [`secrets-and-eso.md`](secrets-and-eso.md) for full contract.
+- **ServiceMonitor.** Three SMs in `mon-system/post/` (loki, ksm, node-exporter), plus 6 system-component SMs (kube-apiserver, kubelet, kube-controller-manager, kube-scheduler, etcd, coredns) in `system-service-monitors.yaml` always-rendered. Vector by design has no SM (no metrics endpoint). Grafana and Prometheus-Operator self-SMs are not currently shipped.
+- **Ingress + Certificate.** UI Ingresses for grafana, prometheus, alertmanager rendered in `post/` with composite gates (operator + per-UI flag for prometheus/alertmanager; just grafana flag for grafana). Per-UI VPN allow-list flags: `mon_system_<c>_vpn_only_enabled`.
+- **Dependencies.** Cilium, cert-manager, external-secrets, vault (for grafana ESO), traefik (for UIs), longhorn (for Prometheus + Grafana + Loki PVCs), zitadel (optional — for grafana OIDC).
+- **Image registry overrides.** Per workload — `mon_system_prometheus_operator_image_registry`, `mon_system_grafana_image_registry`, `mon_system_loki_image_registry`, `mon_system_vector_image_registry`, `mon_system_node_exporter_image_registry`, `mon_system_ksm_image_registry`. (Plus `mon_system_alertmanager_image_tag` and `mon_system_prometheus_image_tag` reuse the prometheus-operator registry.)
 - **Non-install playbooks.** None.
-- **Notes.** Single-binary Loki с filesystem storage. Внешний ingress отсутствует — Grafana подключается через in-cluster DNS `http://loki.loki.svc.cluster.local:3100` (datasource добавляется вручную в Grafana UI). NetworkPolicy для ingress из Grafana создаётся со стороны chart'а Grafana (mon-loki не знает о существовании Grafana). Полный loki-config.yaml живёт в одной переменной `loki_config_yaml` (block scalar) — для override любого параметра достаточно скопировать переменную в `hosts-vars-override/mon-loki.yaml` и отредактировать. Единственная Jinja-подстановка внутри — `{{ loki_port }}` (нужна, чтобы `http_listen_port` оставался в синхроне с `loki_port`, который также используется в Deployment containerPort и Service port).
-
-## 22. `mon-vector`
-
-- **Chart path.** `charts/mon-vector/{pre,install}/` (без post/).
-- **Install playbook.** `mon-vector-install.yaml`.
-- **Namespace.** `vector`.
-- **Releases.** `vector-pre`, `vector` (без префикса `mon-` — паттерн mon-loki). Post-фаза отсутствует — у компонента нет ServiceMonitor / Ingress.
-- **Required vars.** `vector_namespace` (`vector`), `vector_image_tag` (default `0.50.0-debian`), `vector_config_yaml` (полный vector-config.yaml как block scalar `|`), два helm-values блока (`vector_pre_helm_values`, `vector_install_helm_values`).
-- **ESO integration.** No.
-- **ServiceMonitor.** No (метрики Vector не собираем по дизайну).
-- **Dependencies.** Cilium (CNI), mon-loki (Vector пишет логи в Loki по in-cluster DNS `loki.loki.svc.cluster.local:3100`). cert-manager / external-secrets / vault / traefik не используются.
-- **Image registry overrides.** `vector_image_registry` (default `docker.io`).
-- **Non-install playbooks.** None.
-- **Notes.** DaemonSet (по одному pod на ноду) с `runAsUser: 0` + capability `DAC_READ_SEARCH` + `readOnlyRootFilesystem: true` — root нужен для чтения hostPath логов разных UID, DAC_READ_SEARCH ограничивает root до «читать любой файл независимо от прав». Полный vector-config.yaml живёт в одной переменной `vector_config_yaml` (block scalar) — для override любого параметра достаточно скопировать переменную в `hosts-vars-override/mon-vector.yaml` и отредактировать. Внутри vector_config_yaml одна Jinja-подстановка `{{ loki_namespace }}/{{ loki_port }}` для endpoint Loki + единый `{% raw %}{% endraw %}` блок вокруг девяти Loki-template label-плейсхолдеров (level, nodeName, containerName, pod, namespace, name, instance, component, partOf) — последние четыре соответствуют стандартным k8s-меткам `app.kubernetes.io/{name,instance,component,part-of}` — они должны попасть в финальный ConfigMap как литералы и обрабатываться Vector'ом, не Ansible'ом. NetworkPolicy для ingress в Loki создаётся со стороны chart'а Vector cross-namespace (`vector-allow-loki` в loki ns) — паттерн из mon-grafana, поскольку vector ставится после loki.
+- **Notes.** Single namespace eliminates the cross-namespace coupling that previously required: `vector-allow-loki` cross-ns NetworkPolicy in the `loki` namespace; `grafana-allow-prometheus` / `grafana-allow-alertmanager` cross-ns NetworkPolicies in the `mon` namespace; cross-ns Vector→Loki DNS endpoint. The consolidated NetworkPolicy in `mon-system/pre/` covers all intra-namespace traffic with a single `allow-internal-traffic` rule plus per-component egress rules (operator/ksm to apiserver, vector to apiserver:443, grafana external HTTP/HTTPS), and one cross-ns NetworkPolicy in `traefik-lb` for UI ingress.
 
 ---
 
-## 23. Namespaces Matrix
+## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
 |---|---|---|
@@ -319,12 +261,9 @@ Template fields:
 | `teleport` | teleport | no |
 | `medik8s` | medik8s | no |
 | `kube-system` | metrics-server (exceptional) | upstream |
-| `mon` | mon-prometheus-operator, mon-kube-state-metrics, mon-node-exporter | no |
-| `grafana` | mon-grafana | no |
-| `loki` | mon-loki | no |
-| `vector` | mon-vector | no |
+| `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
 
-## 24. Cross-cutting Dependency Order
+## 19. Cross-cutting Dependency Order
 
 Install in roughly this order (first → last). Parallel installation within a dependency tier is safe.
 
@@ -334,20 +273,19 @@ L1  cert-manager   external-secrets
 L2  longhorn       metrics-server
 L3  vault
 L4  traefik        haproxy
-L5  mon-prometheus-operator
-L6  mon-node-exporter   mon-kube-state-metrics
-L7  zitadel
-L8  mon-grafana    mon-loki    argocd    gitlab    teleport    medik8s
-L9  mon-vector    gitlab-runner
+L5  mon-system
+L6  zitadel
+L7  argocd    gitlab    teleport    medik8s
+L8  gitlab-runner
 ```
 
-The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L8 as part of `argocd-install.yaml` — no separate playbook.
+The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L7 as part of `argocd-install.yaml` — no separate playbook.
 
-## 25. ESO-integrated Components (8)
+## 20. ESO-integrated Components (8)
 
 Only these have `eso_vault_integration_<c>` objects and are processed by `tasks-eso-secrets-merge.yaml`:
 
-`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`
+`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`
 
 Each integration object + `_secrets` list + `_secrets_extra` list lives in the corresponding `hosts-vars/<c>.yaml`.
 
