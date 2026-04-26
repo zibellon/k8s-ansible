@@ -161,17 +161,15 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | [`commands-reference.md`](.claude/rules/commands-reference.md) | Canonical invocations — bootstrap sequence, app install order, single-phase re-runs, operational tasks (node add, drain, remove, ETCD rotation, SAN update, HAProxy update, Vault rotate, ESO force-sync), component restart, debugging one-liners, dry-run flags |
 | [`team-workflow.md`](.claude/rules/team-workflow.md) | **Manual chat mode workflow** — как user переносит SUB-task спеки и отчёты между Opus (TeamLead) и Sonnet (DevOps / DevOps-docs) chat-окнами. Роли и границы, 10-шаговый жизненный цикл, формат SUB-спеки (§4), формат отчёта (§5), verify-протокол (§6), commit-протокол (§7), TeamLead self-discipline (§8, включая §8.7 «архитектурно, не заплатки»), escalation (§9), нерушимые принципы (§10) |
 
-### 3.1 Manual chat workflow — bootstrap prompts
+### 3.1 Manual chat workflow — entry point
 
-Для ручного multi-chat workflow (Opus TeamLead + Sonnet DevOps/DevOps-docs) используются готовые bootstrap-промпты:
+Workflow: один долгоживущий Opus 4.7 chat (TeamLead) + новое чистое Sonnet 4.6 chat-окно на каждый SUB-task (DevOps или DevOps-docs). Bootstrap-промпт нужен только для TeamLead'а — Sonnet работает с холодным контекстом, всё что ему нужно для конкретной SUB живёт внутри SUB-промпта (mini-bootstrap-prefix через секцию «Контекст и правила» в skeleton'е [`team-workflow.md`](.claude/rules/team-workflow.md) §4.1).
 
 | Файл | Вставлять куда | Когда |
 |---|---|---|
 | [`.claude/prompts/teamlead-cold-start.md`](.claude/prompts/teamlead-cold-start.md) | Opus 4.7 chat | При холодном старте — первое сообщение TeamLead-у |
-| [`.claude/prompts/devops-bootstrap.md`](.claude/prompts/devops-bootstrap.md) | Sonnet 4.6 chat (DevOps) | Первое сообщение DevOps chat-окну |
-| [`.claude/prompts/devops-docs-bootstrap.md`](.claude/prompts/devops-docs-bootstrap.md) | Sonnet 4.6 chat (DevOps-docs) | Первое сообщение DevOps-docs chat-окну |
 
-Подробности workflow — в [`team-workflow.md`](.claude/rules/team-workflow.md).
+Подробности workflow — в [`team-workflow.md`](.claude/rules/team-workflow.md) §3 (cold-start) и §4 (формат SUB-промпта). User-checklist 7 шагов — [`manual-agents-prompts.md`](manual-agents-prompts.md).
 
 ### 3.2 Finding the right file (cheat sheet)
 
@@ -186,7 +184,7 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | Understand a variable suffix | [`variables.md`](.claude/rules/variables.md) §1 |
 | Find a task include by function | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) |
 | Debug a failing install | [`commands-reference.md`](.claude/rules/commands-reference.md) §5 + per-topic "Troubleshooting" tables in other files |
-| Setup a manual chat session (TeamLead + DevOps + DevOps-docs) | §3.1 above + [`team-workflow.md`](.claude/rules/team-workflow.md) |
+| Setup a manual chat session (TeamLead Opus + Sonnet per SUB) | §3.1 above + [`team-workflow.md`](.claude/rules/team-workflow.md) §3 |
 
 ### 3.3 Human-facing docs (not modified by Claude)
 
