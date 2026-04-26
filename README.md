@@ -562,62 +562,30 @@
   - Ставится: argo-proj + argo-application
 
 ## ---
-## prometheus-operator + prometheus. yaml -> helm
+## mon-system
+## prometheus-operator + prometheus + alertmanager + node-exporter + ksm + loki + vector + grafana. yaml -> helm
 ## ---
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
-## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/mon-prometheus-operator-install.yaml`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/mon-system-install.yaml`
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Grafana - Есть дополнительный файл для `vault + ESO`
 ## ---
 ## Важно_1. Через указание --tags crds = можно установить только CRDs
 ## ---
-## `--tags crds, pre, install, post`
+## `--tags crds, pre, prometheus-operator, prometheus, alertmanager, node-exporter, ksm, loki, vector, grafana, post`
 ## ---
 ## 
 - установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-prometheus-operator-install.yaml`
-- обновление (версия)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-install.yaml`
+- обновление (версия - prometheus-operator)
   - Скачать новый yaml. https://github.com/prometheus-operator/prometheus-operator/releases
   - Разнести yaml на несколько файлов
-    - `playbook-app/charts/prometheus-operator/crds/crds.yaml` - сюда все CRD, (примерно 80_000 строк)
-    - `playbook-app/charts/prometheus-operator/install/templates/prometheus-operator.yaml` - вся установка (Deplyment, RBAC, Service)
+    - `playbook-app/charts/mon-system/crds/crds.yaml` - сюда все CRD, (примерно 80_000 строк)
+    - `playbook-app/charts/mon-system/prometheus-operator/templates/prometheus-operator.yaml` - вся установка (Deplyment, RBAC, Service)
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
-  - Версия не указывается в `hosts-vars/` | `hosts-vars-override/` -> так как версия будет в `*.yaml`
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-prometheus-operator-install.yaml`
-
-## ---
-## node-exporter. yaml -> helm
-## ---
-## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## ---
-## `--tags pre, install`
-## ---
-##
-- установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-node-exporter-install.yaml`
-
-## ---
-## kube-state-metrics. yaml -> helm
-## ---
-## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## ---
-## `--tags pre, install`
-## ---
-##
-- установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-kube-state-metrics-install.yaml`
-
-## ---
-## grafana. yaml -> helm
-## ---
-## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
-## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## Есть дополнительный файл для `vault + ESO`
-## ---
-## `--tags pre, install, post`
-## ---
-##
-- установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-grafana-install.yaml`
+  - Веряия - указывается в `hosts-vars/` | `hosts-vars-override/` -> внутри `*.yaml` надо не потерять щаблонизацию
+- обновление (версия: node-exporter, ksm, loki, vector, grafana)
+  - просто обновить версии в hosts-vars и готово
 
 ## ---------------------
 ## ---------------------
