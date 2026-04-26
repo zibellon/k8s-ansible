@@ -108,7 +108,7 @@ General rules for callers:
 - **Output (runtime facts).**
   - `eso_vault_integration_<c>_secrets_merged` for each of the 8 components — list of ExternalSecret dicts.
 - **Validates (per-component).** Unique `external_secret_name` across the merged list; unique `body.target.name` across the merged list. Fails with component name + duplicate value.
-- **Callers.** Every ESO-integrated install/configure playbook at `tags: [always]`: `traefik-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-configure.yaml`, `gitlab-runner-install.yaml`, `argocd-install.yaml`, `argocd-configure.yaml`, `zitadel-install.yaml`, `mon-grafana-install.yaml`. Also `vault-install.yaml` (after `tasks-vault-policies-roles-merge.yaml`).
+- **Callers.** Every ESO-integrated install/configure playbook at `tags: [always]`: `traefik-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-configure.yaml`, `gitlab-runner-install.yaml`, `argocd-install.yaml`, `argocd-configure.yaml`, `zitadel-install.yaml`, `mon-system-install.yaml`. Also `vault-install.yaml` (after `tasks-vault-policies-roles-merge.yaml`).
 - **Idempotent.** Pure merge + validation.
 
 ### 1.8c `tasks-eso-lookup.yaml`
@@ -122,7 +122,7 @@ General rules for callers:
   - `dto_res_fact_name_vault_path` (required string — output fact name for `vault_path`).
 - **Validates (assert).** All 5 params defined + non-empty; `dto_eso_secrets_list` is a sequence.
 - **Output.** Two named facts (`dto_res_fact_name_secret` → `body.target.name` of the matched item; `dto_res_fact_name_vault_path` → `vault_path` of the matched item). Fails with list size and searched name if no match found.
-- **Callers.** Any playbook that needs to resolve a specific ExternalSecret's target name or Vault path: `gitlab-install.yaml` (7 lookups), `gitlab-configure.yaml` (1), `gitlab-runner-install.yaml` (3), `zitadel-install.yaml` (2), `mon-grafana-install.yaml` (1), `argocd-configure.yaml` (1). Tag `[always]`.
+- **Callers.** Any playbook that needs to resolve a specific ExternalSecret's target name or Vault path: `gitlab-install.yaml` (7 lookups), `gitlab-configure.yaml` (1), `gitlab-runner-install.yaml` (3), `zitadel-install.yaml` (2), `mon-system-install.yaml` (1), `argocd-configure.yaml` (1). Tag `[always]`.
 - **Idempotent.** Pure lookup — no side effects.
 
 ### 1.9 `tasks-resolve-acme-solver.yaml`

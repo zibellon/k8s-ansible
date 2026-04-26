@@ -86,9 +86,9 @@ Lives **exclusively** in `hosts-vars/<c>.yaml` (per-component file). The former 
 
 ```yaml
 eso_vault_integration_<c>:
-  sa_name: "<c>-eso-sa"
-  role_name: "eso-<c>"               # must exist in vault_roles_final
-  secret_store_name: "<c>-eso-secret-store"
+  sa_name: "eso-main"                # constant — same SA name in every namespace
+  role_name: "<c>.eso-main"          # `<namespace>.eso-main` — must exist in vault_roles_final
+  secret_store_name: "eso-main.vault"  # constant — same SecretStore name in every namespace
   kv_engine_path: "eso-secret"       # referenced via Jinja in _secrets entries
   is_need_eso: true
 ```
@@ -193,7 +193,7 @@ The former monolithic `tasks-eso-merge.yaml` was split into two independent task
 
 **Validation:** Unique `external_secret_name` and unique `body.target.name` within each merged list.
 
-**Callers:** Every ESO-integrated install/configure playbook (tag `[always]`): `traefik-install`, `haproxy-install`, `longhorn-install`, `gitlab-install`, `gitlab-configure`, `gitlab-runner-install`, `argocd-install`, `argocd-configure`, `zitadel-install`, `mon-grafana-install`. Also `vault-install.yaml`.
+**Callers:** Every ESO-integrated install/configure playbook (tag `[always]`): `traefik-install`, `haproxy-install`, `longhorn-install`, `gitlab-install`, `gitlab-configure`, `gitlab-runner-install`, `argocd-install`, `argocd-configure`, `zitadel-install`, `mon-system-install`. Also `vault-install.yaml`.
 
 **Idempotency.** Pure merge + validation. No side effects.
 
@@ -429,7 +429,7 @@ All under `eso-secret/` KV engine.
 | `gitlab-runner` | `eso-secret/gitlab-runner/*` | registration token, S3 cache creds |
 | `zitadel` | `eso-secret/zitadel/*` | `postgresql`, `masterkey` |
 | `argocd` | `eso-secret/argocd/*` | `admin` (password), optional OIDC client-secret, plus git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` |
-| `grafana` | `eso-secret/grafana/*` | `admin` (password), `oidc` client-secret, datasource creds |
+| `mon_system` | `eso-secret/mon-system/*` | `grafana/admin/creds` (password), optional `grafana/oidc` client-secret, optional `grafana/<ds>` datasource creds |
 
 ---
 
@@ -456,3 +456,4 @@ All under `eso-secret/` KV engine.
 - **SUB-5** unified values-keys (`gitlabEso`/`runnerEso`/`zitadelEso`/`grafanaEso` → `eso`) so all 8 charts reference `$.Values.eso.*`.
 - **SUB-7** removed `hosts-vars/vault-eso.yaml`; all 8 `eso_vault_integration_<c>` integration blocks now live in the corresponding per-component `hosts-vars/<c>.yaml`.
 - **`vault_policies` / `vault_roles`** remain in `hosts-vars/vault.yaml` (not per-component).
+- **mon-system consolidation (SUB-1..11)** removed six per-component charts/playbooks/vars (mon-prometheus-operator, mon-grafana, mon-loki, mon-vector, mon-node-exporter, mon-kube-state-metrics) and replaced them with a single consolidated mon-system stack: namespace `mon-system`, inventory `hosts-vars/mon-system.yaml`, chart tree `playbook-app/charts/mon-system/`, playbook `playbook-app/mon-system-install.yaml`. The grafana ESO integration was renamed `eso_vault_integration_grafana` → `eso_vault_integration_mon_system`; Vault policy/role `grafana.eso-main` → `mon-system.eso-main`; Vault path prefix `eso-secret/grafana/*` → `eso-secret/mon-system/*`; SA `grafana` ns binding → `mon-system` ns binding. The 8-component list in `tasks-eso-secrets-merge.yaml` now includes `mon_system` (not `grafana`).

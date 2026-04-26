@@ -57,9 +57,9 @@ Every ESO-integrated component has the following variables in its `hosts-vars/<c
 **Integration object:**
 ```yaml
 eso_vault_integration_<c>:
-  sa_name: "<c>-eso-sa"
-  role_name: "<c>-eso-role"
-  secret_store_name: "<c>-eso-secret-store"
+  sa_name: "eso-main"
+  role_name: "<c>.eso-main"
+  secret_store_name: "eso-main.vault"
   kv_engine_path: "eso-secret"
   is_need_eso: true
 ```
