@@ -561,6 +561,48 @@ all:
 
     mon_system_secret_name_grafana_admin_creds: "eso-mon-system-grafana-admin-creds"
 
+    # ---------
+    # Pre-phase Helm values (NetworkPolicies + ESO chart)
+    # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
+    # eso_vault_integration_mon_system_secrets_merged — runtime-факт от tasks-eso-secrets-merge.yaml [always]
+    mon_system_pre_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      prometheus_operator:
+        enabled: "{{ mon_system_prometheus_operator_enabled }}"
+      prometheus:
+        enabled: "{{ mon_system_prometheus_enabled }}"
+        port: "{{ mon_system_prometheus_port }}"
+      alertmanager:
+        enabled: "{{ mon_system_alertmanager_enabled }}"
+        port: "{{ mon_system_alertmanager_port }}"
+      grafana:
+        enabled: "{{ mon_system_grafana_enabled }}"
+        port: "{{ mon_system_grafana_port }}"
+      loki:
+        enabled: "{{ mon_system_loki_enabled }}"
+      vector:
+        enabled: "{{ mon_system_vector_enabled }}"
+      node_exporter:
+        enabled: "{{ mon_system_node_exporter_enabled }}"
+      ksm:
+        enabled: "{{ mon_system_ksm_enabled }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      eso:
+        isNeedEso: "{{ eso_vault_integration_mon_system.is_need_eso }}"
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_mon_system.sa_name }}"
+        roleName: "{{ eso_vault_integration_mon_system.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_mon_system.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_mon_system.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_mon_system_secrets_merged }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+
     eso_vault_integration_mon_system:
       sa_name: "eso-main"
       role_name: "mon-system.eso-main"
