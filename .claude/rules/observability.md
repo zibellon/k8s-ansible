@@ -1,153 +1,152 @@
 # Observability — Prometheus Operator, ServiceMonitor, Grafana, Alertmanager
 
-Depth reference for the observability layer. Four components coordinate to provide metrics, dashboards, and alerting: `mon-prometheus-operator`, `mon-kube-state-metrics`, `mon-node-exporter`, `mon-grafana`.
+Depth reference for the observability layer. After consolidation (SUB-1..10), eight workloads — Prometheus Operator + Prometheus + Alertmanager + Grafana + Loki + Vector + node-exporter + kube-state-metrics — share namespace `mon-system`, one inventory file, one chart tree, and one install playbook (`mon-system-install.yaml`).
 
-For the big picture, see `CLAUDE.md` §1 (mental model, L7 Observability layer). For per-component install detail (namespaces, charts, dependencies, ESO integration), see [`components.md`](components.md) §17–§22.
+For per-component install detail (chart subdirs, helm release names, enable flags, dependencies), see [`components.md`](components.md) §17. For the big picture, see `CLAUDE.md` §1 (mental model, L7 Observability layer).
 
 ---
 
 ## 1. Prometheus Operator
 
-Lives in namespace `mon` (value of `prometheus_operator_namespace`). Installed by `playbook-app/mon-prometheus-operator-install.yaml`.
+Lives in `mon-system` namespace. Installed via the `prometheus-operator` tag of `mon-system-install.yaml`.
 
 ### 1.1 Install phases
 
-Unlike the standard 3-phase pattern, the Prometheus Operator install has **extra phases** because CRDs must be applied separately and the Custom Resources (CRs) that the operator reconciles need to be declared after the operator is ready:
+The mon-system playbook has 11 tags. Five are dedicated to the Prometheus Operator stack and depend on each other:
 
 ```
-crds/         CRDs first (Helm timeout on hook-crd avoidance)
-pre/          NetworkPolicies + ESO (if any)
-install/      the operator itself
-prometheus/   Prometheus CR (retention, storage, selectors)
-alertmanager/ Alertmanager CR
-post/         Ingress for Prometheus / Alertmanager UIs
+crds                  CustomResourceDefinitions (kubectl create -f, not Helm)
+prometheus-operator   the operator workload (Deployment + RBAC + Service)
+prometheus            Prometheus CR + RBAC + Service
+alertmanager          Alertmanager CR + AlertmanagerConfig + Service
+post                  Ingress + Certificate for Prometheus / Alertmanager UIs
+                      + ServiceMonitor + system-services + system-service-monitors
 ```
 
-Each is a separate Helm release — `mon-prometheus-operator-crds`, `mon-prometheus-operator-pre`, `mon-prometheus-operator`, `mon-prometheus-operator-prometheus`, `mon-prometheus-operator-alertmanager`, `mon-prometheus-operator-post`. See [`playbook-conventions.md`](playbook-conventions.md) §6 on the 3-phase pattern and extras.
+Composite gates: `prometheus` and `alertmanager` are skipped if `mon_system_prometheus_operator_enabled: false`, regardless of their own flags. The `crds` phase is also gated by `mon_system_prometheus_operator_enabled`.
+
+Each Helm release follows the `mon-system-<phase>` naming pattern. The CRDs phase deploys via `kubectl create -f charts/mon-system/crds/crds.yaml` — the 74771-line CRD bundle would otherwise hit Helm timeouts and complicate `--skip-crds` semantics.
 
 ### 1.2 Prometheus storage
 
 - PVC on Longhorn storage class `lh-major-single-best-effort` (default)
 - Retention: 60 days (default)
-- Configurable via `prometheus_operator_*` variables in `hosts-vars/mon-prometheus-operator.yaml`
+- Configurable via `mon_system_prometheus_spec` block scalar in `hosts-vars/mon-system.yaml` — the entire Prometheus CRD `spec` is passed verbatim from inventory.
 
 ### 1.3 ServiceMonitor discovery scope
 
-**Cluster-wide.** The Prometheus Operator's `ServiceMonitor` selector has no namespace restriction — it discovers any `ServiceMonitor` CR in any namespace. This lets each component own its own `ServiceMonitor` (in its own namespace, `post/` phase) without needing to touch the operator's config.
+**Cluster-wide.** The Prometheus Operator's `ServiceMonitor` selector has no namespace restriction (empty `serviceMonitorNamespaceSelector: {}`) — it discovers any `ServiceMonitor` CR in any namespace. This lets external components own their own SM resources without touching mon-system config.
 
 ---
 
-## 2. Per-component ServiceMonitor
+## 2. ServiceMonitors
 
-### 2.1 Location in the 3-phase pattern
+### 2.1 Location in the chart tree
 
-Every component's `ServiceMonitor` lives in its `post/` phase chart — applied only AFTER the workload's Service exists (otherwise the SM points at nothing). This is a core reason why `post/` exists as a separate phase (see [`playbook-conventions.md`](playbook-conventions.md) §6).
+All ServiceMonitors for mon-system workloads live in `mon-system/post/`, not in their respective install-phase charts. This is a deliberate departure from the older per-component pattern: post is "all observability config" — Ingress + Certificate + ServiceMonitor + system-* — gated per workload.
 
-### 2.2 Variables
+The post chart contains:
 
-Per-component variables (see [`variables.md`](variables.md) §1.3):
+- `servicemonitor-loki.yaml` — gated by `loki.enabled`
+- `servicemonitor-ksm.yaml` — gated by `ksm.enabled`
+- `servicemonitor-node-exporter.yaml` — gated by `node_exporter.enabled`
+- `system-service-monitors.yaml` — always rendered, iterates `mon_system_prometheus_system_service_monitors` list (kube-apiserver, kubelet, kube-controller-manager, kube-scheduler, etcd, coredns)
+- `system-services.yaml` — always rendered, headless Services in `kube-system` so the system SMs above can find static-pod endpoints
 
-| Variable | Purpose |
-|---|---|
-| `<c>_service_monitor_enabled` | Gate — default `true` where supported |
-| `<c>_service_monitor_interval` | Scrape interval (e.g., `30s`) |
-| `<c>_service_monitor_scrape_timeout` | Scrape timeout |
-| `<c>_service_monitor_additional_labels` / `_labels` | Labels for Prometheus operator selector matching (name varies by component — grep before adding) |
+Vector by design has no SM (no metrics endpoint). Grafana and Prometheus-Operator self-SMs are not currently shipped.
 
-### 2.3 Standard `ServiceMonitor` template shape
+### 2.2 Per-component scrape config
 
-```yaml
-{% if <c>_service_monitor_enabled %}
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: {{ .Values.component }}
-  namespace: {{ .Values.namespace }}
-  labels:
-    {{ <c>_service_monitor_additional_labels | to_json }}
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: {{ .Values.component }}
-  endpoints:
-    - port: metrics
-      interval: {{ <c>_service_monitor_interval }}
-      scrapeTimeout: {{ <c>_service_monitor_scrape_timeout }}
-{% endif %}
-```
+Each per-component SM template uses scoped values: `.Values.<c>.serviceMonitor.{interval,scrapeTimeout,labels}`. Defaults all `30s` interval and `15s` timeout.
 
-### 2.4 Dedicated exporter components
-
-`kube-state-metrics` and `node-exporter` are separate components (in namespace `mon`), each with its own install playbook and `ServiceMonitor` in its `post/` phase. See [`components.md`](components.md) §19, §20.
-
-`node-exporter` is a **DaemonSet** with `tolerations: [{operator: "Exists"}]` so it lands on every node including managers (which are usually tainted).
+The system list (apiserver/kubelet/etc.) lives entirely in inventory as a list of dicts — adding a new system target is just appending to `mon_system_prometheus_system_service_monitors` (with matching headless Service in `mon_system_prometheus_system_services` if needed).
 
 ---
 
 ## 3. Grafana
 
-Lives in its own namespace `grafana` (value of `grafana_namespace`). Installed by `playbook-app/mon-grafana-install.yaml`.
+Lives in `mon-system` namespace. Installed via the `grafana` tag of `mon-system-install.yaml`.
 
 ### 3.1 ESO integration
 
-Grafana is one of the 8 ESO-integrated components (see [`secrets-and-eso.md`](secrets-and-eso.md) §1 and §9):
+Grafana is the only ESO consumer in mon-system. The integration object is namespace-scoped:
 
-| Secret | Path in Vault | Used for |
-|---|---|---|
-| Admin password | `eso-secret/grafana/admin` | Login for the `admin` user |
-| OIDC client-secret | `eso-secret/grafana/oidc` | Zitadel OIDC single sign-on |
-| Datasource credentials | `eso-secret/grafana/<ds-name>` | Auth to Prometheus / Loki / etc. |
+```yaml
+eso_vault_integration_mon_system:
+  sa_name: "eso-main"
+  role_name: "mon-system.eso-main"
+  secret_store_name: "eso-main.vault"
+  kv_engine_path: "eso-secret"
+  is_need_eso: true
+```
 
-Credentials render into Grafana's provisioning ConfigMaps via `ExternalSecret` → K8s `Secret` → mounted-in `grafana.ini` / datasource YAML.
+The grafana phase of `mon-system-install.yaml` runs the full Vault/ESO lifecycle before the Helm install: lookup ExternalSecret → vault-get current password → generate-if-missing → vault-put → eso-force-sync → wait-secret. The Grafana Deployment then mounts the K8s Secret `eso-mon-system-grafana-admin-creds` (rendered by the ExternalSecret in `mon-system/pre/`) for `GF_SECURITY_ADMIN_USER` + `GF_SECURITY_ADMIN_PASSWORD` env vars.
+
+Vault path for grafana credentials: `eso-secret/mon-system/grafana/admin/creds`. See [`secrets-and-eso.md`](secrets-and-eso.md) §9 for full per-component path table.
 
 ### 3.2 Dashboards
 
-Dashboards are provisioned declaratively via Helm values (in `hosts-vars/mon-grafana.yaml`). User-added dashboards go in `grafana_dashboards_extra` to preserve the `*_extra` concat-merge contract (see [`variables.md`](variables.md) §1.5).
+Dashboards are provisioned declaratively via Helm values from `hosts-vars/mon-system.yaml`. User-added dashboards extend via the `*_extra` pattern (see [`variables.md`](variables.md) §1.5).
 
 ---
 
 ## 4. Alertmanager
 
-The Alertmanager Custom Resource lives with the Prometheus Operator chart (phase `alertmanager/`). Routing rules are defined declaratively in that chart's values.
+The Alertmanager Custom Resource is deployed by the `alertmanager` tag of `mon-system-install.yaml` — a separate Helm release `mon-system-alertmanager` that is independent from the operator workload release `mon-system-prometheus-operator`.
 
 ### 4.1 Phase separation
 
-Keeping Alertmanager in its own chart phase (not folded into `install/`) gives two benefits:
+Keeping Alertmanager in its own chart subdir (`mon-system/alertmanager/`, not folded into the operator install) yields:
 
-- Operator can be upgraded without re-applying Alertmanager config.
-- Alertmanager config can be edited + redeployed without touching the operator.
+- Operator can be upgraded (`--tags prometheus-operator`) without re-applying Alertmanager config.
+- Alertmanager config can be edited + redeployed (`--tags alertmanager`) without touching the operator.
 
 ### 4.2 Routing & receivers
 
-Config structure in `hosts-vars/mon-prometheus-operator.yaml`:
+Config lives in `mon_system_alertmanager_root_config_spec` block scalar in `hosts-vars/mon-system.yaml` — the entire `AlertmanagerConfig.spec` is passed verbatim:
 
-- `alertmanager_config.route` — the root route, with sub-routes matching on labels
-- `alertmanager_config.receivers` — Slack / email / PagerDuty / webhook destinations
-- `alertmanager_config.inhibit_rules` — suppression rules to avoid alert storms
+- `route` — root route, with sub-routes matching on labels
+- `receivers` — Slack / email / PagerDuty / webhook destinations
+- `inhibit_rules` — suppression rules to avoid alert storms
 
-Secret fields (webhook URLs, Slack tokens, etc.) should come from Vault via ESO — not hardcoded in values.
+Per-namespace `AlertmanagerConfig` resources are merged as child routes via `spec.alertmanagerConfigSelector: {}` on the Alertmanager CR (cluster-wide discovery).
 
----
-
-## 5. Dependency order
-
-Observability components install **after** the platform and applications they monitor:
-
-```
-L1 control plane → L2 Cilium → L4 Longhorn → L5 Vault+ESO → L7 Prometheus Operator →
-  mon-node-exporter, mon-kube-state-metrics → Grafana (needs Zitadel for OIDC)
-```
-
-See [`components.md`](components.md) §24 for the full dependency tier listing.
+Secret fields (webhook URLs, Slack tokens, etc.) should come from Vault via ESO — not hardcoded in inventory.
 
 ---
 
-## 6. Troubleshooting
+## 5. Loki and Vector
+
+`mon-system-loki` (single-binary Deployment + PVC + ConfigMap + Service) and `mon-system-vector` (DaemonSet + RBAC + ConfigMap, no Service) are independent of the Prometheus Operator stack and can be enabled/disabled separately via `mon_system_loki_enabled` / `mon_system_vector_enabled`.
+
+### 5.1 Vector → Loki
+
+Vector ships logs to Loki via in-cluster DNS `http://loki.{{ mon_system_namespace }}.svc.cluster.local:{{ mon_system_loki_port }}` (defined in `mon_system_vector_config_yaml` block scalar). After consolidation this is intra-namespace traffic, covered by the `allow-internal-traffic` baseline NetworkPolicy in `mon-system/pre/` — no dedicated cross-namespace rule needed.
+
+### 5.2 Grafana → Loki
+
+Grafana datasources can point at `http://loki.mon-system.svc.cluster.local:3100`. Like Vector→Loki, this is intra-namespace and needs no extra NetworkPolicy.
+
+---
+
+## 6. Dependency order
+
+```
+L0 cilium → L1 cert-manager + external-secrets → L2 longhorn → L3 vault → L4 traefik → L5 mon-system → ...
+```
+
+`mon-system` is at L5 (replacing the old L5 mon-prometheus-operator + L6 mon-node-exporter/mon-kube-state-metrics + L8 mon-grafana/mon-loki + L9 mon-vector). See [`components.md`](components.md) §19 for the full dependency tier listing.
+
+---
+
+## 7. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| No metrics from component X | `ServiceMonitor` missing, wrong labels, or in `install/` instead of `post/` | Check `<c>_service_monitor_enabled`, verify SM exists in cluster after `post` phase |
-| Prometheus OOM / disk pressure | Retention too high for available storage | Reduce `prometheus_retention`, reduce scrape interval, or add PVC capacity |
-| Grafana OIDC login fails | Zitadel not installed yet, or OIDC client-secret not in Vault | Verify install order, run `eso-force-sync.yaml` for `grafana` namespace |
-| Alertmanager routes match nothing | Label mismatch between PrometheusRule and `alertmanager_config.route` matchers | `kubectl -n mon get prometheusrules -o yaml` to see actual labels, align matchers |
-| `kubectl -n mon get servicemonitors -A` shows SM but no scrape | Prometheus can't reach the service (NetworkPolicy?) or port name mismatch | Inspect Prometheus targets UI (`/targets`), usually NetworkPolicy + port name |
+| No metrics from component X | `<c>.enabled: false` so post-phase ServiceMonitor isn't rendered | Set `mon_system_<c>_enabled: true` and re-run `--tags post` |
+| Prometheus OOM / disk pressure | Retention too high for available storage | Reduce `retention` in `mon_system_prometheus_spec` block scalar; reduce scrape interval; or grow PVC capacity |
+| Grafana OIDC login fails | Zitadel not installed yet, or OIDC client-secret not in Vault | Verify install order; run `eso-force-sync.yaml` targeting `mon-system` namespace |
+| Alertmanager routes match nothing | Label mismatch between `PrometheusRule` and `mon_system_alertmanager_root_config_spec.route` matchers | `kubectl -n mon-system get prometheusrules -o yaml` to inspect actual labels, align matchers |
+| `kubectl -n mon-system get servicemonitors` shows SM but no scrape | Prometheus can't reach the Service (NetworkPolicy?) or port name mismatch | Inspect Prometheus targets UI (`/targets`); verify the Service exists with the expected selector and port name |
+| `--tags prometheus` skipped even though `mon_system_prometheus_enabled: true` | Operator gate is off — composite condition requires both flags | Set `mon_system_prometheus_operator_enabled: true` |
+| `kubectl create -f .../crds.yaml` returns AlreadyExists on re-run | Expected (idempotency) — `failed_when: false` in playbook | No action — CRDs are cluster-scoped, second create is harmless |
