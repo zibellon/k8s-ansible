@@ -311,8 +311,6 @@
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
-## `--tags pre, install`
-## ---
 ##
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags pre,post`
