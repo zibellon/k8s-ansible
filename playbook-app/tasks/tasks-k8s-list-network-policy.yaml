@@ -1,0 +1,39 @@
+# =============================================================================
+# K8s List NetworkPolicies — Print `kubectl get networkpolicies` output to debug log
+# =============================================================================
+# Utility include. Runs `kubectl get networkpolicies -n <ns>` and prints the
+# result via the `debug` module (visible with default verbosity).
+#
+# Required vars:
+#   dto_label_name              — task label prefix
+#   dto_np_namespace            — K8s namespace
+#
+# Requires global vars: master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert required dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_np_namespace is defined
+      - dto_np_namespace | length > 0
+    fail_msg: "tasks-k8s-list-network-policy: dto_label_name and dto_np_namespace are required"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Get NetworkPolicies in namespace {{ dto_np_namespace }}"
+  command: kubectl get networkpolicies -n {{ dto_np_namespace }}
+  register: k8s_list_network_policy_result
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Print NetworkPolicies in namespace {{ dto_np_namespace }}"
+  debug:
+    var: k8s_list_network_policy_result.stdout_lines
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
