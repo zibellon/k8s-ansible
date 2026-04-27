@@ -1,4 +1,13 @@
 # ---
+# Добавить дополнительный ключ SSH
+# ---
+## есть список SSH-keys, которые должны быть на сервере
+## Этот список указывается в `ssh_public_key_paths`
+## Нужно добавить новый ключ, по каким-то причинам
+##
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/setup-ssh-keys.yaml`
+
+# ---
 # Шифрование ETCD. Ротация ключей
 # ---
 ## api-server, на каждой control-plane будет перезапущен 3 раза (так сказано в официальной документации)
