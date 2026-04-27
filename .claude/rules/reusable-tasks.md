@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (21 tasks)
+## 1. `playbook-app/tasks/` (22 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -214,6 +214,15 @@ General rules for callers:
 - **Validates (assert).** `dto_label_name`, `dto_pods_namespace` — both defined + non-empty.
 - **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get pods`) printed via debug (`var:` form). Register fact `k8s_list_pods_result` is local to the include scope.
 - **Callers.** 23 playbooks in `playbook-app/` — all `<c>-install.yaml` playbooks with a verify block (tag `[always]`), plus all `<c>-restart.yaml` playbooks (before/after the rollout; without tags).
+- **Idempotent.** Read-only (`changed_when: false`).
+
+### 1.19 `tasks-k8s-list-network-policy.yaml`
+
+- **Purpose.** Utility task — run `kubectl get networkpolicies -n <ns>` and print the result to the Ansible log via the `debug` module.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_np_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_np_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get networkpolicies`) printed via debug (`var:` form). Register fact `k8s_list_network_policy_result` is local to the include scope.
+- **Callers.** 14 playbooks in `playbook-app/` — `argocd-install.yaml`, `cert-manager-install.yaml`, `cilium-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `metrics-server-install.yaml`, `mon-system-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml`, `zitadel-install.yaml` (all in verify block, tag `[always]`).
 - **Idempotent.** Read-only (`changed_when: false`).
 
 ---
