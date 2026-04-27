@@ -200,7 +200,7 @@ General rules for callers:
 
 - **Purpose.** Read a single `.data` field from a K8s Secret into a named fact. Never fails on missing secret or field — callers branch on `<fact>_exists`.
 - **Input.** `dto_label_name`, `dto_secret_namespace`, `dto_secret_name`, `dto_secret_field`, `dto_secret_res_fact_name` (all required).
-- **Validates (assert).** All 4 dto params defined + non-empty. **Reference implementation** — this is the canonical example for the assert pattern.
+- **Validates (assert).** All 5 dto params defined + non-empty. **Reference implementation** — this is the canonical example for the assert pattern.
 - **Output (runtime facts, set on all hosts).**
   - `{{ dto_secret_res_fact_name }}` — decoded string value (`''` if missing).
   - `{{ dto_secret_res_fact_name }}_exists` — bool (true only if field is non-empty).

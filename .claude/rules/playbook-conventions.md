@@ -172,6 +172,6 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 - Required dict:   `<param> is defined` + `<param> is mapping` + `<param> | length > 0`
 - Dict subkey:     `<param>.<field> is defined`
 
-19.6 Reference implementation: `tasks-k8s-secret-get.yaml` — full example with 4 required string params.
+19.6 Reference implementation: `tasks-k8s-secret-get.yaml` — full example with 5 required string params.
 
 19.7 Optional params (controlled by `when:` in the task body) do NOT need validation in the assert block. Only required params are asserted.
