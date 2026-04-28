@@ -176,6 +176,7 @@ Per-file source of truth in parentheses.
 | `secret_wait` | `{retries: 15, delay: 5}` | K8s Secret wait config — used by ESO sync tasks |
 | `rollout_wait` | `{retries: 15, delay: 5}` | Rollout wait config — used by `tasks-wait-rollout.yaml` |
 | `helm_async` | `{timeout: 1800, poll: 5}` | Async Helm upgrade config — resilient to SSH disconnects on long upgrades |
+| `system_async` | `{timeout: 900, poll: 10}` | Async system playbook config — resilient to SSH disconnects on long imperative ops in `playbook-system/` (kubeadm init/join, node drain, LLVM install) |
 
 ### 2.2 HAProxy apiserver LB (`hosts-vars/k8s-base.yaml`)
 
