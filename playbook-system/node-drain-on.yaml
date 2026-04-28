@@ -53,13 +53,15 @@
     # =========================================================================
     # DRAIN: Evict all pods from node
     # =========================================================================
-    - name: Drain node (this may take a while if Longhorn needs to evict replicas)
+    - name: Drain node (async — this may take a while if Longhorn needs to evict replicas)
       command: >
         kubectl drain {{ new_hostname }}
         --ignore-daemonsets
         --delete-emptydir-data
         --timeout={{ node_drain_timeout }}
       delegate_to: "{{ master_manager_fact }}"
+      async: "{{ system_async.timeout }}"
+      poll: "{{ system_async.poll }}"
       register: drain_result
       failed_when: false
 
