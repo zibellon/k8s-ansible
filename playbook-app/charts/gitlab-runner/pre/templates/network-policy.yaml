@@ -40,9 +40,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 ---
 # Allow all traffic between pods inside longhorn-system
@@ -81,7 +81,7 @@ spec:
   ingress:
     - ports:
         - protocol: TCP
-          port: 9252 # gitlab-runner metrics
+          port: {{ .Values.gitlabRunner.metricsPort }} # gitlab-runner metrics
 
 # =============================================================================
 # GITLAB RUNNER POD POLICIES
@@ -113,7 +113,7 @@ spec:
               release: {{ .Values.gitlab.releaseName }}
       ports:
         - protocol: TCP
-          port: 8181
+          port: {{ .Values.gitlab.webservicePort }}
     # To GitLab MinIO (runner cache read/write)
     - to:
         - namespaceSelector:
@@ -124,7 +124,7 @@ spec:
               app.kubernetes.io/name: gitlab-minio
       ports:
         - protocol: TCP
-          port: 9000
+          port: {{ .Values.gitlab.minioApiPort }}
     # To GitLab Shell (internal SSH for git operations)
     - to:
         - namespaceSelector:
@@ -140,13 +140,13 @@ spec:
     # To kube-apiserver (kubernetes executor spawns job pods)
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
     # External HTTPS/HTTP (pulling images, package managers)
     - ports:
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
 
 # =============================================================================
 # JOB POD POLICIES
@@ -176,7 +176,7 @@ spec:
               app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
       ports:
         - protocol: TCP
-          port: 2375
+          port: {{ .Values.gitlabRunner.jobDindPort }}
   egress:
     # To GitLab webservice (git clone over HTTP)
     - to:
@@ -189,7 +189,7 @@ spec:
               release: {{ .Values.gitlab.releaseName }}
       ports:
         - protocol: TCP
-          port: 8181
+          port: {{ .Values.gitlab.webservicePort }}
     # To GitLab MinIO (cache read/write)
     - to:
         - namespaceSelector:
@@ -200,7 +200,7 @@ spec:
               app.kubernetes.io/name: gitlab-minio
       ports:
         - protocol: TCP
-          port: 9000
+          port: {{ .Values.gitlab.minioApiPort }}
     # To GitLab Shell (internal SSH for git operations)
     - to:
         - namespaceSelector:
@@ -221,17 +221,17 @@ spec:
               app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
       ports:
         - protocol: TCP
-          port: 2375
+          port: {{ .Values.gitlabRunner.jobDindPort }}
     # To kube-apiserver
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
     # External HTTPS/HTTP (pulling images, package managers, registry push/pull)
     - ports:
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
 
 # =============================================================================
 # CROSS-NAMESPACE POLICIES (in gitlab namespace)
@@ -263,7 +263,7 @@ spec:
               app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
       ports:
         - protocol: TCP
-          port: 8181
+          port: {{ .Values.gitlab.webservicePort }}
     # From job pods
     - from:
         - namespaceSelector:
@@ -275,7 +275,7 @@ spec:
               app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
       ports:
         - protocol: TCP
-          port: 8181
+          port: {{ .Values.gitlab.webservicePort }}
 
 ---
 # Allow runner namespace → GitLab MinIO (cache read/write)
@@ -302,7 +302,7 @@ spec:
               app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
       ports:
         - protocol: TCP
-          port: 9000
+          port: {{ .Values.gitlab.minioApiPort }}
     # From job pods
     - from:
         - namespaceSelector:
@@ -314,7 +314,7 @@ spec:
               app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
       ports:
         - protocol: TCP
-          port: 9000
+          port: {{ .Values.gitlab.minioApiPort }}
 
 ---
 # Allow runner namespace → GitLab Shell (internal SSH)
