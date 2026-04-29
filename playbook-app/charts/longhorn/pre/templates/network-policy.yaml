@@ -36,9 +36,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 ---
 # Allow all traffic between pods inside longhorn-system
@@ -73,13 +73,13 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
         - protocol: TCP
-          port: 10250
+          port: {{ .Values.kubelet.port }}
 
 # =============================================================================
 # ADMISSION WEBHOOK
@@ -101,9 +101,9 @@ spec:
   ingress:
     - ports:
         - protocol: TCP
-          port: 9502
+          port: {{ .Values.longhorn.webhookHttpPort }}
         - protocol: TCP
-          port: 9503
+          port: {{ .Values.longhorn.webhookHttpsPort }}
 
 # =============================================================================
 # PROMETHEUS SCRAPING
@@ -123,7 +123,7 @@ spec:
   ingress:
     - ports:
         - protocol: TCP
-          port: 9500 # longhorn-backend (manager metrics)
+          port: {{ .Values.longhorn.metricsPort }} # longhorn-backend (manager metrics)
 
 # =============================================================================
 # CUSTOM: LONGHORN UI (Traefik access)
@@ -153,7 +153,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8000
+          port: {{ .Values.longhorn.uiPort }}
 
 # =============================================================================
 # CUSTOM: ACME SOLVER (cert-manager HTTP-01 challenge)
@@ -182,7 +182,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 # =============================================================================
 # CUSTOM: TRAEFIK EGRESS TO LONGHORN (in traefik namespace)
@@ -212,7 +212,7 @@ spec:
               app: longhorn-ui
       ports:
         - protocol: TCP
-          port: 8000
+          port: {{ .Values.longhorn.uiPort }}
     # ACME solver in longhorn-system
     - to:
         - namespaceSelector:
@@ -223,4 +223,4 @@ spec:
               {{- .Values.acmeSolverLabels | toYaml | nindent 14 }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
