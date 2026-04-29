@@ -113,7 +113,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 14.1 After `helm upgrade --install <c>`, include `tasks-wait-rollout.yaml` with the exact `kind/name` resources expected (`deployment/<x>`, `statefulset/<x>`, `daemonset/<x>`).
 14.2 Where CRDs must be present before the main chart can deploy workloads, include `tasks-wait-crds.yaml` with the expected CRD list (`crd/<name>`).
-14.3 After all phases, optional `tasks-verify-helm.yaml` confirms release status is `deployed`.
+14.3 After all phases, optional `tasks-k8s-list-helm.yaml` lists Helm releases in the component namespace for operator visibility.
 
 ## 15. Variables Contract
 

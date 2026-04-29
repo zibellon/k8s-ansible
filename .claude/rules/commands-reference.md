@@ -175,6 +175,20 @@ Each uses `kubectl rollout restart` on the target resources and waits for rollou
 | Remove temporary S3 restore creds | `ansible-playbook ... playbook-app/longhorn-s3-restore-delete.yaml` |
 | Sync Longhorn node tags from inventory | `ansible-playbook ... playbook-app/longhorn-tags-sync.yaml` |
 
+### 4.6 Cluster diagnostics
+
+Read-only dump of K8s state across selected (or all) namespaces. For each target namespace prints pods, certificates, network policies, deployments, statefulsets, ingresses, services, TCPs (HAProxy CRD), IngressRoutes (Traefik CRD), secrets, and `helm list`. Useful for triage and post-deploy verification.
+
+```bash
+# Dump all namespaces:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-info.yaml
+
+# Dump only specific namespaces:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-info.yaml --tags vault,argocd
+```
+
+In this playbook `--tags` selects target *namespaces* by name, not Ansible task tags. Without `--tags` all cluster namespaces are dumped.
+
 ---
 
 ## 5. Debugging one-liners

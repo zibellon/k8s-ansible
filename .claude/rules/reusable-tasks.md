@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (22 tasks)
+## 1. `playbook-app/tasks/` (31 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -134,14 +134,14 @@ General rules for callers:
 - **Callers.** Install playbooks of components with HTTPS ingress that triggers ACME HTTP-01 — typically at `tags: [always]`.
 - **Idempotent.** Pure lookup.
 
-### 1.10 `tasks-verify-helm.yaml`
+### 1.10 `tasks-k8s-list-helm.yaml`
 
-- **Purpose.** Assert a Helm release is in `deployed` status (not `failed`, `pending`, `uninstalling`).
-- **Input.** `dto_label_name`, `helm_namespace` (namespace of the release).
-- **Validates (assert).** `dto_label_name`, `helm_namespace` both defined + non-empty.
-- **Output.** Fails if any release in the namespace is not `deployed`.
-- **Callers.** End of install phase (optional, recommended).
-- **Idempotent.** Read-only.
+- **Purpose.** Utility task — run `helm list -n <ns>` and print the result to the Ansible log via the `debug` module. Tab characters in the output are replaced with spaces for readability.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_helm_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_helm_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `helm list`, tabs replaced by spaces) printed via debug (`var:` form). Register fact `k8s_list_helm_result` and intermediate set_fact `k8s_list_helm_pretty` are local to the include scope.
+- **Callers.** 15 playbooks in `playbook-app/` — `argocd-install.yaml`, `cert-manager-install.yaml`, `cilium-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `longhorn-s3-restore-create.yaml`, `metrics-server-install.yaml`, `mon-system-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml`, `zitadel-install.yaml` (all in verify block, tag `[always]`). Also called by `tasks-cluster-info-namespace.yaml` (aggregator, from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`).
 
 ### 1.11 `tasks-eso-force-sync.yaml`
 
@@ -224,6 +224,87 @@ General rules for callers:
 - **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get networkpolicies`) printed via debug (`var:` form). Register fact `k8s_list_network_policy_result` is local to the include scope.
 - **Callers.** 14 playbooks in `playbook-app/` — `argocd-install.yaml`, `cert-manager-install.yaml`, `cilium-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `metrics-server-install.yaml`, `mon-system-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml`, `zitadel-install.yaml` (all in verify block, tag `[always]`).
 - **Idempotent.** Read-only (`changed_when: false`).
+
+### 1.20 `tasks-k8s-list-service.yaml`
+
+- **Purpose.** Utility task — run `kubectl get service -n <ns> -o wide` and print the result to the Ansible log via the `debug` module.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_service_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_service_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get service`) printed via debug (`var:` form). Register fact `k8s_list_service_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.21 `tasks-k8s-list-deployment.yaml`
+
+- **Purpose.** Utility task — run `kubectl get deployment -n <ns> -o wide` and print the result to the Ansible log via the `debug` module.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_deployment_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_deployment_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get deployment`) printed via debug (`var:` form). Register fact `k8s_list_deployment_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.22 `tasks-k8s-list-statefulset.yaml`
+
+- **Purpose.** Utility task — run `kubectl get statefulset -n <ns> -o wide` and print the result to the Ansible log via the `debug` module.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_statefulset_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_statefulset_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get statefulset`) printed via debug (`var:` form). Register fact `k8s_list_statefulset_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.23 `tasks-k8s-list-ingress.yaml`
+
+- **Purpose.** Utility task — run `kubectl get ingress -n <ns> -o wide` and print the result to the Ansible log via the `debug` module.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_ingress_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_ingress_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get ingress`) printed via debug (`var:` form). Register fact `k8s_list_ingress_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.24 `tasks-k8s-list-secret.yaml`
+
+- **Purpose.** Utility task — run `kubectl get secret -n <ns> -o wide` and print the result to the Ansible log via the `debug` module.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_secret_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_secret_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get secret`) printed via debug (`var:` form). Register fact `k8s_list_secret_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.25 `tasks-k8s-list-certificate.yaml`
+
+- **Purpose.** Utility task — run `kubectl get certificate -n <ns> -o wide` (cert-manager CRD) and print the result to the Ansible log via the `debug` module. `failed_when: false` keeps the task green if cert-manager CRDs are not installed.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_certificate_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_certificate_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get certificate`) printed via debug (`var:` form). Register fact `k8s_list_certificate_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.26 `tasks-k8s-list-ingress-route.yaml`
+
+- **Purpose.** Utility task — run `kubectl get IngressRoute -n <ns> -o wide` (Traefik CRD) and print the result to the Ansible log via the `debug` module. `failed_when: false` keeps the task green if Traefik CRDs are not installed.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_ingress_route_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_ingress_route_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get IngressRoute`) printed via debug (`var:` form). Register fact `k8s_list_ingress_route_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.27 `tasks-k8s-list-tcp.yaml`
+
+- **Purpose.** Utility task — run `kubectl get TCP -n <ns> -o wide` (HAProxy ingress controller CRD) and print the result to the Ansible log via the `debug` module. `failed_when: false` keeps the task green if HAProxy ingress controller CRDs are not installed.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_tcp_namespace` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_tcp_namespace` — both defined + non-empty.
+- **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get TCP`) printed via debug (`var:` form). Register fact `k8s_list_tcp_result` is local to the include scope.
+- **Callers.** `tasks-cluster-info-namespace.yaml` (aggregator, called from `cluster-info.yaml`).
+- **Idempotent.** Read-only (`changed_when: false`, `failed_when: false`).
+
+### 1.28 `tasks-cluster-info-namespace.yaml`
+
+- **Purpose.** Aggregator — for a given namespace, runs all 10 per-resource list tasks (pods, certificates, network policies, deployments, statefulsets, ingresses, services, TCPs, IngressRoutes, secrets) plus `helm list`, in a fixed order. Single composition primitive used by the `cluster-info.yaml` playbook.
+- **Input.** `dto_label_name` (required string, log prefix). `dto_namespace_name` (required string, K8s namespace).
+- **Validates (assert).** `dto_label_name`, `dto_namespace_name` — both defined + non-empty.
+- **Output.** None — each underlying task prints its own debug output. Register facts from underlying tasks (e.g. `k8s_list_pods_result`) are visible inside the include scope.
+- **Callers.** `playbook-app/cluster-info.yaml` only.
+- **Idempotent.** Read-only.
 
 ---
 

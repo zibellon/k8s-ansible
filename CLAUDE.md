@@ -131,7 +131,7 @@ k8s-ansible/
 | `playbook-system/` | 22 playbooks (node prep, bootstrap, operational, rolling updates) | [`bootstrap-and-ha.md`](.claude/rules/bootstrap-and-ha.md) |
 | `playbook-system/tasks/` | 16 reusable task includes (guards, cluster-facts, kubeadm, HAProxy, kubelet) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §2 |
 | `playbook-app/` | 30 playbooks (16 install + 14 specials: configure, restart, rotate, sync, DR) | [`components.md`](.claude/rules/components.md) |
-| `playbook-app/tasks/` | 22 reusable task includes (pre-check, copy-chart, helm, wait, Vault/ESO) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1 |
+| `playbook-app/tasks/` | 31 reusable task includes (pre-check, copy-chart, helm, wait, Vault/ESO, k8s-list, cluster-info) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1 |
 | `playbook-app/charts/` | 16 local Helm-chart directories, one per component (mon-system has 11 phase subdirs; others have `pre/`, `install/`, `post/`) | [`components.md`](.claude/rules/components.md) per-component |
 | `hosts-vars/` | 21 files — inventory skeleton, global settings, per-component vars, cross-cutting (vault, vpn-rules, teleport-configure) | [`variables.md`](.claude/rules/variables.md) |
 | `hosts-vars-override/` | Mirror structure with real environment values. `ansible_password`, real IPs, Vault unseal keys, real domains — **gitignored** | — |
