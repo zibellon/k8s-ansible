@@ -1,0 +1,47 @@
+# =============================================================================
+# K8s List Helm Releases — Print `helm list -n <ns>` output to debug log
+# =============================================================================
+# Utility include. Runs `helm list -n <ns>` and prints the result via the
+# `debug` module (visible with default verbosity). Tabs in helm output are
+# converted to spaces for cleaner formatting.
+#
+# Required vars:
+#   dto_label_name              — task label prefix
+#   dto_helm_namespace          — K8s namespace
+#
+# Requires global vars: master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert required dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_helm_namespace is defined
+      - dto_helm_namespace | length > 0
+    fail_msg: "tasks-k8s-list-helm: dto_label_name and dto_helm_namespace are required"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Get Helm releases in namespace {{ dto_helm_namespace }}"
+  command: helm list -n {{ dto_helm_namespace }}
+  register: k8s_list_helm_result
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Format Helm releases output (tabs to spaces)"
+  set_fact:
+    k8s_list_helm_pretty: "{{ k8s_list_helm_result.stdout_lines | map('replace', '\t', '  ') | list }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Print Helm releases in namespace {{ dto_helm_namespace }}"
+  debug:
+    var: k8s_list_helm_pretty
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
