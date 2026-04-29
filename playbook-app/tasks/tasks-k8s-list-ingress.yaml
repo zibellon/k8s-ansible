@@ -1,0 +1,42 @@
+# =============================================================================
+# K8s List Ingresses — Print `kubectl get ingress -o wide` output to debug log
+# =============================================================================
+# Utility include. Runs `kubectl get ingress -n <ns> -o wide` and prints
+# the result via the `debug` module (visible with default verbosity).
+# `failed_when: false` keeps the task green when the underlying CRD is not
+# installed in the cluster (relevant for Certificate, IngressRoute, TCP).
+#
+# Required vars:
+#   dto_label_name              — task label prefix
+#   dto_ingress_namespace       — K8s namespace
+#
+# Requires global vars: master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert required dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_ingress_namespace is defined
+      - dto_ingress_namespace | length > 0
+    fail_msg: "tasks-k8s-list-ingress: dto_label_name and dto_ingress_namespace are required"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Get ingresses in namespace {{ dto_ingress_namespace }}"
+  command: kubectl get ingress -n {{ dto_ingress_namespace }} -o wide
+  register: k8s_list_ingress_result
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Print ingresses in namespace {{ dto_ingress_namespace }}"
+  debug:
+    var: k8s_list_ingress_result.stdout_lines
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]

@@ -1,0 +1,42 @@
+# =============================================================================
+# K8s List Services — Print `kubectl get service -o wide` output to debug log
+# =============================================================================
+# Utility include. Runs `kubectl get service -n <ns> -o wide` and prints
+# the result via the `debug` module (visible with default verbosity).
+# `failed_when: false` keeps the task green when the underlying CRD is not
+# installed in the cluster (relevant for Certificate, IngressRoute, TCP).
+#
+# Required vars:
+#   dto_label_name              — task label prefix
+#   dto_service_namespace       — K8s namespace
+#
+# Requires global vars: master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert required dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_service_namespace is defined
+      - dto_service_namespace | length > 0
+    fail_msg: "tasks-k8s-list-service: dto_label_name and dto_service_namespace are required"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Get services in namespace {{ dto_service_namespace }}"
+  command: kubectl get service -n {{ dto_service_namespace }} -o wide
+  register: k8s_list_service_result
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Print services in namespace {{ dto_service_namespace }}"
+  debug:
+    var: k8s_list_service_result.stdout_lines
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
