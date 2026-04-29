@@ -40,9 +40,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 ---
 # Allow all traffic between pods inside longhorn-system
@@ -92,14 +92,14 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8080
+          port: {{ .Values.zitadel.h2cPort }}
   egress:
     # To external HTTPS (email providers, OIDC discovery, etc.)
     - ports:
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
 
 ---
 # ACME solver: ingress from Traefik (cert-manager HTTP-01 challenge)
@@ -123,7 +123,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 # =============================================================================
 # TRAEFIK NAMESPACE POLICY (allow egress from Traefik to ZITADEL)
@@ -153,7 +153,7 @@ spec:
               app.kubernetes.io/name: zitadel
       ports:
         - protocol: TCP
-          port: 8080
+          port: {{ .Values.zitadel.h2cPort }}
     # To ACME solver
     - to:
         - namespaceSelector:
@@ -163,4 +163,4 @@ spec:
             matchLabels: {{ .Values.acmeSolverLabels | toYaml | nindent 14 }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
