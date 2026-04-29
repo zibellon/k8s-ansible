@@ -32,9 +32,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 ---
 # Allow all traffic between pods inside longhorn-system
@@ -73,17 +73,17 @@ spec:
   ingress:
     - ports:
         - protocol: TCP
-          port: 8082 # application-controller
+          port: {{ .Values.argocd.applicationControllerMetricsPort }} # application-controller
         - protocol: TCP
-          port: 8083 # argocd-server
+          port: {{ .Values.argocd.serverMetricsPort }} # argocd-server
         - protocol: TCP
-          port: 8084 # repo-server
+          port: {{ .Values.argocd.repoServerMetricsPort }} # repo-server
         - protocol: TCP
-          port: 8080 # applicationset-controller
+          port: {{ .Values.argocd.applicationsetControllerMetricsPort }} # applicationset-controller
         - protocol: TCP
-          port: 5558 # dex-server
+          port: {{ .Values.argocd.dexMetricsPort }} # dex-server
         - protocol: TCP
-          port: 9001 # notifications-controller
+          port: {{ .Values.argocd.notificationsControllerMetricsPort }} # notifications-controller
 
 # =============================================================================
 # ARGOCD-SERVER (UI + gRPC)
@@ -114,7 +114,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8080 # actual pod port
+          port: {{ .Values.argocd.serverPort }} # actual pod port
     - from:
         - namespaceSelector:
             matchLabels:
@@ -124,11 +124,11 @@ spec:
               app.kubernetes.io/name: gitlab-runner-job
       ports:
         - protocol: TCP
-          port: 8080
+          port: {{ .Values.argocd.serverPort }}
   egress:
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 # =============================================================================
 # ARGOCD-REPO-SERVER (git clone to internal GitLab)
@@ -180,7 +180,7 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 ---
 # Allow applicationset-controller egress to API server
@@ -198,7 +198,7 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 ---
 # Allow notifications-controller egress to API server
@@ -216,7 +216,7 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 ---
 # Allow redis egress to API server
@@ -234,7 +234,7 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 ---
 # Allow dex-server egress to API server
@@ -252,7 +252,7 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge)
@@ -282,7 +282,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 # =============================================================================
 # EXTERNAL - NS (Traefik -> ArgoCD)
@@ -313,7 +313,7 @@ spec:
               app.kubernetes.io/name: argocd-server
       ports:
         - protocol: TCP
-          port: 8080 # actual pod port
+          port: {{ .Values.argocd.serverPort }} # actual pod port
     # ACME solver in argocd
     - to:
         - namespaceSelector:
@@ -324,7 +324,7 @@ spec:
               {{- .Values.acmeSolverLabels | toYaml | nindent 14 }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 ---
 # Allow gitlab-runner job pods egress to argocd-server (cross-namespace, owned by argocd chart)
@@ -350,7 +350,7 @@ spec:
               app.kubernetes.io/name: argocd-server
       ports:
         - protocol: TCP
-          port: 8080
+          port: {{ .Values.argocd.serverPort }}
 
 ---
 # GitLab shell <- ArgoCD repo-server
