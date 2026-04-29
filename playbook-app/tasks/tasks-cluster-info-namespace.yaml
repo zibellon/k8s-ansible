@@ -1,0 +1,103 @@
+# =============================================================================
+# Cluster Info per Namespace — dump K8s state for ONE namespace
+# =============================================================================
+# Aggregator. For a given namespace, runs all 10 per-resource list tasks
+# (pods, certificates, network policies, deployments, statefulsets, ingresses,
+# services, TCPs, IngressRoutes, secrets) plus `helm list`. Each underlying
+# task delegates to master_manager_fact and prints its output via debug.
+#
+# Required vars:
+#   dto_label_name              — task label prefix (e.g. "cluster-info")
+#   dto_namespace_name          — K8s namespace to dump
+#
+# Requires global vars: master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] Assert required dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_namespace_name is defined
+      - dto_namespace_name | length > 0
+    fail_msg: "tasks-cluster-info-namespace: dto_label_name and dto_namespace_name are required"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List pods"
+  include_tasks: tasks-k8s-list-pods.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_pods_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List certificates"
+  include_tasks: tasks-k8s-list-certificate.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_certificate_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List network policies"
+  include_tasks: tasks-k8s-list-network-policy.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_np_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List deployments"
+  include_tasks: tasks-k8s-list-deployment.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_deployment_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List statefulsets"
+  include_tasks: tasks-k8s-list-statefulset.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_statefulset_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List ingresses"
+  include_tasks: tasks-k8s-list-ingress.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_ingress_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List services"
+  include_tasks: tasks-k8s-list-service.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_service_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List TCPs"
+  include_tasks: tasks-k8s-list-tcp.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_tcp_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List IngressRoutes"
+  include_tasks: tasks-k8s-list-ingress-route.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_ingress_route_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List secrets"
+  include_tasks: tasks-k8s-list-secret.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_secret_namespace: "{{ dto_namespace_name }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-{{ dto_namespace_name }}] List Helm releases"
+  include_tasks: tasks-k8s-list-helm.yaml
+  vars:
+    dto_label_name: "{{ dto_label_name }}-{{ dto_namespace_name }}"
+    dto_helm_namespace: "{{ dto_namespace_name }}"
+  tags: [always]

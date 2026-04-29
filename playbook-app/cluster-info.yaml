@@ -1,0 +1,73 @@
+# =============================================================================
+# Cluster Info — dump K8s state across selected namespaces
+# =============================================================================
+# Read-only diagnostic playbook. For each target namespace prints:
+#   pods, certificates, network policies, deployments, statefulsets,
+#   ingresses, services, TCPs, IngressRoutes, secrets, plus `helm list`.
+#
+# Target namespace selection:
+#   - No `--tags` passed → all namespaces in the cluster
+#   - `--tags ns1,ns2,...`  → only the listed namespaces
+#
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+#     playbook-app/cluster-info.yaml
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+#     playbook-app/cluster-info.yaml --tags vault,argocd
+# =============================================================================
+
+- hosts: managers
+  become: true
+  gather_facts: false
+  tasks:
+    # === STEP 1: pre-check ===
+    - name: "[cluster-info] Pre-check"
+      include_tasks: tasks/tasks-pre-check.yaml
+      vars:
+        dto_label_name: "cluster-info"
+      tags: [always]
+
+    # === STEP 2: detect whether user passed --tags ===
+    - name: "[cluster-info] Detect whether --tags was passed"
+      set_fact:
+        cluster_info_is_no_tags: "{{ ansible_run_tags | length == 1 and ansible_run_tags[0] == 'all' }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # === STEP 3: discover all namespaces (only when no --tags passed) ===
+    - name: "[cluster-info] Get all namespaces from cluster"
+      command: kubectl get namespace -o jsonpath={.items[*].metadata.name}
+      register: cluster_info_all_ns
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      when: cluster_info_is_no_tags
+      tags: [always]
+
+    # === STEP 4: build target_namespaces list ===
+    - name: "[cluster-info] Build target_namespaces list"
+      set_fact:
+        cluster_info_target_namespaces: "{{ cluster_info_all_ns.stdout.split() if cluster_info_is_no_tags else (ansible_run_tags | list) }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # === STEP 5: print target list (operator visibility) ===
+    - name: "[cluster-info] Print target namespaces"
+      debug:
+        var: cluster_info_target_namespaces
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    # === STEP 6: dump state per namespace ===
+    - name: "[cluster-info] Dump state per namespace"
+      include_tasks: tasks/tasks-cluster-info-namespace.yaml
+      vars:
+        dto_label_name: "cluster-info"
+        dto_namespace_name: "{{ ns_item }}"
+      loop: "{{ cluster_info_target_namespaces }}"
+      loop_control:
+        loop_var: ns_item
+      tags: [always]
