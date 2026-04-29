@@ -41,9 +41,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 # =============================================================================
 # NODE HEALTH CHECK CONTROLLER
@@ -66,16 +66,16 @@ spec:
     # Metrics scraping
     - ports:
         - protocol: TCP
-          port: 8443
+          port: {{ .Values.medik8s.controllerMetricsPort }}
     # Health probe
     - ports:
         - protocol: TCP
-          port: 8081
+          port: {{ .Values.medik8s.controllerHealthPort }}
   egress:
     # API server for watching nodes and creating remediation CRs
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 # =============================================================================
 # SELF NODE REMEDIATION CONTROLLER
@@ -99,20 +99,20 @@ spec:
     # Metrics scraping
     - ports:
         - protocol: TCP
-          port: 8443
+          port: {{ .Values.medik8s.controllerMetricsPort }}
     # Health probe
     - ports:
         - protocol: TCP
-          port: 8081
+          port: {{ .Values.medik8s.controllerHealthPort }}
     # Webhook (validating/mutating)
     - ports:
         - protocol: TCP
-          port: 9443
+          port: {{ .Values.medik8s.controllerWebhookPort }}
   egress:
     # API server
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 # =============================================================================
 # SELF NODE REMEDIATION DAEMONSET (runs on every node)
@@ -141,16 +141,16 @@ spec:
               app.kubernetes.io/component: agent
       ports:
         - protocol: TCP
-          port: 30001
+          port: {{ .Values.medik8s.peerHealthPort }}
     # Metrics scraping
     - ports:
         - protocol: TCP
-          port: 9440
+          port: {{ .Values.medik8s.daemonsetMetricsPort }}
   egress:
     # API server
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
     # Peer-to-peer health checks to other SNR agents
     - to:
         - podSelector:
@@ -159,4 +159,4 @@ spec:
               app.kubernetes.io/component: agent
       ports:
         - protocol: TCP
-          port: 30001
+          port: {{ .Values.medik8s.peerHealthPort }}
