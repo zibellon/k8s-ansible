@@ -103,7 +103,7 @@ General rules for callers:
 ### 1.8b `tasks-eso-secrets-merge.yaml`
 
 - **Purpose.** Merge per-component base + `_extra` secrets lists for all 8 ESO-integrated components. Validate uniqueness within each merged list.
-- **Input.** Reads from inventory: `eso_vault_integration_<c>_secrets` and `eso_vault_integration_<c>_secrets_extra` for each of the 8 components: `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `grafana`. `_extra` defaults to `[]` if absent.
+- **Input.** Reads from inventory: `eso_vault_integration_<c>_secrets` and `eso_vault_integration_<c>_secrets_extra` for each of the 8 components: `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`. `_extra` defaults to `[]` if absent.
 - **Merge order.** Base + extra (extra appended at the end).
 - **Output (runtime facts).**
   - `eso_vault_integration_<c>_secrets_merged` for each of the 8 components — list of ExternalSecret dicts.
