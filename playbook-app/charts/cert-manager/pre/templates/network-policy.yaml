@@ -36,9 +36,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 ---
 # Allow all traffic between pods inside longhorn-system
@@ -77,7 +77,7 @@ spec:
   ingress:
     - ports:
         - protocol: TCP
-          port: 9402 # controller, cainjector, webhook metrics
+          port: {{ .Values.certManager.metricsPort }} # controller, cainjector, webhook metrics
 
 # =============================================================================
 # CERT-MANAGER CONTROLLER
@@ -99,19 +99,19 @@ spec:
   ingress:
     - ports:
         - protocol: TCP
-          port: 9402 # Prometheus metrics scraping
+          port: {{ .Values.certManager.metricsPort }} # Prometheus metrics scraping
   egress:
     # API server for certificate resources
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
     # ACME providers (Let's Encrypt) + self-check HTTP requests
     # Self-check goes to external IP which routes back to traefik
     - ports:
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
 
 # =============================================================================
 # CERT-MANAGER WEBHOOK
@@ -135,11 +135,11 @@ spec:
     # API server calls webhook for validation/mutation
     - ports:
         - protocol: TCP
-          port: 10250
+          port: {{ .Values.certManager.webhookPort }}
   egress:
     - ports:
         - protocol: TCP
-          port: 6443 # kube-api-server
+          port: {{ .Values.apiserver.port }} # kube-api-server
 
 # =============================================================================
 # CERT-MANAGER CAINJECTOR
@@ -161,7 +161,7 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443 # kube-api-server
+          port: {{ .Values.apiserver.port }} # kube-api-server
 
 # =============================================================================
 # CERT-MANAGER STARTUPAPICHECK
@@ -183,4 +183,4 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443 # kube-api-server
+          port: {{ .Values.apiserver.port }} # kube-api-server
