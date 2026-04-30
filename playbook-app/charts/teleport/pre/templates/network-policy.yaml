@@ -40,9 +40,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 ---
 # Allow all traffic between pods inside longhorn-system
@@ -115,7 +115,7 @@ spec:
   egress:
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 # =============================================================================
 # TELEPORT APPLICATION POLICIES
@@ -167,13 +167,13 @@ spec:
     # To kube-apiserver (for k8s enrollment and kube proxy)
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
     # To external HTTPS (ACME, OIDC discovery, Teleport license check)
     - ports:
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
 
 # ACME solver: ingress from Traefik (cert-manager HTTP-01 challenge)
 ---
@@ -197,7 +197,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 # =============================================================================
 # TRAEFIK NAMESPACE POLICY (allow egress from Traefik to Teleport web UI)
@@ -237,7 +237,7 @@ spec:
             matchLabels: {{ .Values.acmeSolverLabels | toYaml | nindent 14 }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 # =============================================================================
 # HAPROXY NAMESPACE POLICY (allow egress from HAProxy to Teleport)
