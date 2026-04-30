@@ -40,9 +40,9 @@ spec:
               k8s-app: kube-dns
       ports:
         - protocol: UDP
-          port: 53
+          port: {{ .Values.dns.port }}
         - protocol: TCP
-          port: 53
+          port: {{ .Values.dns.port }}
 
 ---
 # Allow all traffic between pods inside longhorn-system
@@ -81,21 +81,21 @@ spec:
   ingress:
     - ports:
         - protocol: TCP
-          port: 8083 # webservice (Rails)
+          port: {{ .Values.gitlab.webserviceMetricsPort }} # webservice (Rails)
         - protocol: TCP
-          port: 9229 # workhorse
+          port: {{ .Values.gitlab.workhorseMetricsPort }} # workhorse
         - protocol: TCP
-          port: 9236 # gitaly
+          port: {{ .Values.gitlab.gitalyMetricsPort }} # gitaly
         - protocol: TCP
-          port: 9235 # gitlab-pages
+          port: {{ .Values.gitlab.pagesMetricsPort }} # gitlab-pages
         - protocol: TCP
-          port: 9168 # gitlab-exporter
+          port: {{ .Values.gitlab.exporterMetricsPort }} # gitlab-exporter
         - protocol: TCP
-          port: 9122 # gitlab-shell
+          port: {{ .Values.gitlab.shellMetricsPort }} # gitlab-shell
         - protocol: TCP
-          port: 5001 # registry
+          port: {{ .Values.gitlab.registryMetricsPort }} # registry
         - protocol: TCP
-          port: 3807 # sidekiq
+          port: {{ .Values.gitlab.sidekiqMetricsPort }} # sidekiq
 
 # =============================================================================
 # STORAGE POLICIES (PostgreSQL, Redis, MinIO)
@@ -127,9 +127,9 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 9000
+          port: {{ .Values.gitlab.minioApiPort }}
         - protocol: TCP
-          port: 9001
+          port: {{ .Values.gitlab.minioConsolePort }}
 
 # =============================================================================
 # GITLAB CORE POLICIES
@@ -162,14 +162,14 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8181
+          port: {{ .Values.gitlab.webservicePort }}
   egress:
     # External HTTPS (webhooks, external repos)
     - ports:
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
 
 ---
 # GitLab sidekiq: egress to storage and external
@@ -189,9 +189,9 @@ spec:
     # External HTTPS
     - ports:
         - protocol: TCP
-          port: 443
+          port: {{ .Values.external.httpsPort }}
         - protocol: TCP
-          port: 80
+          port: {{ .Values.external.httpPort }}
 
 ---
 # GitLab registry: ingress from Traefik, egress to MinIO
@@ -219,7 +219,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 5000
+          port: {{ .Values.gitlab.registryPort }}
 
 ---
 # GitLab pages: ingress from Traefik
@@ -247,7 +247,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8090
+          port: {{ .Values.gitlab.pagesPort }}
 
 ---
 # GitLab shell: ingress from HAProxy (SSH)
@@ -299,7 +299,7 @@ spec:
     # To kube-apiserver (for managing secrets/configmaps)
     - ports:
         - protocol: TCP
-          port: 6443
+          port: {{ .Values.apiserver.port }}
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge)
@@ -328,7 +328,7 @@ spec:
               app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 # =============================================================================
 # EXTERNAL NAMESPACE POLICIES
@@ -360,7 +360,7 @@ spec:
               release: {{ .Values.gitlab.releaseName }}
       ports:
         - protocol: TCP
-          port: 8181
+          port: {{ .Values.gitlab.webservicePort }}
     # To GitLab registry
     - to:
         - namespaceSelector:
@@ -372,7 +372,7 @@ spec:
               release: {{ .Values.gitlab.releaseName }}
       ports:
         - protocol: TCP
-          port: 5000
+          port: {{ .Values.gitlab.registryPort }}
     # To GitLab pages
     - to:
         - namespaceSelector:
@@ -384,7 +384,7 @@ spec:
               release: {{ .Values.gitlab.releaseName }}
       ports:
         - protocol: TCP
-          port: 8090
+          port: {{ .Values.gitlab.pagesPort }}
     # To MinIO (console)
     - to:
         - namespaceSelector:
@@ -396,9 +396,9 @@ spec:
               app.kubernetes.io/instance: gitlab-minio-{{ .Values.namespace }}
       ports:
         - protocol: TCP
-          port: 9000
+          port: {{ .Values.gitlab.minioApiPort }}
         - protocol: TCP
-          port: 9001
+          port: {{ .Values.gitlab.minioConsolePort }}
     # To ACME solver
     - to:
         - namespaceSelector:
@@ -409,7 +409,7 @@ spec:
               {{- .Values.acmeSolverLabels | toYaml | nindent 14 }}
       ports:
         - protocol: TCP
-          port: 8089
+          port: {{ .Values.acmeSolver.port }}
 
 ---
 # HAProxy egress to GitLab shell (in haproxy namespace)
