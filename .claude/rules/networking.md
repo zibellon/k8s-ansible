@@ -154,3 +154,53 @@ From `hosts-vars/k8s-base.yaml` (see [`variables.md`](variables.md) §2.1):
 | Ingress works inside VPN but not outside (expected) or outside but not inside (not expected) | Middleware attachment inverted, or `vpn_ips` misconfigured | Check `hosts-vars/vpn-rules.yaml` and `<c>_vpn_only_enabled` flag |
 | Cilium agent pods fail with "kube-proxy conflict" | Someone re-enabled kube-proxy addon | Re-run `kubeadm init` after flipping `proxy.disabled` to `false`? — NO, remove kube-proxy DaemonSet instead. See `CLAUDE.md` §0 |
 | `kubectl` to apiserver fails with TLS verification error | certSANs missing a manager's IP/DNS | `apiserver-sans-update.yaml` (see [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §2) |
+
+---
+
+## 7. Port configuration in NetworkPolicy templates
+
+Every `NetworkPolicy` / `CiliumNetworkPolicy` / `CiliumClusterwideNetworkPolicy` template under `playbook-app/charts/<c>/<phase>/templates/` references ports from the chart's `values.yaml` rather than embedding numeric literals. This avoids duplicating the same port (e.g. apiserver `6443`) across 13+ files and gives a single source of truth per chart.
+
+### 7.1 Convention
+
+- **camelCase keys, component-grouped** — matches Helm idiom and the rest of `values.yaml`.
+- **Common ports** live in shared buckets in every chart that uses them:
+  - `dns.port: 53`
+  - `apiserver.port: 6443`
+  - `acmeSolver.port: 8089`
+  - `external.httpPort: 80`, `external.httpsPort: 443`
+  - `kubelet.port: 10250` (only in charts that dial kubelet)
+- **Component-specific ports** live under a bucket named after the component, with a `<role>Port` suffix:
+  - `vault.apiPort: 8200`
+  - `argocd.serverPort: 8080`, `argocd.serverMetricsPort: 8083`
+  - `cilium.hubblePeerPort: 4244`
+- A chart only declares buckets it actually uses — no dead keys.
+- **Same port number with different semantics gets separate keys.** Example: `kubelet.port: 10250` vs `metricsServer.servicePort: 10250` in `metrics-server`; `external.httpsPort: 443` vs `cilium.hubblePeerServicePort: 443` in `cilium`.
+
+### 7.2 Usage in templates
+
+For native Kubernetes `NetworkPolicy`, the value substitutes as an integer:
+
+```yaml
+ports:
+  - protocol: TCP
+    port: {{ .Values.vault.apiPort }}
+```
+
+For Cilium `CiliumClusterwideNetworkPolicy`, the CRD types `port` as a string — wrap the substitution in quotes:
+
+```yaml
+toPorts:
+  - ports:
+      - port: "{{ .Values.external.sshPort }}"
+        protocol: TCP
+```
+
+### 7.3 Reference
+
+Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../../playbook-app/charts/teleport/pre/values.yaml) (component-grouped + common buckets, all NP literals templated). Anti-pattern: hard-coded numeric port inside any NP (see [`playbook-conventions.md`](playbook-conventions.md) §17.9).
+
+### 7.4 Out of scope
+
+- `playbook-app/charts/argocd/install/templates/argocd.yaml` — vendored upstream ArgoCD chart; embedded NP ports remain hardcoded (modifying upstream chart would break sync). Tracked in `todo.md`.
+- Migration of values from chart `values.yaml` to inventory `hosts-vars/<c>.yaml` (so operators can override per environment) — separate future task.

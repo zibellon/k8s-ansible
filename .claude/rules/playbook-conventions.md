@@ -139,6 +139,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 17.6 Helm release names that differ from the phase naming convention (`<c>-pre` / `<c>` / `<c>-post`).
 17.7 Secrets in `hosts-vars/` (committed). Always `hosts-vars-override/`.
 17.8 Editing chart templates without running through `--tags <phase>` afterwards — Helm diff may not detect the change.
+17.9 Hard-coded numeric ports inside `NetworkPolicy` / `CiliumNetworkPolicy` / `CiliumClusterwideNetworkPolicy` templates — always source ports from chart `values.yaml` using camelCase, component-grouped keys (`vault.apiPort`, `argocd.serverPort`). Common ports (DNS, apiserver, ACME solver, external HTTP/HTTPS, kubelet) live in shared per-chart buckets (`dns.port: 53`, `apiserver.port: 6443`, etc.). Reference: `playbook-app/charts/teleport/pre/values.yaml`. See [`networking.md`](networking.md) §7 for the full convention.
 
 ## 18. Checklist Before Commit
 
