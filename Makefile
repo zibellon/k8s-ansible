@@ -22,7 +22,7 @@ ensure-image:
 	@docker image inspect $(DOCKER_IMAGE) >/dev/null 2>&1 || $(MAKE) docker-build
 
 test-yamllint: ensure-image
-	@echo "TODO SUB-3"
+	$(DOCKER_RUN) yamllint -c .yamllint.yaml .
 
 test-ansible-lint: ensure-image
 	@echo "TODO SUB-4"

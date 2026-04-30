@@ -1,0 +1,37 @@
+# yamllint config for k8s-ansible
+#
+# Strategy: extends `default`, with project-specific relaxations.
+# Each relaxation is annotated with its reason. Do not add a rule
+# override without a comment explaining why.
+
+extends: default
+
+ignore: |
+  sources/
+  docs/
+  proxmox/
+  hosts-vars-override/
+  .git/
+  # Helm chart templates use Go template syntax ({{- if }}, {{- range }},
+  # {{ .Values.foo }}) that is not valid YAML — yamllint cannot parse them.
+  playbook-app/charts/**/templates/
+  # Upstream vendored CRD bundle (74 k lines); indentation style differs
+  # from what yamllint expects but is correct Kubernetes YAML.
+  playbook-app/charts/mon-system/crds/
+
+rules:
+  # Long Jinja expressions are common (e.g. multi-key Helm values).
+  # 200 chars is generous but still catches accidentally-monstrous lines.
+  line-length:
+    max: 200
+    level: warning
+
+  # Ansible idiomatically uses `yes`/`no` for booleans on task-arg
+  # values. Don't flag those — only enforce truthy on top-level keys.
+  truthy:
+    check-keys: false
+
+  # The default (2 spaces between content and the `#`) is too strict
+  # for terse inline annotations used throughout this repo.
+  comments:
+    min-spaces-from-content: 1
