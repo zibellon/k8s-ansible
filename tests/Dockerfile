@@ -1,7 +1,11 @@
-FROM python:3.12-slim
+FROM --platform=linux/amd64 python:3.12-slim
 
 RUN apt-get update \
  && apt-get install --no-install-recommends -y bash git \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update \
+ && apt-get install --no-install-recommends -y curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
@@ -14,6 +18,18 @@ RUN pip install --no-cache-dir \
 # --syntax-check has no such mechanism, so the collection is installed
 # directly. Pinned to a known stable release for reproducibility.
 RUN ansible-galaxy collection install ansible.posix:1.5.4
+
+# helm — upstream binary, pinned for reproducibility (matches install-helm.yaml)
+ARG HELM_VERSION=3.20.2
+RUN curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+    | tar -xz -C /tmp \
+ && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
+ && rm -rf /tmp/linux-amd64
+
+# kubeconform — strict K8s schema validator
+ARG KUBECONFORM_VERSION=0.7.0
+RUN curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+    | tar -xz -C /usr/local/bin kubeconform
 
 ENV ANSIBLE_LINT_CACHE_DIR=/tmp/ansible-lint-cache
 
