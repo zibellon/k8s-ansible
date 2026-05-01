@@ -160,6 +160,7 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) | Vault + ESO topology, inventory contracts (`vault_policies`, `vault_roles`, `eso_vault_integration_<c>`, `<c>_secrets`), merge tasks, SecretStore + ExternalSecret templates, seed vs rotation flows, adding a new ESO-integrated component, per-component Vault paths, troubleshooting |
 | [`commands-reference.md`](.claude/rules/commands-reference.md) | Canonical invocations — bootstrap sequence, app install order, single-phase re-runs, operational tasks (node add, drain, remove, ETCD rotation, SAN update, HAProxy update, Vault rotate, ESO force-sync), component restart, debugging one-liners, dry-run flags |
 | [`team-workflow.md`](.claude/rules/team-workflow.md) | **Manual chat mode workflow** — как user переносит SUB-task спеки и отчёты между Opus (TeamLead) и Sonnet (DevOps / DevOps-docs) chat-окнами. Роли и границы, 10-шаговый жизненный цикл, формат SUB-спеки (§4), формат отчёта (§5), verify-протокол (§6), commit-протокол (§7), TeamLead self-discipline (§8, включая §8.7 «архитектурно, не заплатки»), escalation (§9), нерушимые принципы (§10) |
+| [`testing.md`](.claude/rules/testing.md) | Layer 1 test runner — Docker image (`tests/Dockerfile`), Makefile entry point, `.yamllint.yaml` / `.ansible-lint.yml` configs, `hosts-vars-test/` synthetic inventory; commands, pinned versions, debugging. Deferred Helm/variable-resolution/snapshot layers are out of scope. |
 
 ### 3.1 Manual chat workflow — entry point
 
@@ -184,6 +185,7 @@ Workflow: один долгоживущий Opus 4.7 chat (TeamLead) + ново�
 | Understand a variable suffix | [`variables.md`](.claude/rules/variables.md) §1 |
 | Find a task include by function | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) |
 | Debug a failing install | [`commands-reference.md`](.claude/rules/commands-reference.md) §5 + per-topic "Troubleshooting" tables in other files |
+| Run tests / debug a lint failure | [`testing.md`](.claude/rules/testing.md) |
 | Setup a manual chat session (TeamLead Opus + Sonnet per SUB) | §3.1 above + [`team-workflow.md`](.claude/rules/team-workflow.md) §3 |
 
 ### 3.3 Human-facing docs (not modified by Claude)
