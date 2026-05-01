@@ -33,4 +33,10 @@ RUN curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECO
 
 ENV ANSIBLE_LINT_CACHE_DIR=/tmp/ansible-lint-cache
 
+# Set PWD so {{ lookup('env', 'PWD') }} (used by hosts-vars/ansible.yaml's
+# project_root) resolves correctly when ansible-playbook is invoked
+# directly (without an outer shell, e.g. via `docker run ... ansible-playbook`).
+# Shells normally set PWD, but Docker WORKDIR alone does not.
+ENV PWD=/repo
+
 WORKDIR /repo

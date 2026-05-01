@@ -1,5 +1,13 @@
 all:
   vars:
+    # Use the PWD env var set by the launching shell. Project invariant:
+    # all playbooks are launched from the repo root (cd <repo> first), so
+    # PWD = repo root. The Docker test image sets PWD=/repo via Dockerfile
+    # ENV so direct `docker run ... ansible-playbook` (without an outer
+    # shell) also resolves correctly. `lookup('pipe', 'pwd')` was tried
+    # but Ansible chdirs to the playbook's dir during include resolution,
+    # so pwd would return the playbook's location rather than the repo
+    # root — env-based lookup is stable.
     project_root: "{{ lookup('env', 'PWD') }}"
 
     # Explicitly set Python interpreter to avoid discovery warnings
