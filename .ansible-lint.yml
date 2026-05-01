@@ -1,0 +1,64 @@
+# ansible-lint config for k8s-ansible
+#
+# Strategy: profile `moderate` as the baseline. Stricter than `basic`
+# but realistic for a 53-playbook + 47-task-include codebase. Each
+# rule in skip_list MUST have a comment explaining why it cannot be
+# fixed without breaking project architecture (see playbook-conventions.md).
+
+profile: moderate
+
+exclude_paths:
+  - sources/
+  - docs/
+  - proxmox/
+  - hosts-vars-override/
+  - hosts-vars-test/
+  - .git/
+  # Helm chart templates use Go template syntax ({{- if }}, {{- range }},
+  # {{ .Values.foo }}) that is not valid YAML — ansible-lint cannot parse them.
+  - playbook-app/charts/
+
+# skip_list — each entry annotated with reason. Do not add without comment.
+skip_list:
+  # Task naming convention: [{{ dto_label_name }}] Description — Jinja at the
+  # START of 'name' is the project-wide logging pattern (playbook-conventions.md §7.1).
+  # Changing it would break log alignment across 47 task includes.
+  - name[template]
+
+  # playbook-app/ and playbook-system/ are playbook directories, not roles.
+  # ansible-lint incorrectly flags the directory names as invalid role names.
+  - role-name
+
+  # Task include files are YAML fragments (sequences), not standalone YAML
+  # documents. Adding '---' to 30+ includes is excessive churn with no
+  # functional benefit; yamllint already passes without it.
+  - yaml[document-start]
+
+  # The codebase uses ansible-idiomatic yes/no for boolean task arguments
+  # (changed_when: yes, check_mode: no, etc.). yamllint already relaxes this
+  # with truthy.check-keys: false. Fixing 21 occurrences across 8 system
+  # playbooks would be cosmetic-only churn.
+  - yaml[truthy]
+
+  # ansible-lint enforces 160-char default; our yamllint uses 200 as a
+  # warning-only limit. The sole violation (mon-system debug msg, 236 chars)
+  # is an informational string that cannot be meaningfully split.
+  - yaml[line-length]
+
+  # curl and systemctl are used where the recommended module does not fit:
+  #   - curl -sk in apiserver health checks (TLS-ignore semantics that
+  #     uri module cannot replicate without extra config);
+  #   - curl in official install scripts (teleport, k8s apt key);
+  #   - systemctl is-active / status for read-only multipathd/kubelet probes
+  #     (systemd module manages state, not just reads it).
+  - command-instead-of-module
+
+  # Vault token operations use shell piping (vault operator unseal |, etc.).
+  # The shell module is required here; command module does not support pipes.
+  - command-instead-of-shell
+
+# mock_modules — authorized_key is from ansible.posix which is not installed
+# in the lean test image. syntax-check[unknown-module] is unskippable, so
+# we mock the module to allow offline linting.
+mock_modules:
+  - authorized_key

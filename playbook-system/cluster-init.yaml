@@ -36,7 +36,9 @@
     # =========================================================================
     # BLOCK 1: Init tasks (only when cluster is NOT initialized)
     # =========================================================================
-    - block:
+    - name: "[cluster-init] Initialize cluster (skipped if already initialized)"
+      when: inventory_hostname == master_manager_fact and not is_cluster_init
+      block:
         # =====================================================================
         # ETCD ENCRYPTION
         # =====================================================================
@@ -95,12 +97,12 @@
           debug:
             msg: "{{ kubeadm_init_result.stdout_lines }}"
 
-      when: inventory_hostname == master_manager_fact and not is_cluster_init
-
     # =========================================================================
     # BLOCK 2: Post-init tasks (always on master manager)
     # =========================================================================
-    - block:
+    - name: "[cluster-init] Post-init (kubectl + labels + verification)"
+      when: inventory_hostname == master_manager_fact
+      block:
         # =====================================================================
         # CONFIGURE KUBECTL
         # =====================================================================
@@ -134,5 +136,3 @@
               - "{{ nodes_check.stdout_lines }}"
               - "Pods:"
               - "{{ pods_check.stdout_lines }}"
-
-      when: inventory_hostname == master_manager_fact
