@@ -110,6 +110,8 @@ k8s-ansible/
 ├── README.md, readme-*.md     ← human docs (not modified by Claude)
 ├── todo.md                    ← user's TODO list
 ├── hosts-extra.example.yaml   ← template for extensible *_extra arrays
+├── Makefile                   ← test runner entry point (Docker-based)
+├── .yamllint.yaml, .ansible-lint.yml ← lint configs
 ├── .claude/
 │   ├── prompts/               ← cold-start prompts for manual chat workflow
 │   └── rules/                 ← deep reference catalogs (atlas)
@@ -118,8 +120,10 @@ k8s-ansible/
 ├── playbook-app/              ← cluster-scoped, declarative
 │   ├── tasks/
 │   └── charts/                ← 16 local Helm-chart dirs, one per component
+├── tests/                     ← Docker-based test runner (Dockerfile + scripts)
 ├── hosts-vars/                ← base defaults (in git)
 ├── hosts-vars-override/       ← secrets + real inventory (gitignored)
+├── hosts-vars-test/           ← synthetic test inventory (committed, no secrets)
 ├── docs/                      ← DO NOT TOUCH (user constraint)
 └── sources/                   ← DO NOT TOUCH (user constraint)
 ```
@@ -159,6 +163,7 @@ This is the authoritative map of detailed documentation. Every topic beyond the 
 | [`variables.md`](.claude/rules/variables.md) | Variable patterns (Tier 1 — per-component suffix conventions, `*_extra` concat-merge, inventory precedence) and global cross-cutting catalog (Tier 2 — k8s-base, HAProxy LB, ETCD encryption, kubelet, kubeadm template, Vault, VPN, cert-manager, Teleport, inventory host vars, output facts) |
 | [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) | Vault + ESO topology, inventory contracts (`vault_policies`, `vault_roles`, `eso_vault_integration_<c>`, `<c>_secrets`), merge tasks, SecretStore + ExternalSecret templates, seed vs rotation flows, adding a new ESO-integrated component, per-component Vault paths, troubleshooting |
 | [`commands-reference.md`](.claude/rules/commands-reference.md) | Canonical invocations — bootstrap sequence, app install order, single-phase re-runs, operational tasks (node add, drain, remove, ETCD rotation, SAN update, HAProxy update, Vault rotate, ESO force-sync), component restart, debugging one-liners, dry-run flags |
+| [`report-formats.md`](.claude/rules/report-formats.md) | Канонические форматы DONE / BLOCKED / NEEDS_CLARIFICATION (§1) для отчётов DevOps/DevOps-docs → TeamLead. Запреты защитных добавок: для кода (§2 — `failed_when`/`ignore_errors`/zero-scope), для документации (§3 — лишние секции/таблицы/bullets). Строгие правила секций `Files changed`, `Verification`, `Side issues`. |
 | [`team-workflow.md`](.claude/rules/team-workflow.md) | **Manual chat mode workflow** — как user переносит SUB-task спеки и отчёты между Opus (TeamLead) и Sonnet (DevOps / DevOps-docs) chat-окнами. Роли и границы, 10-шаговый жизненный цикл, формат SUB-спеки (§4), формат отчёта (§5), verify-протокол (§6), commit-протокол (§7), TeamLead self-discipline (§8, включая §8.7 «архитектурно, не заплатки»), escalation (§9), нерушимые принципы (§10) |
 | [`testing.md`](.claude/rules/testing.md) | Layer 1 test runner — Docker image (`tests/Dockerfile`), Makefile entry point, `.yamllint.yaml` / `.ansible-lint.yml` configs, `hosts-vars-test/` synthetic inventory; commands, pinned versions, debugging. Deferred Helm/variable-resolution/snapshot layers are out of scope. |
 
