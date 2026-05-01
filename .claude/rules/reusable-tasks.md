@@ -34,8 +34,8 @@ General rules for callers:
 ### 1.3 `tasks-forbid-kube-system.yaml`
 
 - **Purpose.** Guardrail — refuses to operate on `kube-system` namespace.
-- **Input.** `dto_label_name`, `namespace_value` (the component's target namespace).
-- **Output.** Fails play if `namespace_value == "kube-system"`.
+- **Input.** `dto_label_name`, `dto_target_namespace` (the component's target namespace).
+- **Output.** Fails play if `dto_target_namespace == "kube-system"`.
 - **Callers.** Every `<c>-install.yaml` at `tags: [always]`.
 - **Idempotent.** Assertion only.
 
@@ -438,7 +438,7 @@ General rules for callers:
 - include_tasks: tasks/tasks-forbid-kube-system.yaml
   vars:
     dto_label_name: "<c>-install-pre-check"
-    namespace_value: "{{ <c>_namespace }}"
+    dto_target_namespace: "{{ <c>_namespace }}"
   tags: [always]
 
 - include_tasks: tasks/tasks-eso-secrets-merge.yaml
