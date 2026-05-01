@@ -44,6 +44,8 @@
 
 Это часть принципа Wider observation из [`team-workflow.md`](team-workflow.md) §10.5.
 
+**Строгое правило — `make test`:** если SUB-task изменяет playbook, chart, task include, inventory, `.yamllint.yaml`, `.ansible-lint.yml`, `Makefile`, `tests/` — секция `Verification` **обязана** содержать строку с результатом `make test`. Формат: `make test → exit 0` (или `make test → exit N` с описанием fail). Если SUB трогает только документацию (`.claude/rules/*.md`, `CLAUDE.md`, `todo.md`) — достаточно `make test → exit 0 (sanity)` или явного «не запускал, правки только текстовые». Документация runner'а — [`testing.md`](testing.md). Контракт TeamLead'а на запуск — [`team-workflow.md`](team-workflow.md) §6 + §8.11.
+
 ### 1.2 BLOCKED
 
 ```markdown
