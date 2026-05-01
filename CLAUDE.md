@@ -142,7 +142,7 @@ k8s-ansible/
 
 ### 2.3 Inventory layering
 
-- `hosts-vars/` — 25 files with defaults (schema + public values). In git.
+- `hosts-vars/` — 21 files with defaults (schema + public values). In git.
 - `hosts-vars-override/` — same structure, real values + secrets. Gitignored.
 - `hosts-extra.example.yaml` — committed template documenting every `*_extra` extension point. Copy what you need into `hosts-vars-override/`.
 
