@@ -338,7 +338,6 @@ TeamLead **делегирует** (не делает сам):
 - `.claude/rules/team-workflow.md`
 - `.claude/rules/report-formats.md`
 - `.claude/prompts/teamlead-cold-start.md`
-- `manual-agents-prompts.md`
 
 **Такие правки всегда выполняет TeamLead сам**, без делегации DevOps или DevOps-docs. Причины:
 
