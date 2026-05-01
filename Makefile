@@ -28,6 +28,6 @@ test-ansible-lint: ensure-image
 	$(DOCKER_RUN) ansible-lint -c .ansible-lint.yml --offline playbook-system/ playbook-app/
 
 test-syntax: ensure-image
-	@echo "TODO SUB-5"
+	$(DOCKER_RUN) bash tests/run-syntax-check.sh
 
 test: test-yamllint test-ansible-lint test-syntax
