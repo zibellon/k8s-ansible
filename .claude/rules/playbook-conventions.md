@@ -151,6 +151,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 - [ ] If a new variable was added, it is documented (either in `variables.md` if global or in `components.md` if per-component).
 - [ ] If a new task include was added, it is documented in `reusable-tasks.md`.
 - [ ] If a new task include was added, it starts with an `assert` block validating all required params (Rule 19).
+- [ ] `make test` зелёный (Docker — see [`testing.md`](testing.md)).
 
 ## 19. Parameter Validation in Task Includes
 
@@ -176,3 +177,9 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 19.6 Reference implementation: `tasks-k8s-secret-get.yaml` — full example with 5 required string params.
 
 19.7 Optional params (controlled by `when:` in the task body) do NOT need validation in the assert block. Only required params are asserted.
+
+## 20. Testing Requirement
+
+20.1 Any change to a playbook, chart, task include, inventory file, or test infrastructure requires a green `make test` before commit. The runner and configs are documented in [`testing.md`](testing.md).
+
+20.2 Tooling versions are pinned in `tests/Dockerfile`. If a playbook starts using a module from an Ansible collection that is not yet installed in the test image, add a `RUN ansible-galaxy collection install <ns>.<col>:<X.Y.Z>` line to `tests/Dockerfile` (with a pinned version), rebuild the image, and re-run `make test`. See [`testing.md`](testing.md) §7.
