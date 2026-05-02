@@ -1,34 +1,79 @@
 # =============================================================================
-# Add Helm repository and update
+# Add Helm repository (HTTP) or noop (OCI) + export chart-source as dynamic fact
 # =============================================================================
-# Params:
-#   - dto_label_name: Label prefix for task names
-#   - dto_helm_repo_name: Repository alias (e.g. "cilium", "longhorn")
-#   - dto_helm_repo_url: Repository URL
+# Params (L1, всегда required):
+#   - dto_label_name                          — log prefix
+#   - dto_helm_is_oci                         — bool, переключатель режима
+#   - dto_helm_url                            — URL репо (HTTP) ИЛИ полный chart URL (OCI)
+#   - dto_helm_chart_version                  — версия chart'а (используется в helm install в caller'е)
+#   - dto_helm_chart_source_res_fact_name     — имя output fact'а (как в tasks-eso-lookup.yaml)
+#
+# Params (L2, required только если dto_helm_is_oci=false):
+#   - dto_helm_repo_name                      — alias репо для helm repo add
+#   - dto_helm_chart_name                     — имя chart'а внутри репо
+#
+# Behavior:
+#   - HTTP (is_oci=false): helm repo add + helm repo update + set_fact (= "<repo_name>/<chart_name>")
+#   - OCI  (is_oci=true):  set_fact (= "<helm_url>"); helm repo add/update пропускаются
+#
+# Output fact (dynamic name from dto_helm_chart_source_res_fact_name):
+#   {{ dto_helm_chart_source_res_fact_name }} — готовая строка для helm upgrade --install <release> <SOURCE>
 # =============================================================================
 
-- name: "[{{ dto_label_name }}] Assert all dto params are provided"
+- name: "[{{ dto_label_name }}] Assert L1 params (always required)"
   assert:
     that:
       - dto_label_name is defined
       - dto_label_name | length > 0
+      - dto_helm_is_oci is defined
+      - dto_helm_is_oci is boolean
+      - dto_helm_url is defined
+      - dto_helm_url | length > 0
+      - dto_helm_chart_version is defined
+      - dto_helm_chart_version | length > 0
+      - dto_helm_chart_source_res_fact_name is defined
+      - dto_helm_chart_source_res_fact_name | length > 0
+    fail_msg: "tasks-add-helm-repo: L1 params required: dto_label_name, dto_helm_is_oci, dto_helm_url, dto_helm_chart_version, dto_helm_chart_source_res_fact_name"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert L2 params (required only when not OCI)"
+  assert:
+    that:
       - dto_helm_repo_name is defined
       - dto_helm_repo_name | length > 0
-      - dto_helm_repo_url is defined
-      - dto_helm_repo_url | length > 0
-    fail_msg: "tasks-add-helm-repo: all params required: dto_label_name, dto_helm_repo_name, dto_helm_repo_url"
+      - dto_helm_chart_name is defined
+      - dto_helm_chart_name | length > 0
+    fail_msg: "tasks-add-helm-repo: L2 params required when dto_helm_is_oci=false: dto_helm_repo_name, dto_helm_chart_name"
+  when: not dto_helm_is_oci
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Add Helm repository"
-  command: helm repo add {{ dto_helm_repo_name }} {{ dto_helm_repo_url }} --force-update
+- name: "[{{ dto_label_name }}] Add Helm repository (HTTP only)"
+  command: helm repo add {{ dto_helm_repo_name }} {{ dto_helm_url }} --force-update
+  when: not dto_helm_is_oci
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Update Helm repositories"
+- name: "[{{ dto_label_name }}] Update Helm repositories (HTTP only)"
   command: helm repo update
+  when: not dto_helm_is_oci
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Export chart-source fact (dynamic name)"
+  set_fact:
+    "{{ dto_helm_chart_source_res_fact_name }}": >-
+      {% if dto_helm_is_oci %}{{ dto_helm_url }}{% else %}{{ dto_helm_repo_name }}/{{ dto_helm_chart_name }}{% endif %}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Propagate chart-source fact to all hosts"
+  set_fact:
+    "{{ dto_helm_chart_source_res_fact_name }}": "{{ hostvars[master_manager_fact][dto_helm_chart_source_res_fact_name] }}"
   tags: [always]
