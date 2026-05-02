@@ -1,309 +1,232 @@
 ---
 # =============================================================================
-# Layer 2: render upstream chart values + helm template + kubeconform
+# Layer 2: validate upstream Helm charts via helm template + kubeconform.
 # =============================================================================
-# Usage (через `make test-helm`; вручную для отладки):
-#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
-#     tests/helm-validate.yaml
-#
-# Tests upstream Helm releases only (12 charts: cilium, cert-manager,
-# external-secrets, haproxy-ingress, longhorn, teleport, traefik,
-# gitlab-runner, metrics-server, zitadel, gitlab, vault-operator).
-# Local wrappers (pre/, post/, gitlab/postgresql, etc.) — out of scope.
+# Steps:
+#   PRE    — mock master_manager_fact + ESO secrets/lookups for chart values rendering.
+#   STEP 1 — helm repo add (HTTP) или set_fact OCI URL для каждого chart
+#            (через tasks-add-helm-repo.yaml).
+#   STEP 2 — ensure /tmp dirs (rendered values + templated outputs).
+#   STEP 3 — render values per chart (write chart.values to /tmp/values-rendered/<chart>.yaml).
+#   STEP 4 — helm template per chart (output to /tmp/helm-templated/<chart>.yaml).
+#   STEP 5 — kubeconform per chart (read from /tmp/helm-templated/<chart>.yaml).
+#   STEP 6 — print per-chart OK/FAIL.
+#   STEP 7 — assert: всё OK / aggregate failures.
+# Vars: см. hosts-vars-test/upstream-charts.yaml — auto-loaded via `-i hosts-vars-test/` в Makefile.
 # =============================================================================
 
-- name: "[helm-test] Validate upstream charts (render + helm template + kubeconform)"
+- name: "[helm-test] Validate upstream charts"
   hosts: localhost
   gather_facts: false
   connection: local
 
-  vars:
-    rendered_dir: /tmp/values-rendered
-
-    # Pre-declared CRD apiVersions for `helm template --api-versions`.
-    # Without a live cluster, helm cannot discover CRDs, so charts that
-    # check Capabilities.APIVersions for these would skip resources or
-    # fail. Listing them here makes the render produce the same output
-    # as a real install on a cluster that has these CRDs installed.
-    helm_template_api_versions:
-      - monitoring.coreos.com/v1   # ServiceMonitor / PrometheusRule (cilium, traefik, ...)
-
-    upstream_charts:
-      # Naming: name = release name (used in helm template).
-      # All params come from hosts-vars/<c>.yaml — no hardcode here.
-
-      - name: cilium
-        helm_chart_name: "{{ cilium_helm_chart_name }}"
-        helm_repo_name: "{{ cilium_helm_repo_name }}"
-        helm_repo_url: "{{ cilium_helm_repo_url }}"
-        chart_version: "{{ cilium_chart_version }}"
-        namespace: "{{ cilium_namespace }}"
-        values: "{{ cilium_helm_values }}"
-
-      - name: cert-manager
-        helm_chart_name: "{{ cert_manager_helm_chart_name }}"
-        helm_repo_name: "{{ cert_manager_helm_repo_name }}"
-        helm_repo_url: "{{ cert_manager_helm_repo_url }}"
-        chart_version: "v{{ cert_manager_chart_version }}"
-        namespace: "{{ cert_manager_namespace }}"
-        values: "{{ cert_manager_helm_values }}"
-
-      - name: external-secrets
-        helm_chart_name: "{{ external_secrets_helm_chart_name }}"
-        helm_repo_name: "{{ external_secrets_helm_repo_name }}"
-        helm_repo_url: "{{ external_secrets_helm_repo_url }}"
-        chart_version: "{{ external_secrets_chart_version }}"
-        namespace: "{{ external_secrets_namespace }}"
-        values: "{{ external_secrets_helm_values }}"
-
-      - name: haproxy-ingress
-        helm_chart_name: "{{ haproxy_helm_chart_name }}"
-        helm_repo_name: "{{ haproxy_helm_repo_name }}"
-        helm_repo_url: "{{ haproxy_helm_repo_url }}"
-        chart_version: "{{ haproxy_chart_version }}"
-        namespace: "{{ haproxy_namespace }}"
-        values: "{{ haproxy_helm_values }}"
-
-      - name: longhorn
-        helm_chart_name: "{{ longhorn_helm_chart_name }}"
-        helm_repo_name: "{{ longhorn_helm_repo_name }}"
-        helm_repo_url: "{{ longhorn_helm_repo_url }}"
-        chart_version: "{{ longhorn_chart_version }}"
-        namespace: "{{ longhorn_namespace }}"
-        values: "{{ longhorn_helm_values }}"
-
-      - name: teleport
-        helm_chart_name: "{{ teleport_helm_chart_name }}"
-        helm_repo_name: "{{ teleport_helm_repo_name }}"
-        helm_repo_url: "{{ teleport_helm_repo_url }}"
-        chart_version: "{{ teleport_chart_version }}"
-        namespace: "{{ teleport_namespace }}"
-        values: "{{ teleport_helm_values }}"
-
-      # traefik: SKIPPED in Layer 2 — known upstream bug.
-      # Combination of traefik chart 39.0.5 + helm 3.20.2 fails to deep-merge
-      # service.spec: the default values.yaml has `service.spec.type: LoadBalancer`,
-      # our override sets `service.spec.type: NodePort`, but the rendered Service
-      # contains BOTH keys (duplicate `type:`). K8s API server's last-wins parser
-      # makes this work in production (Service is actually NodePort), but
-      # kubeconform's strict YAML→JSON parser correctly flags the duplicate.
-      # Reproducible with even minimal `-f` overrides on a vanilla traefik chart —
-      # confirmed bug in chart's _service.tpl (toYaml of merged dict produces
-      # duplicates). Re-enable once upstream traefik chart fixes _service.tpl
-      # OR helm fixes the deep-merge for nested dicts.
-      - name: traefik
-        is_skipped: true
-        helm_chart_name: "{{ traefik_helm_chart_name }}"
-        helm_repo_name: "{{ traefik_helm_repo_name }}"
-        helm_repo_url: "{{ traefik_helm_repo_url }}"
-        chart_version: "{{ traefik_chart_version }}"
-        namespace: "{{ traefik_namespace }}"
-        values: "{{ traefik_helm_values }}"
-
-      - name: gitlab-runner
-        helm_chart_name: "{{ gitlab_runner_helm_chart_name }}"
-        helm_repo_name: "{{ gitlab_runner_helm_repo_name }}"
-        helm_repo_url: "{{ gitlab_runner_helm_repo_url }}"
-        chart_version: "{{ gitlab_runner_chart_version }}"
-        namespace: "{{ gitlab_runner_namespace }}"
-        values: "{{ gitlab_runner_helm_values }}"
-
-      - name: metrics-server
-        helm_chart_name: "{{ metrics_server_helm_chart_name }}"
-        helm_repo_name: "{{ metrics_server_helm_repo_name }}"
-        helm_repo_url: "{{ metrics_server_helm_repo_url }}"
-        chart_version: "{{ metrics_server_chart_version }}"
-        namespace: "{{ metrics_server_namespace }}"
-        values: "{{ metrics_server_helm_values }}"
-
-      - name: zitadel
-        helm_chart_name: "{{ zitadel_helm_chart_name }}"
-        helm_repo_name: "{{ zitadel_helm_repo_name }}"
-        helm_repo_url: "{{ zitadel_helm_repo_url }}"
-        chart_version: "{{ zitadel_chart_version }}"
-        namespace: "{{ zitadel_namespace }}"
-        values: "{{ zitadel_helm_values }}"
-
-      - name: gitlab
-        helm_chart_name: "{{ gitlab_helm_chart_name }}"
-        helm_repo_name: "{{ gitlab_helm_repo_name }}"
-        helm_repo_url: "{{ gitlab_helm_repo_url }}"
-        chart_version: "{{ gitlab_chart_version }}"
-        namespace: "{{ gitlab_namespace }}"
-        values: "{{ gitlab_helm_values }}"
-
-      # OCI special case — chart_url напрямую, без repo add/update.
-      - name: vault-operator
-        is_oci: true
-        chart_url: "{{ vault_operator_chart }}"
-        chart_version: "{{ vault_bank_vaults_chart_version }}"
-        namespace: "{{ vault_namespace }}"
-        values: "{{ vault_operator_helm_values }}"
-
   tasks:
-    - name: "[helm-test] Pre-set master_manager_fact for local delegation"
+    # -------------------------------------------------------------------------
+    # PRE: mocks for production tasks (ESO lookups produce facts used in
+    # chart values; master_manager_fact required by tasks-add-helm-repo.yaml).
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-pre] Set master_manager_fact = localhost (mock for production task delegation)"
       set_fact:
         master_manager_fact: localhost
       tags: [always]
 
-    - name: "[helm-test] Merge ESO secrets per component"
+    - name: "[helm-test-pre] Merge ESO secrets per component"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
       tags: [always]
 
-    - name: "[helm-test] Lookup gitlab-runner auth-token secret"
+    - name: "[helm-test-pre] Lookup gitlab-runner auth-token secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_runner_secret_name_auth_token }}"
         dto_res_fact_name_secret: "_local_gitlab_runner_secret_name_auth_token"
         dto_res_fact_name_vault_path: "_local_gitlab_runner_vault_path_auth_token"
       tags: [always]
 
-    - name: "[helm-test] Lookup gitlab-runner minio-cache-creds secret"
+    - name: "[helm-test-pre] Lookup gitlab-runner minio-cache-creds secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_runner_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_runner_secret_name_minio_cache_creds }}"
         dto_res_fact_name_secret: "_local_gitlab_runner_secret_name_minio_cache_creds"
         dto_res_fact_name_vault_path: "_local_gitlab_runner_vault_path_minio_cache_creds"
       tags: [always]
 
-    - name: "[helm-test] Lookup zitadel masterkey secret"
+    - name: "[helm-test-pre] Lookup zitadel masterkey secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
         dto_external_secret_name: "{{ zitadel_secret_name_masterkey }}"
         dto_res_fact_name_secret: "_local_zitadel_secret_name_masterkey"
         dto_res_fact_name_vault_path: "_local_zitadel_vault_path_masterkey"
       tags: [always]
 
-    - name: "[helm-test] Lookup zitadel postgresql-creds secret"
+    - name: "[helm-test-pre] Lookup zitadel postgresql-creds secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
         dto_external_secret_name: "{{ zitadel_secret_name_postgresql_creds }}"
         dto_res_fact_name_secret: "_local_zitadel_secret_name_postgresql_creds"
         dto_res_fact_name_vault_path: "_local_zitadel_vault_path_postgresql_creds"
       tags: [always]
 
-    - name: "[helm-test] Lookup gitlab postgresql-creds secret"
+    - name: "[helm-test-pre] Lookup gitlab postgresql-creds secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_postgresql_creds }}"
         dto_res_fact_name_secret: "_local_gitlab_secret_name_postgresql_creds"
         dto_res_fact_name_vault_path: "_local_gitlab_vault_path_postgresql_creds"
       tags: [always]
 
-    - name: "[helm-test] Lookup gitlab redis-creds secret"
+    - name: "[helm-test-pre] Lookup gitlab redis-creds secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_redis_creds }}"
         dto_res_fact_name_secret: "_local_gitlab_secret_name_redis_creds"
         dto_res_fact_name_vault_path: "_local_gitlab_vault_path_redis_creds"
       tags: [always]
 
-    - name: "[helm-test] Lookup gitlab backup-s3-connection-config secret"
+    - name: "[helm-test-pre] Lookup gitlab backup-s3-connection-config secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_backup_s3_connection_config }}"
         dto_res_fact_name_secret: "_local_gitlab_secret_name_backup_s3_connection_config"
         dto_res_fact_name_vault_path: "_local_gitlab_vault_path_backup_s3_connection_config"
       tags: [always]
 
-    - name: "[helm-test] Lookup gitlab registry-connection-config secret"
+    - name: "[helm-test-pre] Lookup gitlab registry-connection-config secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
       vars:
-        dto_label_name: "helm-test"
+        dto_label_name: "helm-test-pre"
         dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
         dto_external_secret_name: "{{ gitlab_secret_name_registry_connection_config }}"
         dto_res_fact_name_secret: "_local_gitlab_secret_name_registry_connection_config"
         dto_res_fact_name_vault_path: "_local_gitlab_vault_path_registry_connection_config"
       tags: [always]
 
-    - name: "[helm-test] Ensure rendered values dir exists"
-      file:
-        path: "{{ rendered_dir }}"
-        state: directory
-        mode: "0755"
-
-    - name: "[helm-test] Add upstream Helm repos (skip OCI, idempotent)"
-      command: >-
-        helm repo add {{ item.helm_repo_name | quote }}
-        {{ item.helm_repo_url | quote }} --force-update
+    # -------------------------------------------------------------------------
+    # STEP 1: helm repo add (HTTP) или set_fact OCI URL per chart.
+    # Через tasks-add-helm-repo.yaml — для is_oci=true делает только set_fact,
+    # для HTTP — helm repo add + update + set_fact. Output fact name per chart:
+    # <chart_name_with_underscores>_helm_chart_source.
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-step-1] Add Helm repo + export chart-source fact (per chart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "helm-test-step-1-{{ chart_item.name }}"
+        dto_helm_is_oci: "{{ chart_item.is_oci }}"
+        dto_helm_url: "{{ chart_item.helm_url }}"
+        dto_helm_chart_version: "{{ chart_item.helm_chart_version }}"
+        dto_helm_repo_name: "{{ chart_item.helm_repo_name }}"
+        dto_helm_chart_name: "{{ chart_item.helm_chart_name }}"
+        dto_helm_chart_source_res_fact_name: "{{ chart_item.name | replace('-', '_') }}_helm_chart_source"
       loop: "{{ upstream_charts }}"
       loop_control:
-        label: "{{ item.helm_repo_name | default(item.name) }}"
-      when: not (item.is_oci | default(false))
-      changed_when: false
+        loop_var: chart_item
+        label: "{{ chart_item.name }}"
 
-    - name: "[helm-test] helm repo update"
-      command: helm repo update
-      changed_when: false
+    # -------------------------------------------------------------------------
+    # STEP 2: ensure /tmp dirs.
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-step-2] Ensure rendered values + templated dirs"
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ rendered_dir }}"
+        - "{{ templated_dir }}"
 
-    - name: "[helm-test] Render values per upstream chart"
+    # -------------------------------------------------------------------------
+    # STEP 3: write chart values to disk per chart.
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-step-3] Render chart values to {{ rendered_dir }}/<chart>.yaml"
       copy:
-        content: "{{ item['values'] | to_nice_yaml }}"
-        dest: "{{ rendered_dir }}/{{ item.name }}.yaml"
+        content: "{{ chart_item['values'] | to_nice_yaml }}"
+        dest: "{{ rendered_dir }}/{{ chart_item.name }}.yaml"
         mode: "0644"
       loop: "{{ upstream_charts }}"
       loop_control:
-        label: "{{ item.name }}"
+        loop_var: chart_item
+        label: "{{ chart_item.name }}"
 
-    - name: "[helm-test] helm template + kubeconform per chart (handles OCI; skip flagged)"
+    # -------------------------------------------------------------------------
+    # STEP 4: helm template per chart → {{ templated_dir }}/<chart>.yaml.
+    # chart-source приходит из dynamic fact (set в STEP 1).
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-step-4] helm template per chart"
       shell: |
         set -o pipefail
-        helm template {{ item.name | quote }} \
-          {{ (item.chart_url if (item.is_oci | default(false)) else item.helm_repo_name + '/' + item.helm_chart_name) | quote }} \
-          --version {{ item.chart_version | quote }} \
-          --namespace {{ item.namespace | quote }} \
+        helm template {{ chart_item.name | quote }} \
+          {{ vars[(chart_item.name | replace('-', '_')) + '_helm_chart_source'] | quote }} \
+          --version {{ chart_item.helm_chart_version | quote }} \
+          --namespace {{ chart_item.namespace | quote }} \
           {% for av in helm_template_api_versions %}--api-versions {{ av | quote }} {% endfor %}\
-          -f {{ rendered_dir }}/{{ item.name }}.yaml \
-        | kubeconform -strict --ignore-missing-schemas -summary
+          -f {{ rendered_dir }}/{{ chart_item.name }}.yaml \
+          > {{ templated_dir }}/{{ chart_item.name }}.yaml
       args:
         executable: /bin/bash
-      register: results
       changed_when: false
-      failed_when: false
+      register: helm_template_results
       loop: "{{ upstream_charts }}"
       loop_control:
-        label: "{{ item.name }}"
-      when: not (item.is_skipped | default(false))
+        loop_var: chart_item
+        label: "{{ chart_item.name }}"
 
-    - name: "[helm-test] Per-chart status"
+    # -------------------------------------------------------------------------
+    # STEP 5: kubeconform per chart (validate templated output against K8s schemas).
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-step-5] kubeconform per chart"
+      shell: |
+        kubeconform -strict --ignore-missing-schemas -summary \
+          < {{ templated_dir }}/{{ chart_item.name }}.yaml
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      register: kubeconform_results
+      loop: "{{ upstream_charts }}"
+      loop_control:
+        loop_var: chart_item
+        label: "{{ chart_item.name }}"
+
+    # -------------------------------------------------------------------------
+    # STEP 6: print per-chart status.
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-step-6] Per-chart status"
       debug:
         msg: >-
-          {% if r.item.is_skipped | default(false) -%}
-          SKIP: {{ r.item.name }} (known upstream bug — see upstream_charts comment)
-          {%- elif r.rc == 0 -%}
-          OK:   {{ r.item.name }} ({{ (r.item.chart_url if (r.item.is_oci | default(false)) else r.item.helm_repo_name + '/' + r.item.helm_chart_name) }}:{{ r.item.chart_version }})
+          {% if r.rc == 0 -%}
+          OK:   {{ r['chart_item'].name }} ({{ vars[(r['chart_item'].name | replace('-', '_')) + '_helm_chart_source'] }}:{{ r['chart_item'].helm_chart_version }})
           {%- else -%}
-          FAIL: {{ r.item.name }} ({{ (r.item.chart_url if (r.item.is_oci | default(false)) else r.item.helm_repo_name + '/' + r.item.helm_chart_name) }}:{{ r.item.chart_version }})
+          FAIL: {{ r['chart_item'].name }} ({{ vars[(r['chart_item'].name | replace('-', '_')) + '_helm_chart_source'] }}:{{ r['chart_item'].helm_chart_version }})
           {%- endif %}
-      loop: "{{ results.results }}"
+      loop: "{{ kubeconform_results.results }}"
       loop_control:
         loop_var: r
-        label: "{{ r.item.name }}"
+        label: "{{ r['chart_item'].name }}"
 
-    - name: "[helm-test] Aggregate failures (skipped charts excluded)"
+    # -------------------------------------------------------------------------
+    # STEP 7: aggregate failures (assert all kubeconform calls returned rc=0).
+    # -------------------------------------------------------------------------
+    - name: "[helm-test-step-7] Aggregate failures"
       assert:
         that:
-          # rc is only set on tasks that actually ran; skipped tasks have no rc.
-          # Failure = any non-skipped chart with rc != 0.
-          - "(results.results | rejectattr('rc', 'undefined') | selectattr('rc', 'ne', 0) | list | length) == 0"
+          - "(kubeconform_results.results | selectattr('rc', 'ne', 0) | list | length) == 0"
         fail_msg: |
           One or more upstream charts failed validation. Per-chart stdout:
-          {% for r in results.results | rejectattr('rc', 'undefined') | selectattr('rc', 'ne', 0) %}
-          --- {{ r.item.name }} ---
+          {% for r in kubeconform_results.results | selectattr('rc', 'ne', 0) %}
+          --- {{ r['chart_item'].name }} ---
           {{ r.stdout }}
           {{ r.stderr }}
           {% endfor %}

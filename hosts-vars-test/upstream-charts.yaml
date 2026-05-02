@@ -1,0 +1,132 @@
+---
+all:
+  vars:
+    # Vars for tests/helm-validate.yaml — auto-loaded via `-i hosts-vars-test/` in Makefile test-helm.
+    # Unified schema: каждый entry имеет is_oci, helm_url, helm_repo_name, helm_chart_name,
+    # helm_chart_version, namespace, values. Для OCI (vault) поля helm_repo_name/_chart_name = "".
+
+    helm_template_api_versions:
+      - monitoring.coreos.com/v1   # ServiceMonitor / PrometheusRule
+
+    rendered_dir: /tmp/values-rendered
+    templated_dir: /tmp/helm-templated
+
+    upstream_charts:
+      - name: cilium
+        is_oci: "{{ cilium_helm_is_oci }}"
+        helm_url: "{{ cilium_helm_url }}"
+        helm_repo_name: "{{ cilium_helm_repo_name }}"
+        helm_chart_name: "{{ cilium_helm_chart_name }}"
+        helm_chart_version: "{{ cilium_helm_chart_version }}"
+        namespace: "{{ cilium_namespace }}"
+        values: "{{ cilium_helm_values }}"
+
+      - name: cert-manager
+        is_oci: "{{ cert_manager_helm_is_oci }}"
+        helm_url: "{{ cert_manager_helm_url }}"
+        helm_repo_name: "{{ cert_manager_helm_repo_name }}"
+        helm_chart_name: "{{ cert_manager_helm_chart_name }}"
+        helm_chart_version: "{{ cert_manager_helm_chart_version }}"
+        namespace: "{{ cert_manager_namespace }}"
+        values: "{{ cert_manager_helm_values }}"
+
+      - name: external-secrets
+        is_oci: "{{ external_secrets_helm_is_oci }}"
+        helm_url: "{{ external_secrets_helm_url }}"
+        helm_repo_name: "{{ external_secrets_helm_repo_name }}"
+        helm_chart_name: "{{ external_secrets_helm_chart_name }}"
+        helm_chart_version: "{{ external_secrets_helm_chart_version }}"
+        namespace: "{{ external_secrets_namespace }}"
+        values: "{{ external_secrets_helm_values }}"
+
+      - name: haproxy-ingress
+        is_oci: "{{ haproxy_helm_is_oci }}"
+        helm_url: "{{ haproxy_helm_url }}"
+        helm_repo_name: "{{ haproxy_helm_repo_name }}"
+        helm_chart_name: "{{ haproxy_helm_chart_name }}"
+        helm_chart_version: "{{ haproxy_helm_chart_version }}"
+        namespace: "{{ haproxy_namespace }}"
+        values: "{{ haproxy_helm_values }}"
+
+      - name: longhorn
+        is_oci: "{{ longhorn_helm_is_oci }}"
+        helm_url: "{{ longhorn_helm_url }}"
+        helm_repo_name: "{{ longhorn_helm_repo_name }}"
+        helm_chart_name: "{{ longhorn_helm_chart_name }}"
+        helm_chart_version: "{{ longhorn_helm_chart_version }}"
+        namespace: "{{ longhorn_namespace }}"
+        values: "{{ longhorn_helm_values }}"
+
+      - name: teleport
+        is_oci: "{{ teleport_helm_is_oci }}"
+        helm_url: "{{ teleport_helm_url }}"
+        helm_repo_name: "{{ teleport_helm_repo_name }}"
+        helm_chart_name: "{{ teleport_helm_chart_name }}"
+        helm_chart_version: "{{ teleport_helm_chart_version }}"
+        namespace: "{{ teleport_namespace }}"
+        values: "{{ teleport_helm_values }}"
+
+      # traefik: SKIPPED — known upstream bug.
+      # Combination of traefik chart 39.0.5 + helm 3.20.2 fails to deep-merge
+      # service.spec: the default values.yaml has `service.spec.type: LoadBalancer`,
+      # our override sets `service.spec.type: NodePort`, but the rendered Service
+      # contains BOTH keys (duplicate `type:`). K8s API server's last-wins parser
+      # makes this work in production (Service is actually NodePort), but
+      # kubeconform's strict YAML→JSON parser correctly flags the duplicate.
+      # Reproducible with even minimal `-f` overrides on a vanilla traefik chart —
+      # confirmed bug in chart's _service.tpl (toYaml of merged dict produces
+      # duplicates). Re-enable once upstream traefik chart fixes _service.tpl
+      # OR helm fixes the deep-merge for nested dicts.
+      # - name: traefik
+      #   is_oci: "{{ traefik_helm_is_oci }}"
+      #   helm_url: "{{ traefik_helm_url }}"
+      #   helm_repo_name: "{{ traefik_helm_repo_name }}"
+      #   helm_chart_name: "{{ traefik_helm_chart_name }}"
+      #   helm_chart_version: "{{ traefik_helm_chart_version }}"
+      #   namespace: "{{ traefik_namespace }}"
+      #   values: "{{ traefik_helm_values }}"
+
+      - name: gitlab-runner
+        is_oci: "{{ gitlab_runner_helm_is_oci }}"
+        helm_url: "{{ gitlab_runner_helm_url }}"
+        helm_repo_name: "{{ gitlab_runner_helm_repo_name }}"
+        helm_chart_name: "{{ gitlab_runner_helm_chart_name }}"
+        helm_chart_version: "{{ gitlab_runner_helm_chart_version }}"
+        namespace: "{{ gitlab_runner_namespace }}"
+        values: "{{ gitlab_runner_helm_values }}"
+
+      - name: metrics-server
+        is_oci: "{{ metrics_server_helm_is_oci }}"
+        helm_url: "{{ metrics_server_helm_url }}"
+        helm_repo_name: "{{ metrics_server_helm_repo_name }}"
+        helm_chart_name: "{{ metrics_server_helm_chart_name }}"
+        helm_chart_version: "{{ metrics_server_helm_chart_version }}"
+        namespace: "{{ metrics_server_namespace }}"
+        values: "{{ metrics_server_helm_values }}"
+
+      - name: zitadel
+        is_oci: "{{ zitadel_helm_is_oci }}"
+        helm_url: "{{ zitadel_helm_url }}"
+        helm_repo_name: "{{ zitadel_helm_repo_name }}"
+        helm_chart_name: "{{ zitadel_helm_chart_name }}"
+        helm_chart_version: "{{ zitadel_helm_chart_version }}"
+        namespace: "{{ zitadel_namespace }}"
+        values: "{{ zitadel_helm_values }}"
+
+      - name: gitlab
+        is_oci: "{{ gitlab_helm_is_oci }}"
+        helm_url: "{{ gitlab_helm_url }}"
+        helm_repo_name: "{{ gitlab_helm_repo_name }}"
+        helm_chart_name: "{{ gitlab_helm_chart_name }}"
+        helm_chart_version: "{{ gitlab_helm_chart_version }}"
+        namespace: "{{ gitlab_namespace }}"
+        values: "{{ gitlab_helm_values }}"
+
+      - name: vault-operator
+        is_oci: "{{ vault_operator_helm_is_oci }}"
+        helm_url: "{{ vault_operator_helm_url }}"
+        helm_repo_name: ""
+        helm_chart_name: ""
+        helm_chart_version: "{{ vault_operator_helm_chart_version }}"
+        namespace: "{{ vault_namespace }}"
+        values: "{{ vault_operator_helm_values }}"
