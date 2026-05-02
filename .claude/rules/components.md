@@ -54,7 +54,7 @@ Template fields:
 - **Install playbook.** `external-secrets-install.yaml`.
 - **Namespace.** `external-secrets`.
 - **Releases.** `external-secrets-pre`, `external-secrets`, `external-secrets-post`.
-- **External Helm repo.** No — local chart.
+- **External Helm repo.** `https://charts.external-secrets.io` → chart `external-secrets/external-secrets`, version `external_secrets_helm_chart_version` (default `2.3.0`). HTTP↔OCI switchable via `external_secrets_helm_is_oci`.
 - **Required vars.** `external_secrets_namespace`, `external_secrets_version`, per-sub-component tolerations/nodeSelector/affinity/resources for `controller`, `webhook`, `cert_controller`.
 - **ESO integration.** No (it *is* ESO).
 - **ServiceMonitor.** Yes.
@@ -68,7 +68,7 @@ Template fields:
 - **Install playbook.** `vault-install.yaml`.
 - **Namespace.** `vault`.
 - **Releases.** `vault-pre`, `vault` (bank-vaults operator), `vault-cr` (Vault Custom Resource), `vault-post`.
-- **External Helm repo.** No — local chart (HashiCorp chart embedded + bank-vaults operator).
+- **External Helm repo.** OCI: `oci://ghcr.io/bank-vaults/helm-charts/vault-operator` (bank-vaults operator chart), version `vault_operator_helm_chart_version` (default `1.23.4`). OCI-only via `vault_operator_helm_is_oci=true`. **Note:** the HashiCorp Vault chart itself is embedded locally in `charts/vault/`; only the bank-vaults operator is from external OCI.
 - **Required vars.** `vault_namespace`, `vault_version` (image), `vault_storage_class`, `vault_storage_size`, `vault_key_shares` (3), `vault_key_threshold` (2), `vault_policies` / `_extra`, `vault_roles` / `_extra`, `vault_auto_unseal_schedule`, `vault_creds_host_path`.
 - **ESO integration.** No (Vault is ESO's **source**, not a consumer).
 - **ServiceMonitor.** Yes.
@@ -83,7 +83,7 @@ Template fields:
 - **Install playbook.** `haproxy-install.yaml`.
 - **Namespace.** `haproxy-lb`.
 - **Releases.** `haproxy-pre`, `haproxy`, `haproxy-post`.
-- **External Helm repo.** No — local chart.
+- **External Helm repo.** `https://haproxytech.github.io/helm-charts` → chart `haproxytech/kubernetes-ingress`, version `haproxy_helm_chart_version` (default `1.49.0`). HTTP↔OCI switchable via `haproxy_helm_is_oci`.
 - **Required vars.** `haproxy_namespace`, `haproxy_helm_values`, tolerations/nodeSelector/resources, TLS/ingress vars.
 - **ESO integration.** Yes (via `eso_vault_integration_haproxy` in `hosts-vars/haproxy.yaml`; base `_secrets` empty — users fill via `_extra`).
 - **ServiceMonitor.** Yes.
@@ -113,7 +113,7 @@ Template fields:
 - **Install playbook.** `longhorn-install.yaml`.
 - **Namespace.** `longhorn-system` — **fixed upstream, cannot rename**.
 - **Releases.** `longhorn-pre`, `longhorn`, `longhorn-post`.
-- **External Helm repo.** No — local chart (upstream Longhorn values embedded).
+- **External Helm repo.** `https://charts.longhorn.io` → chart `longhorn/longhorn`, version `longhorn_helm_chart_version` (default `1.11.1`). HTTP↔OCI switchable via `longhorn_helm_is_oci`.
 - **Required vars.** `longhorn_namespace`, `longhorn_version`, `longhorn_storage_classes` (list — empty by default; populate in overrides), `longhorn_helm_values`, tolerations/nodeSelector/resources.
 - **ESO integration.** Yes (via `eso_vault_integration_longhorn` in `hosts-vars/longhorn.yaml`; base `_secrets` empty — S3 backup creds added via `_extra`).
 - **ServiceMonitor.** Yes.
@@ -153,6 +153,7 @@ Template fields:
 - **Install playbook.** `gitlab-install.yaml`.
 - **Namespace.** `gitlab`.
 - **Releases.** `gitlab-pre`, `gitlab-postgresql`, `gitlab-redis`, `gitlab-minio`, `gitlab`, `gitlab-post`.
+- **External Helm repo.** `https://charts.gitlab.io` → chart `gitlab/gitlab`, version `gitlab_helm_chart_version` (default `8.11.8`, GitLab 17.11). HTTP↔OCI switchable via `gitlab_helm_is_oci`.
 - **Required vars.** `gitlab_namespace`, `gitlab_version`, per-sibling (`gitlab_postgresql_*`, `gitlab_redis_*`, `gitlab_minio_*`) storage class + size + tolerations/nodeSelector/resources + credentials via ESO. Domain vars (`gitlab_domain`, `gitlab_registry_domain`).
 - **ESO integration.** Yes (via `eso_vault_integration_gitlab` in `hosts-vars/gitlab.yaml`) — Postgres password, Redis password, MinIO root + registry creds, GitLab root password, optional PAT tokens. Complex secrets (MinIO connection strings, registry connection YAML) use `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** Yes.
@@ -167,6 +168,7 @@ Template fields:
 - **Install playbook.** `gitlab-runner-install.yaml`.
 - **Namespace.** `gitlab-runner` (separate from `gitlab` — runners can scale independently).
 - **Releases.** `gitlab-runner-pre`, `gitlab-runner`.
+- **External Helm repo.** `https://charts.gitlab.io` → chart `gitlab/gitlab-runner`, version `gitlab_runner_helm_chart_version` (default `0.78.0`, gitlab-runner 17.11). HTTP↔OCI switchable via `gitlab_runner_helm_is_oci`.
 - **Required vars.** `gitlab_runner_namespace`, `gitlab_runner_version`, `gitlab_runner_helm_values`, tolerations/nodeSelector/resources.
 - **ESO integration.** Yes (via `eso_vault_integration_gitlab_runner` in `hosts-vars/gitlab-runner.yaml`) — registration token + S3 cache creds. The runner-token secret uses `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** No (runner itself doesn't expose metrics worth scraping).
@@ -179,6 +181,7 @@ Template fields:
 - **Install playbook.** `zitadel-install.yaml`.
 - **Namespace.** `zitadel`.
 - **Releases.** `zitadel-pre`, `zitadel-postgresql`, `zitadel`, `zitadel-post`.
+- **External Helm repo.** `https://charts.zitadel.com` → chart `zitadel/zitadel`, version `zitadel_helm_chart_version` (default `9.30.0`). HTTP↔OCI switchable via `zitadel_helm_is_oci`.
 - **Required vars.** `zitadel_namespace`, `zitadel_version`, `zitadel_postgresql_*` (storage, creds via ESO), `zitadel_domain`, `zitadel_masterkey` (in Vault via ESO).
 - **ESO integration.** Yes (via `eso_vault_integration_zitadel` in `hosts-vars/zitadel.yaml`) — Postgres password, `masterkey`.
 - **ServiceMonitor.** Yes.
@@ -191,6 +194,7 @@ Template fields:
 - **Install playbook.** `teleport-install.yaml` + companion `teleport-ssh-agent-install.yaml` (non-k8s, installs the Teleport SSH agent as a systemd unit on arbitrary hosts).
 - **Namespace.** `teleport`.
 - **Releases.** `teleport-pre`, `teleport`, `teleport-post`, `teleport-configure`.
+- **External Helm repo.** `https://charts.releases.teleport.dev` → chart `teleport/teleport-cluster`, version `teleport_helm_chart_version` (default `18.7.2`). HTTP↔OCI switchable via `teleport_helm_is_oci`.
 - **Required vars.** `teleport_namespace`, `teleport_version`, `teleport_cluster_name`, `teleport_proxy_domain`, etc. All declarative resources in `hosts-vars/teleport-configure.yaml` (each as `teleport_configure_<resource>` + `_extra`): `roles`, `users`, `bots`, `apps`, `databases`, `oidc`, `saml`, `access_lists`, `trusted_clusters`.
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
