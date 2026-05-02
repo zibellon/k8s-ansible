@@ -430,22 +430,22 @@ General rules for callers:
 ### 3.1 Beginning of an app install playbook
 
 ```yaml
-- include_tasks: tasks/tasks-pre-check.yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
   vars:
     dto_label_name: "<c>-install-pre-check"
   tags: [always]
 
-- include_tasks: tasks/tasks-forbid-kube-system.yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
   vars:
     dto_label_name: "<c>-install-pre-check"
     dto_target_namespace: "{{ <c>_namespace }}"
   tags: [always]
 
-- include_tasks: tasks/tasks-eso-secrets-merge.yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
   tags: [always]
 
 # If ingress uses ACME:
-- include_tasks: tasks/tasks-resolve-acme-solver.yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-resolve-acme-solver.yaml"
   vars:
     dto_label_name: "<c>-install-init"
     cluster_issuer_name: "{{ <c>_cluster_issuer_name }}"
@@ -459,7 +459,7 @@ General rules for callers:
 ### 3.2 Standard phase skeleton
 
 ```yaml
-- include_tasks: tasks/tasks-copy-chart.yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
   vars:
     dto_label_name: "<c>-install-<phase>"
     chart_name: "<c>-<phase>"             # or just "<c>" for install phase

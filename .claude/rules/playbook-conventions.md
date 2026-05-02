@@ -63,6 +63,18 @@ Add `--create-namespace` on the first release that targets the namespace (usuall
 
 8.1 Always use `include_tasks` (dynamic). Never `import_tasks` — tag inheritance breaks with imports.
 8.2 Tag every include with the appropriate phase: `[always]`, `[pre]`, `[install]`, `[post]`. Extras use their own tag (`[crds]`, `[operator]`, `[cr]`, etc.).
+8.3 All `include_tasks` paths MUST be absolute via `{{ project_root }}` — defined in `hosts-vars/ansible.yaml` as `{{ lookup('env', 'PWD') }}`. Format:
+```yaml
+include_tasks: "{{ project_root }}/playbook-app/tasks/<name>.yaml"      # for app
+include_tasks: "{{ project_root }}/playbook-system/tasks/<name>.yaml"   # for system
+```
+Relative forms (`tasks/X.yaml`, `tasks-X.yaml` sibling) are an anti-pattern (see §17.10) — they implicitly depend on Ansible's `playbook_dir` resolution and break when a task is included from a different location (e.g. tests reusing production tasks).
+
+8.4 **Exception — `import_playbook`**. `import_playbook` is resolved at **parse time**, before inventory variables are loaded. Therefore `{{ project_root }}` is `UNDEFINED` inside `import_playbook` and CANNOT be used. The relative form is correct here:
+```yaml
+import_playbook: setup-ssh-keys.yaml   # OK — sibling-form is the only working option
+```
+This is a fundamental Ansible limitation, not a project choice. The single user of `import_playbook` in this repo is `playbook-system/node-install.yaml`.
 
 ## 9. values-override.yaml Pattern
 
@@ -140,12 +152,14 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 17.7 Secrets in `hosts-vars/` (committed). Always `hosts-vars-override/`.
 17.8 Editing chart templates without running through `--tags <phase>` afterwards — Helm diff may not detect the change.
 17.9 Hard-coded numeric ports inside `NetworkPolicy` / `CiliumNetworkPolicy` / `CiliumClusterwideNetworkPolicy` templates — always source ports from chart `values.yaml` using camelCase, component-grouped keys (`vault.apiPort`, `argocd.serverPort`). Common ports (DNS, apiserver, ACME solver, external HTTP/HTTPS, kubelet) live in shared per-chart buckets (`dns.port: 53`, `apiserver.port: 6443`, etc.). Reference: `playbook-app/charts/teleport/pre/values.yaml`. See [`networking.md`](networking.md) §7 for the full convention.
+17.10 Relative `include_tasks: tasks/X.yaml` or sibling-form `include_tasks: tasks-X.yaml` (no prefix) — always use `{{ project_root }}/<dir>/tasks/<name>.yaml` (rule §8.3). Relative forms silently depend on Ansible's `playbook_dir` resolution rule and break when a playbook is included from a different working directory (e.g. tests reusing a production task via `include_tasks` from `tests/` directory). Exception: `import_playbook` (see §8.4 — parse-time evaluation precludes variable use).
 
 ## 18. Checklist Before Commit
 
 - [ ] Both inventories used in local test: `-i hosts-vars/ -i hosts-vars-override/`.
 - [ ] Each phase re-runs cleanly with `--tags`.
 - [ ] No new identifiers (vars, files, namespaces) that don't resolve against the repo.
+- [ ] All `include_tasks` paths use `{{ project_root }}/<dir>/tasks/<name>.yaml` (rule §8.3); no relative `tasks/X.yaml` forms.
 - [ ] `hosts-vars-override/` not committed.
 - [ ] No secret literal in any committed file.
 - [ ] If a new variable was added, it is documented (either in `variables.md` if global or in `components.md` if per-component).
