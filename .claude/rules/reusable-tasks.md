@@ -61,12 +61,18 @@ General rules for callers:
 
 ### 1.5 `tasks-add-helm-repo.yaml`
 
-- **Purpose.** `helm repo add` + `helm repo update`. Used before installing official external charts.
-- **Input.** `dto_label_name`, `helm_repo_name`, `helm_repo_url`.
-- **Validates (assert).** `dto_label_name`, `helm_repo_name`, `helm_repo_url` all defined + non-empty.
-- **Output.** Helm repo registered on the master manager.
-- **Callers.** `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml` (and any other playbook that installs from an external chart).
-- **Idempotent.** `helm repo add` with same URL is no-op; `update` is always safe.
+- **Purpose.** Universal helm chart-source preparation for both HTTP repositories and OCI registries. For HTTP: `helm repo add` + `helm repo update`. For OCI: noop (Helm 3 supports `oci://` URL natively in `helm install`). In both cases exports a dynamic fact with the chart-source string (ready for substitution into `helm upgrade --install <release> <SOURCE> ...`).
+- **Input (L1, always required).** `dto_label_name`, `dto_helm_is_oci` (bool), `dto_helm_url` (HTTP repo URL **or** full OCI chart URL), `dto_helm_chart_version`, `dto_helm_chart_source_res_fact_name` (output fact name — dynamic pattern, как в `tasks-eso-lookup.yaml`).
+- **Input (L2, required only when `dto_helm_is_oci=false`).** `dto_helm_repo_name`, `dto_helm_chart_name`.
+- **Validates (assert).** L1 — все 5 параметров defined + non-empty (`dto_helm_is_oci is boolean`). L2 — `when: not dto_helm_is_oci`, оба параметра defined + `length > 0`.
+- **Output (dynamic fact, name from `dto_helm_chart_source_res_fact_name`).**
+  - HTTP (`is_oci=false`): `<dto_helm_repo_name>/<dto_helm_chart_name>` (например `cilium/cilium`).
+  - OCI (`is_oci=true`): `<dto_helm_url>` (например `oci://ghcr.io/bank-vaults/helm-charts/vault-operator`).
+  Fact propagated to all hosts (см. шаг "Propagate chart-source fact to all hosts").
+- **Side effect (HTTP only).** `helm repo add <repo_name> <url> --force-update` + `helm repo update` on master manager. Skipped for OCI.
+- **Callers (12 install playbooks).** `cilium-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `metrics-server-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml` (vault-operator phase, is_oci=true), `zitadel-install.yaml`.
+- **Idempotent.** `helm repo add` with same URL is no-op (HTTP); `helm repo update` always safe; OCI path is pure set_fact (always safe).
+- **Pattern в caller'е.** Перед каждым external chart install вызвать task с 7 dto-параметрами (HTTP) или 5 dto-параметрами (OCI, без `dto_helm_repo_name`/`dto_helm_chart_name`); затем в helm install command подставить output fact: `helm upgrade --install <release> {{ <c>_helm_chart_source }} --version {{ <c>_helm_chart_version }} ...`. Один и тот же синтаксис для всех 12 callers, никаких Jinja-веток в playbook'ах.
 
 ### 1.6 `tasks-wait-crds.yaml`
 

@@ -19,7 +19,11 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 |---|---|---|
 | `_namespace` | K8s namespace target | `argocd_namespace: "argocd"` |
 | `_version` | App/image version | `vault_version: "1.21.2"` |
-| `_chart_version` | Helm chart version (for external charts) | `traefik_chart_version: "38.0.2"` |
+| `_helm_chart_version` | Helm chart version (for external charts; rename from legacy `_chart_version`) | `traefik_helm_chart_version: "39.0.5"` |
+| `_helm_is_oci` | Bool: HTTP repo (false) or OCI registry (true). Switches `tasks-add-helm-repo.yaml` between `helm repo add` and noop | `cilium_helm_is_oci: false`, `vault_operator_helm_is_oci: true` |
+| `_helm_url` | HTTP repo URL **or** full OCI chart URL (depending on `_helm_is_oci`). Rename from legacy `_helm_repo_url` | `cilium_helm_url: "https://helm.cilium.io/"`, `vault_operator_helm_url: "oci://ghcr.io/..."` |
+| `_helm_repo_name` | Helm repo alias for `helm repo add` (HTTP only; ignored for OCI) | `cilium_helm_repo_name: "cilium"` |
+| `_helm_chart_name` | Chart name within HTTP repo (HTTP only; ignored for OCI) | `cilium_helm_chart_name: "cilium"` |
 | `_image_registry`, `_image_repository`, `_image_tag` | Image coordinates; override registry for air-gap | `gitlab_image_registry: "registry.gitlab.com"` |
 | `_replica_count` | Replica count on Deployments | `int` |
 | `_tolerations`, `_node_selector`, `_affinity` | Scheduling | `list` / `dict` / `dict` |

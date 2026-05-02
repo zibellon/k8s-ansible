@@ -8,7 +8,7 @@ Template fields:
 - **Install playbook** — `playbook-app/<c>-install.yaml`.
 - **Namespace** — K8s namespace (and whether it is fixed by upstream).
 - **Releases** — Helm release names deployed by the install playbook.
-- **External Helm repo** — if the install phase uses an upstream chart, the `helm repo add` URL.
+- **External Helm repo** — if the install phase uses an upstream chart, the chart source: HTTP repo URL (`helm repo add` URL + chart name within) **or** full OCI chart URL (`oci://...`). Switchable per component via `<c>_helm_is_oci`. See [`reusable-tasks.md`](reusable-tasks.md) §1.5 for the unified `tasks-add-helm-repo.yaml` contract.
 - **Required vars** — key knobs from the component's `hosts-vars/<c>.yaml` (full suffix list in [`variables.md`](variables.md) §1).
 - **ESO integration** — `yes/no`; if yes, the `eso_vault_integration_<c>` object points to which Vault paths.
 - **ServiceMonitor** — whether the post phase creates one.
@@ -24,7 +24,7 @@ Template fields:
 - **Install playbook.** `cilium-install.yaml`.
 - **Namespace.** `cilium`.
 - **Releases.** `cilium-pre`, `cilium`, `cilium-post`.
-- **External Helm repo.** `https://helm.cilium.io/` → chart `cilium/cilium`, version `cilium_chart_version` (matches `cilium_version`, default `1.19.1`).
+- **External Helm repo.** `https://helm.cilium.io/` → chart `cilium/cilium`, version `cilium_helm_chart_version` (matches `cilium_version`, default `1.19.1`). HTTP↔OCI switchable via `cilium_helm_is_oci`.
 - **Required vars.** `cilium_version`, `cilium_mask_size` (21), `cilium_helm_values` (large dict — `kubeProxyReplacement: true`, `k8sServiceHost`, `k8sServicePort`, etc.), per-sub-component tolerations/nodeSelector/resources for `agent`, `operator`, `envoy`, `hubble_relay`, `hubble_ui`, `hubble_ui_domain`.
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes — per sub-component (`cilium_agent_service_monitor_enabled`, `hubble_service_monitor_enabled`, etc.).
@@ -39,7 +39,7 @@ Template fields:
 - **Install playbook.** `cert-manager-install.yaml`.
 - **Namespace.** `cert-manager`.
 - **Releases.** `cert-manager-pre`, `cert-manager`, `cert-manager-post`.
-- **External Helm repo.** `https://charts.jetstack.io` → chart `jetstack/cert-manager`, version `v{{ cert_manager_chart_version }}` (note `v` prefix).
+- **External Helm repo.** `https://charts.jetstack.io` → chart `jetstack/cert-manager`, version `{{ cert_manager_helm_chart_version }}` (default `v1.20.2`; `v` префикс хранится в значении переменной — единая нормализация). HTTP↔OCI switchable via `cert_manager_helm_is_oci`.
 - **Required vars.** `cert_manager_namespace`, `cert_manager_version`, plus per-sub-component (`cert_manager_`, `cert_manager_cainjector_`, `cert_manager_webhook_`) tolerations/nodeSelector/affinity/resources. Global `cert_manager_cluster_issuers` (list of `ClusterIssuer` specs, including `solvers[]` with `ingressClass` + `podLabels`).
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
@@ -98,8 +98,8 @@ Template fields:
 - **Install playbook.** `traefik-install.yaml`.
 - **Namespace.** `traefik-lb` (NOT `traefik`).
 - **Releases.** `traefik-pre`, `traefik`, `traefik-post`.
-- **External Helm repo.** `https://traefik.github.io/charts` → chart `traefik/traefik`, version `traefik_chart_version` (default `38.0.2`, app version `v3.6.2`).
-- **Required vars.** `traefik_namespace`, `traefik_version`, `traefik_chart_version`, `traefik_web_entrypoint`, `traefik_websecure_entrypoint`, `traefik_prometheus_port` (9200), `traefik_dashboard_domain`, DaemonSet tolerations `[{operator: "Exists"}]`.
+- **External Helm repo.** `https://traefik.github.io/charts` → chart `traefik/traefik`, version `traefik_helm_chart_version` (default `39.0.5`, app version `v3.6.2`). HTTP↔OCI switchable via `traefik_helm_is_oci`.
+- **Required vars.** `traefik_namespace`, `traefik_version`, `traefik_helm_chart_version`, `traefik_web_entrypoint`, `traefik_websecure_entrypoint`, `traefik_prometheus_port` (9200), `traefik_dashboard_domain`, DaemonSet tolerations `[{operator: "Exists"}]`.
 - **ESO integration.** Yes (via `eso_vault_integration_traefik` in `hosts-vars/traefik.yaml`; base `_secrets` empty — users add via `_extra` for custom TLS / basic-auth).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager.
