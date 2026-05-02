@@ -219,6 +219,7 @@ Template fields:
 - **Install playbook.** `metrics-server-install.yaml`.
 - **Namespace.** `kube-system`. Exceptional — uses `kube-system` because metrics-server is a cluster-scoped API aggregator. The `tasks-forbid-kube-system` guard is bypassed inside this playbook specifically.
 - **Releases.** `metrics-server-pre`, `metrics-server`.
+- **External Helm repo.** `https://kubernetes-sigs.github.io/metrics-server/` → chart `metrics-server/metrics-server`, version `metrics_server_helm_chart_version` (default `3.13.0`). HTTP↔OCI switchable via `metrics_server_helm_is_oci`.
 - **Required vars.** `metrics_server_version`, tolerations/nodeSelector/resources.
 - **ESO integration.** No.
 - **ServiceMonitor.** No.
