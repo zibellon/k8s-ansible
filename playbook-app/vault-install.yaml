@@ -93,6 +93,16 @@
     # STEP 2: INSTALL vault-operator (bank-vaults operator via OCI)
     # =========================================================================
 
+    - name: "[vault-operator] Add Helm repository"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "vault-operator"
+        dto_helm_is_oci: "{{ vault_operator_helm_is_oci }}"
+        dto_helm_url: "{{ vault_operator_helm_url }}"
+        dto_helm_chart_version: "{{ vault_operator_helm_chart_version }}"
+        dto_helm_chart_source_res_fact_name: "vault_operator_helm_chart_source"
+      tags: [operator]
+
     - name: "[vault-operator] Create values file"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
       vars:
@@ -107,11 +117,11 @@
       vars:
         dto_label_name: "vault-operator"
         dto_helm_command: >
-          helm upgrade --install vault-operator {{ vault_operator_chart }}
+          helm upgrade --install vault-operator {{ vault_operator_helm_chart_source }}
           --namespace {{ vault_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/vault/operator/values-override.yaml
-          --version {{ vault_bank_vaults_chart_version }}
+          --version {{ vault_operator_helm_chart_version }}
           --cleanup-on-fail
           --atomic
           --wait
