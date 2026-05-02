@@ -55,7 +55,7 @@ Template fields:
 - **Namespace.** `external-secrets`.
 - **Releases.** `external-secrets-pre`, `external-secrets`, `external-secrets-post`.
 - **External Helm repo.** `https://charts.external-secrets.io` → chart `external-secrets/external-secrets`, version `external_secrets_helm_chart_version` (default `2.3.0`). HTTP↔OCI switchable via `external_secrets_helm_is_oci`.
-- **Required vars.** `external_secrets_namespace`, `external_secrets_version`, per-sub-component tolerations/nodeSelector/affinity/resources for `controller`, `webhook`, `cert_controller`.
+- **Required vars.** `external_secrets_namespace`, `external_secrets_helm_chart_version`, `external_secrets_image_tag`, per-sub-component tolerations/nodeSelector/affinity/resources for `controller`, `webhook`, `cert_controller`.
 - **ESO integration.** No (it *is* ESO).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager.
@@ -114,7 +114,7 @@ Template fields:
 - **Namespace.** `longhorn-system` — **fixed upstream, cannot rename**.
 - **Releases.** `longhorn-pre`, `longhorn`, `longhorn-post`.
 - **External Helm repo.** `https://charts.longhorn.io` → chart `longhorn/longhorn`, version `longhorn_helm_chart_version` (default `1.11.1`). HTTP↔OCI switchable via `longhorn_helm_is_oci`.
-- **Required vars.** `longhorn_namespace`, `longhorn_version`, `longhorn_storage_classes` (list — empty by default; populate in overrides), `longhorn_helm_values`, tolerations/nodeSelector/resources.
+- **Required vars.** `longhorn_namespace`, `longhorn_helm_chart_version`, `longhorn_image_tag`, `longhorn_storage_classes` (list — empty by default; populate in overrides), `longhorn_helm_values`, tolerations/nodeSelector/resources.
 - **ESO integration.** Yes (via `eso_vault_integration_longhorn` in `hosts-vars/longhorn.yaml`; base `_secrets` empty — S3 backup creds added via `_extra`).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault. Node prep via `playbook-system/longhorn-prepare.yaml` (kernel modules `iscsi_tcp`, `dm_crypt`; packages `open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`).
@@ -154,7 +154,7 @@ Template fields:
 - **Namespace.** `gitlab`.
 - **Releases.** `gitlab-pre`, `gitlab-postgresql`, `gitlab-redis`, `gitlab-minio`, `gitlab`, `gitlab-post`.
 - **External Helm repo.** `https://charts.gitlab.io` → chart `gitlab/gitlab`, version `gitlab_helm_chart_version` (default `8.11.8`, GitLab 17.11). HTTP↔OCI switchable via `gitlab_helm_is_oci`.
-- **Required vars.** `gitlab_namespace`, `gitlab_version`, per-sibling (`gitlab_postgresql_*`, `gitlab_redis_*`, `gitlab_minio_*`) storage class + size + tolerations/nodeSelector/resources + credentials via ESO. Domain vars (`gitlab_domain`, `gitlab_registry_domain`).
+- **Required vars.** `gitlab_namespace`, `gitlab_helm_chart_version`, per-sibling (`gitlab_postgresql_*`, `gitlab_redis_*`, `gitlab_minio_*`) storage class + size + tolerations/nodeSelector/resources + credentials via ESO + per-sibling image tags. Domain vars (`gitlab_domain`, `gitlab_registry_domain`).
 - **ESO integration.** Yes (via `eso_vault_integration_gitlab` in `hosts-vars/gitlab.yaml`) — Postgres password, Redis password, MinIO root + registry creds, GitLab root password, optional PAT tokens. Complex secrets (MinIO connection strings, registry connection YAML) use `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
@@ -169,7 +169,7 @@ Template fields:
 - **Namespace.** `gitlab-runner` (separate from `gitlab` — runners can scale independently).
 - **Releases.** `gitlab-runner-pre`, `gitlab-runner`.
 - **External Helm repo.** `https://charts.gitlab.io` → chart `gitlab/gitlab-runner`, version `gitlab_runner_helm_chart_version` (default `0.78.0`, gitlab-runner 17.11). HTTP↔OCI switchable via `gitlab_runner_helm_is_oci`.
-- **Required vars.** `gitlab_runner_namespace`, `gitlab_runner_version`, `gitlab_runner_helm_values`, tolerations/nodeSelector/resources.
+- **Required vars.** `gitlab_runner_namespace`, `gitlab_runner_helm_chart_version`, `gitlab_runner_image_tag`, `gitlab_runner_helm_values`, tolerations/nodeSelector/resources.
 - **ESO integration.** Yes (via `eso_vault_integration_gitlab_runner` in `hosts-vars/gitlab-runner.yaml`) — registration token + S3 cache creds. The runner-token secret uses `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** No (runner itself doesn't expose metrics worth scraping).
 - **Dependencies.** `gitlab` (for runner registration token).
@@ -182,7 +182,7 @@ Template fields:
 - **Namespace.** `zitadel`.
 - **Releases.** `zitadel-pre`, `zitadel-postgresql`, `zitadel`, `zitadel-post`.
 - **External Helm repo.** `https://charts.zitadel.com` → chart `zitadel/zitadel`, version `zitadel_helm_chart_version` (default `9.30.0`). HTTP↔OCI switchable via `zitadel_helm_is_oci`.
-- **Required vars.** `zitadel_namespace`, `zitadel_version`, `zitadel_postgresql_*` (storage, creds via ESO), `zitadel_domain`, `zitadel_masterkey` (in Vault via ESO).
+- **Required vars.** `zitadel_namespace`, `zitadel_helm_chart_version`, `zitadel_image_tag`, `zitadel_postgresql_*` (storage, creds via ESO), `zitadel_domain`, `zitadel_masterkey` (in Vault via ESO).
 - **ESO integration.** Yes (via `eso_vault_integration_zitadel` in `hosts-vars/zitadel.yaml`) — Postgres password, `masterkey`.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
@@ -195,7 +195,7 @@ Template fields:
 - **Namespace.** `teleport`.
 - **Releases.** `teleport-pre`, `teleport`, `teleport-post`, `teleport-configure`.
 - **External Helm repo.** `https://charts.releases.teleport.dev` → chart `teleport/teleport-cluster`, version `teleport_helm_chart_version` (default `18.7.2`). HTTP↔OCI switchable via `teleport_helm_is_oci`.
-- **Required vars.** `teleport_namespace`, `teleport_version`, `teleport_cluster_name`, `teleport_proxy_domain`, etc. All declarative resources in `hosts-vars/teleport-configure.yaml` (each as `teleport_configure_<resource>` + `_extra`): `roles`, `users`, `bots`, `apps`, `databases`, `oidc`, `saml`, `access_lists`, `trusted_clusters`.
+- **Required vars.** `teleport_namespace`, `teleport_helm_chart_version` (image versions auto-set by chart `appVersion`), `teleport_cluster_name`, `teleport_proxy_domain`, etc. All declarative resources in `hosts-vars/teleport-configure.yaml` (each as `teleport_configure_<resource>` + `_extra`): `roles`, `users`, `bots`, `apps`, `databases`, `oidc`, `saml`, `access_lists`, `trusted_clusters`.
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, traefik.
@@ -217,10 +217,10 @@ Template fields:
 
 - **Chart path.** `charts/metrics-server/{pre,install}/` (no `post/`).
 - **Install playbook.** `metrics-server-install.yaml`.
-- **Namespace.** `kube-system`. Exceptional — uses `kube-system` because metrics-server is a cluster-scoped API aggregator. The `tasks-forbid-kube-system` guard is bypassed inside this playbook specifically.
+- **Namespace.** `metrics-server`.
 - **Releases.** `metrics-server-pre`, `metrics-server`.
 - **External Helm repo.** `https://kubernetes-sigs.github.io/metrics-server/` → chart `metrics-server/metrics-server`, version `metrics_server_helm_chart_version` (default `3.13.0`). HTTP↔OCI switchable via `metrics_server_helm_is_oci`.
-- **Required vars.** `metrics_server_version`, tolerations/nodeSelector/resources.
+- **Required vars.** `metrics_server_helm_chart_version`, `metrics_server_image_tag`, tolerations/nodeSelector/resources.
 - **ESO integration.** No.
 - **ServiceMonitor.** No.
 - **Dependencies.** Cilium.
