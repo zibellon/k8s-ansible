@@ -11,17 +11,18 @@ all:
     # Прекол в том, что нельзя указать таг (версию). Она подставляется автоматически: из helm-chart-app-version
     #
     # СБ должна загрузить следующие образы (только хост меняется, пути остаются оригинальными):
-    #   <host>/gravitational/teleport-distroless:v<teleport_chart_version>   (auth + proxy pods)
-    #   <host>/gravitational/teleport-operator:v<teleport_chart_version>     (operator pod)
+    #   <host>/gravitational/teleport-distroless:v<teleport_helm_chart_version>   (auth + proxy pods)
+    #   <host>/gravitational/teleport-operator:v<teleport_helm_chart_version>     (operator pod)
     teleport_image_registry_host: "public.ecr.aws"
     # ---------
     # ---------
     teleport_namespace: "teleport"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
-    teleport_helm_repo_url: "https://charts.releases.teleport.dev"
+    teleport_helm_is_oci: false
+    teleport_helm_url: "https://charts.releases.teleport.dev"
     teleport_helm_repo_name: "teleport"
     teleport_helm_chart_name: "teleport-cluster"
-    teleport_chart_version: "18.7.2"
+    teleport_helm_chart_version: "18.7.2"
     # Timeouts
     teleport_pre_helm_timeout: "5m"
     teleport_install_helm_timeout: "10m"
@@ -87,9 +88,9 @@ all:
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
     # Helm chart values
     # ВАЖНО: tag для teleport-distroless / teleport-operator НЕ задаётся —
-    # teleport-cluster chart автоматически подставляет appVersion (= teleport_chart_version)
+    # teleport-cluster chart автоматически подставляет appVersion (= teleport_helm_chart_version)
     # через helper {{ include "teleport-cluster.version" . }}.
-    # Т.е. обновление версии Teleport = bump teleport_chart_version (строка 17).
+    # Т.е. обновление версии Teleport = bump teleport_helm_chart_version (строка 17).
     teleport_helm_values:
       image: "{{ teleport_image_registry_host }}/gravitational/teleport-distroless"
       clusterName: "{{ teleport_cluster_name }}"

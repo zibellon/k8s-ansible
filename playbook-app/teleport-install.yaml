@@ -100,8 +100,12 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
       vars:
         dto_label_name: "teleport-install"
+        dto_helm_is_oci: "{{ teleport_helm_is_oci }}"
+        dto_helm_url: "{{ teleport_helm_url }}"
+        dto_helm_chart_version: "{{ teleport_helm_chart_version }}"
         dto_helm_repo_name: "{{ teleport_helm_repo_name }}"
-        dto_helm_repo_url: "{{ teleport_helm_repo_url }}"
+        dto_helm_chart_name: "{{ teleport_helm_chart_name }}"
+        dto_helm_chart_source_res_fact_name: "teleport_helm_chart_source"
       tags: [install]
 
     - name: "[teleport-install] Create values file"
@@ -118,11 +122,11 @@
       vars:
         dto_label_name: "teleport-install"
         dto_helm_command: >
-          helm upgrade --install teleport {{ teleport_helm_repo_name }}/{{ teleport_helm_chart_name }}
+          helm upgrade --install teleport {{ teleport_helm_chart_source }}
           --namespace {{ teleport_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/teleport/install/values-override.yaml
-          --version {{ teleport_chart_version }}
+          --version {{ teleport_helm_chart_version }}
           --cleanup-on-fail
           --atomic
           --wait

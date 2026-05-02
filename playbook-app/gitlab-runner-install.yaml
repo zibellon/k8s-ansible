@@ -287,8 +287,12 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
       vars:
         dto_label_name: "gitlab-runner-install"
+        dto_helm_is_oci: "{{ gitlab_runner_helm_is_oci }}"
+        dto_helm_url: "{{ gitlab_runner_helm_url }}"
+        dto_helm_chart_version: "{{ gitlab_runner_helm_chart_version }}"
         dto_helm_repo_name: "{{ gitlab_runner_helm_repo_name }}"
-        dto_helm_repo_url: "{{ gitlab_runner_helm_repo_url }}"
+        dto_helm_chart_name: "{{ gitlab_runner_helm_chart_name }}"
+        dto_helm_chart_source_res_fact_name: "gitlab_runner_helm_chart_source"
       tags: [install]
 
     - name: "[gitlab-runner-install] Install via Helm (async)"
@@ -296,11 +300,11 @@
       vars:
         dto_label_name: "gitlab-runner-install"
         dto_helm_command: >
-          helm upgrade --install gitlab-runner {{ gitlab_runner_helm_repo_name }}/{{ gitlab_runner_helm_chart_name }}
+          helm upgrade --install gitlab-runner {{ gitlab_runner_helm_chart_source }}
           --namespace {{ gitlab_runner_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/gitlab-runner/install/values-override.yaml
-          --version {{ gitlab_runner_chart_version }}
+          --version {{ gitlab_runner_helm_chart_version }}
           --cleanup-on-fail
           --atomic
           --wait
@@ -350,7 +354,7 @@
           - "=============================================="
           - "Namespace:       {{ gitlab_runner_namespace }}"
           - "GitLab URL:      https://{{ gitlab_ui_domain }}"
-          - "Runner chart:    gitlab/gitlab-runner {{ gitlab_runner_chart_version }}"
+          - "Runner chart:    gitlab/gitlab-runner {{ gitlab_runner_helm_chart_version }}"
           - "Executor:        kubernetes"
           - "Cache:           S3 (gitlab-minio.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:9000)"
           - ""
