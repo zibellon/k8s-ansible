@@ -230,7 +230,6 @@ Per-file source of truth in parentheses.
 | `vault_storage_size` | Default `"2Gi"` |
 | `vault_creds_host_path` | `/etc/kubernetes/vault-unseal.json` — unseal creds on every manager |
 | `vault_rekey_temp_file_path` | Temp-файл на `master_manager_fact`, куда `vault-rotate.yaml` пишет новые unseal keys + root token между `vault operator rekey` и обновлением K8s Secret. Default `/etc/kubernetes/vault-rekey-in-progress.json`. Формат — как у `vault_creds_host_path`. Удаляется в конце успешного rotate. Наличие при старте playbook'а = recovery-режим. |
-| `vault_auto_unseal_schedule` | Cron for auto-unseal CronJob (default `"*/5 * * * *"`) |
 | `vault_policies` / `vault_policies_extra` | Vault ACL policy definitions |
 | `vault_roles` / `vault_roles_extra` | Kubernetes-auth role bindings (SA + ns → policies) |
 | `eso_vault_integration_<c>` | One object per ESO-integrated component; lives in `hosts-vars/<c>.yaml` (not `vault.yaml`) — see `secrets-and-eso.md` |
