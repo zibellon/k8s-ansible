@@ -40,7 +40,7 @@ Template fields:
 - **Namespace.** `cert-manager`.
 - **Releases.** `cert-manager-pre`, `cert-manager`, `cert-manager-post`.
 - **External Helm repo.** `https://charts.jetstack.io` → chart `jetstack/cert-manager`, version `{{ cert_manager_helm_chart_version }}` (default `v1.20.2`; `v` префикс хранится в значении переменной — единая нормализация). HTTP↔OCI switchable via `cert_manager_helm_is_oci`.
-- **Required vars.** `cert_manager_namespace`, `cert_manager_version`, plus per-sub-component (`cert_manager_`, `cert_manager_cainjector_`, `cert_manager_webhook_`) tolerations/nodeSelector/affinity/resources. Global `cert_manager_cluster_issuers` (list of `ClusterIssuer` specs, including `solvers[]` with `ingressClass` + `podLabels`).
+- **Required vars.** `cert_manager_namespace`, `cert_manager_helm_chart_version`, `cert_manager_image_tag`, plus per-sub-component (`cert_manager_`, `cert_manager_cainjector_`, `cert_manager_webhook_`) tolerations/nodeSelector/affinity/resources. Global `cert_manager_cluster_issuers` (list of `ClusterIssuer` specs, including `solvers[]` with `ingressClass` + `podLabels`).
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium (CNI). Traefik (if using HTTP-01).
@@ -69,7 +69,7 @@ Template fields:
 - **Namespace.** `vault`.
 - **Releases.** `vault-pre`, `vault` (bank-vaults operator), `vault-cr` (Vault Custom Resource), `vault-post`.
 - **External Helm repo.** OCI: `oci://ghcr.io/bank-vaults/helm-charts/vault-operator` (bank-vaults operator chart), version `vault_operator_helm_chart_version` (default `1.23.4`). OCI-only via `vault_operator_helm_is_oci=true`. **Note:** the HashiCorp Vault chart itself is embedded locally in `charts/vault/`; only the bank-vaults operator is from external OCI.
-- **Required vars.** `vault_namespace`, `vault_version` (image), `vault_storage_class`, `vault_storage_size`, `vault_key_shares` (3), `vault_key_threshold` (2), `vault_policies` / `_extra`, `vault_roles` / `_extra`, `vault_auto_unseal_schedule`, `vault_creds_host_path`.
+- **Required vars.** `vault_namespace`, `vault_image_tag` (Vault server image), `vault_operator_helm_chart_version` (bank-vaults operator chart), `vault_bank_vaults_version` (bank-vaults image), `vault_storage_class`, `vault_storage_size`, `vault_key_shares` (3), `vault_key_threshold` (2), `vault_policies` / `_extra`, `vault_roles` / `_extra`, `vault_auto_unseal_schedule`, `vault_creds_host_path`.
 - **ESO integration.** No (Vault is ESO's **source**, not a consumer).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets (ESO before Vault so SecretStores + ExternalSecrets can resolve as Vault comes up), longhorn (for PVC storage class).
@@ -139,7 +139,7 @@ Template fields:
 - **Namespace.** `argocd` — **fixed upstream, cannot rename**.
 - **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`.
 - **External Helm repo.** No — local chart (upstream values embedded).
-- **Required vars.** `argocd_namespace`, `argocd_version`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_session_duration` (120h), `argocd_reconciliation_timeout` (30s), ConfigMap extras (`argocd_cm_extra`, `argocd_cm_cmd_params_extra`, `argocd_cm_gpg_keys_extra`, `argocd_cm_notifications_extra`, `argocd_cm_rbac_extra`, `argocd_cm_ssh_known_hosts_extra`, `argocd_cm_tls_certs_extra`), `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`.
+- **Required vars.** `argocd_namespace`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_session_duration` (120h), `argocd_reconciliation_timeout` (30s), ConfigMap extras (`argocd_cm_extra`, `argocd_cm_cmd_params_extra`, `argocd_cm_gpg_keys_extra`, `argocd_cm_notifications_extra`, `argocd_cm_rbac_extra`, `argocd_cm_ssh_known_hosts_extra`, `argocd_cm_tls_certs_extra`), `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`.
 - **ESO integration.** Yes (via `eso_vault_integration_argocd` in `hosts-vars/argocd.yaml`; admin password + git-ops repo credentials). The same `_secrets` list carries both types: plain admin-password entries and git-ops repo entries (which set `body.target.template.metadata.labels: argocd.argoproj.io/secret-type: repo-creds` or `repository` to let ArgoCD recognise them as repository credentials).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
@@ -208,7 +208,7 @@ Template fields:
 - **Install playbook.** `medik8s-install.yaml`.
 - **Namespace.** `medik8s`.
 - **Releases.** `medik8s-pre`, `medik8s`, `medik8s-post`.
-- **Required vars.** `medik8s_namespace`, `medik8s_version`, NHC (NodeHealthCheck) + SNR (Self-Node-Remediation) config.
+- **Required vars.** `medik8s_namespace`, NHC (NodeHealthCheck) + SNR (Self-Node-Remediation) config.
 - **ESO integration.** No.
 - **Dependencies.** Cilium. Kernel module `softdog` enabled on nodes via `playbook-system/server-prepare.yaml` (blacklist-aware — uses a unit-service `modprobe` strategy rather than dropping a file in `/etc/modules-load.d/`).
 - **Notes.** NodeHealthCheck operator + Self-Node-Remediation for hardware-failure auto-healing.
