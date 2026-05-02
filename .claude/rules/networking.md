@@ -109,7 +109,7 @@ Traefik HTTP-01 challenges create solver pods that must be matched by `NetworkPo
 In the `pre` phase, include the resolver with `tags: [always]` so facts are available for every phase run:
 
 ```yaml
-- include_tasks: tasks/tasks-resolve-acme-solver.yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-resolve-acme-solver.yaml"
   vars:
     dto_label_name: "<c>-install-init"
     cluster_issuer_name: "{{ <c>_cluster_issuer_name }}"

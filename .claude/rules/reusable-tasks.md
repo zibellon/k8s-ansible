@@ -463,7 +463,7 @@ General rules for callers:
   vars:
     dto_label_name: "<c>-install-<phase>"
     chart_name: "<c>-<phase>"             # or just "<c>" for install phase
-    chart_local_src: "{{ playbook_dir }}/charts/<c>/<phase>/"   # trailing / required
+    chart_local_src: "{{ project_root }}/playbook-app/charts/<c>/<phase>/"   # trailing / required
     chart_remote_dest: "{{ remote_charts_dir }}/<c>/<phase>"    # no trailing /
   tags: [<phase>]
 
