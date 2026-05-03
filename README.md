@@ -27,7 +27,51 @@
 Все доступные переменные — в `hosts-vars/`.
 
 ## Выполнить команду: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
-## Покажит основную информацию по всем node
+## Покажет основную информацию по всем node
+
+# ------
+# Опционально: подключение через bastion (SSH ProxyJump)
+# ------
+## Когда применимо
+1. У основных node НЕТ публичных IP (например, облачная приватная VPC)
+2. Доступен только bastion-сервер с белым IP
+3. С bastion видны все node по приватной сети
+4. SSH-ключ оператора уже есть И на bastion, И на всех node
+
+## Как настроить
+В `hosts-vars-override/hosts.yaml` под `all.vars` добавить bastion-параметры. На группах `managers` / `workers` переопределить `ansible_ssh_common_args` с `ProxyJump`. Поле `ansible_host` каждой node должно быть приватным IP (обычно совпадает с `internal_ip`).
+
+## Multi-cluster
+Каждый `hosts-vars-override-<cluster>/` живёт независимо: один override-каталог может содержать bastion-блок, другой — нет. Никаких глобальных правок в репозитории.
+
+Пример:
+```yaml
+all:
+  vars:
+    bastion_host: "<public-ip-or-dns>"
+    bastion_user: ubuntu
+  children:
+    managers:
+      vars:
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
+      hosts:
+        k8s-manager-1:
+          ansible_host: 10.0.0.10
+          ansible_user: ubuntu
+          internal_ip: "10.0.0.10"
+          api_server_advertise_address: "10.0.0.10"
+          is_master: true
+    workers:
+      vars:
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
+      hosts:
+        k8s-worker-1:
+          ansible_host: 10.0.0.20
+          ansible_user: ubuntu
+          internal_ip: "10.0.0.20"
+```
+
+Полный закомментированный skeleton — в конце `hosts-vars/hosts.yaml`.
 
 # ------
 # Подготовка_1
@@ -382,7 +426,7 @@
   - Ставится: operator, vault-0 (CRDs, StatefulSet)
 - Обновление
   - все устанавливается через официальный helm-chart
-  - НО RBAC - почему-то решили ставить отдельно. Почему - зашадка
+  - НО RBAC - почему-то решили ставить отдельно. Почему - загадка
   - собрать официальный yaml: `kubectl kustomize https://github.com/bank-vaults/vault-operator/deploy/rbac > vault-rbac-official.yaml`
   - поправить содержимое под HELM
   - перенести в `playbook-app/charts/vault/pre`
