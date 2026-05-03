@@ -3,6 +3,13 @@
 # =============================================================================
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/install-helm.yaml --limit k8s-manager-1
+#
+# This playbook:
+#   1. Pre-check: skip if helm already installed (idempotent short-circuit)
+#   2. Install method:
+#      - "url" (default): download tarball from helm_url, extract, copy
+#      - "local_tarball" (offline): copy tarball from pkgs-sources/, extract, copy
+#   3. Verify helm version
 # =============================================================================
 
 ---
@@ -22,20 +29,34 @@
       failed_when: false
 
     # =========================================================================
-    # INSTALL HELM
+    # ASSERT INSTALL METHOD
+    # =========================================================================
+    - name: "[install-helm] assert install method"
+      assert:
+        that:
+          - helm_install_method in ["url", "local_tarball"]
+          - (helm_install_method != "url") or (helm_url is defined and helm_url | length > 0)
+          - (helm_install_method != "local_tarball") or (helm_local_tarball_path is defined and helm_local_tarball_path | length > 0)
+
+    # =========================================================================
+    # INSTALL — url branch
     # =========================================================================
     - name: Download Helm
       get_url:
         url: "{{ helm_url }}"
         dest: /tmp/helm.tar.gz
-      when: helm_pre_check.rc != 0
+      when:
+        - helm_pre_check.rc != 0
+        - helm_install_method == "url"
 
     - name: Extract Helm
       unarchive:
         src: /tmp/helm.tar.gz
         dest: /tmp
         remote_src: yes
-      when: helm_pre_check.rc != 0
+      when:
+        - helm_pre_check.rc != 0
+        - helm_install_method == "url"
 
     - name: Install Helm to /usr/local/bin
       copy:
@@ -43,7 +64,9 @@
         dest: /usr/local/bin/helm
         mode: '0755'
         remote_src: yes
-      when: helm_pre_check.rc != 0
+      when:
+        - helm_pre_check.rc != 0
+        - helm_install_method == "url"
 
     - name: Cleanup temp files
       file:
@@ -52,7 +75,25 @@
       loop:
         - /tmp/helm.tar.gz
         - /tmp/linux-amd64
-      when: helm_pre_check.rc != 0
+      when:
+        - helm_pre_check.rc != 0
+        - helm_install_method == "url"
+
+    # =========================================================================
+    # INSTALL — local_tarball branch (offline, AirGap-friendly)
+    # =========================================================================
+    - name: Install Helm from local tarball
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-tarball-install.yaml"
+      vars:
+        dto_label_name: "install-helm"
+        dto_tarball_local_path: "{{ helm_local_tarball_path }}"
+        dto_extract_dest: "/tmp"
+        dto_binary_src_path: "/tmp/linux-amd64/helm"
+        dto_binary_install_path: "/usr/local/bin/helm"
+        dto_extracted_dir_to_cleanup: "/tmp/linux-amd64"
+      when:
+        - helm_pre_check.rc != 0
+        - helm_install_method == "local_tarball"
 
     # =========================================================================
     # VERIFICATION

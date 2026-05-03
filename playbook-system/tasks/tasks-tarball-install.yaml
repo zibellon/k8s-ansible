@@ -1,0 +1,59 @@
+---
+# =============================================================================
+# tasks-tarball-install.yaml — install a single binary from a local tarball
+# =============================================================================
+# Required params:
+#   dto_label_name              — log prefix string
+#   dto_tarball_local_path      — path to .tar.gz on control machine
+#                                 (relative to project_root)
+#   dto_extract_dest            — directory on the target host to extract into
+#   dto_binary_src_path         — full path to the binary on the target host
+#                                 after extraction
+#   dto_binary_install_path     — final install path (e.g. /usr/local/bin/helm)
+#   dto_extracted_dir_to_cleanup — top-level extracted directory to remove
+#                                  during cleanup
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] assert tarball-install params"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_tarball_local_path is defined
+      - dto_tarball_local_path | length > 0
+      - dto_extract_dest is defined
+      - dto_extract_dest | length > 0
+      - dto_binary_src_path is defined
+      - dto_binary_src_path | length > 0
+      - dto_binary_install_path is defined
+      - dto_binary_install_path | length > 0
+      - dto_extracted_dir_to_cleanup is defined
+      - dto_extracted_dir_to_cleanup | length > 0
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Copy tarball to {{ dto_extract_dest }}"
+  copy:
+    src: "{{ project_root }}/{{ dto_tarball_local_path }}"
+    dest: "{{ dto_extract_dest }}/{{ dto_tarball_local_path | basename }}"
+    mode: '0644'
+
+- name: "[{{ dto_label_name }}] Extract tarball"
+  unarchive:
+    src: "{{ dto_extract_dest }}/{{ dto_tarball_local_path | basename }}"
+    dest: "{{ dto_extract_dest }}"
+    remote_src: yes
+
+- name: "[{{ dto_label_name }}] Install binary to {{ dto_binary_install_path }}"
+  copy:
+    src: "{{ dto_binary_src_path }}"
+    dest: "{{ dto_binary_install_path }}"
+    mode: '0755'
+    remote_src: yes
+
+- name: "[{{ dto_label_name }}] Cleanup tarball and extracted dir"
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ dto_extract_dest }}/{{ dto_tarball_local_path | basename }}"
+    - "{{ dto_extracted_dir_to_cleanup }}"
