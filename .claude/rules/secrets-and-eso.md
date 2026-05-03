@@ -137,8 +137,8 @@ Note: `external_secret_name` and `body.target.name` both reference the same `<c>
             config: |
               s3:
                 bucket: registry
-                accesskey: {% raw %}{{ .access_key }}{% endraw %}
-                secretkey: {% raw %}{{ .secret_key }}{% endraw %}
+                accesskey: {% raw %}{{ .access_key }}{% endraw +%}
+                secretkey: {% raw %}{{ .secret_key }}{% endraw +%}
                 regionendpoint: https://minio.example.com
                 region: us-east-1
                 v4auth: true
@@ -153,7 +153,7 @@ Note: `external_secret_name` and `body.target.name` both reference the same `<c>
             property: secret_key
 ```
 
-**`{% raw %}{% endraw %}` rule:** ESO template placeholders like `{{ .access_key }}` inside `body` values must be wrapped in `{% raw %}...{% endraw %}` to prevent Ansible/Jinja2 from interpreting them during inventory loading. Affects: `gitlab` (registry_connection_config, backup_s3_connection_config) and `gitlab-runner` (runner_token).
+**`{% raw %}{% endraw +%}` rule:** ESO template placeholders like `{{ .access_key }}` inside `body` values must be wrapped in `{% raw %}...{% endraw +%}` to prevent Ansible/Jinja2 from interpreting them during inventory loading. The `+%}` modifier is **required** when the closing tag sits inside a multi-line block scalar (e.g. `data: connection: |`): without it, Ansible's `trim_blocks=True` strips the newline after `{% endraw %}` and the next inventory line gets glued onto the same line, producing invalid YAML in the rendered K8s Secret. Inline form `key: "{% raw %}{{ .x }}{% endraw %}"` (closing tag followed by `"` before the newline) does NOT need `+%}` because the quote guards the newline. Affects: `gitlab` (registry_connection_config, backup_s3_connection_config — `+%}` required) and `gitlab-runner` (runner_token — inline quoted form, plain `{% endraw %}` is fine).
 
 **Special ArgoCD `body.target.template.metadata.labels`:** Git-ops repo credentials require ArgoCD-specific labels so that ArgoCD recognises them as repository credentials:
 - Pattern credentials (wildcard URL match): `argocd.argoproj.io/secret-type: repo-creds`
