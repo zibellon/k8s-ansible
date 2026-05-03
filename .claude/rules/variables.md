@@ -301,6 +301,38 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 |---|---|---|
 | `remote_charts_dir` | `"/opt/helm-charts"` | Where charts are rsynced on the master manager |
 
+### 2.13 Bastion / SSH ProxyJump (optional)
+
+Optional opt-in connection mode for environments where manager/worker nodes have no public IP and are reachable only via a bastion host (e.g. cloud VPC). Activated by defining `bastion_host` + `bastion_user` in `hosts-vars-override/hosts.yaml` under `all.vars`, and overriding `ansible_ssh_common_args` on the `managers` / `workers` groups with a `ProxyJump` clause. In this mode `ansible_host` is a private IP for every node (typically equal to `internal_ip`).
+
+| Variable | Scope | Purpose |
+|---|---|---|
+| `bastion_host` | `all.vars` (override only) | Public IP / DNS of the bastion host |
+| `bastion_user` | `all.vars` (override only) | SSH user on the bastion |
+
+Activation pattern in `hosts-vars-override/hosts.yaml`:
+
+```yaml
+all:
+  vars:
+    bastion_host: "<public-ip-or-dns>"
+    bastion_user: "ubuntu"
+  children:
+    managers:
+      vars:
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
+      hosts: ...
+    workers:
+      vars:
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
+      hosts: ...
+```
+
+Notes:
+- **Opt-in.** If `bastion_host` / `bastion_user` are absent from overrides, the inventory operates in classic public-IP mode — the global `ansible_ssh_common_args` from `hosts-vars/ansible.yaml` applies, no `ProxyJump`.
+- **Multi-cluster.** Each `hosts-vars-override-<cluster>/` directory selects its own scheme independently — no global state in the repo.
+- **Skeleton example.** See the commented-out template at the end of [`hosts-vars/hosts.yaml`](../../hosts-vars/hosts.yaml).
+
 ---
 
 ## 3. Conventions For New Variables
