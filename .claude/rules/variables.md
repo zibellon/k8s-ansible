@@ -282,7 +282,7 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 
 ### 2.11 Output facts (runtime-only, produced by tasks)
 
-| Fact | Produced by | Consumed where |
+| Variable | Produced by | Consumed where |
 |---|---|---|
 | `master_manager_fact` | `tasks-set-master-manager.yaml` (via `tasks-pre-check.yaml` / `tasks-gather-cluster-facts.yaml`) | Every `delegate_to:` in `playbook-app/` |
 | `is_master_manager_exist` | `tasks-set-master-manager.yaml` | Guards in bootstrap plays |
