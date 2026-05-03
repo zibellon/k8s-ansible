@@ -51,3 +51,61 @@ all:
         #     - "lh-worker"
         #     - "lh-major"
         #     - "lh-minor"
+
+# =============================================================================
+# Bastion / SSH ProxyJump scheme (optional — alternative to the public-IP
+# scheme above). Use when manager/worker nodes have NO public IP and are
+# reachable only via a bastion host (e.g. cloud VPC).
+#
+# The two schemes are mutually exclusive per hosts-vars-override/ directory:
+#   - Public-IP scheme: ansible_host = public IP, no ProxyJump (see above).
+#   - Bastion scheme:   ansible_host = private IP (== internal_ip),
+#                       ProxyJump injected via ansible_ssh_common_args at
+#                       the managers/workers group level.
+#
+# Multi-cluster: each hosts-vars-override-<cluster>/ chooses its own scheme.
+# Operator's SSH key must be present on the bastion AND on all nodes.
+#
+# Below — fully commented-out example. Copy the structure into your
+# hosts-vars-override/hosts.yaml and fill real values. Do NOT uncomment here:
+# this file is the committed skeleton.
+# =============================================================================
+
+# all:
+#   vars:
+#     bastion_host: "<public-ip-or-dns-of-bastion>"
+#     bastion_user: ubuntu
+#   children:
+#     managers:
+#       vars:
+#         ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
+#       hosts:
+#         k8s-manager-1:
+#           ansible_host: 10.0.0.10           # private IP (== internal_ip)
+#           ansible_user: ubuntu
+#           ansible_password: "some-password-123"
+#           new_hostname: k8s-manager-1
+#           is_master: true
+#           internal_ip: "10.0.0.10"
+#           api_server_advertise_address: "10.0.0.10"
+#           api_server_bind_port: 6443
+#           longhorn_node_tags:
+#             - "lh-manager"
+#             - "lh-major"
+#
+#     workers:
+#       vars:
+#         ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
+#       hosts:
+#         k8s-worker-1:
+#           ansible_host: 10.0.0.20           # private IP (== internal_ip)
+#           ansible_user: ubuntu
+#           ansible_password: "some-password-789"
+#           new_hostname: k8s-worker-1
+#           internal_ip: "10.0.0.20"
+#           node_labels:
+#             - "node-role.kubernetes.io/worker="
+#           longhorn_node_tags:
+#             - "lh-worker"
+#             - "lh-major"
+#             - "lh-minor"
