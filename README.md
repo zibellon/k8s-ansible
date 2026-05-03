@@ -121,6 +121,23 @@ all:
    10. После этого делать: `... join ...`
 
 # ------
+# Подготовка_3. haproxy-api-server-lb
+# ------
+## Официальный способ установки haproxy (как linux-service) - через PPA (LaunchPad)
+## Адрес PPA - могут быть заблокированы -> все будет падать по timeout
+## Как устанавливать по другому
+## 1 - скачать нужную версию haproxy в формает deb пакета: 
+## Зайти на сайт: `https://launchpad.net/~vbernat`
+## Выбрать нужную версию haproxy: `https://launchpad.net/~vbernat/+archive/ubuntu/haproxy-3.2/+packages`
+## Скачатьнужный пакет для архитектуры сервера и версии ubuntu (пример ниже для: Ubuntu 24.04, amd64)
+## wget https://launchpad.net/~vbernat/+archive/ubuntu/haproxy-3.2/+files/haproxy_3.2.17-1ppa1~noble_amd64.deb
+## 2 - скачанный файл положить в директорию pkgs-sources
+## 3 - в hosts-vars указать такие переменные
+## - `haproxy_apiserver_lb_install_method: "local_deb"`
+## - `haproxy_apiserver_lb_local_deb_path: "pkgs-sources/haproxy_3.2.17-1ppa1~noble_amd64.deb"`
+## 4 - запускать установку. теперь haproxy будет установлен через копирование локального deb пакета
+
+# ------
 # Важно про `namespace`
 # ------
 ## Сменить namespace МОЖНО для любых компонентов

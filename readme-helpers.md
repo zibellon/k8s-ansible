@@ -8,6 +8,14 @@
 - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/setup-ssh-keys.yaml`
 
 # ---
+# Получение информации из Nanespace. Много всего разного
+# ---
+## Все namespaces:
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-info.yaml`
+## Только указанные:
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-info.yaml --tags vault,argocd`
+
+# ---
 # Шифрование ETCD. Ротация ключей
 # ---
 ## api-server, на каждой control-plane будет перезапущен 3 раза (так сказано в официальной документации)
