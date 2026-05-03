@@ -16,7 +16,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
 **Rules (see `CLAUDE.md` §0 and [`playbook-conventions.md`](playbook-conventions.md) §3):**
 
 - **Always** both inventory dirs: `-i hosts-vars/ -i hosts-vars-override/`
-- `--limit` **required** for system playbooks (enforced by `tasks-require-limit.yaml`)
+- `--limit` **required** for **node-scoped** system playbooks (enforced by `tasks-require-limit.yaml`); cluster-wide rolling-update plays (`apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`) run on all nodes via `serial: 1` and don't take `--limit`
 - `--limit` **not required** for app playbooks (cluster-scoped, delegate to master manager)
 - Use `--tags <phase>` to re-run a single phase (`pre`, `install`, `post`, etc.)
 
@@ -248,7 +248,7 @@ ansible-playbook ... --check --diff
 
 See `CLAUDE.md` §0 (Hard Invariants) and [`playbook-conventions.md`](playbook-conventions.md) §17 (Anti-patterns) for the full list. Quick ones:
 
-- **Forgetting `--limit`** — system playbooks fail the `tasks-require-limit.yaml` gate
+- **Forgetting `--limit` on a node-scoped system playbook** — fails the `tasks-require-limit.yaml` gate; cluster-wide rolling-update plays are exempt by design (see [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §6)
 - **Running with only one inventory** — defaults missing OR real hosts missing, both broken
 - **Running `app/` with `--limit`** — harmless but pointless (app plays delegate to master regardless)
 - **Parallel manager joins** — breaks ETCD quorum; always one at a time

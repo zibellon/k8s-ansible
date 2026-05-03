@@ -330,6 +330,8 @@ Used in three places:
 
 All three rely on `tasks-gather-cluster-facts.yaml` at the top to skip un-joined hosts.
 
+Note: these three playbooks intentionally do **not** use `tasks-require-limit.yaml` — they operate cluster-wide via `serial: 1` (running with `--limit <single-host>` would defeat the rolling-update purpose). This is by design, not an oversight.
+
 ---
 
 ## 7. Recovery Matrix (quick reference)
