@@ -132,13 +132,49 @@ all:
 # Важно про `haproxy-apiserver-lb`
 # ------
 ## В конфиге указаны ip адреса всех manager-node + балансировка между ними
-## Запускается как `linux systemd service` (apt install haproxy) на каждой node в кластере
+## Запускается как `linux systemd service` на каждой node в кластере (установка через `apt`: PPA по умолчанию или локальный `.deb` — см. секцию ниже)
 ## Версия пакета зафиксирована в hosts.yaml (haproxy_apiserver_lb_package_version) и заморожена через apt-mark hold
 ## Чтобы обновить конфиг на всех нодах (например при добавлении нового manager):
 - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
   - Обновляет /etc/haproxy/haproxy.cfg
   - делает `systemctl reload haproxy` последовательно (serial: 1)
   - reload — graceful, без разрыва TCP соединений
+
+# ------
+# Опционально: установка HAProxy из локального `.deb` (offline / AirGap)
+# ------
+## Когда применимо
+1. Установка через PPA нестабильна (timeout, сетевые проблемы к launchpad.net)
+2. Сценарий AirGap — закрытый контур без выхода в интернет к PPA
+3. Нужна полная независимость HAProxy-пакета от внешней сети
+
+## Где взять `.deb`
+- Сайт vbernat PPA: `https://launchpad.net/~vbernat/+archive/ubuntu/haproxy-3.3/+packages`
+- Скачать `.deb` под нужную Ubuntu-версию (focal/jammy/noble) и архитектуру (обычно amd64)
+
+## Куда положить
+- В директорию `pkgs-sources/` в корне репозитория
+- Эта директория содержит только `.gitkeep` (в git), а сами `.deb` файлы — в `.gitignore`
+- Имя файла свободное (например `haproxy_3.3.0-1ppa1~jammy_amd64.deb`)
+
+## Как переключить
+В `hosts-vars-override/hosts.yaml` под `all.vars` (или в любом файле override) задать:
+```yaml
+all:
+  vars:
+    haproxy_apiserver_lb_install_method: "local_deb"
+    haproxy_apiserver_lb_local_deb_path: "pkgs-sources/haproxy_3.3.0-1ppa1~jammy_amd64.deb"
+```
+
+## Что произойдёт
+1. Ansible скопирует `.deb` с локальной машины на сервер (`/tmp/<basename>.deb`)
+2. `apt update` обновит cache (нужно для resolve зависимостей)
+3. `apt install -y /tmp/<basename>.deb` установит пакет (зависимости резолвятся через стандартные Ubuntu-mirrors — обычно стабильны в РФ)
+4. `apt-mark hold haproxy` зафиксирует версию
+5. Временный `.deb` на сервере удалится
+
+## Замечание
+Этот режим закрывает только сам HAProxy-пакет. Зависимости (`libc6`, `libssl3` и т.п.) всё ещё резолвятся через стандартные Ubuntu apt-mirrors. Полный AirGap для остальных deb-пакетов (kubeadm, kubelet, kubectl) — отдельная задача (`tasks-deb-install.yaml` подготовлен как reusable примитив для этого).
 
 # ------
 # Важно про VAULT + ESO

@@ -314,7 +314,7 @@ General rules for callers:
 
 ---
 
-## 2. `playbook-system/tasks/` (16 tasks)
+## 2. `playbook-system/tasks/` (17 tasks)
 
 ### 2.1 Guard / preflight
 
@@ -428,6 +428,17 @@ General rules for callers:
 - **Purpose.** Wait until `haproxy_apiserver_lb_host:haproxy_apiserver_lb_port` accepts connections.
 - **Callers.** `node-install.yaml`, `haproxy-apiserver-lb-update.yaml`.
 - **Idempotent.** Read-only wait.
+
+### 2.5 Package install
+
+#### `tasks-deb-install.yaml`
+
+- **Purpose.** Install a local `.deb` package on a target host: copy from control machine, refresh apt cache, install via `apt: deb:` (auto-resolves dependencies via standard Ubuntu repos), `apt-mark hold`, then cleanup. Designed as a reusable primitive for offline / AirGap-friendly installations of deb packages.
+- **Input.** `dto_label_name` (string, log prefix), `dto_deb_local_path` (string, path relative to `project_root`), `dto_apt_mark_hold_pkg_name` (string, package name to hold).
+- **Validates (assert).** All 3 params defined + non-empty. Tag `[always]`.
+- **Output.** Package installed and held; `/tmp/<basename>.deb` removed after install.
+- **Callers.** `playbook-system/haproxy-apiserver-lb.yaml` (when `haproxy_apiserver_lb_install_method: local_deb`).
+- **Idempotent.** Yes — `apt: deb:` is a no-op if the same package version is already installed.
 
 ---
 

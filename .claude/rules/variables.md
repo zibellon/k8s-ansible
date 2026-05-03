@@ -189,7 +189,9 @@ Per-file source of truth in parentheses.
 | `haproxy_apiserver_lb_host` | `"127.0.0.1"` | Bind address on each node |
 | `haproxy_apiserver_lb_port` | `16443` | Frontend port (apiserver LB) |
 | `haproxy_apiserver_lb_healthz_port` | `16444` | HTTP `/healthz` endpoint |
-| `haproxy_apiserver_lb_package_version` | `"3.3"` | Pinned apt version |
+| `haproxy_apiserver_lb_package_version` | `"3.3"` | Pinned apt version (used when `install_method: ppa`) |
+| `haproxy_apiserver_lb_install_method` | `"ppa"` | Install method: `"ppa"` (default — vbernat PPA) or `"local_deb"` (offline) |
+| `haproxy_apiserver_lb_local_deb_path` | `""` | Path to local `.deb` relative to `project_root` (used only when `install_method: local_deb`) |
 
 ### 2.3 ETCD encryption (`hosts-vars/k8s-base.yaml`)
 

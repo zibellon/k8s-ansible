@@ -32,7 +32,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 | `longhorn-prepare.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`), modules (`iscsi_tcp`, `dm_crypt`). |
 | `cilium-prepare.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
 | `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
-| `haproxy-apiserver-lb.yaml` | Install HAProxy (apt, pinned version `haproxy_apiserver_lb_package_version`, held), render `/etc/haproxy/haproxy.cfg`, enable+start service. |
+| `haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
 | `install-helm.yaml` | Managers only — install the `helm` binary. |
 | `install-k9s.yaml` | Managers only — install `k9s`. |
 
