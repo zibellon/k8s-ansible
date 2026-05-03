@@ -6,10 +6,13 @@
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb.yaml --limit k8s-worker-1
 #
 # This playbook:
-#   1. Installs haproxy via apt (pinned version, held from upgrades)
-#   2. Creates /etc/haproxy/haproxy.cfg with all manager IPs
-#   3. Enables and starts the haproxy systemd service
-#   4. Waits for haproxy healthz to be ready
+#   1. Installs haproxy:
+#      - method "ppa": vbernat PPA via apt (default — backward compat)
+#      - method "local_deb": local .deb file from pkgs-sources/ (offline)
+#   2. Holds haproxy version (apt-mark hold)
+#   3. Creates /etc/haproxy/haproxy.cfg with all manager IPs
+#   4. Enables and starts the haproxy systemd service
+#   5. Waits for haproxy healthz to be ready
 # =============================================================================
 
 ---
@@ -20,30 +23,52 @@
 
   tasks:
     # =========================================================================
-    # HAPROXY APT REPOSITORY
+    # ASSERT INSTALL METHOD
+    # =========================================================================
+    - name: "[haproxy-apiserver-lb] assert install method"
+      assert:
+        that:
+          - haproxy_apiserver_lb_install_method in ["ppa", "local_deb"]
+          - (haproxy_apiserver_lb_install_method != "ppa") or (haproxy_apiserver_lb_package_version is defined and haproxy_apiserver_lb_package_version | length > 0)
+          - (haproxy_apiserver_lb_install_method != "local_deb") or (haproxy_apiserver_lb_local_deb_path is defined and haproxy_apiserver_lb_local_deb_path | length > 0)
+
+    # =========================================================================
+    # INSTALL — PPA branch (default, backward compat)
     # =========================================================================
     - name: Install software-properties-common
       apt:
         name: software-properties-common
         state: present
         install_recommends: false
+      when: haproxy_apiserver_lb_install_method == "ppa"
 
     - name: Add HAProxy PPA
       command: add-apt-repository -y ppa:vbernat/haproxy-{{ haproxy_apiserver_lb_package_version }}
       changed_when: false
+      when: haproxy_apiserver_lb_install_method == "ppa"
 
-    # =========================================================================
-    # INSTALL HAPROXY
-    # =========================================================================
     - name: Install haproxy
       apt:
         name: "haproxy={{ haproxy_apiserver_lb_package_version }}*"
         state: present
         update_cache: true
+      when: haproxy_apiserver_lb_install_method == "ppa"
 
     - name: Hold haproxy version
       command: apt-mark hold haproxy
       changed_when: false
+      when: haproxy_apiserver_lb_install_method == "ppa"
+
+    # =========================================================================
+    # INSTALL — local_deb branch (offline, AirGap-friendly)
+    # =========================================================================
+    - name: Install haproxy from local .deb
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
+      vars:
+        dto_label_name: "haproxy-apiserver-lb"
+        dto_deb_local_path: "{{ haproxy_apiserver_lb_local_deb_path }}"
+        dto_apt_mark_hold_pkg_name: "haproxy"
+      when: haproxy_apiserver_lb_install_method == "local_deb"
 
     - name: Enable haproxy service
       systemd:

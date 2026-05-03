@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# tasks-deb-install.yaml — install local .deb package on a target host
+# =============================================================================
+# Required params:
+#   dto_label_name             — log prefix string
+#   dto_deb_local_path         — path to .deb on control machine
+#                                (relative to project_root)
+#   dto_apt_mark_hold_pkg_name — apt package name to hold after install
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] assert deb-install params"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_deb_local_path is defined
+      - dto_deb_local_path | length > 0
+      - dto_apt_mark_hold_pkg_name is defined
+      - dto_apt_mark_hold_pkg_name | length > 0
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Copy .deb to /tmp"
+  copy:
+    src: "{{ project_root }}/{{ dto_deb_local_path }}"
+    dest: "/tmp/{{ dto_deb_local_path | basename }}"
+    mode: '0644'
+
+- name: "[{{ dto_label_name }}] Update apt cache"
+  apt:
+    update_cache: true
+
+- name: "[{{ dto_label_name }}] Install .deb via apt"
+  apt:
+    deb: "/tmp/{{ dto_deb_local_path | basename }}"
+    state: present
+
+- name: "[{{ dto_label_name }}] apt-mark hold {{ dto_apt_mark_hold_pkg_name }}"
+  command: "apt-mark hold {{ dto_apt_mark_hold_pkg_name }}"
+  changed_when: false
+
+- name: "[{{ dto_label_name }}] Cleanup /tmp .deb"
+  file:
+    path: "/tmp/{{ dto_deb_local_path | basename }}"
+    state: absent
