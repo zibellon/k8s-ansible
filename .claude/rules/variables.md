@@ -167,6 +167,8 @@ Per-file source of truth in parentheses.
 | `cni_plugins_download_host` | `"https://github.com"` | Download host for CNI plugins bundle — AirGap override |
 | `helm_version` | `"v3.20.2"` | Helm binary version |
 | `helm_download_host` | `"https://get.helm.sh"` | Download host for Helm tarball — AirGap override |
+| `helm_install_method` | `"url"` | Install method: `"url"` (default — download from `helm_url`) or `"local_tarball"` (offline) |
+| `helm_local_tarball_path` | `""` | Path to local Helm tarball relative to `project_root` (used only when `helm_install_method: local_tarball`) |
 | `k9s_version` | `"v0.50.18"` | k9s binary version |
 | `k9s_download_host` | `"https://github.com"` | Download host for k9s .deb — AirGap override |
 | `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |

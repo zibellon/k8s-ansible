@@ -314,7 +314,7 @@ General rules for callers:
 
 ---
 
-## 2. `playbook-system/tasks/` (17 tasks)
+## 2. `playbook-system/tasks/` (18 tasks)
 
 ### 2.1 Guard / preflight
 
@@ -439,6 +439,15 @@ General rules for callers:
 - **Output.** Package installed and held; `/tmp/<basename>.deb` removed after install.
 - **Callers.** `playbook-system/haproxy-apiserver-lb.yaml` (when `haproxy_apiserver_lb_install_method: local_deb`).
 - **Idempotent.** Yes — `apt: deb:` is a no-op if the same package version is already installed.
+
+#### `tasks-tarball-install.yaml`
+
+- **Purpose.** Install a single binary from a local `.tar.gz` tarball: copy from control machine, extract on the target host, copy the binary to its final install path with mode `0755`, then cleanup the tarball and the extracted directory. Designed as a reusable primitive for offline / AirGap-friendly installations of single-binary tarball-distributed tools.
+- **Input.** `dto_label_name` (string, log prefix), `dto_tarball_local_path` (string, path relative to `project_root`), `dto_extract_dest` (string, directory on target host where to extract), `dto_binary_src_path` (string, full path to the binary on the target host after extraction), `dto_binary_install_path` (string, final install path), `dto_extracted_dir_to_cleanup` (string, top-level extracted directory to remove during cleanup).
+- **Validates (assert).** All 6 params defined + non-empty. Tag `[always]`.
+- **Output.** Binary installed at `dto_binary_install_path` with mode `0755`; tarball and extracted directory removed.
+- **Callers.** `playbook-system/install-helm.yaml` (when `helm_install_method: local_tarball`).
+- **Idempotent.** Yes — `copy` and `unarchive` overwrite if the source content differs; cleanup is `state: absent`.
 
 ---
 
