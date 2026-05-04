@@ -19,6 +19,13 @@ RUN pip install --no-cache-dir \
 # directly. Pinned to a known stable release for reproducibility.
 RUN ansible-galaxy collection install ansible.posix:1.5.4
 
+# community.general is required for the `archive` module used in
+# playbook-app/tasks/tasks-copy-chart.yaml. ansible-lint mocks the
+# module via mock_modules; ansible-playbook --syntax-check has no
+# such mechanism, so the collection is installed directly. Pinned
+# to a known stable release for reproducibility.
+RUN ansible-galaxy collection install community.general:12.6.0
+
 # helm — upstream binary, pinned for reproducibility (matches install-helm.yaml)
 ARG HELM_VERSION=3.20.2
 RUN curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
