@@ -32,7 +32,7 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 |---|---|
 | `make help` | List available targets |
 | `make docker-build` | Build the test image (`k8s-ansible-test:local`) |
-| `make test` | Run all three checks (yamllint + ansible-lint + syntax) |
+| `make test` | Run all four checks (yamllint + ansible-lint + syntax + helm) |
 | `make test-yamllint` | yamllint only |
 | `make test-ansible-lint` | ansible-lint only |
 | `make test-syntax` | ansible-playbook --syntax-check only |
