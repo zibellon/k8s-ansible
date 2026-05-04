@@ -2,7 +2,6 @@ DOCKER_IMAGE := k8s-ansible-test:local
 DOCKER_RUN  := docker run --rm \
                -v "$(CURDIR):/repo:ro" \
                --tmpfs /tmp:rw,exec,size=100M \
-               -w /repo \
                $(DOCKER_IMAGE)
 
 .PHONY: help docker-build ensure-image test test-yamllint test-ansible-lint test-syntax test-helm
