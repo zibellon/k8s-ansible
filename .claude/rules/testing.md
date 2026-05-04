@@ -14,7 +14,7 @@ Layer 1 + Layer 2 run four tools, gated by a single `make test` target:
 
 - **yamllint** — every YAML file in the repo (with project-aware ignores).
 - **ansible-lint** (profile: `moderate`) — every playbook in `playbook-system/` and `playbook-app/`.
-- **ansible-playbook --syntax-check** — every playbook in `playbook-system/` and `playbook-app/`, with both `-i hosts-vars/` and `-i hosts-vars-test/`.
+- **ansible-playbook --syntax-check** — every playbook in `playbook-system/` and `playbook-app/`, plus every task-file in their `tasks/` subdirectories (wrapped in a temporary `import_tasks` playbook because bare task-files are not valid Plays). With both `-i hosts-vars/` and `-i hosts-vars-test/`.
 - **helm template + kubeconform** — для каждого upstream Helm release (`<repo>/<chart>` или `oci://...`), который мы устанавливаем в production. Render values from `hosts-vars/` через ansible (production tasks `tasks-eso-secrets-merge.yaml` + `tasks-eso-lookup.yaml` + `tasks-add-helm-repo.yaml` reused), затем `helm template` → файл на диск → `kubeconform -strict --ignore-missing-schemas`. Render и validation разделены на отдельные шаги (см. `tests/helm-validate.yaml` STEP 4 и STEP 5). **Не** тестируются local wrappers (`pre/`, `post/`, `gitlab/postgresql/`, и т.п.) — там нет сторонней логики.
 
 All four must pass for `make test` to exit 0. Targets are independent and re-runnable individually.
@@ -47,9 +47,9 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 | Path | Purpose |
 |---|---|
 | `Makefile` | Test entry point. Wraps every test as `docker run` with read-only volume mount + tmpfs `/tmp`. |
-| `tests/Dockerfile` | Test image definition. Pinned `ansible-core`, `ansible-lint`, `yamllint`, plus `ansible.posix` collection. |
+| `tests/Dockerfile` | Test image definition. Pinned `ansible-core`, `ansible-lint`, `yamllint`, plus `ansible.posix` and `community.general` collections. |
 | `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list — keeps build context small. |
-| `tests/run-syntax-check.sh` | Bash iterator running `ansible-playbook --syntax-check` over every playbook. |
+| `tests/run-syntax-check.sh` | Bash iterator running `ansible-playbook --syntax-check` over every playbook, then over every task-file (each wrapped in a temporary `import_tasks` playbook). |
 | `tests/helm-validate.yaml` | Ansible-playbook driver for Layer 2. PRE phase: mock `master_manager_fact` + ESO secret lookups for chart values. STEP 1–7: per-chart Helm repo add (через `tasks-add-helm-repo.yaml`) → render values → `helm template` → `kubeconform` → aggregate. Reports per-chart OK/FAIL. |
 | `hosts-vars-test/upstream-charts.yaml` | Inventory-format vars-файл для Layer 2 (auto-loaded через `-i hosts-vars-test/`). Unified schema `upstream_charts` list для всех upstream charts (`is_oci`, `helm_url`, `helm_repo_name`, `helm_chart_name`, `helm_chart_version`, `namespace`, `values`). |
 | `.yamllint.yaml` | yamllint config — extends `default` with project-aware relaxations and ignore paths. |
@@ -65,6 +65,7 @@ Recorded in `tests/Dockerfile`:
 - `ansible-lint==26.4.0`
 - `yamllint==1.38.0`
 - `ansible.posix:1.5.4` — required by `setup-ssh-keys.yaml` (authorized_key module).
+- `community.general:12.6.0` — required by `playbook-app/tasks/tasks-copy-chart.yaml` (`archive` module). Surfaced when task-file syntax-check coverage was added.
 - `helm 3.20.2` — pinned to match `playbook-system/install-helm.yaml` (the version actually deployed on the cluster, so test rendering reproduces production behaviour).
 - `kubeconform 0.7.0` — strict K8s schema validator; standalone tool, not part of the cluster.
 
