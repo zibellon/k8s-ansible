@@ -131,14 +131,14 @@
    1. Весь кластер настроен, все работает исправно
 2. Что нужно
    1. Новый проект: my-casino-app
-   2. Компонены: Postygres, redis, Nats, back, front, cron
+   2. Компонены: Postgres, redis, Nats, back, front, cron
    3. Одно окружение: prod
 3. Последовательность действий
    1. Настрйока VAULT (Эта часть делается через Ansible)
       1. В файле `hosts-vars-override/` - добавить необходимые политики для vault
          1. 1 role
          2. 1 политика. Для чтения всего содержимого по пути (kv_engine/.../my-casino-app-prod/*)
-      2. Синхронизировать vault-policy-sync (можно с тагами - policy-add, role-add. так как это только новые политики)
+      2. Синхронизировать политики через: `... playbook-app/vault-install.yaml --tags vault-cr`
       3. Проверить, что в VAULT все политики и все роли создались успешно
    2. Настройка приложения - через AppOfApps
    3. Через паттерн app-of-apps - создать AppProject + Application

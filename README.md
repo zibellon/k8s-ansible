@@ -295,7 +295,7 @@ all:
 # ---VAULT + ESO
 # ---------
 ## Есть список компонентов, которые используют VAULT + ESO
-## `traefik`, `haproxy`,  `longhorn`, `gitlab`, `argocd`, `argocd-git-ops`
+## `traefik`, `haproxy`,  `longhorn`, `gitlab`, `argocd`, `teleport`, `grafana`
 ## При удалении компонента через `kubectl delete ...` - удаляются ресурсы k8s
 ## НО: записи в vault не удаляются. Их нужно удалять руками
 ## Проблемная ситуация:
@@ -328,11 +328,7 @@ all:
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/cilium-install.yaml`
 ## ---
-## Важно_1. При установке - может зависнуть на пункте: TASK [[cilium-post] Install or upgrade via Helm]
-## Если такое произошло: Ctrl+C (Остановить процесс) + запустить заново
-## Причина: когда cilium берет под контроль сеть на node - все соединения обрываются (в том числе и SSH)
-## ---
-## Важно_2. Установка изначально производится только с тагом `--tags install`
+## Важно_1. Установка изначально производится только с тагом `--tags install`
 ## pre + post = станавливаются позже. После cert-manager, ESO, Traefik, Haproxy
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
@@ -458,9 +454,9 @@ all:
 ## Есть работа с `vault + ESO`
 ## ---
 ## Важно_1. Для создания секретов для работы с backup - их нужно определить в `hosts-vars-override/` (пример в `hosts-vars-override/.example`)
-## После определния они будут использоваться при установке `longhorn-install.yaml` + `vault-policy-sync.yaml`
+## После определния они будут использоваться при установке `longhorn-install.yaml`
 ## ---
-## Важно_2. node-tags - для их автоматической установки на Nodes теперь используется отдельный playbook (аналогично - vault-policy-sync)
+## Важно_2. node-tags - для их автоматической установки на Nodes теперь используется отдельный playbook
 ## Синхронизация node-tags вызывается отдельно. То есть: после установки longhorn, после добавления node, после изменения node-tags в ansible-hosts
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
@@ -491,7 +487,7 @@ all:
 ## ---
 ## Важно_2. Работа с конфигурацией идет через Operator + CRDs
 ## все политики, роли, методы авторизации и так далее - определяются в Vault (CRDs)
-## Для их синхронизации с Vaul-instance = надо вызвать `... playbook-app/vault-install.yaml --tags vault-cr`
+## Для их синхронизации с Vaul-instance, надо вызвать `... playbook-app/vault-install.yaml --tags vault-cr`
 ## ---
 ## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть volume -> требуется Longhorn
@@ -517,11 +513,11 @@ all:
 ## ---
 ## В файле `hosts-vars/` + `hosts-vars-override/` есть отдельная структуры для управления VAULT (какие политики, роли, аккаунты и пути для секретов)
 ## Пример: `./readme-vault.md`
-## Вызов синхронизации VAULT: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-policy-sync.yaml`
+## Вызов синхронизации VAULT: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml --tags vault-cr`
 ## План, при добавлении чего-то в VAULT
 ## 1. добавить в `hosts-vars-override/` новые данные (policy + role)
 ## 2. Вызвать синхронизацию
-## 3. Уже отдельно (ArgoCD или как-то иначе) - загрузить в kubernetes: Namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
+## 3. Уже отдельно (ArgoCD или как-то иначе) загрузить в kubernetes: Namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
 ## ВАЖНО: синхронизация полностью синхронизирует структуру в VAULT (добавить, обновить, удалить)
 ## ---
 
