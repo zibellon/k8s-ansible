@@ -194,6 +194,38 @@ all:
 Этот режим закрывает только сам HAProxy-пакет. Зависимости (`libc6`, `libssl3` и т.п.) всё ещё резолвятся через стандартные Ubuntu apt-mirrors. Полный AirGap для остальных deb-пакетов (kubeadm, kubelet, kubectl) — отдельная задача (`tasks-deb-install.yaml` подготовлен как reusable примитив для этого).
 
 # ------
+# Опционально: установка Helm из локального `tarball` (offline / AirGap)
+# ------
+## Когда применимо
+1. Сценарий AirGap — закрытый контур без выхода в интернет
+2. Нужна полная независимость Helm-бинарника от внешней сети
+
+## Где взять `tarball`
+- Официальный сайт: `https://github.com/helm/helm/releases`
+- Скачать `helm-vX.Y.Z-linux-amd64.tar.gz` под архитектуру сервера (`linux-amd64` для x86_64; `linux-arm64` для ARM)
+- Прямой `wget https://get.helm.sh/helm-v3.20.2-linux-amd64.tar.gz`:
+
+## Куда положить
+- В директорию `pkgs-sources/` в корне репозитория (та же что для haproxy `.deb` — `.gitignored`)
+- Имя файла свободное (например `helm-v3.20.2-linux-amd64.tar.gz`)
+
+## Как переключить
+В `hosts-vars-override/hosts.yaml` под `all.vars` (или в любом файле override) задать:
+```yaml
+all:
+  vars:
+    helm_install_method: "local_tarball"
+    helm_local_tarball_path: "pkgs-sources/helm-v3.20.2-linux-amd64.tar.gz"
+```
+
+## Что произойдёт
+1. Pre-check: `which helm` — если уже установлен, ничего не делается (idempotent skip)
+2. Ansible скопирует `tarball` с локальной машины на сервер (`/tmp/<basename>.tar.gz`)
+3. `unarchive` распакует архив в `/tmp/` (даёт `/tmp/linux-amd64/helm`)
+4. `copy` бинарь `/tmp/linux-amd64/helm` → `/usr/local/bin/helm` (mode 0755)
+5. Cleanup: удалится `/tmp/<basename>.tar.gz` и `/tmp/linux-amd64/`
+
+# ------
 # Важно про VAULT + ESO
 # ------
 ## Во все конфиги ESO (SecretStore + ExternalSecret) добавен параметр is_need_eso: true | false
@@ -412,10 +444,6 @@ all:
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags pre,post`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
-
-## medik8s
-## ---
-## NOT_READY
 
 ## ---
 ## longhorn. Официальный helm
