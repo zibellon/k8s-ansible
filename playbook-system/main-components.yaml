@@ -13,6 +13,17 @@
 
   tasks:
     # =========================================================================
+    # ASSERT INSTALL METHOD
+    # =========================================================================
+    - name: "[main-components] assert k8s install method"
+      assert:
+        that:
+          - k8s_install_method in ["apt", "local_deb"]
+          - (k8s_install_method != "local_deb") or (k8s_kubelet_local_deb_path is defined and k8s_kubelet_local_deb_path | length > 0)
+          - (k8s_install_method != "local_deb") or (k8s_kubeadm_local_deb_path is defined and k8s_kubeadm_local_deb_path | length > 0)
+          - (k8s_install_method != "local_deb") or (k8s_kubectl_local_deb_path is defined and k8s_kubectl_local_deb_path | length > 0)
+
+    # =========================================================================
     # KUBERNETES APT REPOSITORY
     # =========================================================================
     - name: Install required packages for apt repo
@@ -33,6 +44,7 @@
       shell: >-
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/Release.key
         | gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      when: k8s_install_method == "apt"
 
     - name: Add Kubernetes apt repository
       copy:
@@ -40,6 +52,7 @@
         content: |
           deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/ /
         mode: '0644'
+      when: k8s_install_method == "apt"
 
     # =========================================================================
     # CONTAINERD
@@ -202,15 +215,46 @@
     - name: Update apt cache
       apt:
         update_cache: yes
+      when: k8s_install_method == "apt"
 
     - name: Install kubelet, kubeadm, kubectl
       apt:
         name: "{{ k8s_package_list }}"
         state: present
+      when: k8s_install_method == "apt"
 
     - name: Hold kubelet, kubeadm, kubectl versions
       command: apt-mark hold {{ k8s_package_list | join(' ') }}
       changed_when: false
+      when: k8s_install_method == "apt"
+
+    # =========================================================================
+    # KUBEADM, KUBELET, KUBECTL — local_deb branch (offline, AirGap-friendly)
+    # Order: kubelet → kubectl → kubeadm (kubeadm.deb has Depends on both).
+    # =========================================================================
+    - name: Install kubelet from local .deb
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
+      vars:
+        dto_label_name: "main-components"
+        dto_deb_local_path: "{{ k8s_kubelet_local_deb_path }}"
+        dto_apt_mark_hold_pkg_name: "kubelet"
+      when: k8s_install_method == "local_deb"
+
+    - name: Install kubectl from local .deb
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
+      vars:
+        dto_label_name: "main-components"
+        dto_deb_local_path: "{{ k8s_kubectl_local_deb_path }}"
+        dto_apt_mark_hold_pkg_name: "kubectl"
+      when: k8s_install_method == "local_deb"
+
+    - name: Install kubeadm from local .deb
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
+      vars:
+        dto_label_name: "main-components"
+        dto_deb_local_path: "{{ k8s_kubeadm_local_deb_path }}"
+        dto_apt_mark_hold_pkg_name: "kubeadm"
+      when: k8s_install_method == "local_deb"
 
     - name: Enable kubelet
       systemd:
