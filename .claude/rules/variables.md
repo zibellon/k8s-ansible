@@ -171,6 +171,10 @@ Per-file source of truth in parentheses.
 | `helm_local_tarball_path` | `""` | Path to local Helm tarball relative to `project_root` (used only when `helm_install_method: local_tarball`) |
 | `k9s_version` | `"v0.50.18"` | k9s binary version |
 | `k9s_download_host` | `"https://github.com"` | Download host for k9s .deb — AirGap override |
+| `k8s_install_method` | `"apt"` | Install method for kubelet/kubeadm/kubectl: `"apt"` (default — pkgs.k8s.io repo) or `"local_deb"` (offline) |
+| `k8s_kubelet_local_deb_path` | `""` | Path to local kubelet `.deb` relative to `project_root` (used only when `k8s_install_method: local_deb`) |
+| `k8s_kubeadm_local_deb_path` | `""` | Path to local kubeadm `.deb` relative to `project_root` (used only when `k8s_install_method: local_deb`) |
+| `k8s_kubectl_local_deb_path` | `""` | Path to local kubectl `.deb` relative to `project_root` (used only when `k8s_install_method: local_deb`) |
 | `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |
 | `pod_subnet` | `"10.64.0.0/10"` | Pod CIDR (Cilium IPAM) |
 | `cluster_dns_domain` | `"cluster.local"` | Cluster DNS suffix |

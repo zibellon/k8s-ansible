@@ -31,7 +31,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 | `server-prepare.yaml` | Disable swap, load kernel modules (`br_netfilter`, `overlay`, `softdog`), sysctls (`net.ipv4.ip_forward`, `net.bridge.bridge-nf-call-*`, IPv6 counterparts), time sync. Blacklisted modules re-enabled via unit-service wrapping `modprobe` (survives reboots despite blacklists). |
 | `longhorn-prepare.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`), modules (`iscsi_tcp`, `dm_crypt`). |
 | `cilium-prepare.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
-| `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
+| `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins. K8s components (`kubeadm`, `kubelet`, `kubectl`) install via `pkgs.k8s.io` apt repo (default `k8s_install_method: apt`) or local `.deb` files from `pkgs-sources/` (when `k8s_install_method: local_deb`); held via `apt-mark hold`. |
 | `haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
 | `install-helm.yaml` | Managers only — install the `helm` binary via download (`helm_install_method: url`, default) or local tarball from `pkgs-sources/` (`helm_install_method: local_tarball`). Pre-check skips install if helm is already present. |
 | `install-k9s.yaml` | Managers only — install `k9s`. |
