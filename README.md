@@ -121,23 +121,6 @@ all:
    10. После этого делать: `... join ...`
 
 # ------
-# Подготовка_3. haproxy-api-server-lb
-# ------
-## Официальный способ установки haproxy (как linux-service) - через PPA (LaunchPad)
-## Адрес PPA - могут быть заблокированы -> все будет падать по timeout
-## Как устанавливать по другому
-## 1 - скачать нужную версию haproxy в формает deb пакета: 
-## Зайти на сайт: `https://launchpad.net/~vbernat`
-## Выбрать нужную версию haproxy: `https://launchpad.net/~vbernat/+archive/ubuntu/haproxy-3.2/+packages`
-## Скачатьнужный пакет для архитектуры сервера и версии ubuntu (пример ниже для: Ubuntu 24.04, amd64)
-## wget https://launchpad.net/~vbernat/+archive/ubuntu/haproxy-3.2/+files/haproxy_3.2.17-1ppa1~noble_amd64.deb
-## 2 - скачанный файл положить в директорию pkgs-sources
-## 3 - в hosts-vars указать такие переменные
-## - `haproxy_apiserver_lb_install_method: "local_deb"`
-## - `haproxy_apiserver_lb_local_deb_path: "pkgs-sources/haproxy_3.2.17-1ppa1~noble_amd64.deb"`
-## 4 - запускать установку. теперь haproxy будет установлен через копирование локального deb пакета
-
-# ------
 # Важно про `namespace`
 # ------
 ## Сменить namespace МОЖНО для любых компонентов
@@ -156,74 +139,6 @@ all:
   - Обновляет /etc/haproxy/haproxy.cfg
   - делает `systemctl reload haproxy` последовательно (serial: 1)
   - reload — graceful, без разрыва TCP соединений
-
-# ------
-# Опционально: установка HAProxy из локального `.deb` (offline / AirGap)
-# ------
-## Когда применимо
-1. Установка через PPA нестабильна (timeout, сетевые проблемы к launchpad.net)
-2. Сценарий AirGap — закрытый контур без выхода в интернет к PPA
-3. Нужна полная независимость HAProxy-пакета от внешней сети
-
-## Где взять `.deb`
-- Сайт vbernat PPA: `https://launchpad.net/~vbernat/+archive/ubuntu/haproxy-3.3/+packages`
-- Скачать `.deb` под нужную Ubuntu-версию (focal/jammy/noble) и архитектуру (обычно amd64)
-
-## Куда положить
-- В директорию `pkgs-sources/` в корне репозитория
-- Эта директория содержит только `.gitkeep` (в git), а сами `.deb` файлы — в `.gitignore`
-- Имя файла свободное (например `haproxy_3.3.0-1ppa1~jammy_amd64.deb`)
-
-## Как переключить
-В `hosts-vars-override/hosts.yaml` под `all.vars` (или в любом файле override) задать:
-```yaml
-all:
-  vars:
-    haproxy_apiserver_lb_install_method: "local_deb"
-    haproxy_apiserver_lb_local_deb_path: "pkgs-sources/haproxy_3.3.0-1ppa1~jammy_amd64.deb"
-```
-
-## Что произойдёт
-1. Ansible скопирует `.deb` с локальной машины на сервер (`/tmp/<basename>.deb`)
-2. `apt update` обновит cache (нужно для resolve зависимостей)
-3. `apt install -y /tmp/<basename>.deb` установит пакет (зависимости резолвятся через стандартные Ubuntu-mirrors — обычно стабильны в РФ)
-4. `apt-mark hold haproxy` зафиксирует версию
-5. Временный `.deb` на сервере удалится
-
-## Замечание
-Этот режим закрывает только сам HAProxy-пакет. Зависимости (`libc6`, `libssl3` и т.п.) всё ещё резолвятся через стандартные Ubuntu apt-mirrors. Полный AirGap для остальных deb-пакетов (kubeadm, kubelet, kubectl) — отдельная задача (`tasks-deb-install.yaml` подготовлен как reusable примитив для этого).
-
-# ------
-# Опционально: установка Helm из локального `tarball` (offline / AirGap)
-# ------
-## Когда применимо
-1. Сценарий AirGap — закрытый контур без выхода в интернет
-2. Нужна полная независимость Helm-бинарника от внешней сети
-
-## Где взять `tarball`
-- Официальный сайт: `https://github.com/helm/helm/releases`
-- Скачать `helm-vX.Y.Z-linux-amd64.tar.gz` под архитектуру сервера (`linux-amd64` для x86_64; `linux-arm64` для ARM)
-- Прямой `wget https://get.helm.sh/helm-v3.20.2-linux-amd64.tar.gz`:
-
-## Куда положить
-- В директорию `pkgs-sources/` в корне репозитория (та же что для haproxy `.deb` — `.gitignored`)
-- Имя файла свободное (например `helm-v3.20.2-linux-amd64.tar.gz`)
-
-## Как переключить
-В `hosts-vars-override/hosts.yaml` под `all.vars` (или в любом файле override) задать:
-```yaml
-all:
-  vars:
-    helm_install_method: "local_tarball"
-    helm_local_tarball_path: "pkgs-sources/helm-v3.20.2-linux-amd64.tar.gz"
-```
-
-## Что произойдёт
-1. Pre-check: `which helm` — если уже установлен, ничего не делается (idempotent skip)
-2. Ansible скопирует `tarball` с локальной машины на сервер (`/tmp/<basename>.tar.gz`)
-3. `unarchive` распакует архив в `/tmp/` (даёт `/tmp/linux-amd64/helm`)
-4. `copy` бинарь `/tmp/linux-amd64/helm` → `/usr/local/bin/helm` (mode 0755)
-5. Cleanup: удалится `/tmp/<basename>.tar.gz` и `/tmp/linux-amd64/`
 
 # ------
 # Важно про VAULT + ESO
@@ -456,8 +371,9 @@ all:
 ## Важно_1. Для создания секретов для работы с backup - их нужно определить в `hosts-vars-override/` (пример в `hosts-vars-override/.example`)
 ## После определния они будут использоваться при установке `longhorn-install.yaml`
 ## ---
-## Важно_2. node-tags - для их автоматической установки на Nodes теперь используется отдельный playbook
-## Синхронизация node-tags вызывается отдельно. То есть: после установки longhorn, после добавления node, после изменения node-tags в ansible-hosts
+## Важно_2. `node-tags`: для их автоматической установки на Nodes используется отдельный playbook `... playbook-app/longhorn-tags-sync.yaml`
+## Синхронизация `node-tags` вызывается отдельно
+## То есть: после установки longhorn, после добавления node, после изменения `node-tags` в `hosts-vars-xxx`
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
@@ -702,9 +618,9 @@ all:
     - `playbook-app/charts/mon-system/crds/crds.yaml` - сюда все CRD, (примерно 80_000 строк)
     - `playbook-app/charts/mon-system/prometheus-operator/templates/prometheus-operator.yaml` - вся установка (Deplyment, RBAC, Service)
   - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
-  - Веряия - указывается в `hosts-vars/` | `hosts-vars-override/` -> внутри `*.yaml` надо не потерять щаблонизацию
+  - Версия указывается в `hosts-vars/` | `hosts-vars-override/` -> внутри `*.yaml` надо не потерять щаблонизацию
 - обновление (версия: node-exporter, ksm, loki, vector, grafana)
-  - просто обновить версии в hosts-vars и готово
+  - просто обновить версии в hosts-vars
 
 ## ---------------------
 ## ---------------------
