@@ -17,7 +17,7 @@ Violating any of these will break the cluster or leak secrets.
 - `kube-proxy` is **disabled at `kubeadm init`** via declarative `proxy.disabled: true` in `ClusterConfiguration`. Cilium replaces it. Do not re-enable.
 - `hosts-vars-override/` is **never committed**. It contains `ansible_password`, real IPs, Vault unseal keys, and all secrets.
 - Always run Ansible with **both** inventories: `-i hosts-vars/ -i hosts-vars-override/`. Running with only one is always a bug.
-- **Node-scoped system playbooks require `--limit`**. Forgetting `--limit` on `node-install.yaml` / `cluster-init.yaml` / `manager-join.yaml` / `worker-join.yaml` / `node-remove.yaml` / `server-clean.yaml` will fail a `tasks-require-limit.yaml` gate (by design). Cluster-wide rolling-update plays (`apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`) intentionally have **no** `--limit` requirement — they iterate over all nodes via `serial: 1`.
+- **Single-node system playbooks require `--limit`**. Forgetting `--limit` on `cluster-init.yaml` / `manager-join.yaml` / `worker-join.yaml` / `node-drain-on.yaml` / `node-drain-off.yaml` / `node-remove.yaml` / `server-clean.yaml` will fail a `tasks-require-limit.yaml` gate (by design). `node-install.yaml` is **bulk-friendly** by design: `--limit` is optional — use without `--limit` for bulk preparation of multiple nodes (sub-plays are idempotent: `apt`, kernel modules, sysctls, HAProxy on `127.0.0.1`); use with `--limit <host>` to prepare a single node added to an already-running cluster. Cluster-wide rolling-update plays (`apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`) intentionally have **no** `--limit` requirement — they iterate over all nodes via `serial: 1`.
 - Exactly **one** manager in inventory must have `is_master: true`. That host becomes `master_manager_fact` — the single delegation target for every cluster-scope operation.
 - Before adding a new node to the cluster, run `playbook-app/cilium-install.yaml --tags post` first — it refreshes the Cilium host firewall with the new node's IPs, otherwise the join handshake is blocked.
 
@@ -52,7 +52,7 @@ The repo is structured along **two axes** that intersect at every component:
 
 ### 1.2 Two "repos in one"
 
-- `playbook-system/` is **imperative**. Most plays are **node-scoped** — they target specific hosts and require `--limit <host>` (enforced by a gate). A few are **cluster-wide rolling-update** plays (`apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`) — they run on `hosts: all` with `serial: 1` and do not take `--limit`. All install packages, write `/etc/…` files, start systemd units.
+- `playbook-system/` is **imperative**. Most plays are **single-node** — they target a specific host and require `--limit <host>` (enforced by a gate). `node-install.yaml` is **bulk-friendly** — its sub-plays are idempotent and safe to run on multiple hosts at once, so `--limit` is optional. A few are **cluster-wide rolling-update** plays (`apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`) — they run on `hosts: all` with `serial: 1` and do not take `--limit`. All install packages, write `/etc/…` files, start systemd units.
 - `playbook-app/` is **declarative-ish and cluster-scoped**. Plays always `hosts: managers` + `gather_facts: false`; all `kubectl`/`helm` work delegates to one manager (`master_manager_fact`) with `run_once: true`.
 
 ### 1.3 Two inventory layers
