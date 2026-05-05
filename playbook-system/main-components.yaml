@@ -19,9 +19,10 @@
       assert:
         that:
           - k8s_install_method in ["apt", "local_deb"]
-          - (k8s_install_method != "local_deb") or (k8s_kubelet_local_deb_path is defined and k8s_kubelet_local_deb_path | length > 0)
-          - (k8s_install_method != "local_deb") or (k8s_kubeadm_local_deb_path is defined and k8s_kubeadm_local_deb_path | length > 0)
-          - (k8s_install_method != "local_deb") or (k8s_kubectl_local_deb_path is defined and k8s_kubectl_local_deb_path | length > 0)
+          - (k8s_install_method != "local_deb") or (k8s_kubernetes_cni_local_deb_path is defined and k8s_kubernetes_cni_local_deb_path | length > 0)
+          - (k8s_install_method != "local_deb") or (k8s_cri_tools_local_deb_path is defined and k8s_cri_tools_local_deb_path | length > 0)
+          - (k8s_install_method != "local_deb") or (k8s_local_deb_path_list is defined and k8s_local_deb_path_list is sequence and k8s_local_deb_path_list | length > 0)
+          - (k8s_install_method != "local_deb") or (k8s_local_deb_path_list | length == k8s_package_list | length)
 
     # =========================================================================
     # KUBERNETES APT REPOSITORY
@@ -230,30 +231,35 @@
 
     # =========================================================================
     # KUBEADM, KUBELET, KUBECTL — local_deb branch (offline, AirGap-friendly)
-    # Order: kubelet → kubectl → kubeadm (kubeadm.deb has Depends on both).
+    # Order: kubernetes-cni → cri-tools → k8s_local_deb_path_list iteration
+    # (kubelet → kubectl → kubeadm by inventory order). kubelet.deb has Depends
+    # on kubernetes-cni and cri-tools; kubeadm.deb has Depends on kubelet/kubectl.
     # =========================================================================
-    - name: Install kubelet from local .deb
+    - name: Install kubernetes-cni from local .deb
       include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
       vars:
         dto_label_name: "main-components"
-        dto_deb_local_path: "{{ k8s_kubelet_local_deb_path }}"
-        dto_apt_mark_hold_pkg_name: "kubelet"
+        dto_deb_local_path: "{{ k8s_kubernetes_cni_local_deb_path }}"
+        dto_apt_mark_hold_pkg_name: "kubernetes-cni"
       when: k8s_install_method == "local_deb"
 
-    - name: Install kubectl from local .deb
+    - name: Install cri-tools from local .deb
       include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
       vars:
         dto_label_name: "main-components"
-        dto_deb_local_path: "{{ k8s_kubectl_local_deb_path }}"
-        dto_apt_mark_hold_pkg_name: "kubectl"
+        dto_deb_local_path: "{{ k8s_cri_tools_local_deb_path }}"
+        dto_apt_mark_hold_pkg_name: "cri-tools"
       when: k8s_install_method == "local_deb"
 
-    - name: Install kubeadm from local .deb
+    - name: Install kubelet/kubectl/kubeadm from local .debs
       include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
       vars:
         dto_label_name: "main-components"
-        dto_deb_local_path: "{{ k8s_kubeadm_local_deb_path }}"
-        dto_apt_mark_hold_pkg_name: "kubeadm"
+        dto_deb_local_path: "{{ item }}"
+        dto_apt_mark_hold_pkg_name: "{{ k8s_package_list[i] }}"
+      loop: "{{ k8s_local_deb_path_list }}"
+      loop_control:
+        index_var: i
       when: k8s_install_method == "local_deb"
 
     - name: Enable kubelet
