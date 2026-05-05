@@ -100,6 +100,14 @@ all:
   - `nfs-common_<version>_<arch>.deb`
   - `cryptsetup_<version>_<arch>.deb`
   - `dmsetup_<version>_<arch>.deb`
+  - `libcryptsetup12_<version>_<arch>.deb`
+
+## Ссылки на файлы
+- curl -L -O "http://de.archive.ubuntu.com/ubuntu/pool/main/o/open-iscsi/open-iscsi_2.1.9-3ubuntu4_amd64.deb"
+- curl -L -O "http://de.archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-common_2.6.4-3ubuntu5_amd64.deb"
+- curl -L -O "http://de.archive.ubuntu.com/ubuntu/pool/main/c/cryptsetup/cryptsetup_2.7.0-1ubuntu4_amd64.deb"
+- curl -L -O "http://de.archive.ubuntu.com/ubuntu/pool/main/l/lvm2/dmsetup_1.02.185-3ubuntu3_amd64.deb"
+- curl -L -O "http://de.archive.ubuntu.com/ubuntu/pool/main/c/cryptsetup/libcryptsetup12_2.7.0-1ubuntu4_amd64.deb"
 
 ## Куда положить
 - В директорию `pkgs-sources/` в корне репозитория
@@ -116,8 +124,8 @@ all:
       - "pkgs-sources/nfs-common_<ver>_amd64.deb"
       - "pkgs-sources/cryptsetup_<ver>_amd64.deb"
       - "pkgs-sources/dmsetup_<ver>_amd64.deb"
+      - "pkgs-sources/libcryptsetup12_<ver>_amd64.deb"
 ```
 
 ## Замечание
 - `longhorn_local_deb_path_list` ДОЛЖЕН быть позиционно парным к `longhorn_packages` — одинаковая длина И одинаковый порядок. Assert в `longhorn-prepare.yaml` проверит длину; порядок — на ответственности оператора.
-- Транзитивные deps Ubuntu-уровня (например `libcryptsetup12` для `cryptsetup`) всё ещё резолвятся через стандартные Ubuntu apt-mirrors.
