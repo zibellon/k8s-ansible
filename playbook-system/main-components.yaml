@@ -169,30 +169,26 @@
     # Drop-in dir подход через `/etc/containerd/certs.d/<namespace>/hosts.toml`.
     # Containerd 2.x поддерживает special `_default` namespace — fallback для
     # всех registries без dedicated dir. См. hosts-vars/k8s-base.yaml для
-    # развёрнутого описания + примеров `_default` mirror'а.
+    # развёрнутого описания + дефолтного mirror'а на mirror.gcr.io.
     # config_path = '/etc/containerd/certs.d:/etc/docker/certs.d' установлен
     # containerd-defaults для 2.x — отдельной правки config.toml не требует.
-    # Base + _extra concat-merge по variables.md §1.5.
-
-    - name: Build merged containerd additional configs list
-      set_fact:
-        containerd_additional_configs_merged: "{{ containerd_additional_configs + (containerd_additional_configs_extra | default([])) }}"
+    # Оператор переопределяет список целиком в hosts-vars-override/k8s-base.yaml.
 
     - name: Create additional containerd config directories
       file:
         path: "/etc/containerd/certs.d/{{ item.dirName }}"
         state: directory
         mode: '0755'
-      loop: "{{ containerd_additional_configs_merged }}"
-      when: containerd_additional_configs_merged | length > 0
+      loop: "{{ containerd_additional_configs }}"
+      when: containerd_additional_configs | length > 0
 
     - name: Create additional containerd config files
       copy:
         dest: "/etc/containerd/certs.d/{{ item.dirName }}/hosts.toml"
         content: "{{ item.content }}"
         mode: '0644'
-      loop: "{{ containerd_additional_configs_merged }}"
-      when: containerd_additional_configs_merged | length > 0
+      loop: "{{ containerd_additional_configs }}"
+      when: containerd_additional_configs | length > 0
       register: containerd_additional_config_result
 
     - name: Restart containerd

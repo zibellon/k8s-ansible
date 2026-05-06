@@ -54,7 +54,7 @@ all:
     force_containerd_config_regenerate: false
 
     # ------
-    # Containerd registry mirror (AirGap)
+    # Containerd registry mirror
     # ------
     # Containerd 2.x поддерживает special `_default` namespace в
     # `/etc/containerd/certs.d/` — содержимое `_default/hosts.toml`
@@ -65,51 +65,41 @@ all:
     # необходимости перечислять каждый.
     # Docs: https://github.com/containerd/containerd/blob/main/docs/hosts.md
     #
-    # Для AirGap-инсталляции:
-    #   1. Поднять локальный registry с pull-through cache. Готовые
-    #      решения: Harbor (proxy cache project), Zot (zotregistry.io),
-    #      docker `distribution` v2 с `proxy.remoteurl` в config.yml.
-    #      Один локальный registry должен покрывать все upstream
-    #      registries (либо несколько proxy-cache projects в Harbor,
-    #      либо single mirror, который умеет multi-upstream).
-    #   2. Прописать `_default` mirror в hosts-vars-override/k8s-base.yaml
-    #      через `containerd_additional_configs_extra` (concat-merge с
-    #      base — см. variables.md §1.5).
+    # ## Базовый дефолт
+    # По умолчанию `_default/hosts.toml` указывает на mirror.gcr.io
+    # (публичный mirror Google Container Registry для docker.io) —
+    # обходит docker.io rate limits на свежих узлах без дополнительной
+    # настройки. При отсутствии образа в mirror'е containerd возвращается
+    # к upstream registry (mirror + fallback). Если оператору нужен
+    # другой mirror (локальный pull-through cache на Harbor / Zot /
+    # docker `distribution` v2 с `proxy.remoteurl`) — переопределяет
+    # `containerd_additional_configs` целиком в hosts-vars-override/k8s-base.yaml
+    # (replace, не concat — см. variables.md §1.5).
     #
-    # Доступны два режима `hosts.toml`:
+    # ## Несколько mirrors последовательно
+    # Containerd идёт по `[host."..."]` блокам ПО ПОРЯДКУ объявления.
+    # Если первый mirror не отдал образ — пробует второй, затем третий,
+    # и т.д. После всех — fallback на upstream (для `_default` —
+    # отсутствует, см. ниже). Пример цепочки mirror1 → mirror2:
     #
-    #   А. Mirror + upstream fallback (mirror используется первым; при
-    #      недоступности mirror'а containerd пробует upstream напрямую):
+    #   [host."https://mirror.gcr.io"]
+    #     capabilities = ["pull", "resolve"]
+    #   [host."https://public.ecr.aws"]
+    #     capabilities = ["pull", "resolve"]
     #
-    #        [host."https://my-mirror.example.com"]
-    #          capabilities = ["pull", "resolve"]
-    #
-    #   Б. Exclusive mirror (всё ТОЛЬКО через mirror, без fallback на
-    #      upstream — для строгого AirGap):
-    #
-    #        server = "https://my-mirror.example.com"
-    #
-    # Базовый список пуст. Оператор расширяет через `_extra` в overrides.
-    #
-    # Пример hosts-vars-override/k8s-base.yaml (mirror + fallback):
-    #   containerd_additional_configs_extra:
-    #     - dirName: "_default"
-    #       content: |
-    #         [host."https://my-mirror.example.com"]
-    #           capabilities = ["pull", "resolve"]
-    #
-    # Пример для self-signed mirror (exclusive + skip_verify):
-    #   containerd_additional_configs_extra:
-    #     - dirName: "_default"
-    #       content: |
-    #         server = "https://my-mirror.example.com"
-    #         [host."https://my-mirror.example.com"]
-    #           capabilities = ["pull", "resolve"]
-    #           skip_verify = true
+    # ## Strict mode (fail если ни один mirror не отдал образ)
+    # Для `_default` namespace отсутствие верхнего `server = "..."`
+    # означает: после всех `[host."..."]` блоков нет fallback'а на
+    # upstream — pull завершается ошибкой. Это даёт config-level
+    # AirGap-режим без сетевых ограничений.
     #
     # Каждая entry — dict с двумя ключами: dirName (имя поддиректории
     # в /etc/containerd/certs.d/) + content (содержимое hosts.toml).
-    containerd_additional_configs: []
+    containerd_additional_configs:
+      - dirName: "_default"
+        content: |
+          [host."https://mirror.gcr.io"]
+            capabilities = ["pull", "resolve"]
 
     # ------
     # registry+images (AirGap) — containerd sandbox (pause)
