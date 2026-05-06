@@ -1,22 +1,5 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry для образов cert-manager. По умолчанию — quay.io.
-    # Для airgap/приватного registry — переопределить в hosts-vars-override/cert-manager.yaml:
-    #   cert_manager_image_registry: "my-private-registry.local"
-    #
-    # СБ должна загрузить следующие образы (только хост меняется, путь jetstack/* остаётся):
-    #   <registry>/jetstack/cert-manager-controller:v1.20.2
-    #   <registry>/jetstack/cert-manager-cainjector:v1.20.2
-    #   <registry>/jetstack/cert-manager-webhook:v1.20.2
-    #   <registry>/jetstack/cert-manager-acmesolver:v1.20.2
-    #   <registry>/jetstack/cert-manager-startupapicheck:v1.20.2
-    cert_manager_image_registry: "quay.io"
-    cert_manager_image_tag: "v1.20.2"
-    # ---------
-    # ---------
     cert_manager_namespace: "cert-manager"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     cert_manager_helm_is_oci: false
@@ -54,14 +37,8 @@ all:
       clusterIssuers: "{{ cert_manager_cluster_issuers }}"
     # Helm chart values
     cert_manager_helm_values:
-      # imageRegistry + imageNamespace заменяют per-component image.repository
-      # chart строит: {imageRegistry}/{imageNamespace}/{image.name}:{tag} для всех компонентов
-      imageRegistry: "{{ cert_manager_image_registry }}"
-      imageNamespace: "jetstack"
       crds:
         enabled: true
-      image:
-        tag: "{{ cert_manager_image_tag }}"
       prometheus:
         enabled: true
         servicemonitor:
@@ -77,28 +54,19 @@ all:
       affinity: {}
       replicaCount: 1
       resources: {}
-      acmesolver:
-        image:
-          tag: "{{ cert_manager_image_tag }}"
       cainjector:
-        image:
-          tag: "{{ cert_manager_image_tag }}"
         tolerations: []
         nodeSelector: {}
         affinity: {}
         replicaCount: 1
         resources: {}
       webhook:
-        image:
-          tag: "{{ cert_manager_image_tag }}"
         tolerations: []
         nodeSelector: {}
         affinity: {}
         replicaCount: 1
         resources: {}
       startupapicheck:
-        image:
-          tag: "{{ cert_manager_image_tag }}"
         tolerations: []
         nodeSelector: {}
         affinity: {}

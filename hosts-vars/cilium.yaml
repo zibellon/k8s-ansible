@@ -1,30 +1,5 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry для образов Cilium. По умолчанию — quay.io.
-    # Для airgap/приватного registry — переопределить в hosts-vars-override/cilium.yaml:
-    #   cilium_image_registry_host: "my-private-registry.local"
-    #
-    # СБ должна загрузить следующие образы (только хост меняется, пути остаются оригинальными):
-    #   <host>/cilium/cilium:v1.19.1
-    #   <host>/cilium/operator-generic:v1.19.1
-    #   <host>/cilium/cilium-envoy:v1.36.5
-    #   <host>/cilium/hubble-relay:v1.19.1
-    #   <host>/cilium/hubble-ui-backend:v0.13.3
-    #   <host>/cilium/hubble-ui:v0.13.3
-    cilium_image_registry_host: "quay.io"
-    # Image tags
-    # cilium_image_tag — общий для agent, operator, hubble-relay (одна версия Cilium-релиза)
-    cilium_image_tag: "v1.19.1"
-    # cilium-envoy версионируется отдельно; формат tag содержит digest-suffix (useDigest: false — см. ниже)
-    cilium_envoy_image_tag: "v1.36.5-1775659161-c07fe96b7c1b6cbfc3d477da1821e70205e572a9"
-    # Hubble UI backend + frontend всегда одной версии
-    cilium_hubble_ui_image_tag: "v0.13.3"
-    # ---------
-    # ---------
-    # ---------
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     cilium_namespace: "cilium"
     cilium_helm_is_oci: false
@@ -49,13 +24,8 @@ all:
 
     # Helm chart values
     cilium_helm_values:
-      image:
-        repository: "{{ cilium_image_registry_host }}/cilium/cilium"
-        tag: "{{ cilium_image_tag }}"
       operator:
         image:
-          repository: "{{ cilium_image_registry_host }}/cilium/operator"
-          tag: "{{ cilium_image_tag }}"
           # suffix="" → chart template produces operator-{cloud}{suffix} = operator-generic
           # default chart suffix is "-ci" which would produce operator-generic-ci (wrong)
           suffix: ""
@@ -75,9 +45,8 @@ all:
             labels: {}
       envoy:
         image:
-          repository: "{{ cilium_image_registry_host }}/cilium/cilium-envoy"
-          tag: "{{ cilium_envoy_image_tag }}"
-          # chart default useDigest=true with digest for v1.36.6; our tag is v1.36.5 → must disable
+          # chart default useDigest=true with digest pinned to upstream version;
+          # disable digest to allow upstream chart's default image tag to apply cleanly
           useDigest: false
         tolerations:
           - operator: "Exists"
@@ -93,9 +62,6 @@ all:
             labels: {}
       hubble:
         relay:
-          image:
-            repository: "{{ cilium_image_registry_host }}/cilium/hubble-relay"
-            tag: "{{ cilium_image_tag }}"
           enabled: true
           tolerations: []
           nodeSelector: {}
@@ -111,14 +77,8 @@ all:
               labels: {}
         ui:
           backend:
-            image:
-              repository: "{{ cilium_image_registry_host }}/cilium/hubble-ui-backend"
-              tag: "{{ cilium_hubble_ui_image_tag }}"
             resources: {}
           frontend:
-            image:
-              repository: "{{ cilium_image_registry_host }}/cilium/hubble-ui"
-              tag: "{{ cilium_hubble_ui_image_tag }}"
             resources: {}
           enabled: true
           tolerations: []
