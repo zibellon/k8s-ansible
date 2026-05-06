@@ -1,42 +1,5 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry для образов GitLab. По умолчанию — registry.gitlab.com.
-    # Для airgap/приватного registry — переопределить в hosts-vars-override/gitlab.yaml:
-    #   gitlab_image_registry_host: "my-private-registry.local"
-    #
-    # СБ должна загрузить следующие образы (только хост меняется, пути остаются оригинальными):
-    #   <host>/gitlab-org/build/cng/gitlab-webservice-ce:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-workhorse-ce:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-sidekiq-ce:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-toolbox-ce:v<gitlabVersion>   (toolbox + migrations)
-    #   <host>/gitlab-org/build/cng/gitaly:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-shell:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-exporter:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-pages:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-container-registry:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/certificates:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/kubectl:v<gitlabVersion>
-    #   <host>/gitlab-org/build/cng/gitlab-base:v<gitlabVersion>
-    gitlab_image_registry_host: "registry.gitlab.com"
-    # ---------
-    # Registry для sub-releases: PostgreSQL, Redis, MinIO. По умолчанию — docker.io.
-    # Для airgap — переопределить в hosts-vars-override/gitlab.yaml:
-    #   gitlab_postgresql_image_registry: "my-private-registry.local"
-    #   gitlab_redis_image_registry:      "my-private-registry.local"
-    #   gitlab_minio_image_registry:      "my-private-registry.local"
-    #
-    # СБ должна загрузить (3 образа):
-    #   <registry>/postgres:16-alpine
-    #   <registry>/redis/redis-stack-server:latest
-    #   <registry>/minio/minio:latest
-    gitlab_postgresql_image_registry: "docker.io"
-    gitlab_redis_image_registry: "docker.io"
-    gitlab_minio_image_registry: "docker.io"
-    # ---------
-    # ---------
     gitlab_namespace: "gitlab"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     gitlab_helm_is_oci: false
@@ -87,17 +50,17 @@ all:
     gitlab_vpn_only_enabled: false
 
     # GitLab PostgreSQL
-    gitlab_postgresql_image: "{{ gitlab_postgresql_image_registry }}/postgres:16-alpine"
+    gitlab_postgresql_image: "docker.io/postgres:16-alpine"
     gitlab_postgresql_storage_class: "lh-major-multi-best-effort"
     gitlab_postgresql_storage_size: "4Gi"
 
     # GitLab Redis
-    gitlab_redis_image: "{{ gitlab_redis_image_registry }}/redis/redis-stack-server:latest"
+    gitlab_redis_image: "docker.io/redis/redis-stack-server:latest"
     gitlab_redis_storage_class: "lh-major-single-best-effort"
     gitlab_redis_storage_size: "1Gi"
 
     # GitLab MinIO
-    gitlab_minio_image: "{{ gitlab_minio_image_registry }}/minio/minio:latest"
+    gitlab_minio_image: "docker.io/minio/minio:latest"
     gitlab_minio_root_user: "admin"
     gitlab_minio_storage_class: "lh-major-single-best-effort"
     gitlab_minio_storage_size: "2Gi"
@@ -212,26 +175,6 @@ all:
         edition: ce
         # Версия образов GitLab — должна соответствовать gitlab_helm_chart_version (8.11.8 = GitLab 17.11)
         gitlabVersion: "17.11.7"
-        communityImages:
-          webservice:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-webservice-ce"
-          workhorse:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-workhorse-ce"
-          sidekiq:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-sidekiq-ce"
-          toolbox:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-toolbox-ce"
-          migrations:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-toolbox-ce"
-        certificates:
-          image:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/certificates"
-        kubectl:
-          image:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/kubectl"
-        gitlabBase:
-          image:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-base"
         hosts:
           domain: "{{ gitlab_base_domain }}"
           https: "{{ gitlab_external_https }}"
@@ -309,8 +252,6 @@ all:
         install: false
       registry:
         enabled: true
-        image:
-          repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-container-registry"
         tolerations: []
         nodeSelector: {}
         resources: {}
@@ -389,8 +330,6 @@ all:
                 interval: "30s"
                 scrapeTimeout: "10s"
         gitlab-shell:
-          image:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-shell"
           tolerations: []
           nodeSelector: {}
           resources: {}
@@ -401,8 +340,6 @@ all:
             strategy:
               type: Recreate
         gitaly:
-          image:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitaly"
           tolerations: []
           nodeSelector: {}
           resources: {}
@@ -417,8 +354,6 @@ all:
                 interval: "30s"
                 scrapeTimeout: "10s"
         gitlab-exporter:
-          image:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-exporter"
           tolerations: []
           nodeSelector: {}
           resources: {}
@@ -432,8 +367,6 @@ all:
                 interval: "30s"
                 scrapeTimeout: "10s"
         gitlab-pages:
-          image:
-            repository: "{{ gitlab_image_registry_host }}/gitlab-org/build/cng/gitlab-pages"
           tolerations: []
           nodeSelector: {}
           resources: {}
