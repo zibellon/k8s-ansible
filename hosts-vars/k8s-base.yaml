@@ -53,26 +53,63 @@ all:
     # Force regenerate containerd config (set to true to update config after containerd upgrade)
     force_containerd_config_regenerate: false
 
-    # Дополнительные конфигурации для containerd (/etc/containerd/certs.d/)
-    # Каждая запись: dirName (имя директории) + content (содержимое hosts.toml)
-    containerd_additional_configs:
-      - dirName: "docker.io"
-        content: |
-          server = "https://docker.io"
-
-          [host."https://mirror.gcr.io"]
-            capabilities = ["pull","resolve"]
-      # - dirName: "my-local-registry.local"
-      #   content: |
-      #     server = "http://192.168.1.100:5000"
-      #     [host."http://192.168.1.100:5000"]
-      #       capabilities = ["pull", "resolve", "push"]
-      # - dirName: "my-local-registry.local"
-      #   content: |
-      #     server = "https://192.168.1.100:5000"
-      #     [host."https://192.168.1.100:5000"]
-      #       capabilities = ["pull", "resolve", "push"]
-      #       skip_verify = true
+    # ------
+    # Containerd registry mirror (AirGap)
+    # ------
+    # Containerd 2.x поддерживает special `_default` namespace в
+    # `/etc/containerd/certs.d/` — содержимое `_default/hosts.toml`
+    # применяется как fallback ко ВСЕМ registries, у которых нет
+    # собственной dedicated dir. Это даёт ОДИН config, перехватывающий
+    # запросы к docker.io / quay.io / gcr.io / ghcr.io / registry.k8s.io
+    # / registry.gitlab.com / public.ecr.aws / любым другим — без
+    # необходимости перечислять каждый.
+    # Docs: https://github.com/containerd/containerd/blob/main/docs/hosts.md
+    #
+    # Для AirGap-инсталляции:
+    #   1. Поднять локальный registry с pull-through cache. Готовые
+    #      решения: Harbor (proxy cache project), Zot (zotregistry.io),
+    #      docker `distribution` v2 с `proxy.remoteurl` в config.yml.
+    #      Один локальный registry должен покрывать все upstream
+    #      registries (либо несколько proxy-cache projects в Harbor,
+    #      либо single mirror, который умеет multi-upstream).
+    #   2. Прописать `_default` mirror в hosts-vars-override/k8s-base.yaml
+    #      через `containerd_additional_configs_extra` (concat-merge с
+    #      base — см. variables.md §1.5).
+    #
+    # Доступны два режима `hosts.toml`:
+    #
+    #   А. Mirror + upstream fallback (mirror используется первым; при
+    #      недоступности mirror'а containerd пробует upstream напрямую):
+    #
+    #        [host."https://my-mirror.example.com"]
+    #          capabilities = ["pull", "resolve"]
+    #
+    #   Б. Exclusive mirror (всё ТОЛЬКО через mirror, без fallback на
+    #      upstream — для строгого AirGap):
+    #
+    #        server = "https://my-mirror.example.com"
+    #
+    # Базовый список пуст. Оператор расширяет через `_extra` в overrides.
+    #
+    # Пример hosts-vars-override/k8s-base.yaml (mirror + fallback):
+    #   containerd_additional_configs_extra:
+    #     - dirName: "_default"
+    #       content: |
+    #         [host."https://my-mirror.example.com"]
+    #           capabilities = ["pull", "resolve"]
+    #
+    # Пример для self-signed mirror (exclusive + skip_verify):
+    #   containerd_additional_configs_extra:
+    #     - dirName: "_default"
+    #       content: |
+    #         server = "https://my-mirror.example.com"
+    #         [host."https://my-mirror.example.com"]
+    #           capabilities = ["pull", "resolve"]
+    #           skip_verify = true
+    #
+    # Каждая entry — dict с двумя ключами: dirName (имя поддиректории
+    # в /etc/containerd/certs.d/) + content (содержимое hosts.toml).
+    containerd_additional_configs: []
 
     # ------
     # registry+images (AirGap) — containerd sandbox (pause)
