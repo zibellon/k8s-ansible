@@ -94,7 +94,7 @@ all:
 # ------
 
 ## Где взять `.deb`
-- Стандартные Ubuntu archives: либо `apt-get download <pkg>` с подключённой Ubuntu-машины, либо `https://packages.ubuntu.com/<release>/<arch>/<pkg>/download`
+- Стандартные Ubuntu archives: либо `apt-get download <pkg>` с подключённой Ubuntu-машины, либо `https://packages.ubuntu.com`
 - Нужны 4 файла под архитектуру сервера и Ubuntu-релиз:
   - `open-iscsi_<version>_<arch>.deb`
   - `nfs-common_<version>_<arch>.deb`
