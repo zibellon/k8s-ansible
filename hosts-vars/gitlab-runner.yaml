@@ -1,38 +1,12 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry для образов GitLab Runner. По умолчанию — registry.gitlab.com.
-    # Для airgap/приватного registry — переопределить в hosts-vars-override/gitlab-runner.yaml:
-    #   gitlab_runner_image_registry_host: "my-private-registry.local"
-    #
-    # СБ должна загрузить следующий образ (только registry меняется, путь остаётся оригинальным):
-    #   <host>/gitlab-org/gitlab-runner:alpine-v<appVersion>
-    #   Пример: registry.gitlab.com/gitlab-org/gitlab-runner:alpine-v17.11.4
-    gitlab_runner_image_registry_host: "registry.gitlab.com"
-    gitlab_runner_image_tag: "alpine-v17.11.4"
-    # ---------
-    # Registry для helper-образа GitLab Runner. По умолчанию — registry.gitlab.com.
-    # Для airgap — переопределить в hosts-vars-override/gitlab-runner.yaml:
-    #   gitlab_runner_helper_image_registry_host: "my-private-registry.local"
-    #
-    # СБ должна загрузить:
-    #   <registry>/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-<tag>
-    #   Пример: registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-alpine-v17.11.4
-    gitlab_runner_helper_image_registry_host: "registry.gitlab.com"
-    # Registry и тег для DinD (Docker-in-Docker) executor образа. По умолчанию — docker.io.
-    # Используется как executor image и DinD sidecar в runners.config TOML.
-    # Для airgap — переопределить в hosts-vars-override/gitlab-runner.yaml:
-    #   gitlab_runner_dind_image_registry: "my-private-registry.local"
-    #
-    # СБ должна загрузить (2 образа):
-    #   <registry>/docker:<tag>       (executor)
-    #   <registry>/docker:<tag>-dind  (DinD sidecar)
-    gitlab_runner_dind_image_registry: "docker.io"
-    gitlab_runner_dind_image_tag: "29.3.0"
-    # ---------
-    # ---------
+    # GitLab Runner internal images (helper + DinD executor + DinD service).
+    # Используются в gitlab_runner_config TOML (runners.kubernetes.image,
+    # runners.kubernetes.services, helper_image).
+    # Для AirGap оператор переопределяет в hosts-vars-override/gitlab-runner.yaml.
+    gitlab_runner_helper_image: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-alpine-v17.11.4"
+    gitlab_runner_dind_image: "docker.io/docker:29.3.0"
+    gitlab_runner_dind_dind_image: "docker.io/docker:29.3.0-dind"
     gitlab_runner_namespace: "gitlab-runner"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     gitlab_runner_helm_is_oci: false
@@ -81,7 +55,7 @@ all:
       [[runners]]
         executor = "kubernetes"
         shell = "bash"
-        helper_image = "{{ gitlab_runner_helper_image_registry_host }}/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-{{ gitlab_runner_image_tag }}"
+        helper_image = "{{ gitlab_runner_helper_image }}"
         environment = ["DOCKER_TLS_CERTDIR=", "DOCKER_HOST=tcp://docker-my-dind:2375"]
 
         [runners.cache]
@@ -98,7 +72,7 @@ all:
         [runners.kubernetes]
           namespace = "{{ gitlab_runner_namespace }}"
           service_account = "gitlab-runner"
-          image = "{{ gitlab_runner_dind_image_registry }}/docker:{{ gitlab_runner_dind_image_tag }}"
+          image = "{{ gitlab_runner_dind_image }}"
           privileged = true
           allow_privilege_escalation = true
 
@@ -112,16 +86,12 @@ all:
             "app.kubernetes.io/managed-by" = "gitlab-runner"
 
           [[runners.kubernetes.services]]
-            name = "{{ gitlab_runner_dind_image_registry }}/docker:{{ gitlab_runner_dind_image_tag }}-dind"
+            name = "{{ gitlab_runner_dind_dind_image }}"
             alias = "docker-my-dind"
             environment = ["HEALTHCHECK_TCP_PORT=2375"]
 
     # Helm chart values
     gitlab_runner_helm_values:
-      image:
-        registry: "{{ gitlab_runner_image_registry_host }}"
-        image: "gitlab-org/gitlab-runner"
-        tag: "{{ gitlab_runner_image_tag }}"
       gitlabUrl: "{{ gitlab_runner_gitlab_url }}"
       replicas: 3
       concurrent: 10
