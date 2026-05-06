@@ -1,21 +1,5 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry для образов Teleport. По умолчанию — public.ecr.aws.
-    # Для airgap/приватного registry — переопределить в hosts-vars-override/teleport.yaml:
-    #   teleport_image_registry_host: "my-private-registry.local"
-    #
-    # прекол про image, registry, repository
-    # Прекол в том, что нельзя указать таг (версию). Она подставляется автоматически: из helm-chart-app-version
-    #
-    # СБ должна загрузить следующие образы (только хост меняется, пути остаются оригинальными):
-    #   <host>/gravitational/teleport-distroless:v<teleport_helm_chart_version>   (auth + proxy pods)
-    #   <host>/gravitational/teleport-operator:v<teleport_helm_chart_version>     (operator pod)
-    teleport_image_registry_host: "public.ecr.aws"
-    # ---------
-    # ---------
     teleport_namespace: "teleport"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     teleport_helm_is_oci: false
@@ -92,7 +76,6 @@ all:
     # через helper {{ include "teleport-cluster.version" . }}.
     # Т.е. обновление версии Teleport = bump teleport_helm_chart_version.
     teleport_helm_values:
-      image: "{{ teleport_image_registry_host }}/gravitational/teleport-distroless"
       clusterName: "{{ teleport_cluster_name }}"
       kubeClusterName: "{{ teleport_kube_cluster_name }}"
       chartMode: standalone
@@ -119,7 +102,6 @@ all:
             kube_public_addr: "{{ teleport_kube_public_addr }}"
       operator:
         enabled: true
-        image: "{{ teleport_image_registry_host }}/gravitational/teleport-operator"
         tolerations: []
         nodeSelector: {}
         affinity: {}
