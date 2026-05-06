@@ -1,40 +1,10 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry для образов ZITADEL (app + login UI). По умолчанию — ghcr.io.
-    # Для airgap — переопределить в hosts-vars-override/zitadel.yaml:
-    #   zitadel_image_registry: "my-private-registry.local"
-    #
-    # СБ должна загрузить (2 образа):
-    #   <registry>/zitadel/zitadel:v4.13.1              (main app, initJob, setupJob)
-    #   <registry>/zitadel/zitadel-login:<appVersion>  (Login UI, см. chart appVersion)
-    zitadel_image_registry: "ghcr.io"
-    # Registry для tool-образов официального chart. По умолчанию — docker.io.
-    # Маппится на chart-поле imageRegistry (покрывает wait4x, busybox, kubectl).
-    # Для airgap — переопределить в hosts-vars-override/zitadel.yaml:
-    #   zitadel_tools_image_registry: "my-private-registry.local"
-    #
-    # СБ должна загрузить (3 образа):
-    #   <registry>/wait4x/wait4x:3.6
-    #   <registry>/busybox:1.37
-    #   <registry>/alpine/k8s:<cluster-version>  (тег = версия k8s кластера)
-    zitadel_tools_image_registry: "docker.io"
-    # PostgreSQL
-    # Registry для образа PostgreSQL (локальный chart). По умолчанию — docker.io.
-    # Для airgap — переопределить в hosts-vars-override/zitadel.yaml:
-    #   zitadel_postgresql_image_registry: "my-private-registry.local"
-    #
-    # СБ должна загрузить:
-    #   <registry>/postgres:16-alpine
-    zitadel_postgresql_image_registry: "docker.io"
-    zitadel_postgresql_image: "{{ zitadel_postgresql_image_registry }}/postgres:16-alpine"
-    # ---------
-    # Image tags
-    # zitadel-login tag не задаётся — chart подставляет appVersion автоматически (values.yaml default tag: "").
-    zitadel_image_tag: "v4.13.1"
-    # ---------
+    # PostgreSQL image (handwritten chart — full URI:tag).
+    # Используется в zitadel_postgresql_helm_values.image
+    # (handwritten chart playbook-app/charts/zitadel/postgresql/).
+    # Для AirGap оператор переопределяет в hosts-vars-override/zitadel.yaml.
+    zitadel_postgresql_image: "docker.io/postgres:16-alpine"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     zitadel_namespace: "zitadel"
     zitadel_helm_is_oci: false
@@ -118,13 +88,6 @@ all:
           websecure: "{{ traefik_websecure_entrypoint }}"
     # Helm chart values
     zitadel_helm_values:
-      imageRegistry: "{{ zitadel_tools_image_registry }}"
-      image:
-        repository: "{{ zitadel_image_registry }}/zitadel/zitadel"
-        tag: "{{ zitadel_image_tag }}"
-      login:
-        image:
-          repository: "{{ zitadel_image_registry }}/zitadel/zitadel-login"
       replicaCount: 1
       resources: {}
       nodeSelector: {}
