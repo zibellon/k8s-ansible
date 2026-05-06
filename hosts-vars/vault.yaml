@@ -1,22 +1,5 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry для образов Vault. По умолчанию: vault server — docker.io, operator/sidecar — ghcr.io.
-    # Для airgap/приватного registry — переопределить в hosts-vars-override/vault.yaml:
-    #   vault_image_registry: "my-private-registry.local"
-    #   vault_operator_image_registry: "my-private-registry.local"
-    #
-    # СБ должна загрузить следующие образы:
-    #   <vault_image_registry>/hashicorp/vault:<vault_image_tag>
-    #   <vault_operator_image_registry>/bank-vaults/vault-operator  (тег = версия chart)
-    #   <vault_operator_image_registry>/bank-vaults/bank-vaults:v1.32.1
-    vault_image_registry: "docker.io"
-    vault_image_tag: "1.21.2"
-    vault_operator_image_registry: "ghcr.io"
-    # ---------
-    # ---------
     # Vault (HashiCorp) — managed by bank-vaults operator
     # Operator: oci://ghcr.io/bank-vaults/helm-charts/vault-operator
     # Vault CR: playbook-app/charts/vault/cr/
@@ -32,6 +15,10 @@ all:
     # refresh_interval - опциональное переопределение интервала (иначе используется eso_resources_config.external_secret_refresh_interval)
     # ---------
     vault_namespace: "vault"
+    # Vault server image (полный URI:tag — handwritten chart pattern).
+    # Используется в vault_spec.image (попадает в Vault CR → читается bank-vaults operator).
+    # Для AirGap оператор переопределяет в hosts-vars-override/vault.yaml.
+    vault_image: "docker.io/hashicorp/vault:1.21.2"
     # Helm repository (OCI) - адрес chart bank-vaults/vault-operator (переопределить в hosts-vars-override/ для airgap)
     vault_operator_helm_is_oci: true
     vault_operator_helm_url: "oci://ghcr.io/bank-vaults/helm-charts/vault-operator"
@@ -66,8 +53,6 @@ all:
     vault_unsealer_secret_name: "vault-unseal-keys"
     # Vault Kubernetes Auth
     vault_kubernetes_host: "https://kubernetes.default.svc:443"
-    # bank-vaults operator
-    vault_bank_vaults_version: "v1.32.1"
     vault_roles_default_ttl: "1h"
 
     # Pre-phase values (NetworkPolicies chart)
@@ -99,12 +84,6 @@ all:
           websecure: "{{ traefik_websecure_entrypoint }}"
     # Operator Helm values (bank-vaults operator chart)
     vault_operator_helm_values:
-      image:
-        repository: "{{ vault_operator_image_registry }}/bank-vaults/vault-operator"
-      bankVaults:
-        image:
-          repository: "{{ vault_operator_image_registry }}/bank-vaults/bank-vaults"
-          tag: "{{ vault_bank_vaults_version }}"
       tolerations: []
       nodeSelector: {}
       affinity: {}
@@ -288,7 +267,7 @@ all:
     vault_spec:
       size: 1
       serviceAccount: vault
-      image: "{{ vault_image_registry }}/hashicorp/vault:{{ vault_image_tag }}"
+      image: "{{ vault_image }}"
       unsealConfig:
         options:
           secretShares: "{{ vault_key_shares }}"
