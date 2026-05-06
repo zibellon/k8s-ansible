@@ -411,33 +411,21 @@ all:
     # ----------------------------------------------------------------------------
     # node-exporter — DaemonSet + Service (host-level metrics)
     # ----------------------------------------------------------------------------
-    # СБ должна загрузить:
-    #   {{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter:{{ mon_system_node_exporter_image_tag }}
-    mon_system_node_exporter_image_registry: "quay.io"
-    mon_system_node_exporter_image_name: "{{ mon_system_node_exporter_image_registry }}/prometheus/node-exporter"
-    mon_system_node_exporter_image_tag: "v1.11.1"
+    mon_system_node_exporter_image: "quay.io/prometheus/node-exporter:v1.11.1"
     mon_system_node_exporter_rollout_timeout: "120s"
     mon_system_node_exporter_port: 9100
 
     # ----------------------------------------------------------------------------
     # kube-state-metrics — Deployment + RBAC + Service (Kubernetes object metrics)
     # ----------------------------------------------------------------------------
-    # СБ должна загрузить:
-    #   {{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics:{{ mon_system_ksm_image_tag }}
-    mon_system_ksm_image_registry: "registry.k8s.io"
-    mon_system_ksm_image_name: "{{ mon_system_ksm_image_registry }}/kube-state-metrics/kube-state-metrics"
-    mon_system_ksm_image_tag: "v2.18.0"
+    mon_system_ksm_image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0"
     mon_system_ksm_rollout_timeout: "60s"
     mon_system_ksm_port: 8080
 
     # ----------------------------------------------------------------------------
     # Vector — DaemonSet + RBAC + ConfigMap (log shipper, no Service by design)
     # ----------------------------------------------------------------------------
-    # СБ должна загрузить:
-    #   {{ mon_system_vector_image_registry }}/timberio/vector:{{ mon_system_vector_image_tag }}
-    mon_system_vector_image_registry: "docker.io"
-    mon_system_vector_image_name: "{{ mon_system_vector_image_registry }}/timberio/vector"
-    mon_system_vector_image_tag: "0.50.0-debian"
+    mon_system_vector_image: "docker.io/timberio/vector:0.50.0-debian"
     mon_system_vector_rollout_timeout: "180s"
     # ---------
     # Full vector-config.yaml as block scalar — override entire variable in
@@ -580,11 +568,7 @@ all:
     # ----------------------------------------------------------------------------
     # Loki — single-binary Deployment + PVC + ConfigMap + Service (log store)
     # ----------------------------------------------------------------------------
-    # СБ должна загрузить:
-    #   {{ mon_system_loki_image_registry }}/grafana/loki:{{ mon_system_loki_image_tag }}
-    mon_system_loki_image_registry: "docker.io"
-    mon_system_loki_image_name: "{{ mon_system_loki_image_registry }}/grafana/loki"
-    mon_system_loki_image_tag: "3.5.0"
+    mon_system_loki_image: "docker.io/grafana/loki:3.5.0"
     mon_system_loki_rollout_timeout: "120s"
     mon_system_loki_port: 3100
     # ---------
@@ -640,11 +624,7 @@ all:
     # ----------------------------------------------------------------------------
     # Grafana — Deployment + PVC + Service (with Vault/ESO admin password lifecycle)
     # ----------------------------------------------------------------------------
-    # СБ должна загрузить:
-    #   {{ mon_system_grafana_image_registry }}/grafana/grafana:{{ mon_system_grafana_image_tag }}
-    mon_system_grafana_image_registry: "docker.io"
-    mon_system_grafana_image_name: "{{ mon_system_grafana_image_registry }}/grafana/grafana"
-    mon_system_grafana_image_tag: "12.4.2"
+    mon_system_grafana_image: "docker.io/grafana/grafana:12.4.2"
     mon_system_grafana_rollout_timeout: "120s"
     mon_system_grafana_port: 3000
     mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
@@ -748,9 +728,7 @@ all:
     mon_system_node_exporter_helm_values:
       namespace: "{{ mon_system_namespace }}"
       nodeExporter:
-        image:
-          name: "{{ mon_system_node_exporter_image_name }}"
-          tag: "{{ mon_system_node_exporter_image_tag }}"
+        image: "{{ mon_system_node_exporter_image }}"
         port: "{{ mon_system_node_exporter_port }}"
         args:
           - --path.procfs=/host/proc
@@ -776,9 +754,7 @@ all:
     mon_system_ksm_helm_values:
       namespace: "{{ mon_system_namespace }}"
       ksm:
-        image:
-          name: "{{ mon_system_ksm_image_name }}"
-          tag: "{{ mon_system_ksm_image_tag }}"
+        image: "{{ mon_system_ksm_image }}"
         port: "{{ mon_system_ksm_port }}"
         args:
           - --port=8080
@@ -799,9 +775,7 @@ all:
     mon_system_loki_helm_values:
       namespace: "{{ mon_system_namespace }}"
       loki:
-        image:
-          name: "{{ mon_system_loki_image_name }}"
-          tag: "{{ mon_system_loki_image_tag }}"
+        image: "{{ mon_system_loki_image }}"
         port: "{{ mon_system_loki_port }}"
       pvc:
         accessMode: "ReadWriteOnce"
@@ -824,9 +798,7 @@ all:
     mon_system_vector_helm_values:
       namespace: "{{ mon_system_namespace }}"
       vector:
-        image:
-          name: "{{ mon_system_vector_image_name }}"
-          tag: "{{ mon_system_vector_image_tag }}"
+        image: "{{ mon_system_vector_image }}"
         serviceAccount: "vector"
       config_yaml: "{{ mon_system_vector_config_yaml }}"
       tolerations:
@@ -848,9 +820,7 @@ all:
       namespace: "{{ mon_system_namespace }}"
       grafana:
         port: "{{ mon_system_grafana_port }}"
-        image:
-          name: "{{ mon_system_grafana_image_name }}"
-          tag: "{{ mon_system_grafana_image_tag }}"
+        image: "{{ mon_system_grafana_image }}"
         installPlugins: "grafana-piechart-panel"
         externalUrl: "{{ mon_system_grafana_external_url }}"
       adminSecret:
