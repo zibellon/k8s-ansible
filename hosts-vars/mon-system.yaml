@@ -1,24 +1,5 @@
 all:
   vars:
-    # ============================================================================
-    # registry+images (AirGap)
-    # ============================================================================
-    # mon-system stack — 8 workloads делят namespace `mon-system`. Каждый workload
-    # имеет отдельную переменную mon_system_<c>_image_registry. Default'ы взяты
-    # из исходных mon-* (quay.io / docker.io / registry.k8s.io). Для airgap —
-    # переопределить нужные переменные в hosts-vars-override/mon-system.yaml.
-    #
-    # СБ должна загрузить следующие 9 образов (путь после хоста сохраняется):
-    #   quay.io/prometheus-operator/prometheus-operator:v0.90.1
-    #   quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1
-    #   quay.io/prometheus/prometheus:v3.7.2
-    #   quay.io/prometheus/alertmanager:v0.28.1
-    #   quay.io/prometheus/node-exporter:v1.11.1
-    #   registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0
-    #   docker.io/grafana/loki:3.5.0
-    #   docker.io/timberio/vector:0.50.0-debian
-    #   docker.io/grafana/grafana:12.4.2
-    # ============================================================================
     # ----------------------------------------------------------------------------
     # General: namespace + per-component enable flags + common ingress + helm timeouts
     # ----------------------------------------------------------------------------
@@ -91,18 +72,14 @@ all:
     # ----------------------------------------------------------------------------
     # Prometheus-Operator stack: operator + Prometheus instance + Alertmanager
     # ----------------------------------------------------------------------------
-    # СБ должна загрузить (4 образа под одним registry):
-    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-operator:{{ mon_system_prometheus_operator_image_tag }}
-    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-config-reloader:{{ mon_system_prometheus_config_reloader_image_tag }}
-    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus/prometheus:{{ mon_system_prometheus_image_tag }}
-    #   {{ mon_system_prometheus_operator_image_registry }}/prometheus/alertmanager:{{ mon_system_alertmanager_image_tag }}
-    mon_system_prometheus_operator_image_registry: "quay.io"
-    mon_system_prometheus_operator_image_tag: "v0.90.1"
+    # При апгрейде prometheus-operator: 4 hardcoded image URIs живут в разных местах.
+    # Синхронизируй ВСЕ при bump:
+    #   1. operator           — playbook-app/charts/mon-system/prometheus-operator/values.yaml::imageOperator
+    #   2. config-reloader    — mon_system_prometheus_operator_helm_values.args[1] ниже
+    #   3. prometheus image   — mon_system_prometheus_spec.image / .version (выше)
+    #   4. alertmanager image — mon_system_alertmanager_spec.image / .version (выше)
+    # Plus this label_version below — должна совпадать с operator tag (без 'v' prefix).
     mon_system_prometheus_operator_label_version: "0.90.1"
-    mon_system_prometheus_config_reloader_image_tag: "v0.90.1"
-    mon_system_prometheus_image_tag: "v3.7.2"
-    mon_system_alertmanager_image_tag: "v0.28.1"
-    mon_system_prometheus_operator_image_with_registry: "{{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-operator:{{ mon_system_prometheus_operator_image_tag }}"
     mon_system_prometheus_operator_rollout_timeout: "300s"
     mon_system_prometheus_operator_port: 8080
 
@@ -131,9 +108,10 @@ all:
           app.kubernetes.io/managed-by: Helm
       serviceAccountName: prometheus-instance
       automountServiceAccountToken: true
-      image: "{{ mon_system_prometheus_operator_image_registry }}/prometheus/prometheus:{{ mon_system_prometheus_image_tag }}"
+      # При апгрейде синхронизируй с label app.kubernetes.io/version выше + label_version в prometheus-operator section
+      image: "quay.io/prometheus/prometheus:v3.7.2"
       imagePullPolicy: IfNotPresent
-      version: "{{ mon_system_prometheus_image_tag }}"
+      version: "v3.7.2"
       replicas: 1
       logLevel: info
       logFormat: json
@@ -214,9 +192,10 @@ all:
           app.kubernetes.io/component: alertmanager
           app.kubernetes.io/part-of: monitoring
           app.kubernetes.io/managed-by: Helm
-      image: "{{ mon_system_prometheus_operator_image_registry }}/prometheus/alertmanager:{{ mon_system_alertmanager_image_tag }}"
+      # При апгрейде синхронизируй с label_version в prometheus-operator section
+      image: "quay.io/prometheus/alertmanager:v0.28.1"
       imagePullPolicy: IfNotPresent
-      version: "{{ mon_system_alertmanager_image_tag }}"
+      version: "v0.28.1"
       replicas: 1
       logLevel: info
       logFormat: json
@@ -725,7 +704,6 @@ all:
     # Prometheus Operator workload Helm values (operator Deployment + RBAC)
     mon_system_prometheus_operator_helm_values:
       namespace: "{{ mon_system_namespace }}"
-      imageOperator: "{{ mon_system_prometheus_operator_image_with_registry }}"
       version: "{{ mon_system_prometheus_operator_label_version }}"
       tolerations: []
       nodeSelector:
@@ -740,7 +718,7 @@ all:
       port: "{{ mon_system_prometheus_operator_port }}"
       args:
         - --kubelet-service=kube-system/kubelet
-        - --prometheus-config-reloader={{ mon_system_prometheus_operator_image_registry }}/prometheus-operator/prometheus-config-reloader:{{ mon_system_prometheus_config_reloader_image_tag }}
+        - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1
         - --watch-referenced-objects-in-all-namespaces=true
         - --disable-unmanaged-prometheus-configuration=true
         - --kubelet-endpoints=true
