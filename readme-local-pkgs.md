@@ -53,43 +53,6 @@ all:
 ```
 
 # ------
-# Kubernetes packages из локальных `.deb`
-# ------
-
-## Где взять `.deb`
-- Официальный репозиторий: `https://pkgs.k8s.io/core:/stable:/v<X.Y>/deb/` (где `<X.Y>` — major.minor версия, например `1.35`)
-- Можно браузером, либо `apt-get download <pkg>` с подключённой к интернету Ubuntu-машины (после `apt-add` репозитория pkgs.k8s.io)
-- Нужны 5 файлов под архитектуру сервера и Ubuntu-релиз:
-  - `kubernetes-cni_<version>_<arch>.deb` (transitive dep — kubelet требует CNI plugins .deb)
-  - `cri-tools_<version>_<arch>.deb` (transitive dep — kubelet требует CRI tools)
-  - `kubelet_<version>_<arch>.deb`
-  - `kubectl_<version>_<arch>.deb`
-  - `kubeadm_<version>_<arch>.deb`
-
-## Куда положить
-- В директорию `pkgs-sources/` в корне репозитория
-- Имена файлов свободные
-
-## Как переключить
-В `hosts-vars-override/XXXXX.yaml` под `all.vars` задать:
-```yaml
-all:
-  vars:
-    k8s_install_method: "local_deb"
-    k8s_kubernetes_cni_local_deb_path: "pkgs-sources/kubernetes-cni_<ver>_amd64.deb"
-    k8s_cri_tools_local_deb_path: "pkgs-sources/cri-tools_<ver>_amd64.deb"
-    k8s_local_deb_path_list:
-      - "pkgs-sources/kubelet_<ver>_amd64.deb"
-      - "pkgs-sources/kubectl_<ver>_amd64.deb"
-      - "pkgs-sources/kubeadm_<ver>_amd64.deb"
-```
-
-## Замечание
-- `k8s_local_deb_path_list` ДОЛЖЕН быть позиционно парным к `k8s_package_list` — одинаковая длина И одинаковый порядок (`kubelet → kubectl → kubeadm`). Assert в `main-components.yaml` проверит длину; порядок — на ответственности оператора.
-- `kubernetes-cni` и `cri-tools` устанавливаются ПЕРЕД списком (kubelet.deb имеет на них `Depends`).
-- Транзитивные deps Ubuntu-уровня (`conntrack`, `ethtool`, `socat`, `iptables` и т.п.) всё ещё резолвятся через стандартные Ubuntu apt-mirrors.
-
-# ------
 # Longhorn packages из локальных `.deb`
 # ------
 

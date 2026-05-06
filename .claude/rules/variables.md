@@ -171,10 +171,6 @@ Per-file source of truth in parentheses.
 | `helm_local_tarball_path` | `""` | Path to local Helm tarball relative to `project_root` (used only when `helm_install_method: local_tarball`) |
 | `k9s_version` | `"v0.50.18"` | k9s binary version |
 | `k9s_download_host` | `"https://github.com"` | Download host for k9s .deb — AirGap override |
-| `k8s_install_method` | `"apt"` | Install method for `k8s_package_list`: `"apt"` (default — pkgs.k8s.io repo) or `"local_deb"` (offline). In `local_deb` mode 5 .deb files are required — `k8s_local_deb_path_list` (paired with `k8s_package_list`) plus 2 standalone transitive-dep paths |
-| `k8s_kubernetes_cni_local_deb_path` | `""` | Path to local `kubernetes-cni` `.deb` relative to `project_root` (used only when `k8s_install_method: local_deb`; transitive dep of kubelet) |
-| `k8s_cri_tools_local_deb_path` | `""` | Path to local `cri-tools` `.deb` relative to `project_root` (used only when `k8s_install_method: local_deb`; transitive dep of kubelet) |
-| `k8s_local_deb_path_list` | `[]` | List of paths to local `.deb` files for `k8s_package_list`, positionally paired (same length AND same order). Used only when `k8s_install_method: local_deb` |
 | `longhorn_install_method` | `"apt"` | Install method for `longhorn_packages`: `"apt"` (default — standard Ubuntu repos) or `"local_deb"` (offline) |
 | `longhorn_local_deb_path_list` | `[]` | List of paths to local `.deb` files for `longhorn_packages`, positionally paired (same length AND same order). Used only when `longhorn_install_method: local_deb` |
 | `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |
