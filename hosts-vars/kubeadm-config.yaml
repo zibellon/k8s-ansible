@@ -1,30 +1,5 @@
 all:
   vars:
-    # ------
-    # registry+images (AirGap)
-    # ------
-    # Registry-префикс для control-plane образов, которые тянет kubeadm.
-    # По умолчанию — registry.k8s.io. Для airgap — переопределить в
-    # hosts-vars-override/kubeadm-config.yaml:
-    #   kubeadm_image_registry: "my-private-registry.local"
-    # (или "my-private-registry.local/registry.k8s.io" если в зеркале сохранены
-    # оригинальные пути)
-    #
-    # kubeadm подставляет имена прямо под этим префиксом:
-    #   <registry>/kube-apiserver:<k8s_full_version>
-    #   <registry>/kube-controller-manager:<k8s_full_version>
-    #   <registry>/kube-scheduler:<k8s_full_version>
-    #   <registry>/etcd:<kubeadm-auto-tag>
-    #   <registry>/coredns/coredns:<kubeadm-auto-tag>
-    #
-    # Точные tags etcd / coredns для текущей версии k8s можно получить так:
-    #   kubeadm config images list --kubernetes-version {{ k8s_full_version }}
-    #
-    # СБ должна загрузить перечисленные выше 5 образов в приватный registry.
-    # kube-proxy отключён (proxy.disabled: true в ClusterConfiguration) — образ не нужен.
-    kubeadm_image_registry: "registry.k8s.io"
-    # ---------
-    # ---------
     # -----------------------------------------------------------------------
     # kubeadm config template
     # -----------------------------------------------------------------------
@@ -46,7 +21,6 @@ all:
       apiVersion: kubeadm.k8s.io/v1beta4
       kind: ClusterConfiguration
       kubernetesVersion: "{{ k8s_full_version }}"
-      imageRepository: "{{ kubeadm_image_registry }}"
       controlPlaneEndpoint: "{{ haproxy_apiserver_lb_host }}:{{ haproxy_apiserver_lb_port }}"
       apiServer:
         extraArgs:
