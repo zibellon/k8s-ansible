@@ -13,18 +13,6 @@
 
   tasks:
     # =========================================================================
-    # ASSERT INSTALL METHOD
-    # =========================================================================
-    - name: "[main-components] assert k8s install method"
-      assert:
-        that:
-          - k8s_install_method in ["apt", "local_deb"]
-          - (k8s_install_method != "local_deb") or (k8s_kubernetes_cni_local_deb_path is defined and k8s_kubernetes_cni_local_deb_path | length > 0)
-          - (k8s_install_method != "local_deb") or (k8s_cri_tools_local_deb_path is defined and k8s_cri_tools_local_deb_path | length > 0)
-          - (k8s_install_method != "local_deb") or (k8s_local_deb_path_list is defined and k8s_local_deb_path_list is sequence and k8s_local_deb_path_list | length > 0)
-          - (k8s_install_method != "local_deb") or (k8s_local_deb_path_list | length == k8s_package_list | length)
-
-    # =========================================================================
     # KUBERNETES APT REPOSITORY
     # =========================================================================
     - name: Install required packages for apt repo
@@ -45,7 +33,6 @@
       shell: >-
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/Release.key
         | gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-      when: k8s_install_method == "apt"
 
     - name: Add Kubernetes apt repository
       copy:
@@ -53,7 +40,6 @@
         content: |
           deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/ /
         mode: '0644'
-      when: k8s_install_method == "apt"
 
     # =========================================================================
     # CONTAINERD
@@ -216,51 +202,15 @@
     - name: Update apt cache
       apt:
         update_cache: yes
-      when: k8s_install_method == "apt"
 
     - name: Install kubelet, kubeadm, kubectl
       apt:
         name: "{{ k8s_package_list }}"
         state: present
-      when: k8s_install_method == "apt"
 
     - name: Hold kubelet, kubeadm, kubectl versions
       command: apt-mark hold {{ k8s_package_list | join(' ') }}
       changed_when: false
-      when: k8s_install_method == "apt"
-
-    # =========================================================================
-    # KUBEADM, KUBELET, KUBECTL — local_deb branch (offline, AirGap-friendly)
-    # Order: kubernetes-cni → cri-tools → k8s_local_deb_path_list iteration
-    # (kubelet → kubectl → kubeadm by inventory order). kubelet.deb has Depends
-    # on kubernetes-cni and cri-tools; kubeadm.deb has Depends on kubelet/kubectl.
-    # =========================================================================
-    - name: Install kubernetes-cni from local .deb
-      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
-      vars:
-        dto_label_name: "main-components"
-        dto_deb_local_path: "{{ k8s_kubernetes_cni_local_deb_path }}"
-        dto_apt_mark_hold_pkg_name: "kubernetes-cni"
-      when: k8s_install_method == "local_deb"
-
-    - name: Install cri-tools from local .deb
-      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
-      vars:
-        dto_label_name: "main-components"
-        dto_deb_local_path: "{{ k8s_cri_tools_local_deb_path }}"
-        dto_apt_mark_hold_pkg_name: "cri-tools"
-      when: k8s_install_method == "local_deb"
-
-    - name: Install kubelet/kubectl/kubeadm from local .debs
-      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
-      vars:
-        dto_label_name: "main-components"
-        dto_deb_local_path: "{{ item }}"
-        dto_apt_mark_hold_pkg_name: "{{ k8s_package_list[i] }}"
-      loop: "{{ k8s_local_deb_path_list }}"
-      loop_control:
-        index_var: i
-      when: k8s_install_method == "local_deb"
 
     - name: Enable kubelet
       systemd:
