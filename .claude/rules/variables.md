@@ -158,17 +158,26 @@ Per-file source of truth in parentheses.
 | `containerd_version` | `"2.2.2"` | Container runtime |
 | `containerd_download_host` | `"https://github.com"` | Download host for containerd tarball — AirGap override |
 | `containerd_service_download_host` | `"https://raw.githubusercontent.com"` | Download host for containerd.service unit — AirGap override |
+| `containerd_install_method` | `"url"` | Install method: `"url"` (default — download from `containerd_url` + `containerd_service_url`) or `"local_tarball"` (offline; paths relative to `project_root`, files kept in `pkgs-sources/`) |
+| `containerd_local_tarball_path` | `""` | Path to local containerd tarball relative to `project_root` (used only when `containerd_install_method: local_tarball`) |
+| `containerd_service_local_path` | `""` | Path to local `containerd.service` unit file relative to `project_root` (used only when `containerd_install_method: local_tarball`) |
 | `containerd_additional_configs` | `[{dirName: "_default", content: "..."}]` | List of drop-in configs in `/etc/containerd/certs.d/<dirName>/hosts.toml`. Default has one `_default` entry pointing all registries (catch-all) at `mirror.gcr.io`. **Единая точка AirGap-интерсепции** для образов всех компонентов — заменяет per-component `_image_registry` overrides. См. `hosts-vars/k8s-base.yaml` для развёрнутого описания + примеров |
 | `runc_version` | `"v1.4.2"` | OCI runtime |
 | `runc_download_host` | `"https://github.com"` | Download host for runc binary — AirGap override |
+| `runc_install_method` | `"url"` | Install method: `"url"` (default — download from `runc_url`) or `"local_file"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
+| `runc_local_path` | `""` | Path to local runc binary relative to `project_root` (used only when `runc_install_method: local_file`) |
 | `cni_plugins_version` | `"v1.9.1"` | CNI plugins bundle |
 | `cni_plugins_download_host` | `"https://github.com"` | Download host for CNI plugins bundle — AirGap override |
+| `cni_plugins_install_method` | `"url"` | Install method: `"url"` (default — download from `cni_plugins_url`) or `"local_tarball"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
+| `cni_plugins_local_tarball_path` | `""` | Path to local CNI plugins tarball relative to `project_root` (used only when `cni_plugins_install_method: local_tarball`) |
 | `helm_version` | `"v3.20.2"` | Helm binary version |
 | `helm_download_host` | `"https://get.helm.sh"` | Download host for Helm tarball — AirGap override |
 | `helm_install_method` | `"url"` | Install method: `"url"` (default — download from `helm_url`) or `"local_tarball"` (offline) |
 | `helm_local_tarball_path` | `""` | Path to local Helm tarball relative to `project_root` (used only when `helm_install_method: local_tarball`) |
 | `k9s_version` | `"v0.50.18"` | k9s binary version |
 | `k9s_download_host` | `"https://github.com"` | Download host for k9s .deb — AirGap override |
+| `k9s_install_method` | `"url"` | Install method: `"url"` (default — download from `k9s_url`) or `"local_deb"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
+| `k9s_local_deb_path` | `""` | Path to local k9s `.deb` file relative to `project_root` (used only when `k9s_install_method: local_deb`) |
 | `longhorn_install_method` | `"apt"` | Install method for `longhorn_packages`: `"apt"` (default — standard Ubuntu repos) or `"local_deb"` (offline) |
 | `longhorn_local_deb_path_list` | `[]` | List of paths to local `.deb` files for `longhorn_packages`, positionally paired (same length AND same order). Used only when `longhorn_install_method: local_deb` |
 | `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |
