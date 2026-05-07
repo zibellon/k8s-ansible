@@ -22,12 +22,30 @@
       changed_when: false
       failed_when: false
 
-    - name: Download LLVM install script
+    - name: Assert llvm install method is valid
+      assert:
+        that:
+          - llvm_install_method in ["url", "local_script"]
+          - (llvm_install_method == "url") or (llvm_local_script_path | length > 0)
+        fail_msg: "llvm_install_method must be 'url' or 'local_script'; for 'local_script' set llvm_local_script_path"
+
+    - name: Download LLVM install script (url)
       get_url:
-        url: "https://apt.llvm.org/llvm.sh"
+        url: "{{ llvm_url }}"
         dest: /tmp/llvm.sh
         mode: '0755'
-      when: clang_pre_check.rc != 0
+      when:
+        - clang_pre_check.rc != 0
+        - llvm_install_method == "url"
+
+    - name: Copy LLVM install script (local_script)
+      copy:
+        src: "{{ project_root }}/{{ llvm_local_script_path }}"
+        dest: /tmp/llvm.sh
+        mode: '0755'
+      when:
+        - clang_pre_check.rc != 0
+        - llvm_install_method == "local_script"
 
     - name: Install LLVM {{ llvm_version }} (async)
       command: /tmp/llvm.sh {{ llvm_version }} all
