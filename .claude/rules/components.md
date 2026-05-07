@@ -13,7 +13,6 @@ Template fields:
 - **ESO integration** — `yes/no`; if yes, the `eso_vault_integration_<c>` object points to which Vault paths.
 - **ServiceMonitor** — whether the post phase creates one.
 - **Dependencies** — components that must be installed first.
-- **Image registry overrides** — variables for air-gap re-targeting.
 - **Non-install playbooks** — companion plays (`-configure`, `-restart`, `-rotate`, sync helpers).
 
 ---
@@ -29,7 +28,6 @@ Template fields:
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes — per sub-component (`cilium_agent_service_monitor_enabled`, `hubble_service_monitor_enabled`, etc.).
 - **Dependencies.** None (installed first, before any other app). Must run BEFORE each node join: `--tags post` regenerates the host-firewall policy (`CiliumClusterwideNetworkPolicy`) with the new node's IPs.
-- **Image registry overrides.** `cilium_image_registry` (and per-sub-component if needed).
 - **Non-install playbooks.** `cilium-restart.yaml` (rollout-restart agent DaemonSet, operator Deployment, envoy DS, Hubble components).
 - **Notes.** Deployed as DaemonSet with `tolerations: [{operator: "Exists"}]` — runs on every node including tainted ones. `kube-proxy` is never installed — Cilium replaces it; the kubeadm template sets `proxy.disabled: true` in `ClusterConfiguration` so the addon is never deployed.
 
@@ -40,11 +38,10 @@ Template fields:
 - **Namespace.** `cert-manager`.
 - **Releases.** `cert-manager-pre`, `cert-manager`, `cert-manager-post`.
 - **External Helm repo.** `https://charts.jetstack.io` → chart `jetstack/cert-manager`, version `{{ cert_manager_helm_chart_version }}` (default `v1.20.2`; `v` префикс хранится в значении переменной — единая нормализация). HTTP↔OCI switchable via `cert_manager_helm_is_oci`.
-- **Required vars.** `cert_manager_namespace`, `cert_manager_helm_chart_version`, `cert_manager_image_tag`, plus per-sub-component (`cert_manager_`, `cert_manager_cainjector_`, `cert_manager_webhook_`) tolerations/nodeSelector/affinity/resources. Global `cert_manager_cluster_issuers` (list of `ClusterIssuer` specs, including `solvers[]` with `ingressClass` + `podLabels`).
+- **Required vars.** `cert_manager_namespace`, `cert_manager_helm_chart_version`, plus per-sub-component (`cert_manager_`, `cert_manager_cainjector_`, `cert_manager_webhook_`) tolerations/nodeSelector/affinity/resources. Global `cert_manager_cluster_issuers` (list of `ClusterIssuer` specs, including `solvers[]` with `ingressClass` + `podLabels`).
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium (CNI). Traefik (if using HTTP-01).
-- **Image registry overrides.** `cert_manager_image_registry` (and per-sub-component variants).
 - **Non-install playbooks.** None.
 - **Notes.** `cert_manager_cluster_issuers` is the single source of truth — downstream components derive ACME solver pod labels via `tasks-resolve-acme-solver.yaml` (never hard-code).
 
@@ -55,11 +52,10 @@ Template fields:
 - **Namespace.** `external-secrets`.
 - **Releases.** `external-secrets-pre`, `external-secrets`, `external-secrets-post`.
 - **External Helm repo.** `https://charts.external-secrets.io` → chart `external-secrets/external-secrets`, version `external_secrets_helm_chart_version` (default `2.3.0`). HTTP↔OCI switchable via `external_secrets_helm_is_oci`.
-- **Required vars.** `external_secrets_namespace`, `external_secrets_helm_chart_version`, `external_secrets_image_tag`, per-sub-component tolerations/nodeSelector/affinity/resources for `controller`, `webhook`, `cert_controller`.
+- **Required vars.** `external_secrets_namespace`, `external_secrets_helm_chart_version`, per-sub-component tolerations/nodeSelector/affinity/resources for `controller`, `webhook`, `cert_controller`.
 - **ESO integration.** No (it *is* ESO).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager.
-- **Image registry overrides.** `external_secrets_image_registry`.
 - **Non-install playbooks.** `external-secrets-restart.yaml`.
 
 ## 4. `vault`
@@ -69,11 +65,10 @@ Template fields:
 - **Namespace.** `vault`.
 - **Releases.** `vault-pre`, `vault` (bank-vaults operator), `vault-cr` (Vault Custom Resource), `vault-post`.
 - **External Helm repo.** OCI: `oci://ghcr.io/bank-vaults/helm-charts/vault-operator` (bank-vaults operator chart), version `vault_operator_helm_chart_version` (default `1.23.4`). OCI-only via `vault_operator_helm_is_oci=true`. **Note:** the HashiCorp Vault chart itself is embedded locally in `charts/vault/`; only the bank-vaults operator is from external OCI.
-- **Required vars.** `vault_namespace`, `vault_image_tag` (Vault server image), `vault_operator_helm_chart_version` (bank-vaults operator chart), `vault_bank_vaults_version` (bank-vaults image), `vault_storage_class`, `vault_storage_size`, `vault_key_shares` (3), `vault_key_threshold` (2), `vault_policies` / `_extra`, `vault_roles` / `_extra`, `vault_creds_host_path`.
+- **Required vars.** `vault_namespace`, `vault_image` (Vault server image — full URI:tag), `vault_operator_helm_chart_version` (bank-vaults operator chart), `vault_storage_class`, `vault_storage_size`, `vault_key_shares` (3), `vault_key_threshold` (2), `vault_policies` / `_extra`, `vault_roles` / `_extra`, `vault_creds_host_path`.
 - **ESO integration.** No (Vault is ESO's **source**, not a consumer).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets (ESO before Vault so SecretStores + ExternalSecrets can resolve as Vault comes up), longhorn (for PVC storage class).
-- **Image registry overrides.** `vault_image_registry`.
 - **Non-install playbooks.** `vault-rotate.yaml` — rekey unseal shares + rotate root token. Uses state files (see `bootstrap-and-ha.md`).
 - **Notes.** Unseal creds live at `/etc/kubernetes/vault-unseal.json` on every manager (mode 0600). Distributed to new managers at `manager-join.yaml` via `tasks-vault-distribute-creds.yaml`. Two KV engines mounted: `secret/` (admin use), `eso-secret/` (ESO read-only consumption).
 
@@ -88,7 +83,6 @@ Template fields:
 - **ESO integration.** Yes (via `eso_vault_integration_haproxy` in `hosts-vars/haproxy.yaml`; base `_secrets` empty — users fill via `_extra`).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
-- **Image registry overrides.** `haproxy_image_registry`.
 - **Non-install playbooks.** `haproxy-restart.yaml`.
 - **Notes.** This is the **in-cluster** HAProxy ingress — NOT to be confused with the systemd-level apiserver LB in `playbook-system/haproxy-apiserver-lb.yaml`.
 
@@ -103,7 +97,6 @@ Template fields:
 - **ESO integration.** Yes (via `eso_vault_integration_traefik` in `hosts-vars/traefik.yaml`; base `_secrets` empty — users add via `_extra` for custom TLS / basic-auth).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager.
-- **Image registry overrides.** `traefik_image_registry`.
 - **Non-install playbooks.** `traefik-restart.yaml`.
 - **Notes.** Ingress class is `traefik-lb`, **not** `traefik`. `post/` creates middlewares: `vpn-only` (ipAllowList from `vpn_ips`), `http-to-https`, `http-www-to-https`.
 
@@ -114,11 +107,10 @@ Template fields:
 - **Namespace.** `longhorn-system` — **fixed upstream, cannot rename**.
 - **Releases.** `longhorn-pre`, `longhorn`, `longhorn-post`.
 - **External Helm repo.** `https://charts.longhorn.io` → chart `longhorn/longhorn`, version `longhorn_helm_chart_version` (default `1.11.1`). HTTP↔OCI switchable via `longhorn_helm_is_oci`.
-- **Required vars.** `longhorn_namespace`, `longhorn_helm_chart_version`, `longhorn_image_tag`, `longhorn_storage_classes` (list — empty by default; populate in overrides), `longhorn_helm_values`, tolerations/nodeSelector/resources.
+- **Required vars.** `longhorn_namespace`, `longhorn_helm_chart_version`, `longhorn_storage_classes` (list — empty by default; populate in overrides), `longhorn_helm_values`, tolerations/nodeSelector/resources.
 - **ESO integration.** Yes (via `eso_vault_integration_longhorn` in `hosts-vars/longhorn.yaml`; base `_secrets` empty — S3 backup creds added via `_extra`).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault. Node prep via `playbook-system/longhorn-prepare.yaml` (kernel modules `iscsi_tcp`, `dm_crypt`; packages `open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`).
-- **Image registry overrides.** `longhorn_image_registry` (and per-sub-component).
 - **Non-install playbooks.** `longhorn-tags-sync.yaml` (sync node tags from inventory → `nodes.longhorn.io` CRD), `longhorn-s3-restore-create.yaml`, `longhorn-s3-restore-delete.yaml` (DR helpers).
 - **Notes.** Storage class conventions: `lh-manager`, `lh-major`, `lh-worker`, `lh-minor` node tags drive scheduling. Default class for critical PVCs (including Vault): `lh-major-single-best-effort`.
 
@@ -143,7 +135,6 @@ Template fields:
 - **ESO integration.** Yes (via `eso_vault_integration_argocd` in `hosts-vars/argocd.yaml`; admin password + git-ops repo credentials). The same `_secrets` list carries both types: plain admin-password entries and git-ops repo entries (which set `body.target.template.metadata.labels: argocd.argoproj.io/secret-type: repo-creds` or `repository` to let ArgoCD recognise them as repository credentials).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
-- **Image registry overrides.** `argocd_image_registry`.
 - **Non-install playbooks.** `argocd-configure.yaml` (one-off admin-password resolve/rotate + validation against ArgoCD API), `argocd-restart.yaml`.
 - **Notes.** 7 ConfigMaps (`argocd-cm`, `argocd-cmd-params-cm`, `argocd-gpg-keys-cm`, `argocd-notifications-cm`, `argocd-rbac-cm`, `argocd-ssh-known-hosts-cm`, `argocd-tls-certs-cm`) are applied in `pre/`, not `install/` — so they exist before the first controller reconcile. The `argocd-install.yaml` playbook ships with an additional `[gitops]` tag that runs after `[post]` and creates AppProject + Application(s) from `argocd_git_ops_apps` using `charts/argocd-git-ops/install/` (separate Helm release `argocd-git-ops` in the same namespace).
 
@@ -158,7 +149,6 @@ Template fields:
 - **ESO integration.** Yes (via `eso_vault_integration_gitlab` in `hosts-vars/gitlab.yaml`) — Postgres password, Redis password, MinIO root + registry creds, GitLab root password, optional PAT tokens. Complex secrets (MinIO connection strings, registry connection YAML) use `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
-- **Image registry overrides.** `gitlab_image_registry`, `gitlab_postgresql_image_registry`, `gitlab_redis_image_registry`, `gitlab_minio_image_registry`.
 - **Non-install playbooks.** `gitlab-configure.yaml` (rotate root password, regenerate PAT, etc.).
 - **Notes.** Uses `tasks-helm-upgrade-async.yaml` for the main `gitlab` release (synchronous Ansible command times out on the multi-release GitLab chart).
 
@@ -169,11 +159,10 @@ Template fields:
 - **Namespace.** `gitlab-runner` (separate from `gitlab` — runners can scale independently).
 - **Releases.** `gitlab-runner-pre`, `gitlab-runner`.
 - **External Helm repo.** `https://charts.gitlab.io` → chart `gitlab/gitlab-runner`, version `gitlab_runner_helm_chart_version` (default `0.78.0`, gitlab-runner 17.11). HTTP↔OCI switchable via `gitlab_runner_helm_is_oci`.
-- **Required vars.** `gitlab_runner_namespace`, `gitlab_runner_helm_chart_version`, `gitlab_runner_image_tag`, `gitlab_runner_helm_values`, tolerations/nodeSelector/resources.
+- **Required vars.** `gitlab_runner_namespace`, `gitlab_runner_helm_chart_version`, `gitlab_runner_helper_image`, `gitlab_runner_dind_image`, `gitlab_runner_dind_dind_image`, `gitlab_runner_helm_values`, tolerations/nodeSelector/resources.
 - **ESO integration.** Yes (via `eso_vault_integration_gitlab_runner` in `hosts-vars/gitlab-runner.yaml`) — registration token + S3 cache creds. The runner-token secret uses `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** No (runner itself doesn't expose metrics worth scraping).
 - **Dependencies.** `gitlab` (for runner registration token).
-- **Image registry overrides.** `gitlab_runner_image_registry`.
 
 ## 13. `zitadel`
 
@@ -182,11 +171,10 @@ Template fields:
 - **Namespace.** `zitadel`.
 - **Releases.** `zitadel-pre`, `zitadel-postgresql`, `zitadel`, `zitadel-post`.
 - **External Helm repo.** `https://charts.zitadel.com` → chart `zitadel/zitadel`, version `zitadel_helm_chart_version` (default `9.30.0`). HTTP↔OCI switchable via `zitadel_helm_is_oci`.
-- **Required vars.** `zitadel_namespace`, `zitadel_helm_chart_version`, `zitadel_image_tag`, `zitadel_postgresql_*` (storage, creds via ESO), `zitadel_domain`, `zitadel_masterkey` (in Vault via ESO).
+- **Required vars.** `zitadel_namespace`, `zitadel_helm_chart_version`, `zitadel_postgresql_image` (full URI:tag), `zitadel_postgresql_*` (storage, creds via ESO), `zitadel_domain`, `zitadel_masterkey` (in Vault via ESO).
 - **ESO integration.** Yes (via `eso_vault_integration_zitadel` in `hosts-vars/zitadel.yaml`) — Postgres password, `masterkey`.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
-- **Image registry overrides.** `zitadel_image_registry`, `zitadel_postgresql_image_registry`.
 
 ## 14. `teleport`
 
@@ -199,7 +187,6 @@ Template fields:
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, traefik.
-- **Image registry overrides.** `teleport_image_registry`.
 - **Notes.** `configure/` phase runs after the server is up and applies the declarative resource list.
 
 ## 15. `medik8s`
@@ -220,11 +207,10 @@ Template fields:
 - **Namespace.** `metrics-server`.
 - **Releases.** `metrics-server-pre`, `metrics-server`.
 - **External Helm repo.** `https://kubernetes-sigs.github.io/metrics-server/` → chart `metrics-server/metrics-server`, version `metrics_server_helm_chart_version` (default `3.13.0`). HTTP↔OCI switchable via `metrics_server_helm_is_oci`.
-- **Required vars.** `metrics_server_helm_chart_version`, `metrics_server_image_tag`, tolerations/nodeSelector/resources.
+- **Required vars.** `metrics_server_helm_chart_version`, tolerations/nodeSelector/resources.
 - **ESO integration.** No.
 - **ServiceMonitor.** No.
 - **Dependencies.** Cilium.
-- **Image registry overrides.** `metrics_server_image_registry`.
 
 ## 17. `mon-system`
 
@@ -242,7 +228,6 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 - **ServiceMonitor.** Three SMs in `mon-system/post/` (loki, ksm, node-exporter), plus 6 system-component SMs (kube-apiserver, kubelet, kube-controller-manager, kube-scheduler, etcd, coredns) in `system-service-monitors.yaml` always-rendered. Vector by design has no SM (no metrics endpoint). Grafana and Prometheus-Operator self-SMs are not currently shipped.
 - **Ingress + Certificate.** UI Ingresses for grafana, prometheus, alertmanager rendered in `post/` with composite gates (operator + per-UI flag for prometheus/alertmanager; just grafana flag for grafana). Per-UI VPN allow-list flags: `mon_system_<c>_vpn_only_enabled`.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault (for grafana ESO), traefik (for UIs), longhorn (for Prometheus + Grafana + Loki PVCs), zitadel (optional — for grafana OIDC).
-- **Image registry overrides.** Per workload — `mon_system_prometheus_operator_image_registry`, `mon_system_grafana_image_registry`, `mon_system_loki_image_registry`, `mon_system_vector_image_registry`, `mon_system_node_exporter_image_registry`, `mon_system_ksm_image_registry`. (Plus `mon_system_alertmanager_image_tag` and `mon_system_prometheus_image_tag` reuse the prometheus-operator registry.)
 - **Non-install playbooks.** None.
 - **Notes.** Single namespace eliminates the cross-namespace coupling that previously required: `vector-allow-loki` cross-ns NetworkPolicy in the `loki` namespace; `grafana-allow-prometheus` / `grafana-allow-alertmanager` cross-ns NetworkPolicies in the `mon` namespace; cross-ns Vector→Loki DNS endpoint. The consolidated NetworkPolicy in `mon-system/pre/` covers all intra-namespace traffic with a single `allow-internal-traffic` rule plus per-component egress rules (operator/ksm to apiserver, vector to apiserver:443, grafana external HTTP/HTTPS), and one cross-ns NetworkPolicy in `traefik-lb` for UI ingress.
 
