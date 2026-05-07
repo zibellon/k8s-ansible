@@ -105,9 +105,7 @@ Cert-manager + любой компонент, где нужен HTTPS серти
 
 ---
 
-Суффикс _download_host не в §1.1 (Per-component suffix convention). Сейчас там есть _image_registry, _image_repository, _image_tag. Логично дополнить _download_host + может _download_url — это мини-задача, вне scope этой.
-
-Консолидация AirGap-блоков в k8s-base.yaml. Сейчас в файле два AirGap-заголовка: новый (binaries) в начале и старый (containerd-sandbox image) в середине. Консистентнее было бы собрать их рядом сверху. Тоже отдельная мини-задача, если понадобится.
+Суффикс _download_host не в §1.1 (Per-component suffix convention). Логично дополнить _download_host + может _download_url — это мини-задача, вне scope этой.
 
 containerd_service_url тянет из main ветки upstream — это отдельная тема стабильности (upstream может сломать юнит). Вне scope, но держу в голове как риск: если когда-нибудь containerd выпустит breaking change в containerd.service на main, — переключимся на локальный template в репо.
 
