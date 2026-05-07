@@ -178,8 +178,6 @@ Per-file source of truth in parentheses.
 | `k9s_download_host` | `"https://github.com"` | Download host for k9s .deb — AirGap override |
 | `k9s_install_method` | `"url"` | Install method: `"url"` (default — download from `k9s_url`) or `"local_deb"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
 | `k9s_local_deb_path` | `""` | Path to local k9s `.deb` file relative to `project_root` (used only when `k9s_install_method: local_deb`) |
-| `longhorn_install_method` | `"apt"` | Install method for `longhorn_packages`: `"apt"` (default — standard Ubuntu repos) or `"local_deb"` (offline) |
-| `longhorn_local_deb_path_list` | `[]` | List of paths to local `.deb` files for `longhorn_packages`, positionally paired (same length AND same order). Used only when `longhorn_install_method: local_deb` |
 | `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |
 | `pod_subnet` | `"10.64.0.0/10"` | Pod CIDR (Cilium IPAM) |
 | `cluster_dns_domain` | `"cluster.local"` | Cluster DNS suffix |
