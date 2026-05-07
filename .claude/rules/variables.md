@@ -153,6 +153,9 @@ Per-file source of truth in parentheses.
 | Variable | Default | Purpose |
 |---|---|---|
 | `llvm_version` | `20` | LLVM/Clang version for Cilium eBPF |
+| `llvm_download_host` | `"https://apt.llvm.org"` | Download host for `llvm.sh` script — AirGap override |
+| `llvm_install_method` | `"url"` | Install method: `"url"` (default — download from `llvm_url`) or `"local_script"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`). **Не решает AirGap полностью** — `llvm.sh` сам внутри ходит curl на `apt.llvm.org` за GPG-ключом |
+| `llvm_local_script_path` | `""` | Path to local `llvm.sh` relative to `project_root` (used only when `llvm_install_method: local_script`) |
 | `k8s_version` | `"1.35"` | Short version (for apt repo URL) |
 | `k8s_full_version` | `"v1.35.3"` | Full version pin in kubeadm config |
 | `containerd_version` | `"2.2.2"` | Container runtime |

@@ -124,3 +124,24 @@ all:
 
 ## Замечание
 Этот режим закрывает только сам HAProxy-пакет. Зависимости (`libc6`, `libssl3` и т.п.) всё ещё резолвятся через стандартные Ubuntu apt-mirrors
+
+# ------
+# LLVM/Clang из локального shell-скрипта (llvm.sh)
+# ------
+
+## Где взять `llvm.sh`
+- Источник — официальный скрипт LLVM Project:
+  - `wget https://apt.llvm.org/llvm.sh`
+  - `curl -LO https://apt.llvm.org/llvm.sh`
+
+## Как переключить
+В `hosts-vars-override/XXXXX.yaml` под `all.vars` (или в любом файле override) задать:
+```yaml
+all:
+  vars:
+    llvm_install_method: "local_script"
+    llvm_local_script_path: "pkgs-sources/llvm.sh"
+```
+
+## Замечание
+Этот режим закрывает только подачу самого скрипта на сервер. Сам `llvm.sh` внутри обращается напрямую (через `wget`/`curl`, в обход apt) к `https://apt.llvm.org` за GPG-ключом и проверкой репо-метаданных — apt-mirror эти запросы не перехватит. Для полноценного AirGap (без сетевых вызовов скрипта) нужен отдельный режим установки на нативном apt-flow — отдельная задача.
