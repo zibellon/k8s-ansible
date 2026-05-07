@@ -74,14 +74,11 @@ all:
     # ----------------------------------------------------------------------------
     # При апгрейде prometheus-operator: 4 hardcoded image URIs живут в разных местах.
     # Синхронизируй ВСЕ при bump:
-    #   1. operator           — playbook-app/charts/mon-system/prometheus-operator/values.yaml::imageOperator
+    #   1. operator           — playbook-app/charts/mon-system/prometheus-operator/templates/prometheus-operator.yaml (image + 6 labels)
     #   2. config-reloader    — mon_system_prometheus_operator_helm_values.args[1] ниже
     #   3. prometheus image   — mon_system_prometheus_spec.image / .version (выше)
     #   4. alertmanager image — mon_system_alertmanager_spec.image / .version (выше)
-    # Plus this label_version below — должна совпадать с operator tag (без 'v' prefix).
-    mon_system_prometheus_operator_label_version: "0.90.1"
     mon_system_prometheus_operator_rollout_timeout: "300s"
-    mon_system_prometheus_operator_port: 8080
 
     # ---------
     # Prometheus instance — Ingress + ports
@@ -108,7 +105,7 @@ all:
           app.kubernetes.io/managed-by: Helm
       serviceAccountName: prometheus-instance
       automountServiceAccountToken: true
-      # При апгрейде синхронизируй с label app.kubernetes.io/version выше + label_version в prometheus-operator section
+      # При апгрейде синхронизируй с label app.kubernetes.io/version выше + 6 hardcoded version labels в playbook-app/charts/mon-system/prometheus-operator/templates/prometheus-operator.yaml
       image: "quay.io/prometheus/prometheus:v3.7.2"
       imagePullPolicy: IfNotPresent
       version: "v3.7.2"
@@ -192,7 +189,7 @@ all:
           app.kubernetes.io/component: alertmanager
           app.kubernetes.io/part-of: monitoring
           app.kubernetes.io/managed-by: Helm
-      # При апгрейде синхронизируй с label_version в prometheus-operator section
+      # При апгрейде синхронизируй с 6 hardcoded version labels в playbook-app/charts/mon-system/prometheus-operator/templates/prometheus-operator.yaml
       image: "quay.io/prometheus/alertmanager:v0.28.1"
       imagePullPolicy: IfNotPresent
       version: "v0.28.1"
@@ -684,7 +681,6 @@ all:
     # Prometheus Operator workload Helm values (operator Deployment + RBAC)
     mon_system_prometheus_operator_helm_values:
       namespace: "{{ mon_system_namespace }}"
-      version: "{{ mon_system_prometheus_operator_label_version }}"
       tolerations: []
       nodeSelector:
         kubernetes.io/os: linux
@@ -695,7 +691,6 @@ all:
         requests:
           cpu: 100m
           memory: 100Mi
-      port: "{{ mon_system_prometheus_operator_port }}"
       args:
         - --kubelet-service=kube-system/kubelet
         - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1

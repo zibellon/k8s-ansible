@@ -1,10 +1,15 @@
+# При апгрейде prometheus-operator синхронизируй ВСЕ literal значения:
+#   - image (выше — quay.io/prometheus-operator/prometheus-operator:vX.Y.Z)
+#   - app.kubernetes.io/version label (= operator tag без 'v' prefix, 6 вхождений)
+#   - config-reloader URL в hosts-vars/mon-system.yaml (mon_system_prometheus_operator_helm_values.args)
+#   - Prometheus + Alertmanager CR specs (image / version) в hosts-vars/mon-system.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: {{ .Values.version }}
+    app.kubernetes.io/version: 0.90.1
   name: prometheus-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -21,7 +26,7 @@ metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: {{ .Values.version }}
+    app.kubernetes.io/version: 0.90.1
   name: prometheus-operator
 rules:
 - apiGroups:
@@ -134,7 +139,7 @@ metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: {{ .Values.version }}
+    app.kubernetes.io/version: 0.90.1
   name: prometheus-operator
   namespace: {{ .Values.namespace }}
 spec:
@@ -150,7 +155,7 @@ spec:
       labels:
         app.kubernetes.io/component: controller
         app.kubernetes.io/name: prometheus-operator
-        app.kubernetes.io/version: {{ .Values.version }}
+        app.kubernetes.io/version: 0.90.1
     spec:
       automountServiceAccountToken: true
       containers:
@@ -161,10 +166,10 @@ spec:
         env:
         - name: GOGC
           value: "30"
-        image: "{{ .Values.imageOperator }}"
+        image: "quay.io/prometheus-operator/prometheus-operator:v0.90.1"
         name: prometheus-operator
         ports:
-        - containerPort: {{ .Values.port }}
+        - containerPort: 8080
           name: http
         {{- if .Values.resources }}
         resources:
@@ -198,7 +203,7 @@ metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: {{ .Values.version }}
+    app.kubernetes.io/version: 0.90.1
   name: prometheus-operator
   namespace: {{ .Values.namespace }}
 ---
@@ -208,14 +213,14 @@ metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: {{ .Values.version }}
+    app.kubernetes.io/version: 0.90.1
   name: prometheus-operator
   namespace: {{ .Values.namespace }}
 spec:
   clusterIP: None
   ports:
   - name: http
-    port: {{ .Values.port }}
+    port: 8080
     targetPort: http
   selector:
     app.kubernetes.io/component: controller
