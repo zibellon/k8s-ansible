@@ -22,24 +22,53 @@
       failed_when: false
 
     # =========================================================================
-    # INSTALL K9S
+    # ASSERT INSTALL METHOD
+    # =========================================================================
+    - name: "[install-k9s] assert install method"
+      assert:
+        that:
+          - k9s_install_method in ["url", "local_deb"]
+          - (k9s_install_method != "url") or (k9s_url is defined and k9s_url | length > 0)
+          - (k9s_install_method != "local_deb") or (k9s_local_deb_path is defined and k9s_local_deb_path | length > 0)
+
+    # =========================================================================
+    # INSTALL — url branch
     # =========================================================================
     - name: Download k9s deb package
       get_url:
         url: "{{ k9s_url }}"
         dest: /tmp/k9s_linux_amd64.deb
-      when: k9s_pre_check.rc != 0
+      when:
+        - k9s_pre_check.rc != 0
+        - k9s_install_method == "url"
 
     - name: Install k9s from deb package
       apt:
         deb: /tmp/k9s_linux_amd64.deb
-      when: k9s_pre_check.rc != 0
+      when:
+        - k9s_pre_check.rc != 0
+        - k9s_install_method == "url"
 
     - name: Cleanup temp files
       file:
         path: /tmp/k9s_linux_amd64.deb
         state: absent
-      when: k9s_pre_check.rc != 0
+      when:
+        - k9s_pre_check.rc != 0
+        - k9s_install_method == "url"
+
+    # =========================================================================
+    # INSTALL — local_deb branch (offline, AirGap-friendly)
+    # =========================================================================
+    - name: Install k9s from local .deb
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-deb-install.yaml"
+      vars:
+        dto_label_name: "install-k9s"
+        dto_deb_local_path: "{{ k9s_local_deb_path }}"
+        dto_apt_mark_hold_pkg_name: "k9s"
+      when:
+        - k9s_pre_check.rc != 0
+        - k9s_install_method == "local_deb"
 
     # =========================================================================
     # VERIFICATION
