@@ -24,7 +24,7 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | `_helm_url` | HTTP repo URL **or** full OCI chart URL (depending on `_helm_is_oci`). Rename from legacy `_helm_repo_url` | `cilium_helm_url: "https://helm.cilium.io/"`, `vault_operator_helm_url: "oci://ghcr.io/..."` |
 | `_helm_repo_name` | Helm repo alias for `helm repo add` (HTTP only; ignored for OCI) | `cilium_helm_repo_name: "cilium"` |
 | `_helm_chart_name` | Chart name within HTTP repo (HTTP only; ignored for OCI) | `cilium_helm_chart_name: "cilium"` |
-| `_image_registry`, `_image_repository`, `_image_tag` | Image coordinates; override registry for air-gap | `gitlab_image_registry: "registry.gitlab.com"` |
+| `_image` | Full image URI:tag (handwritten charts only — chart's `image:` field receives the literal). AirGap interception via containerd `_default` mirror, не per-component override | `vault_image: "docker.io/hashicorp/vault:1.21.2"` |
 | `_replica_count` | Replica count on Deployments | `int` |
 | `_tolerations`, `_node_selector`, `_affinity` | Scheduling | `list` / `dict` / `dict` |
 | `_resources` | CPU/memory requests & limits | `dict` |
@@ -158,9 +158,7 @@ Per-file source of truth in parentheses.
 | `containerd_version` | `"2.2.2"` | Container runtime |
 | `containerd_download_host` | `"https://github.com"` | Download host for containerd tarball — AirGap override |
 | `containerd_service_download_host` | `"https://raw.githubusercontent.com"` | Download host for containerd.service unit — AirGap override |
-| `containerd_sandbox_image_registry` | `"registry.k8s.io"` | Registry for containerd sandbox (pause) image — AirGap override |
-| `containerd_sandbox_image_name` | `"pause"` | Image name for containerd sandbox (pause) |
-| `containerd_sandbox_image_tag` | `"3.10.1"` | Tag for containerd sandbox (pause) image |
+| `containerd_additional_configs` | `[{dirName: "_default", content: "..."}]` | List of drop-in configs in `/etc/containerd/certs.d/<dirName>/hosts.toml`. Default has one `_default` entry pointing all registries (catch-all) at `mirror.gcr.io`. **Единая точка AirGap-интерсепции** для образов всех компонентов — заменяет per-component `_image_registry` overrides. См. `hosts-vars/k8s-base.yaml` для развёрнутого описания + примеров |
 | `runc_version` | `"v1.4.2"` | OCI runtime |
 | `runc_download_host` | `"https://github.com"` | Download host for runc binary — AirGap override |
 | `cni_plugins_version` | `"v1.9.1"` | CNI plugins bundle |
@@ -222,7 +220,6 @@ Per-file source of truth in parentheses.
 
 - `kubeadm_config_template` — full kubeadm `InitConfiguration` + `ClusterConfiguration` (with `proxy.disabled: true` to skip kube-proxy) + `KubeletConfiguration` template. Rendered by `tasks-kubeadm-config-create.yaml`.
 - `kubeadm_config_path` — `/etc/kubernetes/kubeadm-config.yaml`.
-- `kubeadm_image_registry` — `ClusterConfiguration.imageRepository` prefix for all kubeadm-pulled control-plane images (kube-apiserver, kube-controller-manager, kube-scheduler, etcd, coredns). AirGap override; default `"registry.k8s.io"`.
 
 ### 2.6 Vault & ESO cross-cutting (`hosts-vars/vault.yaml`)
 
