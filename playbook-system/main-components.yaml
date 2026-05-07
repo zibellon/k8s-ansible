@@ -50,24 +50,75 @@
       changed_when: false
       failed_when: false
 
+    - name: "[main-components] assert containerd install method"
+      assert:
+        that:
+          - containerd_install_method in ["url", "local_tarball"]
+          - (containerd_install_method != "local_tarball") or (containerd_local_tarball_path is defined and containerd_local_tarball_path | length > 0)
+          - (containerd_install_method != "local_tarball") or (containerd_service_local_path is defined and containerd_service_local_path | length > 0)
+
+    # =========================================================================
+    # CONTAINERD — url branch
+    # =========================================================================
     - name: Download containerd
       get_url:
         url: "{{ containerd_url }}"
         dest: /tmp/containerd.tar.gz
-      when: containerd_pre_check.rc != 0
+      when:
+        - containerd_pre_check.rc != 0
+        - containerd_install_method == "url"
 
     - name: Extract containerd to /usr/local
       unarchive:
         src: /tmp/containerd.tar.gz
         dest: /usr/local
         remote_src: yes
-      when: containerd_pre_check.rc != 0
+      when:
+        - containerd_pre_check.rc != 0
+        - containerd_install_method == "url"
 
     - name: Download containerd.service
       get_url:
         url: "{{ containerd_service_url }}"
         dest: /usr/lib/systemd/system/containerd.service
         mode: '0644'
+      when: containerd_install_method == "url"
+
+    # =========================================================================
+    # CONTAINERD — local_tarball branch (offline, AirGap-friendly)
+    # =========================================================================
+    - name: Copy containerd tarball to /tmp
+      copy:
+        src: "{{ project_root }}/{{ containerd_local_tarball_path }}"
+        dest: /tmp/containerd.tar.gz
+        mode: '0644'
+      when:
+        - containerd_pre_check.rc != 0
+        - containerd_install_method == "local_tarball"
+
+    - name: Extract containerd from local tarball to /usr/local
+      unarchive:
+        src: /tmp/containerd.tar.gz
+        dest: /usr/local
+        remote_src: yes
+      when:
+        - containerd_pre_check.rc != 0
+        - containerd_install_method == "local_tarball"
+
+    - name: Cleanup containerd tarball
+      file:
+        path: /tmp/containerd.tar.gz
+        state: absent
+      when:
+        - containerd_pre_check.rc != 0
+        - containerd_install_method == "local_tarball"
+
+    - name: Copy containerd.service from local file
+      copy:
+        src: "{{ project_root }}/{{ containerd_service_local_path }}"
+        dest: /usr/lib/systemd/system/containerd.service
+        mode: '0644'
+      when: containerd_install_method == "local_tarball"
 
     - name: Enable and start containerd
       systemd:
@@ -85,12 +136,23 @@
       changed_when: false
       failed_when: false
 
+    - name: "[main-components] assert runc install method"
+      assert:
+        that:
+          - runc_install_method in ["url", "local_file"]
+          - (runc_install_method != "local_file") or (runc_local_path is defined and runc_local_path | length > 0)
+
+    # =========================================================================
+    # RUNC — url branch
+    # =========================================================================
     - name: Download runc
       get_url:
         url: "{{ runc_url }}"
         dest: /tmp/runc.amd64
         mode: '0755'
-      when: runc_pre_check.rc != 0
+      when:
+        - runc_pre_check.rc != 0
+        - runc_install_method == "url"
 
     - name: Install runc
       copy:
@@ -98,7 +160,21 @@
         dest: /usr/local/sbin/runc
         mode: '0755'
         remote_src: yes
-      when: runc_pre_check.rc != 0
+      when:
+        - runc_pre_check.rc != 0
+        - runc_install_method == "url"
+
+    # =========================================================================
+    # RUNC — local_file branch (offline, AirGap-friendly)
+    # =========================================================================
+    - name: Install runc from local file
+      copy:
+        src: "{{ project_root }}/{{ runc_local_path }}"
+        dest: /usr/local/sbin/runc
+        mode: '0755'
+      when:
+        - runc_pre_check.rc != 0
+        - runc_install_method == "local_file"
 
     # =========================================================================
     # CNI PLUGINS
@@ -108,24 +184,66 @@
         path: /opt/cni/bin/bridge
       register: cni_pre_check
 
+    - name: "[main-components] assert cni_plugins install method"
+      assert:
+        that:
+          - cni_plugins_install_method in ["url", "local_tarball"]
+          - (cni_plugins_install_method != "local_tarball") or (cni_plugins_local_tarball_path is defined and cni_plugins_local_tarball_path | length > 0)
+
     - name: Create /opt/cni/bin directory
       file:
         path: /opt/cni/bin
         state: directory
         mode: '0755'
 
+    # =========================================================================
+    # CNI PLUGINS — url branch
+    # =========================================================================
     - name: Download CNI plugins
       get_url:
         url: "{{ cni_plugins_url }}"
         dest: /tmp/cni-plugins.tgz
-      when: not cni_pre_check.stat.exists
+      when:
+        - not cni_pre_check.stat.exists
+        - cni_plugins_install_method == "url"
 
     - name: Extract CNI plugins
       unarchive:
         src: /tmp/cni-plugins.tgz
         dest: /opt/cni/bin
         remote_src: yes
-      when: not cni_pre_check.stat.exists
+      when:
+        - not cni_pre_check.stat.exists
+        - cni_plugins_install_method == "url"
+
+    # =========================================================================
+    # CNI PLUGINS — local_tarball branch (offline, AirGap-friendly)
+    # =========================================================================
+    - name: Copy CNI plugins tarball to /tmp
+      copy:
+        src: "{{ project_root }}/{{ cni_plugins_local_tarball_path }}"
+        dest: /tmp/cni-plugins.tgz
+        mode: '0644'
+      when:
+        - not cni_pre_check.stat.exists
+        - cni_plugins_install_method == "local_tarball"
+
+    - name: Extract CNI plugins from local tarball
+      unarchive:
+        src: /tmp/cni-plugins.tgz
+        dest: /opt/cni/bin
+        remote_src: yes
+      when:
+        - not cni_pre_check.stat.exists
+        - cni_plugins_install_method == "local_tarball"
+
+    - name: Cleanup CNI plugins tarball
+      file:
+        path: /tmp/cni-plugins.tgz
+        state: absent
+      when:
+        - not cni_pre_check.stat.exists
+        - cni_plugins_install_method == "local_tarball"
 
     # =========================================================================
     # CONTAINERD CONFIG
