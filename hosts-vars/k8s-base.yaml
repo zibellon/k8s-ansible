@@ -121,25 +121,110 @@ all:
     # `containerd_additional_configs` целиком в hosts-vars-override/k8s-base.yaml
     # (replace, не concat — см. variables.md §1.5).
     #
-    # ## Несколько mirrors последовательно
-    # Containerd идёт по `[host."..."]` блокам ПО ПОРЯДКУ объявления.
-    # Если первый mirror не отдал образ — пробует второй, затем третий,
-    # и т.д. После всех — fallback на upstream (для `_default` —
-    # отсутствует, см. ниже). Пример цепочки mirror1 → mirror2:
+    # ## Правила в hosts.toml
+    #   * `[host."..."]` блоки идут по порядку объявления — первый mirror
+    #     пробуется первым, при failure — следующий, и т.д.
+    #   * `server = "..."` сверху → fallback URL когда все mirror'ы fail.
+    #     URL ФИКСИРОВАН (не подменяется именем registry).
+    #   * Без `server` в `_default` → strict: pull error если ни один mirror
+    #     не отдал образ.
+    #   * Per-registry dir (например `docker.io/`) полностью перебивает
+    #     `_default` для этого registry (без merge).
+    #   * Recursion не поддерживается.
+    # Подробности:
+    # https://github.com/containerd/containerd/blob/main/docs/hosts.md
     #
-    #   [host."https://mirror.gcr.io"]
-    #     capabilities = ["pull", "resolve"]
-    #   [host."https://public.ecr.aws"]
-    #     capabilities = ["pull", "resolve"]
+    # ## Примеры конфигураций
+    # Каждый пример — paste-ready значение для `containerd_additional_configs`
+    # в hosts-vars-override/k8s-base.yaml (replace, не concat —
+    # см. variables.md §1.5).
     #
-    # ## Strict mode (fail если ни один mirror не отдал образ)
-    # Для `_default` namespace отсутствие верхнего `server = "..."`
-    # означает: после всех `[host."..."]` блоков нет fallback'а на
-    # upstream — pull завершается ошибкой. Это даёт config-level
-    # AirGap-режим без сетевых ограничений.
+    # ### A. Все запросы → одно зеркало; если mirror fail → error (strict)
     #
-    # Каждая entry — dict с двумя ключами: dirName (имя поддиректории
-    # в /etc/containerd/certs.d/) + content (содержимое hosts.toml).
+    # containerd_additional_configs:
+    #   - dirName: "_default"
+    #     content: |
+    #       [host."https://mirror1.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #
+    # ### B. Все запросы → одно зеркало; если mirror fail → fallback на оригинальный registry
+    #
+    # Через `_default` НЕ реализуется (server фиксирован, не подменяется
+    # именем registry). Требуется per-registry dir на каждый используемый
+    # registry. Ниже пример для docker.io; АНАЛОГИЧНО повторить блок
+    # для каждого из:
+    # quay.io / gcr.io / ghcr.io / registry.k8s.io / registry.gitlab.com /
+    # public.ecr.aws.
+    # В каждом блоке `server` = `https://<имя_registry>`, dirName = имя registry.
+    #
+    # containerd_additional_configs:
+    #   - dirName: "docker.io"
+    #     content: |
+    #       server = "https://docker.io"
+    #       [host."https://mirror1.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #
+    # ### C. Все запросы → mirror1 → mirror2; если оба fail → error (strict)
+    #
+    # containerd_additional_configs:
+    #   - dirName: "_default"
+    #     content: |
+    #       [host."https://mirror1.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #       [host."https://mirror2.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #
+    # ### D. Все запросы → mirror1 → mirror2; если оба fail → fallback на оригинальный registry
+    #
+    # Аналогично B — `_default` не подходит. Пример для docker.io;
+    # повторить для quay.io / gcr.io / ghcr.io / registry.k8s.io /
+    # registry.gitlab.com / public.ecr.aws.
+    #
+    # containerd_additional_configs:
+    #   - dirName: "docker.io"
+    #     content: |
+    #       server = "https://docker.io"
+    #       [host."https://mirror1.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #       [host."https://mirror2.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #
+    # ### E1. Все → mirror1, для quay.io → отдельный mirror; если mirror fail → error
+    #
+    # containerd_additional_configs:
+    #   - dirName: "_default"
+    #     content: |
+    #       [host."https://mirror1.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #   - dirName: "quay.io"
+    #     content: |
+    #       [host."https://quay-mirror.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #
+    # ### E2. Все → mirror1, для quay.io → отдельный mirror; если mirror fail → fallback на оригинальный registry
+    #
+    # Default-часть требует per-registry dirs (как B/D). Ниже пример: docker.io
+    # как один из default-registry + override для quay.io. Повторить
+    # docker.io-блок для остальных пяти:
+    # gcr.io / ghcr.io / registry.k8s.io / registry.gitlab.com / public.ecr.aws.
+    #
+    # containerd_additional_configs:
+    #   - dirName: "docker.io"
+    #     content: |
+    #       server = "https://docker.io"
+    #       [host."https://mirror1.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #   - dirName: "quay.io"
+    #     content: |
+    #       server = "https://quay.io"
+    #       [host."https://quay-mirror.example.com"]
+    #         capabilities = ["pull", "resolve"]
+    #
+    # ## Формат переменной
+    # `containerd_additional_configs` — список dicts с двумя ключами:
+    #   * `dirName` — имя поддиректории в `/etc/containerd/certs.d/`
+    #     (например `"_default"` или `"docker.io"`).
+    #   * `content` — содержимое файла `hosts.toml` в этой поддиректории.
     containerd_additional_configs:
       - dirName: "_default"
         content: |
