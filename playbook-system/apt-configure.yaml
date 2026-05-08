@@ -1,0 +1,152 @@
+---
+# =============================================================================
+# Configure APT (mirrors / extra configs / preferences)
+# =============================================================================
+# Применяет ansible-managed файлы для apt:
+#   * apt_additional_configs → /etc/apt/<filePath>
+#   * apt_preferences        → /etc/apt/preferences.d/<name>
+#
+# Полностью декларативная модель (auto-cleanup orphans по префиксу ansible-):
+#   * Файлы с префиксом "ansible-" в /etc/apt/{sources.list.d,apt.conf.d,
+#     preferences.d}/ управляются этим playbook'ом.
+#   * Что в переменных — то и на сервере. Убрал entry → файл удалён.
+#   * Файлы БЕЗ префикса ansible- (cloud-init defaults, custom repos из
+#     других playbook'ов, ручные настройки) — НЕ ТРОГАЮТСЯ.
+#
+# Default обоих переменных = [] → safe no-op на свежем сервере.
+#
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/apt-configure.yaml
+#   ansible-playbook ... --limit <host>   (опционально, для одного узла)
+# =============================================================================
+
+- name: Configure APT (mirrors / extra configs / preferences)
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+
+    # =========================================================================
+    # PHASE 1: ASSERTS
+    # =========================================================================
+
+    - name: "[apt-configure] Assert apt_additional_configs entries"
+      assert:
+        that:
+          - item.filePath is defined
+          - item.filePath | length > 0
+          - "'..' not in item.filePath"
+          - >-
+            item.filePath.startswith("sources.list.d/ansible-")
+            or item.filePath.startswith("apt.conf.d/ansible-")
+          - item.content is defined
+          - item.content | length > 0
+        fail_msg: >-
+          apt_additional_configs[{{ ansible_loop.index0 }}]: filePath must
+          start with "sources.list.d/ansible-" or "apt.conf.d/ansible-",
+          content required, no '..' in path
+      loop: "{{ apt_additional_configs }}"
+      loop_control:
+        extended: true
+      when: apt_additional_configs | length > 0
+      tags: [always]
+
+    - name: "[apt-configure] Assert apt_preferences entries"
+      assert:
+        that:
+          - item.name is defined
+          - item.name | length > 0
+          - item.name.startswith("ansible-")
+          - "'/' not in item.name"
+          - item.content is defined
+          - item.content | length > 0
+        fail_msg: >-
+          apt_preferences[{{ ansible_loop.index0 }}]: name must start with
+          "ansible-", no '/' in name, content required
+      loop: "{{ apt_preferences }}"
+      loop_control:
+        extended: true
+      when: apt_preferences | length > 0
+      tags: [always]
+
+    # =========================================================================
+    # PHASE 2: FIND EXISTING ansible-* FILES
+    # =========================================================================
+
+    - name: "[apt-configure] Find existing ansible-* files in managed subdirs"
+      find:
+        paths:
+          - /etc/apt/sources.list.d
+          - /etc/apt/apt.conf.d
+          - /etc/apt/preferences.d
+        patterns: "ansible-*"
+        file_type: file
+      register: apt_existing_managed_files
+
+    # =========================================================================
+    # PHASE 3: COMPUTE ORPHANS (existing ∖ expected)
+    # =========================================================================
+
+    - name: "[apt-configure] Build expected file paths set"
+      set_fact:
+        apt_expected_paths: >-
+          {{
+            (apt_additional_configs | map(attribute='filePath')
+              | map('regex_replace', '^', '/etc/apt/') | list)
+            + (apt_preferences | map(attribute='name')
+              | map('regex_replace', '^', '/etc/apt/preferences.d/') | list)
+          }}
+
+    - name: "[apt-configure] Compute orphan files (existing minus expected)"
+      set_fact:
+        apt_orphan_paths: >-
+          {{
+            apt_existing_managed_files.files
+              | map(attribute='path') | list
+              | difference(apt_expected_paths)
+          }}
+
+    # =========================================================================
+    # PHASE 4: DELETE ORPHANS
+    # =========================================================================
+
+    - name: "[apt-configure] Delete orphan ansible-* files"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ apt_orphan_paths }}"
+      register: apt_orphans_deleted
+
+    # =========================================================================
+    # PHASE 5: WRITE/UPDATE CURRENT FILES
+    # =========================================================================
+
+    - name: "[apt-configure] Write apt_additional_configs files"
+      copy:
+        dest: "/etc/apt/{{ item.filePath }}"
+        content: "{{ item.content }}"
+        mode: '0644'
+      loop: "{{ apt_additional_configs }}"
+      when: apt_additional_configs | length > 0
+      register: apt_configs_write_result
+
+    - name: "[apt-configure] Write apt_preferences files"
+      copy:
+        dest: "/etc/apt/preferences.d/{{ item.name }}"
+        content: "{{ item.content }}"
+        mode: '0644'
+      loop: "{{ apt_preferences }}"
+      when: apt_preferences | length > 0
+      register: apt_prefs_write_result
+
+    # =========================================================================
+    # PHASE 6: REFRESH APT CACHE (only if anything changed)
+    # =========================================================================
+
+    - name: "[apt-configure] Update apt cache"
+      apt:
+        update_cache: true
+      when: >-
+        (apt_configs_write_result is defined and apt_configs_write_result.changed)
+        or (apt_prefs_write_result is defined and apt_prefs_write_result.changed)
+        or (apt_orphans_deleted is defined and apt_orphans_deleted.changed)

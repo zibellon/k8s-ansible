@@ -360,6 +360,67 @@ all:
       - tunnel6
 
     # ------
+    # APT configuration (mirrors / extra sources / apt.conf overrides)
+    # ------
+    # Универсальный механизм для ansible-managed apt-файлов. Полностью
+    # декларативная модель: что в переменной — то и на сервере. Убрал
+    # entry → файл удалён автоматически на следующем прогоне.
+    #
+    # Каждая entry в apt_additional_configs — dict с двумя ключами:
+    #   * filePath — относительный путь от /etc/apt/, включая имя файла.
+    #     Имя файла (basename) ОБЯЗАНО начинаться с "ansible-".
+    #     Allowed subdirs: sources.list.d/, apt.conf.d/.
+    #     Для preferences.d/ — отдельная переменная apt_preferences ниже.
+    #   * content — полный текст файла (deb822 / apt.conf синтаксис).
+    #
+    # Default: [] → ansible не создаёт никаких файлов, существующая
+    # конфигурация серверов (cloud-init, ручные настройки, custom repos
+    # из других playbook'ов вроде kubernetes.list) не трогается, потому
+    # что у этих файлов нет префикса "ansible-".
+    #
+    # Примеры использования:
+    #
+    # A. Дополнительный mirror как extra source:
+    #
+    # apt_additional_configs:
+    #   - filePath: "sources.list.d/ansible-my-mirror.sources"
+    #     content: |
+    #       Types: deb
+    #       URIs: http://mirror.example.com/ubuntu
+    #       Suites: noble noble-updates noble-security
+    #       Components: main restricted universe multiverse
+    #       Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+    #
+    # B. HTTP proxy через apt.conf.d/ (для apt-cacher-ng / squid):
+    #
+    # apt_additional_configs:
+    #   - filePath: "apt.conf.d/ansible-99-mirror-proxy"
+    #     content: |
+    #       Acquire::http::Proxy "http://apt-cacher.local:3142";
+    apt_additional_configs: []
+
+    # ------
+    # APT pinning (preferences.d/)
+    # ------
+    # Список ansible-managed preferences файлов в /etc/apt/preferences.d/.
+    # Каждая entry:
+    #   * name — имя файла (без пути), создаётся в /etc/apt/preferences.d/.
+    #     ОБЯЗАНО начинаться с "ansible-".
+    #   * content — полный текст preference-блока (Package/Pin/Pin-Priority).
+    # Default: [] → ansible не создаёт preferences файлы.
+    # Lifecycle тот же: убрал entry — файл удалён на следующем прогоне.
+    #
+    # C. Pin priority для своего mirror (priority > 500 → выше дефолтных):
+    #
+    # apt_preferences:
+    #   - name: "ansible-10-my-mirror"
+    #     content: |
+    #       Package: *
+    #       Pin: origin "mirror.example.com"
+    #       Pin-Priority: 990
+    apt_preferences: []
+
+    # ------
     # HAProxy API Server LB (linux service)
     # ------
     # Install method: "ppa" (default — vbernat PPA) or "local_deb" (offline,
