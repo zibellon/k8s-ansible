@@ -188,6 +188,8 @@ Per-file source of truth in parentheses.
 | `node_monitor_grace_period` | `"30s"` | kube-controller-manager flag |
 | `node_drain_timeout` | `"10m"` | Default `kubectl drain --timeout` |
 | `softdog_timeout` | `30` | Watchdog (softdog) reboot timeout in seconds — used by medik8s |
+| `apt_additional_configs` | `[]` | List of ansible-managed apt files. Each entry: `{filePath, content}` where `filePath` is path under `/etc/apt/` (subdir + name, basename must start with `ansible-`; allowed subdirs: `sources.list.d/`, `apt.conf.d/`). Auto-cleanup: removing entry from variable deletes the file on next run |
+| `apt_preferences` | `[]` | List of ansible-managed apt pinning files in `/etc/apt/preferences.d/`. Each entry: `{name, content}` where `name` must start with `ansible-`. Auto-cleanup: same as `apt_additional_configs` |
 | `crds_wait` | `{timeout: "60s", retries: 15, delay: 5}` | CRD wait config — used by `tasks-wait-crds.yaml` |
 | `secret_wait` | `{retries: 15, delay: 5}` | K8s Secret wait config — used by ESO sync tasks |
 | `rollout_wait` | `{retries: 15, delay: 5}` | Rollout wait config — used by `tasks-wait-rollout.yaml` |
