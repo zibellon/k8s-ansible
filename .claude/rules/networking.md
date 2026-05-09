@@ -202,5 +202,5 @@ Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../../playbo
 
 ### 7.4 Out of scope
 
-- `playbook-app/charts/argocd/install/templates/argocd.yaml` — vendored upstream ArgoCD chart; embedded NP ports remain hardcoded (modifying upstream chart would break sync). Tracked in `todo.md`.
+- `playbook-app/charts/argocd/install/templates/install.yaml` — vendored upstream ArgoCD chart; embedded NP ports remain hardcoded (modifying upstream chart would break sync). Tracked in `todo.md`.
 - Migration of values from chart `values.yaml` to inventory `hosts-vars/<c>.yaml` (so operators can override per environment) — separate future task.
