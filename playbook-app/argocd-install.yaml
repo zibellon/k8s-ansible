@@ -125,7 +125,7 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 3: ARGOCD/INSTALL (ArgoCD manifests)
+    # STEP 3: ARGOCD/INSTALL (ArgoCD manifests via kustomize → Helm)
     # =========================================================================
 
     - name: "[argocd-install] Copy install chart to remote"
@@ -137,13 +137,20 @@
         dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/install"
       tags: [install]
 
-    - name: "[argocd-install] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+    - name: "[argocd-install] Build merged kustomize patches list"
+      set_fact:
+        argocd_kustomize_patches_merged: "{{ argocd_kustomize_patches + (argocd_kustomize_patches_extra | default([])) }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[argocd-install] Render install.yaml via kustomize"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-kustomize-build.yaml"
       vars:
         dto_label_name: "argocd-install"
-        dto_dir: "{{ remote_charts_dir }}/argocd/install"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/install"
+        dto_source_filename: "install.yaml"
+        dto_patches_list: "{{ argocd_kustomize_patches_merged }}"
       tags: [install]
 
     - name: "[argocd-install] Install or upgrade argocd via Helm (async)"
@@ -154,7 +161,6 @@
           helm upgrade --install argocd {{ remote_charts_dir }}/argocd/install
           --namespace {{ argocd_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/argocd/install/values-override.yaml
           --cleanup-on-fail
           --skip-crds
           --atomic

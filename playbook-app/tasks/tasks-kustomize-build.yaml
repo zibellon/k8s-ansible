@@ -1,0 +1,97 @@
+# =============================================================================
+# Build kustomize output and overwrite the source file in chart templates dir
+#
+# Workflow on master_manager_fact:
+#   1. mktemp -d staging
+#   2. cp <chart>/templates/<source> -> staging/<source>
+#   3. render staging/kustomization.yaml from dto_patches_list
+#   4. kubectl kustomize staging/ -> overwrite <chart>/templates/<source>
+#   5. rm -rf staging
+#
+# Params:
+#   - dto_label_name:        Label for task names (used in logs)
+#   - dto_chart_remote_dest: Remote path to chart dir on master_manager_fact (no trailing /)
+#   - dto_source_filename:   Name of pristine file inside templates/ (e.g. install.yaml)
+#   - dto_patches_list:      Sequence of {target: {...}, patch: |- ...} dicts (merged base + extra)
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert all dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_chart_remote_dest is defined
+      - dto_chart_remote_dest | length > 0
+      - dto_source_filename is defined
+      - dto_source_filename | length > 0
+      - dto_patches_list is defined
+      - dto_patches_list is sequence
+    fail_msg: "tasks-kustomize-build: all params required: dto_label_name, dto_chart_remote_dest, dto_source_filename, dto_patches_list"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Create temp staging dir for kustomize"
+  tempfile:
+    state: directory
+    prefix: "kustomize-build-"
+  register: kustomize_build_temp
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Copy pristine source into staging"
+  copy:
+    src: "{{ dto_chart_remote_dest }}/templates/{{ dto_source_filename }}"
+    dest: "{{ kustomize_build_temp.path }}/{{ dto_source_filename }}"
+    remote_src: true
+    mode: "0644"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build kustomization data structure"
+  set_fact:
+    kustomize_build_kustomization:
+      apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      resources:
+        - "{{ dto_source_filename }}"
+      patches: "{{ dto_patches_list }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Render kustomization.yaml in staging"
+  copy:
+    dest: "{{ kustomize_build_temp.path }}/kustomization.yaml"
+    mode: "0644"
+    content: "{{ kustomize_build_kustomization | to_nice_yaml }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Run kubectl kustomize"
+  command: "kubectl kustomize {{ kustomize_build_temp.path }}"
+  register: kustomize_build_output
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Overwrite chart templates/{{ dto_source_filename }} with kustomize output"
+  copy:
+    dest: "{{ dto_chart_remote_dest }}/templates/{{ dto_source_filename }}"
+    mode: "0644"
+    content: "{{ kustomize_build_output.stdout }}\n"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Cleanup staging dir"
+  file:
+    path: "{{ kustomize_build_temp.path }}"
+    state: absent
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
