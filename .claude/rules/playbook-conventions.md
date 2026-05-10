@@ -200,7 +200,7 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 
 ## 21. Kustomize→Helm Pattern (для компонентов без upstream Helm chart)
 
-21.1 Применяется для компонентов, у которых официальная установка идёт **только** через `install.yaml` (без upstream Helm chart) — в проекте сейчас `argocd`, в будущем планируется `prometheus-operator`.
+21.1 Применяется для компонентов, у которых официальная установка идёт **только** через `install.yaml` (без upstream Helm chart) — в проекте сейчас `argocd` и `prometheus-operator` (фаза внутри mon-system stack).
 
 21.2 Структура local Helm chart:
 - `Chart.yaml` — стандартный.
@@ -217,4 +217,4 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 
 21.5 Strategic merge поверх pristine: upstream defaults сохраняются автоматически. **Не копировать** upstream defaults в patches — это dead duplication. Только пользовательские customization'ы.
 
-21.6 Канонический пример: `playbook-app/argocd-install.yaml` STEP 3 + `hosts-vars/argocd.yaml` `argocd_kustomize_patches` (см. также [`components.md`](components.md) §9 ArgoCD).
+21.6 Канонические примеры: `playbook-app/argocd-install.yaml` STEP 3 + `hosts-vars/argocd.yaml` `argocd_kustomize_patches` (см. также [`components.md`](components.md) §9 ArgoCD); `playbook-app/mon-system-install.yaml` STEP 3 (prometheus-operator phase) + `hosts-vars/mon-system.yaml` `mon_system_prometheus_operator_kustomize_patches` (см. также [`components.md`](components.md) §17 mon-system).

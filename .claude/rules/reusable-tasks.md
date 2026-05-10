@@ -66,7 +66,7 @@ General rules for callers:
 - **Validates (assert).** All 4 dto-params defined + non-empty (per Rule 19, [`playbook-conventions.md`](playbook-conventions.md) §19). Tag `[always]`.
 - **Output.** Side effect: `<dto_chart_remote_dest>/templates/<dto_source_filename>` перезаписан kustomize-output. No facts exported.
 - **Internals.** `mktemp -d` staging; copy pristine → staging; render `kustomization.yaml` (`resources: [<source>]`, `patches: <list>`) через `to_nice_yaml`; `kubectl kustomize` → перезапись `templates/<source>` в чарте; cleanup staging.
-- **Callers.** `playbook-app/argocd-install.yaml` STEP 3 (install phase). В будущем — prometheus-operator install playbook.
+- **Callers.** `playbook-app/argocd-install.yaml` STEP 3 (install phase). `playbook-app/mon-system-install.yaml` STEP 3 (prometheus-operator phase).
 - **Idempotent.** Да: при одинаковом patches списке kustomize output идентичен, helm release не меняется.
 
 ### 1.5 `tasks-add-helm-repo.yaml`
