@@ -244,7 +244,7 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 | `haproxy-lb` | haproxy | no |
 | `traefik-lb` | traefik | no |
 | `longhorn-system` | longhorn, longhorn-s3-restore | **yes** — cannot rename |
-| `argocd` | argocd | **yes** — cannot rename |
+| `argocd` | argocd | no (configurable via `argocd_namespace` — see §9) |
 | `gitlab` | gitlab | no |
 | `gitlab-runner` | gitlab-runner | no |
 | `zitadel` | zitadel | no |
