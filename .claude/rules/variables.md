@@ -32,6 +32,8 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | `_rollout_timeout` | `kubectl rollout status --timeout` | `"120s"` |
 | `_daemonset_rollout_timeout` | Same, for DaemonSet workloads | `"180s"` |
 | `_helm_values` | Full inline values dict (often large) | `dict` |
+| `_kustomize_patches` | List of kustomize patches applied to local chart's pristine upstream file before helm install (see [`reusable-tasks.md`](reusable-tasks.md) §1.4б `tasks-kustomize-build.yaml`, [`playbook-conventions.md`](playbook-conventions.md) §21). Each item: `{target: {kind, name}, patch: \|- ...}` | `list` of dicts |
+| `_kustomize_patches_extra` | Operator-side extension of `_kustomize_patches` (concat-merge at runtime, last-wins on conflicting keys) | `list` |
 
 ### 1.2 Ingress & TLS suffixes
 
@@ -97,13 +99,7 @@ Known `_extra` names:
 vault_policies_extra
 vault_roles_extra
 eso_vault_integration_<c>_secrets_extra    # for each of the 8 ESO-integrated components
-argocd_cm_extra
-argocd_cm_cmd_params_extra
-argocd_cm_gpg_keys_extra
-argocd_cm_notifications_extra
-argocd_cm_rbac_extra
-argocd_cm_ssh_known_hosts_extra
-argocd_cm_tls_certs_extra
+argocd_kustomize_patches_extra
 teleport_configure_<resource>_extra        # roles, users, bots, apps, databases, oidc, saml, access-lists, trusted-clusters, ...
 ```
 

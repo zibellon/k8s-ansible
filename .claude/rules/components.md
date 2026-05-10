@@ -126,17 +126,17 @@ Template fields:
 
 ## 9. `argocd`
 
-- **Chart path.** `charts/argocd/{crds,pre,install,post}/`.
+- **Chart path.** `charts/argocd/{crds,gitops,install,post,pre}/`.
 - **Install playbook.** `argocd-install.yaml`.
 - **Namespace.** `argocd` — **fixed upstream, cannot rename**.
-- **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`.
-- **External Helm repo.** No — local chart (upstream values embedded).
-- **Required vars.** `argocd_namespace`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_session_duration` (120h), `argocd_reconciliation_timeout` (30s), ConfigMap extras (`argocd_cm_extra`, `argocd_cm_cmd_params_extra`, `argocd_cm_gpg_keys_extra`, `argocd_cm_notifications_extra`, `argocd_cm_rbac_extra`, `argocd_cm_ssh_known_hosts_extra`, `argocd_cm_tls_certs_extra`), `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`.
+- **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`, `argocd-gitops`.
+- **External Helm repo.** No — local chart with kustomize render of pristine upstream `install.yaml` on master_manager_fact before helm install (see [`playbook-conventions.md`](playbook-conventions.md) §21).
+- **Required vars.** `argocd_namespace`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_kustomize_patches` (база — strategic merge patches на argocd-cm и argocd-cmd-params-cm с пользовательскими customization'ами) / `argocd_kustomize_patches_extra` (operator-side, default `[]`), `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`.
 - **ESO integration.** Yes (via `eso_vault_integration_argocd` in `hosts-vars/argocd.yaml`; admin password + git-ops repo credentials). The same `_secrets` list carries both types: plain admin-password entries and git-ops repo entries (which set `body.target.template.metadata.labels: argocd.argoproj.io/secret-type: repo-creds` or `repository` to let ArgoCD recognise them as repository credentials).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
 - **Non-install playbooks.** `argocd-configure.yaml` (one-off admin-password resolve/rotate + validation against ArgoCD API), `argocd-restart.yaml`.
-- **Notes.** 7 ConfigMaps (`argocd-cm`, `argocd-cmd-params-cm`, `argocd-gpg-keys-cm`, `argocd-notifications-cm`, `argocd-rbac-cm`, `argocd-ssh-known-hosts-cm`, `argocd-tls-certs-cm`) are applied in `pre/`, not `install/` — so they exist before the first controller reconcile. The `argocd-install.yaml` playbook ships with an additional `[gitops]` tag that runs after `[post]` and creates AppProject + Application(s) from `argocd_git_ops_apps` using `charts/argocd-git-ops/install/` (separate Helm release `argocd-git-ops` in the same namespace).
+- **Notes.** Install phase renders pristine upstream `install.yaml` через kustomize (`argocd_kustomize_patches` + `_extra`) на master_manager_fact перед helm install — см. [`playbook-conventions.md`](playbook-conventions.md) §21. 7 ConfigMaps из upstream (`argocd-cm`, `argocd-cmd-params-cm`, `argocd-gpg-keys-cm`, `argocd-notifications-cm`, `argocd-rbac-cm`, `argocd-ssh-known-hosts-cm`, `argocd-tls-certs-cm`) принадлежат Helm release `argocd` (не `argocd-pre`); customization через strategic merge patches сохраняет upstream defaults автоматически. The `argocd-install.yaml` playbook ships with an additional `[gitops]` tag that runs after `[post]` and creates AppProject + Application(s) from `argocd_git_ops_apps` using `charts/argocd/gitops/` (separate Helm release `argocd-gitops` in the same namespace).
 
 ## 11. `gitlab`
 

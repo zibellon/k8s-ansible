@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (31 tasks)
+## 1. `playbook-app/tasks/` (32 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -58,6 +58,16 @@ General rules for callers:
 - **Callers.** Install-phase blocks in any playbook that uses an external Helm repo: `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `metrics-server-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `teleport-install.yaml`, `vault-install.yaml` (operator phase).
 - **Idempotent.** Yes — `file: state=directory` and `copy` are both idempotent.
 - **Gotcha.** `dto_content` is evaluated at include-time in the caller's variable scope. Always pass the fully-rendered string (e.g., `"{{ my_helm_values | to_nice_yaml }}"`).
+
+### 1.4б `tasks-kustomize-build.yaml`
+
+- **Purpose.** На `master_manager_fact`: построить kustomize output из pristine upstream + список patches, перезаписать output поверх pristine в чарте, очистить временный staging. Используется в install-фазе компонентов, идущих через kustomize→helm паттерн (см. [`playbook-conventions.md`](playbook-conventions.md) §21).
+- **Input.** `dto_label_name` (string), `dto_chart_remote_dest` (string — путь чарта на сервере, без `/`), `dto_source_filename` (string — имя файла в `templates/`, например `install.yaml`), `dto_patches_list` (sequence — merged patches: base + extra).
+- **Validates (assert).** All 4 dto-params defined + non-empty (per Rule 19, [`playbook-conventions.md`](playbook-conventions.md) §19). Tag `[always]`.
+- **Output.** Side effect: `<dto_chart_remote_dest>/templates/<dto_source_filename>` перезаписан kustomize-output. No facts exported.
+- **Internals.** `mktemp -d` staging; copy pristine → staging; render `kustomization.yaml` (`resources: [<source>]`, `patches: <list>`) через `to_nice_yaml`; `kubectl kustomize` → перезапись `templates/<source>` в чарте; cleanup staging.
+- **Callers.** `playbook-app/argocd-install.yaml` STEP 3 (install phase). В будущем — prometheus-operator install playbook.
+- **Idempotent.** Да: при одинаковом patches списке kustomize output идентичен, helm release не меняется.
 
 ### 1.5 `tasks-add-helm-repo.yaml`
 
