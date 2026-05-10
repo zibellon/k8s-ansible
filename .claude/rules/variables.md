@@ -45,7 +45,6 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | `_ingress_class_name` | Traefik ingress class (usually `traefik-lb`) |
 | `_http_enable`, `_https_enable` | Toggle plain-HTTP ingress |
 | `_vpn_only_enabled` | If true, attach Traefik `vpn-only` middleware |
-| `_acme_cluster_issuer`, `_acme_solver`, `_acme_solver_pod_labels` | **Output facts** set dynamically by `tasks-resolve-acme-solver.yaml` — never set manually in vars files |
 
 ### 1.3 ServiceMonitor suffixes
 
@@ -304,7 +303,7 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `vault_policies_final` | `tasks-vault-policies-roles-merge.yaml` | Rendered into `vault/install/values-override.yaml` |
 | `vault_roles_final` | same | Same |
 | `eso_vault_integration_<c>_secrets_merged` | `tasks-eso-secrets-merge.yaml` | Rendered into `<c>/pre/values-override.yaml` |
-| `<c>_acme_cluster_issuer`, `<c>_acme_solver`, `<c>_acme_solver_pod_labels` | `tasks-resolve-acme-solver.yaml` | NetworkPolicy templates in `<c>/pre/` |
+| `acme_cluster_issuer_result_fact`, `acme_solver_result_fact`, `acme_pod_labels_result_fact` (global, not per-component) | `tasks-resolve-acme-solver.yaml` | NetworkPolicy templates in `<c>/pre/` (typically `acme_pod_labels_result_fact`) |
 
 ### 2.12 Ansible runtime settings (`hosts-vars/ansible.yaml`)
 

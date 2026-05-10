@@ -97,12 +97,12 @@ Traefik HTTP-01 challenges create solver pods that must be matched by `NetworkPo
 `tasks-resolve-acme-solver.yaml` (see [`reusable-tasks.md`](reusable-tasks.md) §1.9):
 
 1. Reads the `cert_manager_cluster_issuers` list from inventory.
-2. Finds the entry by name (`{{ <c>_cluster_issuer_name }}`).
-3. Picks the solver matching `{{ <c>_ingress_class_name }}`.
-4. Exports three dynamic facts (names controlled by caller):
-   - `{{ acme_cluster_issuer_result_var }}` — resolved `ClusterIssuer` name
-   - `{{ acme_solver_result_var }}` — full solver dict
-   - `{{ acme_pod_labels_result_var }}` — `podLabels` to match in `NetworkPolicy`
+2. Finds the entry by name (`{{ dto_cluster_issuer_name }}`).
+3. Picks the solver matching `{{ dto_ingress_class_name }}`.
+4. Exports three fixed global facts (only one ClusterIssuer/solver is resolved per playbook run, so global fact names cause no conflicts):
+   - `acme_cluster_issuer_result_fact` — full ClusterIssuer dict
+   - `acme_solver_result_fact` — full solver dict
+   - `acme_pod_labels_result_fact` — `podLabels` to match in `NetworkPolicy`
 
 ### 4.2 Usage in install playbooks
 
@@ -112,15 +112,12 @@ In the `pre` phase, include the resolver with `tags: [always]` so facts are avai
 - include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-resolve-acme-solver.yaml"
   vars:
     dto_label_name: "<c>-install-init"
-    cluster_issuer_name: "{{ <c>_cluster_issuer_name }}"
-    ingress_class_name: "{{ <c>_ingress_class_name }}"
-    acme_cluster_issuer_result_var: "<c>_acme_cluster_issuer"
-    acme_solver_result_var: "<c>_acme_solver"
-    acme_pod_labels_result_var: "<c>_acme_solver_pod_labels"
+    dto_cluster_issuer_name: "{{ <c>_cluster_issuer_name }}"
+    dto_ingress_class_name: "{{ <c>_ingress_class_name }}"
   tags: [always]
 ```
 
-Then the `pre/` chart's `NetworkPolicy` template uses `{{ <c>_acme_solver_pod_labels | to_json }}` as the allow-selector for incoming HTTP-01 challenge traffic.
+Then the `pre/` chart's `NetworkPolicy` template uses `{{ acme_pod_labels_result_fact | to_json }}` as the allow-selector for incoming HTTP-01 challenge traffic.
 
 ### 4.3 Why this indirection matters
 

@@ -118,8 +118,8 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 ## 13. ACME / cert-manager Integration
 
-13.1 Components that use an ingress with HTTP-01 challenge MUST include `tasks-resolve-acme-solver.yaml` (tag `always`) to derive `<c>_acme_solver_pod_labels`.
-13.2 `NetworkPolicy` rules allowing the cert-manager solver MUST reference those resolved labels. Do not hard-code solver pod labels.
+13.1 Components that use an ingress with HTTP-01 challenge MUST include `tasks-resolve-acme-solver.yaml` (tag `always`) to derive the global fact `acme_pod_labels_result_fact` (set by the task; one ClusterIssuer/solver per playbook run, so the global fact name causes no conflicts).
+13.2 `NetworkPolicy` rules allowing the cert-manager solver MUST reference `acme_pod_labels_result_fact`. Do not hard-code solver pod labels.
 
 ## 14. Rollout Verification
 
