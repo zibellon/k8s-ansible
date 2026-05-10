@@ -150,13 +150,21 @@
       when: mon_system_prometheus_operator_enabled
       tags: [prometheus-operator]
 
-    - name: "[mon-system-prometheus-operator] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+    - name: "[mon-system-prometheus-operator] Build merged kustomize patches list"
+      set_fact:
+        mon_system_prometheus_operator_kustomize_patches_merged: "{{ mon_system_prometheus_operator_kustomize_patches + (mon_system_prometheus_operator_kustomize_patches_extra | default([])) }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      when: mon_system_prometheus_operator_enabled
+      tags: [prometheus-operator]
+
+    - name: "[mon-system-prometheus-operator] Render prometheus-operator.yaml via kustomize"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-kustomize-build.yaml"
       vars:
         dto_label_name: "mon-system-prometheus-operator"
-        dto_dir: "{{ remote_charts_dir }}/mon-system/prometheus-operator"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ mon_system_prometheus_operator_helm_values | to_nice_yaml }}"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/prometheus-operator"
+        dto_source_filename: "prometheus-operator.yaml"
+        dto_patches_list: "{{ mon_system_prometheus_operator_kustomize_patches_merged }}"
       when: mon_system_prometheus_operator_enabled
       tags: [prometheus-operator]
 
@@ -167,7 +175,7 @@
         dto_helm_command: >
           helm upgrade --install mon-system-prometheus-operator {{ remote_charts_dir }}/mon-system/prometheus-operator
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/prometheus-operator/values-override.yaml
+          --create-namespace
           --cleanup-on-fail
           --skip-crds
           --atomic

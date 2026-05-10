@@ -679,20 +679,63 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
 
-    # ---------
-    # Prometheus Operator workload Helm values (operator Deployment + RBAC)
-    mon_system_prometheus_operator_helm_values:
-      namespace: "{{ mon_system_namespace }}"
-      tolerations: []
-      nodeSelector:
-        kubernetes.io/os: linux
-      resources:
-        limits:
-          cpu: 200m
-          memory: 200Mi
-        requests:
-          cpu: 100m
-          memory: 100Mi
+    # kustomize patches применяются tasks-kustomize-build.yaml перед helm install.
+    # Pristine templates/prometheus-operator.yaml не модифицируется — все customizations здесь.
+    # Operator-side extension через mon_system_prometheus_operator_kustomize_patches_extra.
+    mon_system_prometheus_operator_kustomize_patches:
+      # 1. ClusterRoleBinding subjects[0].namespace → mon_system_namespace (JSON Patch)
+      - target:
+          kind: ClusterRoleBinding
+          name: prometheus-operator
+        patch: |-
+          - op: replace
+            path: /subjects/0/namespace
+            value: "{{ mon_system_namespace }}"
+      # 2. Deployment metadata.namespace + customizations (resources, tolerations, nodeSelector)
+      - target:
+          kind: Deployment
+          name: prometheus-operator
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: prometheus-operator
+            namespace: "{{ mon_system_namespace }}"
+          spec:
+            template:
+              spec:
+                tolerations: []
+                nodeSelector:
+                  kubernetes.io/os: linux
+                containers:
+                  - name: prometheus-operator
+                    resources:
+                      limits:
+                        cpu: 200m
+                        memory: 200Mi
+                      requests:
+                        cpu: 100m
+                        memory: 100Mi
+      # 3. ServiceAccount metadata.namespace → mon_system_namespace
+      - target:
+          kind: ServiceAccount
+          name: prometheus-operator
+        patch: |-
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: prometheus-operator
+            namespace: "{{ mon_system_namespace }}"
+      # 4. Service metadata.namespace → mon_system_namespace
+      - target:
+          kind: Service
+          name: prometheus-operator
+        patch: |-
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: prometheus-operator
+            namespace: "{{ mon_system_namespace }}"
 
     # ---------
     # Prometheus CR Helm values (Prometheus instance + RBAC + Service)
