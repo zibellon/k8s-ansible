@@ -407,24 +407,33 @@ all:
             - extract:
                 key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/custom/creds"
 
-    # ArgoCD ConfigMaps — расширение кастомными ключами
-    # Каждая переменная независима: можно переопределить только нужную в hosts-extra.yaml
-    argocd_cm_ssh_known_hosts_extra: []
-    argocd_cm_extra:
-      url: "https://argocd-ui-k8s-v2.drawapp.ru"
-    argocd_cm_cmd_params_extra: {}
-    argocd_cm_gpg_keys_extra: {}
-    argocd_cm_notifications_extra: {}
-    argocd_cm_rbac_extra: {}
-    argocd_cm_tls_certs_extra: {}
-    # Пример: добавить SSH ключи GitLab (переопределить только эту переменную)
-    # argocd_cm_ssh_known_hosts_extra:
-    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ecdsa-sha2-nistp256 AAAA..."
-    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ssh-ed25519 AAAA..."
-    #   - "[gitlab-gitlab-shell.gitlab.svc.cluster.local]:3714 ssh-rsa AAAA..."
-    # Пример: добавить только RBAC политики
-    # argocd_cm_rbac_extra:
-    #   policy.default: "role:readonly"
+    # ArgoCD: kustomize patches install phase — расширение upstream install.yaml.
+    # Базовая часть в hosts-vars/argocd.yaml (argocd_kustomize_patches);
+    # extra применяется ПОСЛЕ базовой (last-wins при конфликте data-ключей).
+    # Поддерживаются strategic merge и JSON Patch (RFC 6902) — kustomize
+    # определяет тип автоматически по содержимому patch.
+    argocd_kustomize_patches_extra: []
+    # Пример 1: расширить data ConfigMap argocd-cm своим ключом (strategic merge)
+    # argocd_kustomize_patches_extra:
+    #   - target:
+    #       kind: ConfigMap
+    #       name: argocd-cm
+    #     patch: |-
+    #       apiVersion: v1
+    #       kind: ConfigMap
+    #       metadata:
+    #         name: argocd-cm
+    #       data:
+    #         users.session.duration: "240h"
+    # Пример 2: изменить replicas Deployment argocd-server (JSON Patch RFC 6902)
+    # argocd_kustomize_patches_extra:
+    #   - target:
+    #       kind: Deployment
+    #       name: argocd-server
+    #     patch: |-
+    #       - op: replace
+    #         path: /spec/replicas
+    #         value: 3
 
     # Переопределение ArgoCD git-ops приложений (заменяет argocd_git_ops_apps из hosts.yaml целиком)
     argocd_git_ops_apps:
