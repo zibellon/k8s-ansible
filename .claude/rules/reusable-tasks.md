@@ -90,7 +90,7 @@ General rules for callers:
 - **Input.** `dto_label_name`, `crds_list` (list of `"crd/<name>"` strings), `crds_wait` (dict: `timeout`, `retries`, `delay`).
 - **Validates (assert).** `dto_label_name` defined + non-empty; `crds_list` defined, is sequence, non-empty; `crds_wait` defined, is mapping, with `timeout`/`retries`/`delay` subkeys defined.
 - **Output.** None. Fails on timeout.
-- **Callers.** Install playbooks with `crds/` phases (`argocd`, `mon-prometheus-operator`), Vault operator, cert-manager.
+- **Callers.** Install playbooks with `crds/` phases (`argocd`, `mon-system`), Vault operator, cert-manager.
 - **Idempotent.** Read-only wait.
 
 ### 1.7 `tasks-wait-rollout.yaml`
