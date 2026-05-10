@@ -13,7 +13,7 @@ This file is the **map** of the project. Detailed **catalogs** live under `.clau
 
 Violating any of these will break the cluster or leak secrets.
 
-- `argocd` and `longhorn-system` namespaces are **upstream-fixed** — never rename.
+- `longhorn-system` namespace is **upstream-fixed** — never rename. (Note: `argocd` was historically also fixed but is now configurable via kustomize namespace-rebind patch — see [`components.md`](.claude/rules/components.md) §9.)
 - `kube-proxy` is **disabled at `kubeadm init`** via declarative `proxy.disabled: true` in `ClusterConfiguration`. Cilium replaces it. Do not re-enable.
 - `hosts-vars-override/` is **never committed**. It contains `ansible_password`, real IPs, Vault unseal keys, and all secrets.
 - Always run Ansible with **both** inventories: `-i hosts-vars/ -i hosts-vars-override/`. Running with only one is always a bug.

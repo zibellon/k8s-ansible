@@ -128,7 +128,7 @@ Template fields:
 
 - **Chart path.** `charts/argocd/{crds,gitops,install,post,pre}/`.
 - **Install playbook.** `argocd-install.yaml`.
-- **Namespace.** `argocd` — **fixed upstream, cannot rename**.
+- **Namespace.** `argocd` (default; configurable via `argocd_namespace` — first patch in `argocd_kustomize_patches` is a JSON Patch on `kind: ClusterRoleBinding` rebinding `subjects/0/namespace` to `argocd_namespace`, see [`playbook-conventions.md`](playbook-conventions.md) §21).
 - **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`, `argocd-gitops`.
 - **External Helm repo.** No — local chart with kustomize render of pristine upstream `install.yaml` on master_manager_fact before helm install (see [`playbook-conventions.md`](playbook-conventions.md) §21).
 - **Required vars.** `argocd_namespace`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_kustomize_patches` (база — strategic merge patches на argocd-cm и argocd-cmd-params-cm с пользовательскими customization'ами) / `argocd_kustomize_patches_extra` (operator-side, default `[]`), `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`.
