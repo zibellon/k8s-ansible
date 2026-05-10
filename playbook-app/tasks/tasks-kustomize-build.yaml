@@ -2,11 +2,12 @@
 # Build kustomize output and overwrite the source file in chart templates dir
 #
 # Workflow on master_manager_fact:
-#   1. mktemp -d staging
-#   2. cp <chart>/templates/<source> -> staging/<source>
-#   3. render staging/kustomization.yaml from dto_patches_list
-#   4. kubectl kustomize staging/ -> overwrite <chart>/templates/<source>
-#   5. rm -rf staging
+#   1. rm -rf <chart>/kustomize_build_tmp/  (defensive cleanup if previous run failed)
+#   2. mkdir <chart>/kustomize_build_tmp/
+#   3. cp <chart>/templates/<source> -> <chart>/kustomize_build_tmp/<source>
+#   4. render <chart>/kustomize_build_tmp/kustomization.yaml from dto_patches_list
+#   5. kubectl kustomize <chart>/kustomize_build_tmp -o <chart>/templates/<source>
+#   6. rm -rf <chart>/kustomize_build_tmp
 #
 # Params:
 #   - dto_label_name:        Label for task names (used in logs)
@@ -31,11 +32,19 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Create temp staging dir for kustomize"
-  tempfile:
+- name: "[{{ dto_label_name }}] Cleanup leftover staging dir from previous failed run"
+  file:
+    path: "{{ dto_chart_remote_dest }}/kustomize_build_tmp"
+    state: absent
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Create staging dir for kustomize"
+  file:
+    path: "{{ dto_chart_remote_dest }}/kustomize_build_tmp"
     state: directory
-    prefix: "kustomize-build-"
-  register: kustomize_build_temp
+    mode: "0755"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -43,7 +52,7 @@
 - name: "[{{ dto_label_name }}] Copy pristine source into staging"
   copy:
     src: "{{ dto_chart_remote_dest }}/templates/{{ dto_source_filename }}"
-    dest: "{{ kustomize_build_temp.path }}/{{ dto_source_filename }}"
+    dest: "{{ dto_chart_remote_dest }}/kustomize_build_tmp/{{ dto_source_filename }}"
     remote_src: true
     mode: "0644"
   delegate_to: "{{ master_manager_fact }}"
@@ -64,33 +73,23 @@
 
 - name: "[{{ dto_label_name }}] Render kustomization.yaml in staging"
   copy:
-    dest: "{{ kustomize_build_temp.path }}/kustomization.yaml"
+    dest: "{{ dto_chart_remote_dest }}/kustomize_build_tmp/kustomization.yaml"
     mode: "0644"
     content: "{{ kustomize_build_kustomization | to_nice_yaml }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Run kubectl kustomize"
-  command: "kubectl kustomize {{ kustomize_build_temp.path }}"
-  register: kustomize_build_output
+- name: "[{{ dto_label_name }}] Run kubectl kustomize, write directly to templates/{{ dto_source_filename }}"
+  command: "kubectl kustomize {{ dto_chart_remote_dest }}/kustomize_build_tmp -o {{ dto_chart_remote_dest }}/templates/{{ dto_source_filename }}"
   changed_when: false
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Overwrite chart templates/{{ dto_source_filename }} with kustomize output"
-  copy:
-    dest: "{{ dto_chart_remote_dest }}/templates/{{ dto_source_filename }}"
-    mode: "0644"
-    content: "{{ kustomize_build_output.stdout }}\n"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 - name: "[{{ dto_label_name }}] Cleanup staging dir"
   file:
-    path: "{{ kustomize_build_temp.path }}"
+    path: "{{ dto_chart_remote_dest }}/kustomize_build_tmp"
     state: absent
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
