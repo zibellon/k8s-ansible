@@ -7,7 +7,7 @@ all:
     argocd_post_helm_timeout: "5m"
     argocd_gitops_helm_timeout: "3m"
     # ---------
-    argocd_namespace: "argocd" # DO NOT CHANGE - hardcoded in ClusterRoleBindings
+    argocd_namespace: "argocd" # Configurable: namespace-rebind kustomize patch (first in argocd_kustomize_patches) handles ClusterRoleBindings
     argocd_ui_domain: "argocd-ui-k8s-v2.drawapp.ru"
     argocd_external_url: "https://argocd-ui-k8s-v2.drawapp.ru"
     argocd_ui_https_secret_name: "cert-argocd-ui"
@@ -64,6 +64,12 @@ all:
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
     # Install-phase kustomize patches (applied by tasks-kustomize-build.yaml)
     argocd_kustomize_patches:
+      - target:
+          kind: ClusterRoleBinding
+        patch: |-
+          - op: replace
+            path: /subjects/0/namespace
+            value: "{{ argocd_namespace }}"
       - target:
           kind: ConfigMap
           name: argocd-cm
