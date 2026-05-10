@@ -20,26 +20,6 @@ all:
     argocd_ingress_https_enable: true
     # ------
     argocd_admin_username: "admin"
-    argocd_cm_extra:
-      url: "{{ argocd_external_url }}"
-      timeout.reconciliation: "30s"
-      timeout.reconciliation.jitter: "10s"
-      users.anonymous.enabled: "false"
-      users.session.duration: "120h"
-      resource.customizations: |
-        networking.k8s.io/Ingress:
-          health.lua: |
-            hs = {}
-            hs.status = "Healthy"
-            hs.message = "Skip health check for Ingress"
-            return hs
-    argocd_cm_cmd_params_extra:
-      server.insecure: "true"
-    argocd_cm_gpg_keys_extra: {}
-    argocd_cm_notifications_extra: {}
-    argocd_cm_rbac_extra: {}
-    argocd_cm_ssh_known_hosts_extra: []
-    argocd_cm_tls_certs_extra: {}
     # Prometheus metrics ports (hardcoded in ArgoCD manifests)
     argocd_application_controller_metrics_port: 8082
     argocd_server_metrics_port: 8083
@@ -53,7 +33,7 @@ all:
     # Each entry creates one AppProject + one or more Applications in ArgoCD
     # Пример и переопределение — в hosts-vars-override/argocd.yaml
     argocd_git_ops_apps: []
-    # Pre-phase values (ESO + ConfigMaps + NetworkPolicies chart)
+    # Pre-phase values (ESO + NetworkPolicies chart)
     # eso_vault_integration_argocd_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
     # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
     argocd_pre_helm_values:
@@ -81,21 +61,6 @@ all:
         secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
-      configMaps:
-        argocdCm:
-          data: "{{ argocd_cm_extra }}"
-        cmdParamsCm:
-          data: "{{ argocd_cm_cmd_params_extra }}"
-        gpgKeysCm:
-          data: "{{ argocd_cm_gpg_keys_extra }}"
-        notificationsCm:
-          data: "{{ argocd_cm_notifications_extra }}"
-        rbacCm:
-          data: "{{ argocd_cm_rbac_extra }}"
-        sshKnownHostsCm:
-          additional: "{{ argocd_cm_ssh_known_hosts_extra }}"
-        tlsCertsCm:
-          data: "{{ argocd_cm_tls_certs_extra }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
     # Install-phase kustomize patches (applied by tasks-kustomize-build.yaml)
     argocd_kustomize_patches:
