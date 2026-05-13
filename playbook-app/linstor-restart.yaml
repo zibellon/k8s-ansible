@@ -1,0 +1,84 @@
+# =============================================================================
+# LINSTOR / Piraeus RESTART
+# Restarts Piraeus Operator + LINSTOR Cluster workloads to apply configuration
+# changes or recover from non-standard states.
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/linstor-restart.yaml
+#
+# Override list of resources (optional):
+#   ansible-playbook ... --extra-vars 'linstor_restart_resources=["deployment/linstor-controller"]'
+# =============================================================================
+
+- name: Restart LINSTOR / Piraeus stack
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[linstor-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "linstor-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify LINSTOR namespace is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[linstor-restart] Check if LINSTOR namespace exists"
+      command: kubectl get namespace {{ linstor_namespace }}
+      register: namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[linstor-restart] Fail if LINSTOR namespace not found"
+      fail:
+        msg: "LINSTOR namespace '{{ linstor_namespace }}' not found. Install LINSTOR first via linstor-install.yaml."
+      when: namespace_check.rc != 0
+      run_once: true
+
+    - name: "[linstor-restart] Show pods in {{ linstor_namespace }} (before restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "linstor-restart"
+        dto_pods_namespace: "{{ linstor_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART WORKLOADS
+    # -------------------------------------------------------------------------
+
+    - name: "[linstor-restart] Rollout-restart workloads from linstor_restart_resources"
+      command: kubectl rollout restart {{ item }} -n {{ linstor_namespace }}
+      loop: "{{ linstor_restart_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[linstor-restart] Wait for rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "linstor-restart"
+        dto_rollout_namespace: "{{ linstor_namespace }}"
+        dto_rollout_timeout: "{{ linstor_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ linstor_restart_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[linstor-verify] Show pods in {{ linstor_namespace }} (after restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "linstor-verify"
+        dto_pods_namespace: "{{ linstor_namespace }}"
+
+    - name: "[linstor-verify] Restart completed"
+      debug:
+        msg: "LINSTOR / Piraeus stack restart complete ({{ linstor_restart_resources | length }} workloads)"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
