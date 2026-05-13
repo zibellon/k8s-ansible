@@ -1,0 +1,203 @@
+# =============================================================================
+# Install LINSTOR / Piraeus Operator via Helm charts
+# Steps:
+#   1. linstor/pre: NetworkPolicies for piraeus-datastore namespace
+#   2. linstor/install-operator: Piraeus operator from OCI chart (CRDs registered)
+#   3. linstor/install-cluster: LinstorCluster + LinstorSatelliteConfiguration +
+#      StorageClasses + monitoring resources from linstor-cluster OCI chart
+#
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/linstor-install.yaml
+#   ansible-playbook ... --tags pre
+#   ansible-playbook ... --tags install-operator
+#   ansible-playbook ... --tags install-cluster
+# =============================================================================
+
+---
+- name: Install LINSTOR / Piraeus via Helm
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # ALWAYS: pre-check + forbid kube-system
+    # =========================================================================
+    - name: "[linstor-install-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "linstor-install-pre-check"
+      tags: [always]
+
+    - name: "[linstor-install-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "linstor-install-pre-check"
+        dto_target_namespace: "{{ linstor_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: linstor/pre (NetworkPolicies — local chart)
+    # =========================================================================
+
+    - name: "[linstor-pre] Copy chart to server"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "linstor-pre"
+        dto_chart_name: "linstor-pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/linstor/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/linstor/pre"
+      tags: [pre]
+
+    - name: "[linstor-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "linstor-pre"
+        dto_dir: "{{ remote_charts_dir }}/linstor/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ linstor_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[linstor-pre] Install or upgrade via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "linstor-pre"
+        dto_helm_command: >
+          helm upgrade --install linstor-pre {{ remote_charts_dir }}/linstor/pre
+          --namespace {{ linstor_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/linstor/pre/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ linstor_pre_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: install-operator (Piraeus operator — external OCI chart)
+    # =========================================================================
+
+    - name: "[linstor-install-operator] Add Helm repository (OCI)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "linstor-install-operator"
+        dto_helm_is_oci: "{{ piraeus_operator_helm_is_oci }}"
+        dto_helm_url: "{{ piraeus_operator_helm_url }}"
+        dto_helm_chart_version: "{{ piraeus_operator_helm_chart_version }}"
+        dto_helm_chart_source_res_fact_name: "piraeus_operator_helm_chart_source"
+      tags: [install-operator]
+
+    - name: "[linstor-install-operator] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "linstor-install-operator"
+        dto_dir: "{{ remote_charts_dir }}/linstor/install-operator"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ piraeus_operator_helm_values | to_nice_yaml }}"
+      tags: [install-operator]
+
+    - name: "[linstor-install-operator] Install or upgrade Piraeus operator via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "linstor-install-operator"
+        dto_helm_command: >
+          helm upgrade --install piraeus-operator {{ piraeus_operator_helm_chart_source }}
+          --namespace {{ linstor_namespace }}
+          --version {{ piraeus_operator_helm_chart_version }}
+          --values {{ remote_charts_dir }}/linstor/install-operator/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ piraeus_operator_helm_timeout }}
+      tags: [install-operator]
+
+    - name: "[linstor-install-operator] Wait for piraeus.io CRDs"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-crds.yaml"
+      vars:
+        dto_label_name: "linstor-install-operator"
+        dto_crds_list:
+          - crd/linstorclusters.piraeus.io
+          - crd/linstorsatelliteconfigurations.piraeus.io
+          - crd/linstornodeconnections.piraeus.io
+          - crd/linstorsatellites.piraeus.io
+      tags: [install-operator]
+
+    # =========================================================================
+    # STEP 3: install-cluster (LinstorCluster CRs + StorageClasses — external OCI chart)
+    # =========================================================================
+
+    - name: "[linstor-install-cluster] Add Helm repository (OCI)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "linstor-install-cluster"
+        dto_helm_is_oci: "{{ linstor_cluster_helm_is_oci }}"
+        dto_helm_url: "{{ linstor_cluster_helm_url }}"
+        dto_helm_chart_version: "{{ linstor_cluster_helm_chart_version }}"
+        dto_helm_chart_source_res_fact_name: "linstor_cluster_helm_chart_source"
+      tags: [install-cluster]
+
+    - name: "[linstor-install-cluster] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "linstor-install-cluster"
+        dto_dir: "{{ remote_charts_dir }}/linstor/install-cluster"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ linstor_cluster_helm_values | to_nice_yaml }}"
+      tags: [install-cluster]
+
+    - name: "[linstor-install-cluster] Install or upgrade linstor-cluster via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "linstor-install-cluster"
+        dto_helm_command: >
+          helm upgrade --install linstor-cluster {{ linstor_cluster_helm_chart_source }}
+          --namespace {{ linstor_namespace }}
+          --version {{ linstor_cluster_helm_chart_version }}
+          --values {{ remote_charts_dir }}/linstor/install-cluster/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ linstor_cluster_helm_timeout }}
+      tags: [install-cluster]
+
+    - name: "[linstor-install-cluster] Wait for LINSTOR control-plane rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "linstor-install-cluster"
+        dto_rollout_namespace: "{{ linstor_namespace }}"
+        dto_rollout_timeout: "{{ linstor_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment/linstor-controller
+          - deployment/linstor-csi-controller
+          - deployment/ha-controller
+          - deployment/affinity-controller
+          - daemonset/linstor-csi-node
+      tags: [install-cluster]
+
+    # =========================================================================
+    # ALWAYS: Verification
+    # =========================================================================
+
+    - name: "[linstor-verify] List Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_label_name: "linstor-verify"
+        dto_helm_namespace: "{{ linstor_namespace }}"
+      tags: [always]
+
+    - name: "[linstor-verify] Show pods in {{ linstor_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "linstor-verify"
+        dto_pods_namespace: "{{ linstor_namespace }}"
+      tags: [always]
+
+    - name: "[linstor-verify] Show NetworkPolicies in {{ linstor_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "linstor-verify"
+        dto_np_namespace: "{{ linstor_namespace }}"
+      tags: [always]
