@@ -207,3 +207,21 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 
 - `playbook-app/charts/argocd/install/templates/argocd.yaml` — это vendored upstream ArgoCD chart с встроенными NP, в которых порты захардкожены (8080, 8082-8084, 5556-5558, 9001, 6379, 5557, 7000 и др.). При общем рефакторинге NP-портов в `values.yaml` (см. `.claude/rules/networking.md` §7) этот файл намеренно пропущен — модификация upstream-чарта сломала бы синхронизацию с upstream при следующем обновлении ArgoCD. Отдельная задача (если будет): fork-aware retrofit либо ожидание upstream-параметризации этих портов.
 - Перенос новых port-ключей из chart-овых `values.yaml` в `hosts-vars/<c>.yaml` (чтобы operator мог override per environment) — отдельная задача, в текущем рефакторинге не сделана.
+
+------
+
+учимся работать с LVM
+
+1. fdisk -l
+2. cfdisk
+   1. красивый interactive UI
+3. 
+
+------
+
+## LINSTOR / Piraeus stack — отложенные задачи
+
+- **Storage pools на LVM thinpool** — при появлении baremetal с extra disks переопределить `linstor_cluster_helm_values.linstorSatelliteConfigurations[*].storagePools` с `fileThinPool` на `lvmThinPool` + `source.hostDevices: [/dev/sdb]` (auto-pvcreate через operator). Имена pool'ов (`linstor-managers`/`linstor-workers`) остаются — SC переопределять не нужно. См. plan §"Out of scope" в `.claude/plans/teamlead-nested-volcano.md`.
+- **`LinstorNodeConnection` CR'ы для multi-NIC / cross-region** — `linstor_cluster_helm_values.linstorNodeConnections: []` сейчас пустой. Активировать когда понадобится DRBD replication через отдельный VLAN (`paths`) или разные DRBD protocols per node pair (`properties` с `DrbdOptions/Net/protocol: A` для cross-region).
+- **`monitoring.enabled: true` cross-namespace ingress** в `charts/linstor/pre/templates/network-policy.yaml` — когда `linstor_cluster_helm_values.monitoring.enabled: true` (уже так), Prometheus из `mon-system` должен иметь ingress к ServiceMonitor target'ам. Сейчас Prometheus scraping работает через intra-cluster pod IP routing — но если активируется strict NetworkPolicy enforcement, нужен explicit ingress rule.
+- **Stale docs fix:** `.claude/rules/reusable-tasks.md` §1.4 `tasks-copy-chart.yaml` документирует параметры `chart_name` / `chart_local_src` / `chart_remote_dest` без `dto_` prefix, тогда как actual task code (`playbook-app/tasks/tasks-copy-chart.yaml`) требует **`dto_chart_name` / `dto_chart_local_src` / `dto_chart_remote_dest`** (с prefix). Все callers в проекте используют правильный `dto_` prefix — это исключительно doc stale. Обнаружено в SUB-5 (commit `8fea3d5`).

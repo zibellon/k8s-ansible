@@ -83,6 +83,7 @@ done
 - `vault` before anything whose ESO pulls from it
 - `traefik` before anything with ingress
 - `zitadel` before `mon-system` (for Grafana OIDC inside mon-system stack)
+- **Альтернатива** `longhorn` → `linstor` (Piraeus Operator + LINSTOR; ставится через `ansible-playbook ... playbook-app/linstor-install.yaml`). Только один из двух storage stack'ов в кластере, не оба параллельно. См. [`components.md`](components.md) §16.5.
 
 ---
 
@@ -110,6 +111,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install
 - `--tags cr` — for `vault` (Vault Custom Resource)
 - `--tags configure` — for `teleport` (declarative resources)
 - `--tags gitops` — for `argocd` (AppProjects + Applications)
+- `--tags pre`, `--tags install-operator`, `--tags install-cluster` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы)
 
 `tags: [always]` tasks (`tasks-pre-check`, `tasks-eso-secrets-merge`, `tasks-eso-lookup`, `tasks-resolve-acme-solver`) run regardless of `--tags`, so facts are always set.
 
@@ -163,6 +165,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-rest
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/external-secrets-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/haproxy-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/traefik-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/linstor-restart.yaml
 ```
 
 Each uses `kubectl rollout restart` on the target resources and waits for rollout to complete.
