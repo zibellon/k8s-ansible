@@ -63,38 +63,23 @@ spec:
 ---
 # Allow egress to K8s apiserver (via host HAProxy LB on apiserver port)
 # Operator + CSI controller + HA controller talk к apiserver через RBAC
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-apiserver-egress
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector: {}
-  policyTypes:
-    - Egress
-  egress:
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
-        - protocol: TCP
-          port: {{ .Values.apiserver.port }}
-
----
 # Allow egress to kubelet (CSI node plugin registers с kubelet)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-kubelet-egress
+  name: allow-external-egress
   namespace: {{ .Values.namespace }}
 spec:
   podSelector: {}
   policyTypes:
     - Egress
   egress:
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
         - protocol: TCP
           port: {{ .Values.kubelet.port }}
