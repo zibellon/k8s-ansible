@@ -1,0 +1,40 @@
+# =============================================================================
+# Prepare servers for Piraeus Operator / LINSTOR (DRBD kernel module headers)
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/linstor-prepare.yaml
+# =============================================================================
+# - Install kernel-headers matching running kernel (linux-headers-$(uname -r))
+# - Hold kernel-headers package against apt upgrade
+# - Verify /lib/modules/$(uname -r)/build symlink exists (DKMS prerequisite)
+#
+# Piraeus operator собирает DRBD module через kmod-loader Pod
+# (init-container внутри satellite). На хосте нужны ТОЛЬКО kernel-headers.
+# drbd-dkms / drbd-utils на хост НЕ ставятся — operator делает всё внутри
+# container'а. См. https://piraeus.io/docs/stable/how-to/install-kernel-headers/
+# и https://piraeus.io/docs/stable/how-to/drbd-loader/.
+# =============================================================================
+
+---
+- name: Prepare servers for Piraeus Operator / LINSTOR (DRBD kernel module headers)
+  hosts: all
+  become: true
+  gather_facts: true   # need ansible_kernel for headers package name
+
+  tasks:
+    - name: Install kernel-headers matching running kernel
+      apt:
+        name: "linux-headers-{{ ansible_kernel }}"
+        state: present
+        update_cache: yes
+
+    - name: Hold kernel-headers package against apt upgrade
+      command: "apt-mark hold linux-headers-{{ ansible_kernel }}"
+      register: linstor_hold_result
+      changed_when: "'set on hold' in linstor_hold_result.stdout"
+
+    - name: Verify /lib/modules/{{ ansible_kernel }}/build symlink exists
+      stat:
+        path: "/lib/modules/{{ ansible_kernel }}/build"
+      register: linstor_kernel_build_check
+      failed_when: not linstor_kernel_build_check.stat.exists
