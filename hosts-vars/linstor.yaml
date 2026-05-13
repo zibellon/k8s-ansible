@@ -1,0 +1,253 @@
+all:
+  vars:
+    # =============================================================================
+    # Piraeus Operator + LINSTOR Cluster — base defaults
+    # Operator: oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus
+    # Cluster:  oci://ghcr.io/piraeusdatastore/helm-charts/linstor-cluster
+    # =============================================================================
+
+    # === Shared ===
+    linstor_namespace: "piraeus-datastore"
+    linstor_rollout_timeout: "300s"
+
+    # === Pre chart (NetworkPolicy + namespace) ===
+    linstor_pre_timeout: "5m"
+
+    linstor_pre_helm_values:
+      namespace: "{{ linstor_namespace }}"
+      clusterDomain: "{{ cluster_dns_domain }}"
+      dns:
+        port: 53
+      apiserver:
+        port: 6443
+      kubelet:
+        port: 10250
+
+    # === Install operator chart (external OCI: piraeus-operator) ===
+    piraeus_operator_helm_is_oci: true
+    piraeus_operator_helm_url: "oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus"
+    piraeus_operator_helm_chart_version: "2.10.6"
+    piraeus_operator_helm_timeout: "10m"
+
+    piraeus_operator_helm_values:
+      installCRDs: true
+      replicaCount: 1
+      tls:
+        autogenerate: true
+        renew: true
+      # ----- закомментировано как memo (chart defaults, оставлены для напоминания) -----
+      # affinity: {}
+      # nodeSelector: {}
+      # tolerations:
+      #   - key: drbd.linbit.com/lost-quorum
+      #     effect: NoSchedule
+      #   - key: drbd.linbit.com/force-io-error
+      #     effect: NoSchedule
+      # operator:
+      #   resources: {}
+
+    # === Install cluster chart (external OCI: linstor-cluster) ===
+    linstor_cluster_helm_is_oci: true
+    linstor_cluster_helm_url: "oci://ghcr.io/piraeusdatastore/helm-charts/linstor-cluster"
+    linstor_cluster_helm_chart_version: "1.1.1"
+    linstor_cluster_helm_timeout: "10m"
+
+    linstor_cluster_helm_values:
+      # === linstorCluster — главный CR ===
+      linstorCluster:
+        nodeSelector: {}
+        tolerations:
+          - operator: Exists
+        controller:
+          enabled: true
+        csiController:
+          enabled: true
+        csiNode:
+          enabled: true
+        highAvailabilityController:
+          enabled: true
+        affinityController:
+          enabled: true
+        nfsServer:
+          enabled: true
+        # === Active cluster-wide DRBD sync rate tuning ===
+        # Namespace: DrbdOptions/PeerDevice (эмпирически проверено через
+        # `linstor controller drbd-options --c-*` + `list-properties`).
+        # Defaults слишком консервативны (c-min-rate=250 KB/s, c-fill-target=50 KiB).
+        # На VPS network эти tuned values дают ~120× ускорение sync.
+        properties:
+          - name: DrbdOptions/PeerDevice/c-min-rate
+            value: "10M"
+          - name: DrbdOptions/PeerDevice/c-max-rate
+            value: "100M"
+          - name: DrbdOptions/PeerDevice/c-fill-target
+            value: "10M"
+          - name: DrbdOptions/PeerDevice/c-plan-ahead
+            value: "20"
+
+      # === Encryption + TLS creation method (не используем) ===
+      # linstorPassphrase: ""
+      # createApiTLS: ""
+      # createInternalTLS: ""
+
+      # === Ingress для LINSTOR Controller — не используем, user создаёт сам ===
+      # Service внутрикластерный: linstor-controller (namespace piraeus-datastore)
+      # Port: 3370 (HTTP), 3371 (HTTPS при apiTLS)
+      ingress:
+        enabled: false
+
+      # === linstorSatelliteConfigurations — два config'а (Path B: pool name per tier) ===
+      linstorSatelliteConfigurations:
+        - name: managers-config
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+          storagePools:
+            - name: linstor-managers
+              fileThinPool:
+                directory: /var/lib/linstor-pools/linstor-managers
+
+        - name: workers-config
+          nodeSelector:
+            node-role.kubernetes.io/worker: ""
+          storagePools:
+            - name: linstor-workers
+              fileThinPool:
+                directory: /var/lib/linstor-pools/linstor-workers
+
+      # === linstorNodeConnections — пустой, не используем ===
+      linstorNodeConnections: []
+
+      # === Prometheus monitoring ===
+      monitoring:
+        enabled: true
+        dashboard:
+          enabled: false
+
+      # === storageClasses — 9 SC (3 tier × 3 modes) ===
+      # Tier prefix → storagePool mapping:
+      #   lnstr-major-manager-* → "linstor-managers"
+      #   lnstr-major-*         → "linstor-managers linstor-workers" (cross-tier multi-pool, space-separated)
+      #   lnstr-major-worker-*  → "linstor-workers"
+      storageClasses:
+        # === tier: lnstr-major-manager (only managers) ===
+        - name: "lnstr-major-manager-single-local"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "1"
+            linstor.csi.linbit.com/storagePool: "linstor-managers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        - name: "lnstr-major-manager-multi-sync"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "2"
+            linstor.csi.linbit.com/storagePool: "linstor-managers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        - name: "lnstr-major-manager-multi-async"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "2"
+            linstor.csi.linbit.com/storagePool: "linstor-managers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "A"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        # === tier: lnstr-major (managers + workers, multi-pool) ===
+        - name: "lnstr-major-single-local"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "1"
+            linstor.csi.linbit.com/storagePool: "linstor-managers linstor-workers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        - name: "lnstr-major-multi-sync"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "2"
+            linstor.csi.linbit.com/storagePool: "linstor-managers linstor-workers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        - name: "lnstr-major-multi-async"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "2"
+            linstor.csi.linbit.com/storagePool: "linstor-managers linstor-workers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "A"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        # === tier: lnstr-major-worker (only workers) ===
+        - name: "lnstr-major-worker-single-local"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "1"
+            linstor.csi.linbit.com/storagePool: "linstor-workers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        - name: "lnstr-major-worker-multi-sync"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "2"
+            linstor.csi.linbit.com/storagePool: "linstor-workers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+            csi.storage.k8s.io/fstype: "ext4"
+
+        - name: "lnstr-major-worker-multi-async"
+          allowVolumeExpansion: true
+          reclaimPolicy: "Retain"
+          volumeBindingMode: "WaitForFirstConsumer"
+          provisioner: linstor.csi.linbit.com
+          parameters:
+            linstor.csi.linbit.com/autoPlace: "2"
+            linstor.csi.linbit.com/storagePool: "linstor-workers"
+            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "A"
+            csi.storage.k8s.io/fstype: "ext4"
+
+      # === volumeSnapshotClasses и volumeGroupSnapshotClasses — пустые ===
+      volumeSnapshotClasses: []
+      volumeGroupSnapshotClasses: []
+
+    # === Companion playbook (piraeus-restart.yaml) — целевые workloads ===
+    linstor_restart_resources:
+      - deployment/piraeus-operator-controller-manager
+      - deployment/linstor-controller
+      - deployment/linstor-csi-controller
+      - daemonset/linstor-csi-node
+      - deployment/ha-controller
+      - deployment/affinity-controller
+      - daemonset/linstor-satellite.managers-config
+      - daemonset/linstor-satellite.workers-config
