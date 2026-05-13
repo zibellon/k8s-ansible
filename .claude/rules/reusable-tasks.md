@@ -42,19 +42,19 @@ General rules for callers:
 ### 1.4 `tasks-copy-chart.yaml`
 
 - **Purpose.** Package a local chart directory as tar.gz, copy to the master manager, extract. Faster and more idempotent than `synchronize` for many small files.
-- **Input.** `dto_label_name`, `chart_name` (release name — used for the temp archive file), `chart_local_src` (**must** end with `/`), `chart_remote_dest` (**must not** end with `/`).
-- **Validates (assert).** `dto_label_name`, `chart_name`, `chart_local_src`, `chart_remote_dest` all defined + non-empty.
-- **Output.** Chart files at `{{ chart_remote_dest }}/` on the master manager.
+- **Input.** `dto_label_name`, `dto_chart_name` (release name — used for the temp archive file), `dto_chart_local_src` (**must** end with `/`), `dto_chart_remote_dest` (**must not** end with `/`).
+- **Validates (assert).** `dto_label_name`, `dto_chart_name`, `dto_chart_local_src`, `dto_chart_remote_dest` all defined + non-empty.
+- **Output.** Chart files at `{{ dto_chart_remote_dest }}/` on the master manager.
 - **Callers.** Every phase of every install playbook.
 - **Idempotent.** Re-extraction overwrites. Old files not pruned — if you rename a template, re-run `server-clean` on chart dir or `rm -rf` the remote dir.
-- **Gotcha.** Missing trailing slash on `chart_local_src` creates a nested dir.
+- **Gotcha.** Missing trailing slash on `dto_chart_local_src` creates a nested dir.
 
 ### 1.4а `tasks-copy-helm-values.yaml`
 
 - **Purpose.** Create a remote directory + write `values-override.yaml`. Used for external Helm chart install phases where `tasks-copy-chart.yaml` is not called (no local chart to ship).
-- **Input.** `dto_label_name` (string), `dto_dir` (remote path, no trailing slash), `dto_content` (rendered string — the YAML content to write).
-- **Validates (assert).** `dto_label_name`, `dto_dir`, `dto_content` all defined + non-empty.
-- **Output.** Directory `{{ dto_dir }}` exists on master manager, file `{{ dto_dir }}/values-override.yaml` written (mode 0644).
+- **Input.** `dto_label_name` (string), `dto_dir` (remote path, no trailing slash), `dto_filename` (string — name of file to create, typically `"values-override.yaml"`), `dto_content` (rendered string — the YAML content to write).
+- **Validates (assert).** `dto_label_name`, `dto_dir`, `dto_filename`, `dto_content` all defined + non-empty.
+- **Output.** Directory `{{ dto_dir }}` exists on master manager, file `{{ dto_dir }}/{{ dto_filename }}` written (mode 0644).
 - **Callers.** Install-phase blocks in any playbook that uses an external Helm repo: `cilium-install.yaml`, `traefik-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `metrics-server-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `teleport-install.yaml`, `vault-install.yaml` (operator phase).
 - **Idempotent.** Yes — `file: state=directory` and `copy` are both idempotent.
 - **Gotcha.** `dto_content` is evaluated at include-time in the caller's variable scope. Always pass the fully-rendered string (e.g., `"{{ my_helm_values | to_nice_yaml }}"`).
@@ -87,8 +87,9 @@ General rules for callers:
 ### 1.6 `tasks-wait-crds.yaml`
 
 - **Purpose.** Wait for CRDs to reach `Established` condition before applying workloads that depend on them.
-- **Input.** `dto_label_name`, `crds_list` (list of `"crd/<name>"` strings), `crds_wait` (dict: `timeout`, `retries`, `delay`).
-- **Validates (assert).** `dto_label_name` defined + non-empty; `crds_list` defined, is sequence, non-empty; `crds_wait` defined, is mapping, with `timeout`/`retries`/`delay` subkeys defined.
+- **Input.** `dto_label_name`, `dto_crds_list` (list of `"crd/<name>"` strings).
+- **Validates (assert).** `dto_label_name` defined + non-empty; `dto_crds_list` defined, is sequence, non-empty.
+- **Reads global var.** `crds_wait` (dict from `hosts-vars/k8s-base.yaml`: `timeout`/`retries`/`delay`) — controls `command --timeout`, `until.retries`, `until.delay`. Not a caller-passed param.
 - **Output.** None. Fails on timeout.
 - **Callers.** Install playbooks with `crds/` phases (`argocd`, `mon-system`), Vault operator, cert-manager.
 - **Idempotent.** Read-only wait.
@@ -96,8 +97,8 @@ General rules for callers:
 ### 1.7 `tasks-wait-rollout.yaml`
 
 - **Purpose.** `kubectl rollout status` for Deployments / DaemonSets / StatefulSets.
-- **Input.** `dto_label_name`, `rollout_namespace`, `rollout_timeout` (e.g. `"120s"`), `rollout_resources` (list of `"<kind>/<name>"`).
-- **Validates (assert).** `dto_label_name`, `rollout_namespace`, `rollout_timeout` defined + non-empty; `rollout_resources` defined, is sequence, non-empty.
+- **Input.** `dto_label_name`, `dto_rollout_namespace`, `dto_rollout_timeout` (e.g. `"120s"`), `dto_rollout_resources_list` (list of `"<kind>/<name>"`).
+- **Validates (assert).** `dto_label_name`, `dto_rollout_namespace`, `dto_rollout_timeout` defined + non-empty; `dto_rollout_resources_list` defined, is sequence, non-empty.
 - **Output.** None. Fails on timeout.
 - **Callers.** End of `install` phase on every component; also `-restart` playbooks.
 - **Idempotent.** Read-only wait.
@@ -206,8 +207,8 @@ General rules for callers:
 ### 1.16 `tasks-helm-upgrade-async.yaml`
 
 - **Purpose.** Run `helm upgrade --install` in async mode for charts that exceed Ansible's synchronous command timeout (notably the GitLab chart family).
-- **Input.** `dto_label_name`, `helm_command` (complete helm command string). Async timing from global vars (`helm_async_timeout`, `helm_async_poll`).
-- **Validates (assert).** `dto_label_name`, `helm_command` both defined + non-empty.
+- **Input.** `dto_label_name`, `dto_helm_command` (complete helm command string). Async timing from global var `helm_async` (dict from `hosts-vars/k8s-base.yaml`: `helm_async.timeout`, `helm_async.poll`).
+- **Validates (assert).** `dto_label_name`, `dto_helm_command` both defined + non-empty.
 - **Output.** Helm release updated.
 - **Callers.** `gitlab-install.yaml`.
 - **Idempotent.** Same semantics as synchronous helm; async is just about avoiding SSH timeouts.
