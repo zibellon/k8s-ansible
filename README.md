@@ -26,7 +26,7 @@
 ## Решенеи: `./readme-local-pkgs.md`. Вот тут есть полное описание, как к этому подготовиться
 
 # ------
-# как и что запускать
+# Как и откуда запускать
 # ------
 ## крайне важно - все запуски делать из директории проекта
 ## В playbook-s, оченеь много логики зависит от корневой директории
@@ -41,6 +41,10 @@
 
 ## Выполнить команду: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
 ## Покажет основную информацию по всем node
+
+## Выполнить команду: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/network-bandwidth-test.yaml --limit k8s-worker-1,k8s-worker-2`
+## Покажет информацию: какой реально пропускной канал (скорость между серверами)
+## `--limit k8s-worker-1,k8s-worker-2` - можно указать только ДВЕ node, и они обязательно должны быть в inventory
 
 # ------
 # Опционально: подключение через bastion (SSH ProxyJump)
