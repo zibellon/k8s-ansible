@@ -132,7 +132,7 @@ k8s-ansible/
 
 | Directory | Contents | Deep reference |
 |---|---|---|
-| `playbook-system/` | 25 playbooks (node prep, bootstrap, operational, rolling updates, diagnostics) | [`bootstrap-and-ha.md`](.claude/rules/bootstrap-and-ha.md) |
+| `playbook-system/` | 26 playbooks (node prep, bootstrap, operational, rolling updates, diagnostics) | [`bootstrap-and-ha.md`](.claude/rules/bootstrap-and-ha.md) |
 | `playbook-system/tasks/` | 21 reusable task includes (guards, cluster-facts, kubeadm, HAProxy, kubelet, package install, network diagnostics) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §2 |
 | `playbook-app/` | 33 playbooks (17 install + 16 specials: configure, restart, rotate, sync, DR) | [`components.md`](.claude/rules/components.md) |
 | `playbook-app/tasks/` | 33 reusable task includes (pre-check, copy-chart, helm, wait, Vault/ESO, k8s-list, cluster-info) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1 |

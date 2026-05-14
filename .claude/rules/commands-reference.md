@@ -206,6 +206,27 @@ Exactly **two distinct hosts** via `--limit` are required (the playbook asserts 
 
 After the test iperf3 server processes are killed on both hosts; the `iperf3` package stays installed.
 
+### 4.8 Disk I/O diagnostics
+
+Measure disk performance via `fio` (random write + random read, 8k blocks, iodepth=64, 2 minutes per direction) on 1...N selected nodes. Defaults configurable via `fio_*` keys in `hosts-vars/ansible.yaml` (`fio_directory`, `fio_runtime`, `fio_size`, `fio_blocksize`, `fio_iodepth`, `fio_numjobs`). Used for DRBD/Longhorn replication rate capacity planning.
+
+```bash
+# All hosts in parallel (~4 min wall-clock independent of N):
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+  playbook-system/disk-io-test.yaml
+
+# Subset via --limit:
+ansible-playbook ... --limit k8s-manager-1,k8s-worker-2
+
+# Force serial (avoid backend contention on shared storage):
+ansible-playbook ... --forks 1
+
+# Override test directory ad-hoc:
+ansible-playbook ... -e fio_directory=/data
+```
+
+Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + cluster summary (min/max/avg per metric). Test files (`disk-io-test-randread.*`, `disk-io-test-randwrite.*`) cleaned via `always:` block regardless of failure; `fio` package stays installed.
+
 ---
 
 ## 5. Debugging one-liners
