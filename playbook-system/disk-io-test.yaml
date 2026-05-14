@@ -1,0 +1,231 @@
+---
+# =============================================================================
+# Measure disk I/O performance via fio (random write + random read) on N nodes
+#
+# Usage:
+#   # All hosts:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+#     playbook-system/disk-io-test.yaml
+#
+#   # Subset via --limit:
+#   ansible-playbook ... --limit k8s-manager-1,k8s-worker-2
+#
+#   # Force sequential (avoid backend contention on shared storage):
+#   ansible-playbook ... --forks 1
+#
+# Requirements:
+#   - >= 1 host in inventory after --limit filtering.
+#   - fio_directory exists on every selected host (asserted).
+#   - sudo/root privileges (become: true).
+#
+# Steps:
+#   1. Validate inputs (assert: >=1 host; stat fio_directory existence per host).
+#   2. Install fio inline (idempotent: pre-check which fio + apt + verify).
+#   3. Block: fio randwrite first (creates file), then fio randread.
+#      Always: cleanup test files in fio_directory (regardless of failure).
+#   4. Aggregate parsed JSON results on localhost, print vertical per-host
+#      stanzas + cluster summary via debug: msg.
+#
+# Test file naming (hardcoded, collision-free with manual fio runs):
+#   disk-io-test-randwrite.<jobnum>.<file_index>
+#   disk-io-test-randread.<jobnum>.<file_index>
+#
+# Output: stdout only (no file, no Vault, no cluster facts).
+# Total temp space across N parallel hosts = N x fio_size (default 1 GiB).
+# =============================================================================
+
+- name: Measure disk I/O performance via fio
+  hosts: managers:workers
+  become: true
+  gather_facts: false
+
+  tasks:
+    # === Phase 1: Validate inputs ===
+    - name: "[disk-io-test] Assert >=1 host selected"
+      assert:
+        that:
+          - ansible_play_hosts | length >= 1
+        fail_msg: |
+          ERROR: no hosts selected. ansible_play_hosts is empty.
+          Raw --limit value: {{ ansible_limit | default('(none)') }}.
+      run_once: true
+
+    - name: "[disk-io-test] Stat fio_directory on each host"
+      stat:
+        path: "{{ fio_directory }}"
+      register: fio_dir_stat
+      changed_when: false
+
+    - name: "[disk-io-test] Assert fio_directory exists and is a directory"
+      assert:
+        that:
+          - fio_dir_stat.stat.exists
+          - fio_dir_stat.stat.isdir
+        fail_msg: |
+          fio_directory '{{ fio_directory }}' does not exist or is not a directory on {{ inventory_hostname }}.
+
+    - name: "[disk-io-test] Show selected hosts and parameters"
+      debug:
+        msg:
+          - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
+          - "Directory: {{ fio_directory }}"
+          - "Parameters: bs={{ fio_blocksize }}, iodepth={{ fio_iodepth }}, runtime={{ fio_runtime }}s, size={{ fio_size }}, numjobs={{ fio_numjobs }}, direct=1, ioengine=libaio"
+      run_once: true
+
+    # === Phase 2: Install fio inline ===
+    - name: "[disk-io-test] Pre-check: is fio installed?"
+      command: which fio
+      register: fio_pre_check
+      changed_when: false
+      failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
+
+    - name: "[disk-io-test] Install fio via apt"
+      apt:
+        name: fio
+        state: present
+        update_cache: true
+      when: fio_pre_check.rc != 0
+
+    - name: "[disk-io-test] Verify fio binary works"
+      command: fio --version
+      register: fio_version_check
+      changed_when: false
+
+    - name: "[disk-io-test] Show fio version"
+      debug:
+        msg: "fio binary on {{ inventory_hostname }}: {{ fio_version_check.stdout_lines[0] }}"
+
+    # === Phase 3: Run fio tests (block with cleanup) ===
+    - name: "[disk-io-test] Run fio tests (block with cleanup)"
+      # AUTHORIZED §2.1: block/always для guaranteed cleanup test файлов
+      block:
+        - name: "[disk-io-test] Run fio randwrite (creates test file)"
+          command: >
+            fio
+            --directory={{ fio_directory }}
+            --name=disk-io-test-randwrite
+            --ioengine=libaio
+            --direct=1
+            --rw=randwrite
+            --bs={{ fio_blocksize }}
+            --numjobs={{ fio_numjobs }}
+            --size={{ fio_size }}
+            --runtime={{ fio_runtime }}
+            --time_based
+            --group_reporting
+            --iodepth={{ fio_iodepth }}
+            --output-format=json
+          register: fio_randwrite_result
+          failed_when: fio_randwrite_result.rc != 0 # AUTHORIZED §2.1
+          changed_when: false
+
+        - name: "[disk-io-test] Run fio randread (reads test file written above)"
+          command: >
+            fio
+            --directory={{ fio_directory }}
+            --name=disk-io-test-randread
+            --ioengine=libaio
+            --direct=1
+            --rw=randread
+            --bs={{ fio_blocksize }}
+            --numjobs={{ fio_numjobs }}
+            --size={{ fio_size }}
+            --runtime={{ fio_runtime }}
+            --time_based
+            --group_reporting
+            --iodepth={{ fio_iodepth }}
+            --output-format=json
+          register: fio_randread_result
+          failed_when: fio_randread_result.rc != 0 # AUTHORIZED §2.1
+          changed_when: false
+
+      always:
+        - name: "[disk-io-test] Find fio test files"
+          find:
+            paths: "{{ fio_directory }}"
+            patterns:
+              - "disk-io-test-randread.*"
+              - "disk-io-test-randwrite.*"
+          register: fio_cleanup_files
+          changed_when: false
+
+        - name: "[disk-io-test] Remove fio test files"
+          file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ fio_cleanup_files.files }}"
+          loop_control:
+            label: "{{ item.path }}"
+
+    # === Phase 4: Aggregate results and print report ===
+    - name: "[disk-io-test] Build per-host stanza for {{ item }}"
+      set_fact:
+        per_host_stanzas: "{{ per_host_stanzas | default([]) + new_stanza }}"
+      loop: "{{ ansible_play_hosts | sort }}"
+      vars:
+        read_json: "{{ hostvars[item].fio_randread_result.stdout | from_json }}"
+        write_json: "{{ hostvars[item].fio_randwrite_result.stdout | from_json }}"
+        read_iops: "{{ read_json.jobs[0].read.iops | round(0) | int }}"
+        write_iops: "{{ write_json.jobs[0].write.iops | round(0) | int }}"
+        read_bw_bytes: "{{ read_json.jobs[0].read.bw_bytes | default(read_json.jobs[0].read.bw | int * 1024) }}"
+        write_bw_bytes: "{{ write_json.jobs[0].write.bw_bytes | default(write_json.jobs[0].write.bw | int * 1024) }}"
+        read_bw_mib: "{{ (read_bw_bytes | float / 1048576) | round(2) }}"
+        write_bw_mib: "{{ (write_bw_bytes | float / 1048576) | round(2) }}"
+        read_clat_ms: "{{ (read_json.jobs[0].read.clat_ns.mean | float / 1000000) | round(2) }}"
+        write_clat_ms: "{{ (write_json.jobs[0].write.clat_ns.mean | float / 1000000) | round(2) }}"
+        read_p99_ms: "{{ (read_json.jobs[0].read.clat_ns.percentile['99.000000'] | float / 1000000) | round(2) }}"
+        write_p99_ms: "{{ (write_json.jobs[0].write.clat_ns.percentile['99.000000'] | float / 1000000) | round(2) }}"
+        new_stanza:
+          - "--- {{ item }} ---"
+          - "  Random Read:   IOPS={{ read_iops }}   BW={{ read_bw_mib }} MiB/s   clat_avg={{ read_clat_ms }}ms   clat_p99={{ read_p99_ms }}ms"
+          - "  Random Write:  IOPS={{ write_iops }}   BW={{ write_bw_mib }} MiB/s   clat_avg={{ write_clat_ms }}ms   clat_p99={{ write_p99_ms }}ms"
+          - ""
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1
+
+    # Simplified alternative (authorized): accumulate cluster numeric stats in one loop
+    - name: "[disk-io-test] Build cluster numeric stats for {{ item }}"
+      set_fact:
+        fio_read_iops_list: "{{ fio_read_iops_list | default([]) + [read_iops | int] }}"
+        fio_write_iops_list: "{{ fio_write_iops_list | default([]) + [write_iops | int] }}"
+        fio_read_bw_mib_list: "{{ fio_read_bw_mib_list | default([]) + [read_bw_mib | float] }}"
+        fio_write_bw_mib_list: "{{ fio_write_bw_mib_list | default([]) + [write_bw_mib | float] }}"
+      loop: "{{ ansible_play_hosts | sort }}"
+      vars:
+        read_json: "{{ hostvars[item].fio_randread_result.stdout | from_json }}"
+        write_json: "{{ hostvars[item].fio_randwrite_result.stdout | from_json }}"
+        read_iops: "{{ read_json.jobs[0].read.iops | round(0) | int }}"
+        write_iops: "{{ write_json.jobs[0].write.iops | round(0) | int }}"
+        read_bw_bytes: "{{ read_json.jobs[0].read.bw_bytes | default(read_json.jobs[0].read.bw | int * 1024) }}"
+        write_bw_bytes: "{{ write_json.jobs[0].write.bw_bytes | default(write_json.jobs[0].write.bw | int * 1024) }}"
+        read_bw_mib: "{{ (read_bw_bytes | float / 1048576) | round(2) }}"
+        write_bw_mib: "{{ (write_bw_bytes | float / 1048576) | round(2) }}"
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1
+
+    - name: "[disk-io-test] Build cluster summary lines"
+      set_fact:
+        cluster_summary_lines:
+          - "=== Cluster summary across {{ ansible_play_hosts | length }} hosts ==="
+          - "  Random Read:   IOPS min={{ fio_read_iops_list | min }} max={{ fio_read_iops_list | max }} avg={{ ((fio_read_iops_list | sum) / (fio_read_iops_list | length)) | round(0) | int }}   BW min={{ fio_read_bw_mib_list | min }} max={{ fio_read_bw_mib_list | max }} avg={{ ((fio_read_bw_mib_list | sum) / (fio_read_bw_mib_list | length)) | round(2) }} MiB/s"
+          - "  Random Write:  IOPS min={{ fio_write_iops_list | min }} max={{ fio_write_iops_list | max }} avg={{ ((fio_write_iops_list | sum) / (fio_write_iops_list | length)) | round(0) | int }}   BW min={{ fio_write_bw_mib_list | min }} max={{ fio_write_bw_mib_list | max }} avg={{ ((fio_write_bw_mib_list | sum) / (fio_write_bw_mib_list | length)) | round(2) }} MiB/s"
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1
+
+    - name: "[disk-io-test] Compose and print final report"
+      vars:
+        fio_version_for_header: "{{ (hostvars[ansible_play_hosts | first].fio_randread_result.stdout | from_json).fio_version | default('unknown') }}"
+        header_lines:
+          - "=== Disk I/O Test ({{ fio_version_for_header }}) ==="
+          - "Parameters: bs={{ fio_blocksize }}, iodepth={{ fio_iodepth }}, runtime={{ fio_runtime }}s, size={{ fio_size }}, numjobs={{ fio_numjobs }}, direct=1, ioengine=libaio"
+          - "Directory: {{ fio_directory }}"
+          - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
+          - ""
+      debug:
+        msg: "{{ header_lines + per_host_stanzas + cluster_summary_lines }}"
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1
