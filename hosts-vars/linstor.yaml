@@ -98,21 +98,37 @@ all:
 
       # === linstorSatelliteConfigurations — два config'а (Path B: pool name per tier) ===
       linstorSatelliteConfigurations:
-        - name: managers-config
+        - name: manager
           nodeSelector:
             node-role.kubernetes.io/control-plane: ""
           storagePools:
-            - name: linstor-managers
+            - name: lnstr-file-thin-manager
               fileThinPool:
-                directory: /var/lib/linstor-pools/linstor-managers
+                directory: /var/lib/linstor-pools/lnstr-file-thin-manager
 
-        - name: workers-config
+            # - name: lnstr-lvm-thin-manager
+            #   lvmThinPool:
+            #     volumeGroup: lnstr-lvm-thin-manager
+            #   source:
+            #     hostDevices:
+            #       - /dev/sdb
+            #       - /dev/sdc
+
+        - name: worker
           nodeSelector:
             node-role.kubernetes.io/worker: ""
           storagePools:
-            - name: linstor-workers
+            - name: lnstr-file-thin-worker
               fileThinPool:
-                directory: /var/lib/linstor-pools/linstor-workers
+                directory: /var/lib/linstor-pools/lnstr-file-thin-worker
+
+            # - name: lnstr-lvm-thin-worker
+            #   lvmThinPool:
+            #     volumeGroup: lnstr-lvm-thin-worker
+            #   source:
+            #     hostDevices:
+            #       - /dev/sdb
+            #       - /dev/sdc
 
       # === linstorNodeConnections — пустой, не используем ===
       linstorNodeConnections: []
@@ -124,56 +140,40 @@ all:
           enabled: false
 
       # === storageClasses — 9 SC (3 tier × 3 modes) ===
-      # Tier prefix → storagePool mapping:
-      #   lnstr-major-manager-* → "linstor-managers"
-      #   lnstr-major-*         → "linstor-managers linstor-workers" (cross-tier multi-pool, space-separated)
-      #   lnstr-major-worker-*  → "linstor-workers"
       storageClasses:
         # === tier: lnstr-major-manager (only managers) ===
-        - name: "lnstr-major-manager-single-local"
+        - name: "lnstr-manager-local"
           allowVolumeExpansion: true
           reclaimPolicy: "Retain"
           volumeBindingMode: "WaitForFirstConsumer"
           provisioner: linstor.csi.linbit.com
           parameters:
             linstor.csi.linbit.com/autoPlace: "1"
-            linstor.csi.linbit.com/storagePool: "linstor-managers"
+            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
             linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
             csi.storage.k8s.io/fstype: "ext4"
 
-        - name: "lnstr-major-manager-multi-sync"
+        - name: "lnstr-manager-multi-sync"
           allowVolumeExpansion: true
           reclaimPolicy: "Retain"
           volumeBindingMode: "WaitForFirstConsumer"
           provisioner: linstor.csi.linbit.com
           parameters:
             linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "linstor-managers"
+            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
             linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
             property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
             csi.storage.k8s.io/fstype: "ext4"
 
-        - name: "lnstr-major-manager-multi-async"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "linstor-managers"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
-            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "A"
-            csi.storage.k8s.io/fstype: "ext4"
-
         # === tier: lnstr-major (managers + workers, multi-pool) ===
-        - name: "lnstr-major-single-local"
+        - name: "lnstr-major-local"
           allowVolumeExpansion: true
           reclaimPolicy: "Retain"
           volumeBindingMode: "WaitForFirstConsumer"
           provisioner: linstor.csi.linbit.com
           parameters:
             linstor.csi.linbit.com/autoPlace: "1"
-            linstor.csi.linbit.com/storagePool: "linstor-managers linstor-workers"
+            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker"
             linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
             csi.storage.k8s.io/fstype: "ext4"
 
@@ -184,57 +184,33 @@ all:
           provisioner: linstor.csi.linbit.com
           parameters:
             linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "linstor-managers linstor-workers"
+            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker"
             linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
             property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
             csi.storage.k8s.io/fstype: "ext4"
 
-        - name: "lnstr-major-multi-async"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "linstor-managers linstor-workers"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
-            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "A"
-            csi.storage.k8s.io/fstype: "ext4"
-
         # === tier: lnstr-major-worker (only workers) ===
-        - name: "lnstr-major-worker-single-local"
+        - name: "lnstr-worker-local"
           allowVolumeExpansion: true
           reclaimPolicy: "Retain"
           volumeBindingMode: "WaitForFirstConsumer"
           provisioner: linstor.csi.linbit.com
           parameters:
             linstor.csi.linbit.com/autoPlace: "1"
-            linstor.csi.linbit.com/storagePool: "linstor-workers"
+            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker"
             linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
             csi.storage.k8s.io/fstype: "ext4"
 
-        - name: "lnstr-major-worker-multi-sync"
+        - name: "lnstr-worker-multi-sync"
           allowVolumeExpansion: true
           reclaimPolicy: "Retain"
           volumeBindingMode: "WaitForFirstConsumer"
           provisioner: linstor.csi.linbit.com
           parameters:
             linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "linstor-workers"
+            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker"
             linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
             property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
-            csi.storage.k8s.io/fstype: "ext4"
-
-        - name: "lnstr-major-worker-multi-async"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "linstor-workers"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
-            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "A"
             csi.storage.k8s.io/fstype: "ext4"
 
       # === volumeSnapshotClasses и volumeGroupSnapshotClasses — пустые ===
