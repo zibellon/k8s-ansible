@@ -42,7 +42,8 @@
 ## Выполнить команду: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
 ## Покажет основную информацию по всем node
 
-## Выполнить команду: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/network-bandwidth-test.yaml --limit k8s-worker-1,k8s-worker-2`
+## Выполнить команду:
+## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/network-bandwidth-test.yaml --limit k8s-worker-1,k8s-worker-2`
 ## Покажет информацию: какой реально пропускной канал (скорость между серверами)
 ## `--limit k8s-worker-1,k8s-worker-2` - можно указать только ДВЕ node, и они обязательно должны быть в inventory
 
