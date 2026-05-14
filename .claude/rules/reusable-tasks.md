@@ -325,7 +325,7 @@ General rules for callers:
 
 ---
 
-## 2. `playbook-system/tasks/` (18 tasks)
+## 2. `playbook-system/tasks/` (21 tasks)
 
 ### 2.1 Guard / preflight
 
@@ -459,6 +459,33 @@ General rules for callers:
 - **Output.** Binary installed at `dto_binary_install_path` with mode `0755`; tarball and extracted directory removed.
 - **Callers.** `playbook-system/install-helm.yaml` (when `helm_install_method: local_tarball`).
 - **Idempotent.** Yes — `copy` and `unarchive` overwrite if the source content differs; cleanup is `state: absent`.
+
+### 2.6 `tasks-iperf3-install.yaml`
+
+- **Purpose.** Idempotently install iperf3 on a target host with the systemd daemon disabled. Three-layer defense against the Ubuntu `iperf3/start_daemon` debconf prompt: (1) `debconf` preseed `iperf3/start_daemon=false`, (2) `apt install iperf3` (the `apt:` module already runs non-interactive), (3) `systemd: enabled=false state=stopped` enforcement after install. Pre-check via `which iperf3` skips apt install if already present. Verifies `iperf3 --version` at the end.
+- **Input.** `dto_label_name` (string, log prefix).
+- **Validates (assert).** `dto_label_name` defined + non-empty. Tag `[always]`.
+- **Output.** iperf3 binary installed and verified; `iperf3.service` systemd unit disabled + stopped (best-effort — unit absent on some Debian variants).
+- **Callers.** `playbook-system/network-bandwidth-test.yaml` (Phase 4).
+- **Idempotent.** Yes — apt install skipped if pre-check passes; debconf preseed and systemd enforcement are idempotent.
+
+### 2.7 `tasks-iperf3-server-start.yaml`
+
+- **Purpose.** Start an iperf3 server on a given port in detached background (`nohup` + redirected stdout/stderr + `&`), then wait until the port begins listening. Uses `shell:` module (required for redirection and backgrounding) with `async: 0 poll: 0` — fire-and-forget so Ansible does not wait for the SSH channel to close on the backgrounded process.
+- **Input.** `dto_label_name` (string, log prefix), `dto_iperf3_port` (int/string — port for the iperf3 server to listen on).
+- **Validates (assert).** Both params defined + non-empty. Tag `[always]`.
+- **Output.** iperf3 server process running in background; port `dto_iperf3_port` listening (verified via `wait_for state=started timeout=10`); log written to `/tmp/iperf3-server-<port>.log` on the host.
+- **Callers.** `playbook-system/network-bandwidth-test.yaml` (Phase 5, `block:`).
+- **Idempotent.** No — re-invocation spawns a second iperf3 server process. Caller must invoke `tasks-iperf3-server-stop.yaml` before re-starting, or use a different port.
+
+### 2.8 `tasks-iperf3-server-stop.yaml`
+
+- **Purpose.** Kill the iperf3 server process on a given port via `pkill -f "iperf3 -s -p <port>"` (narrow match by port — does not affect iperf3 servers on other ports), wait for the port to be free, then remove the `/tmp/iperf3-server-<port>.log` log file.
+- **Input.** `dto_label_name` (string, log prefix), `dto_iperf3_port` (int/string — port of the iperf3 server to stop).
+- **Validates (assert).** Both params defined + non-empty. Tag `[always]`.
+- **Output.** iperf3 server process on `dto_iperf3_port` killed; port free (verified via `wait_for state=stopped timeout=10`); log file removed.
+- **Callers.** `playbook-system/network-bandwidth-test.yaml` (Phase 5, `always:`).
+- **Idempotent.** Yes — `pkill` with rc=1 («no process matched») accepted via `failed_when: rc not in [0,1]`. Repeated stop is a no-op.
 
 ---
 

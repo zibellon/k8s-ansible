@@ -192,6 +192,20 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-inf
 
 In this playbook `--tags` selects target *namespaces* by name, not Ansible task tags. Without `--tags` all cluster namespaces are dumped.
 
+### 4.7 Network diagnostics
+
+Measure real inter-node network bandwidth between exactly two cluster nodes via iperf3 (bidirectional, 30s per direction, 4 parallel streams). Pre/post-bootstrap; on a running cluster Cilium `CiliumClusterwideNetworkPolicy` already permits inter-node traffic on port 5201 — no firewall change needed.
+
+```bash
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+  playbook-system/network-bandwidth-test.yaml \
+  --limit <host_a>,<host_b>
+```
+
+Exactly **two distinct hosts** via `--limit` are required (the playbook asserts on count + uniqueness). Both must be in inventory (`managers:workers`) with `internal_ip` defined. Output is printed to stdout (no file).
+
+After the test iperf3 server processes are killed on both hosts; the `iperf3` package stays installed.
+
 ---
 
 ## 5. Debugging one-liners
