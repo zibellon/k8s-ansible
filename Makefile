@@ -33,4 +33,14 @@ test-syntax: ensure-image
 test-helm: ensure-image
 	$(DOCKER_RUN) ansible-playbook -i hosts-vars/ -i hosts-vars-test/ tests/helm-validate.yaml
 
-test: test-yamllint test-ansible-lint test-syntax test-helm
+test:
+	@START=$$(date +%s) && \
+	$(MAKE) test-yamllint test-ansible-lint test-syntax test-helm && \
+	END=$$(date +%s) && \
+	DURATION=$$((END - START)) && \
+	M=$$((DURATION / 60)) && \
+	S=$$((DURATION % 60)) && \
+	printf "\n==========================================\n" && \
+	printf "make test → exit 0 (all 4 stages passed)\n" && \
+	printf "Wall-clock: %dm %02ds\n" $$M $$S && \
+	printf "==========================================\n"
