@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (32 tasks)
+## 1. `playbook-app/tasks/` (33 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
