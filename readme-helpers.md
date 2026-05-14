@@ -25,6 +25,18 @@
 ##
 - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/etcd-key-rotate.yaml`
 
+# ------
+# `haproxy-apiserver-lb` - обновление конфига
+# ------
+## В конфиге указаны ip адреса всех manager-node + балансировка между ними
+## Запускается как `linux systemd service` на каждой node (установка через `apt: PPA` или локальный `.deb`)
+## Версия пакета зафиксирована в hosts.yaml (`haproxy_apiserver_lb_package_version`) и заморожена через `apt-mark hold`
+## Чтобы обновить конфиг на всех нодах (например при добавлении нового manager)
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
+  - Обновляет /etc/haproxy/haproxy.cfg
+  - делает `systemctl reload haproxy` последовательно (serial: 1)
+  - reload === graceful, без разрыва TCP соединений
+
 # ---
 # SANS (api-server). Обновление имен (SANS) в сертификатах
 # ---

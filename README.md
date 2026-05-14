@@ -1,142 +1,33 @@
-# ------
-# Как и откуда запускать
-# ------
+# ---------
+# ---Как и откуда запускать
+# ---------
 ## Важно: все запуски делать из директории проекта
 ## В playbook, оченеь много логики зависит от корневой директории (откуда был сделан запуск)
 ## Чтобы определить эту директорию корректно, запуск нужно производить из директории, где находится проект
 ## Как выглядит переменная: `project_root: "{{ lookup('env', 'PWD') }}"`
 
-# ------
-# Конфигурация
-# ------
+# ---------
+# ---Конфигурация
+# ---------
 ## `hosts-vars/` - тут лежат все доступные переменные, которые можно использовать
-## НО - менять переменные в этой директории не рекомендуется. Эта директория находится по контролем GIT
+## НО - менять переменные в этой директории не рекомендуется. Эта директория находится под контролем GIT
 ## Если нужно переопредеелить какую-то переменную - нужно создать новую директорию (любую)
 ## Например: `hosts-vars-override/*` и там создать `xxx.yaml` файл в котором опредеелить нужную переменную
 ## Пример запуска: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
 ## То есть: сначала берем все базовые переменные, а потом сверху накладываем переменные из override
 
-# ------
-# Установка пакетов и AirGap
-# ------
-## `./readme-local-pkgs.md`. Вот тут есть полное описание, как к этому подготовиться
 
-# ------
-# Опционально: подключение через bastion (SSH ProxyJump)
-# ------
-## Когда применимо
-1. У основных node НЕТ публичных IP (например, облачная приватная VPC)
-2. Доступен только bastion-сервер с белым IP
-3. С bastion видны все node по приватной сети
-4. SSH-ключ оператора уже есть И на bastion, И на всех node
+# ---------
+# ---Pre-check + Prepare
+# ---------
+## `./readme-pre-check.md`. Тут есть полное описание, что нужно сделать ПЕРЕД УСТАНОВКОЙ
 
-## Как настроить
-В `hosts-vars-override/hosts.yaml` под `all.vars` добавить bastion-параметры. На группах `managers` / `workers` переопределить `ansible_ssh_common_args` с `ProxyJump`. Поле `ansible_host` каждой node должно быть приватным IP (обычно совпадает с `internal_ip`).
 
-## Multi-cluster
-Каждый `hosts-vars-override-<cluster>/` живёт независимо: один override-каталог может содержать bastion-блок, другой — нет. Никаких глобальных правок в репозитории.
+# ---------
+# ---AirGap (на серверах нет доступа в интернет)
+# ---------
+## `./readme-local-pkgs.md`. Тут есть полное описание, как к этому подготовиться
 
-Пример:
-```yaml
-all:
-  vars:
-    bastion_host: "<public-ip-or-dns>"
-    bastion_user: ubuntu
-  children:
-    managers:
-      vars:
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
-      hosts:
-        k8s-manager-1:
-          ansible_host: 10.0.0.10
-          ansible_user: ubuntu
-          internal_ip: "10.0.0.10"
-          api_server_advertise_address: "10.0.0.10"
-          is_master: true
-    workers:
-      vars:
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ProxyJump={{ bastion_user }}@{{ bastion_host }}"
-      hosts:
-        k8s-worker-1:
-          ansible_host: 10.0.0.20
-          ansible_user: ubuntu
-          internal_ip: "10.0.0.20"
-```
-
-# ------
-# Подготовка_1
-# ------
-## Узнать, какой ip адрес принадлежит основному интерфейсу (ens_xxx | eth_xxx)
-1. ip addr show
-2. Пример вывода - ниже
-3. Надо достать ip адрес. В данном случае: `10.129.0.27`
-
-1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
-    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
-    inet 127.0.0.1/8 scope host lo
-       valid_lft forever preferred_lft forever
-    inet6 ::1/128 scope host noprefixroute 
-       valid_lft forever preferred_lft forever
-2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
-    link/ether d0:0d:bd:92:06:81 brd ff:ff:ff:ff:ff:ff
-    altname enp7s0
-    inet 10.129.0.27/24 metric 100 brd 10.129.0.255 scope global dynamic eth0
-       valid_lft 4294967229sec preferred_lft 4294967229sec
-    inet6 fe80::d20d:bdff:fe92:681/64 scope link 
-       valid_lft forever preferred_lft forever
-
-# ------
-# Подготовка_2
-# ------
-## занести внутренний `ip` в `hosts-vars-override/`
-## его надо будет разрешить в `cilium-host-firewall`, чтобы можно было делать join
-## есть два варианта
-1. сначала ВСЕ join -> потом install cilium
-   1. При таком сценарии - проблем нет
-   2. cluster-init
-   3. worker/manager join
-   4. install cilium + cilium-host-firewall
-   5. Все node уже внутри кластера и Cilium про них знает
-2. cluster-init -> install cilium -> потом join
-   1. install cilium + cilium-host-firewall
-   2. Входящий трафик разрешается только от известных источников (внутри кластера, cilium.entities)
-   3. Пока Node не добавлена в кластер = cilium видит ее как world (внешний мир)
-   4. Трафик запрещен на уровне cilium-host-firewall
-   5. при выполнении команды JOIN - timeout. Так как Node не может подключиться к кластеру
-   6. Как решать
-   7. Добавить новый сервер в hosts.yaml
-   8. Обновить cilium-host-firewall
-      1. Вызвать `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags post`
-   9.  Это автоматически добавит в `cilium-host-firewall` новые ip адреса и обновит политику на сервере
-   10. После этого делать: `... join ...`
-
-# ------
-# Важно про `namespace`
-# ------
-## Сменить namespace МОЖНО для любых компонентов
-## Сменить namespace НЕЛЬЗЯ для некоторых компонентов. Так указано в официальной документации
-- longhorn-system
-
-# ------
-# Важно про `haproxy-apiserver-lb`
-# ------
-## В конфиге указаны ip адреса всех manager-node + балансировка между ними
-## Запускается как `linux systemd service` на каждой node в кластере (установка через `apt`: PPA по умолчанию или локальный `.deb` — см. секцию ниже)
-## Версия пакета зафиксирована в hosts.yaml (haproxy_apiserver_lb_package_version) и заморожена через apt-mark hold
-## Чтобы обновить конфиг на всех нодах (например при добавлении нового manager):
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
-  - Обновляет /etc/haproxy/haproxy.cfg
-  - делает `systemctl reload haproxy` последовательно (serial: 1)
-  - reload — graceful, без разрыва TCP соединений
-
-# ------
-# Важно про VAULT + ESO
-# ------
-## Во все конфиги ESO (SecretStore + ExternalSecret) добавен параметр is_need_eso: true | false
-## Зачем: Это контроль - нужно создавать объекты ESO + vault-policy
-## Например: есть GitLab.root (user + pass), их надо обязаиельно положить в vault. Но они не нужны как k8s-secret
-## Чтобы положить в vault - нужен путь
-## Но для таких секретов не нужно ESO -> политики доступа для них не нужны
 
 # ---------
 # ---INIT
@@ -161,7 +52,9 @@ all:
 # ---JOIN
 # ---------
 
-# Присоединение worker-node
+# ------
+# WORKER_NODE
+# ------
 ## Добавить в `hosts-vars-override/` нового worker
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
 ## Если уже был установлен и настроен Longhorn - смотрим `longhorn/tags-sync`
@@ -171,7 +64,9 @@ all:
 - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/worker-join.yaml --limit k8s-worker-1`
   - Получение токена и вызов команды `kubeadm join ...`
 
-# Присоединение manager-node
+# ------
+# MANAGER_NODE
+# ------
 ## Добавить в `hosts-vars-override/` нового manager
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
 ## Если уже был установлен и настроен Longhorn - смотрим `longhorn/tags-sync`
@@ -194,18 +89,6 @@ all:
   - Загрузка сертификатов в k8s.secrets
   - получение токена
   - вызов команды `kubeadm join ...`
-
-# ---------
-# ---VAULT + ESO
-# ---------
-## Есть список компонентов, которые используют VAULT + ESO
-## `traefik`, `haproxy`,  `longhorn`, `gitlab`, `argocd`, `teleport`, `grafana`
-## При удалении компонента через `kubectl delete ...` - удаляются ресурсы k8s
-## НО: записи в vault не удаляются. Их нужно удалять руками
-## Проблемная ситуация:
-## - Установили argocd (через ansible), пароль админа сохранен в vault, удалили argocd из k8s
-## - Записи в vault не удалились
-## - При повторной установке argocd (через ansible), новый пароль админа не будет положен в vault
 
 # ---------
 # ---------

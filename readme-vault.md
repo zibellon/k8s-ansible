@@ -98,8 +98,8 @@
    1. Будет создана новая политика (Для доступа куда-то там)
    2. Будет создана новая роль. Такой SA, из Такого NS = имеет такие доступы (на основе политик)
 4. Это обновит политики и права внутри vault. Чтобы SA + NS + Role (gitlab) = смогли читать что-то из экзатических путей VAULT
-5. Добавить новые элементы в массив = eso_vault_integration_gitlab_secrets_extra
-6. Вызвать: gitlab-install --tags pre
+5. Добавить новые элементы в массив = `eso_vault_integration_gitlab_secrets_extra`
+6. Вызвать: `gitlab-install --tags pre`
 7. Подождать синхронизации
 8. После этого буду работать новые ExternalSecret
 
@@ -146,9 +146,9 @@
    1. 1 role === 1 SA + 1 namespace + N policy
 6. Сначала, надо подготовить vault
    1. Знаем, какие нужны namespace - их 3 штуки
-   2. Добавляем политики в массив = vault_policies_extra
-   3. Добавляем роли в массив = vault_roles_extra
-   4. Вызываем синронизацию политик VAULT. только с --tags ADD
+   2. Добавляем политики в массив = `vault_policies_extra`
+   3. Добавляем роли в массив = `vault_roles_extra`
+   4. Вызываем синронизацию политик VAULT: `... playbook-app/vault-install.yaml --tags vault-cr`
    5. все, vault готов
 7. Vault + значения секретов
    1. По нужным путям, для каждого namespace - кладем в vault секреты (postgres, redis, и так далее ...)
@@ -156,5 +156,22 @@
    1. все подготовили в ArgoCD + gitops (AppProject + 3 Application)
    2. Заливаем Namespace + SA + SecretStore + ExternalSecret
    3. Ждем синхронизацию
-   4. Запускаем остальные компоненты с использованием секретов, которые были созданы через ESO
+   4. Запускаем остальные компоненты с использованием k8s.secret, которые были созданы через ESO
 9. Вы великолепны
+
+# про парамтер = is_need_eso
+1. Во все конфиги ESO (SecretStore + ExternalSecret) добавен параметр is_need_eso: true | false
+2. Зачем: Это контроль - нужно создавать объекты ESO + vault-policy
+3. Например: есть GitLab.root (user + pass), их надо обязаиельно положить в vault. Но они не нужны как k8s-secret
+4. Чтобы положить в vault - нужен путь
+5. Но для таких секретов не нужно ESO -> политики доступа для них не нужны
+
+# Удаление компонентов и ESO и VALUT
+1. Есть список компонентов, которые используют VAULT + ESO
+2. `traefik`, `haproxy`,  `longhorn`, `gitlab`, `argocd`, `teleport`, `grafana`
+3. При удалении компонента через `kubectl delete ...` - удаляются ресурсы k8s
+4. НО: записи в vault не удаляются. Их нужно удалять руками
+5. Проблемная ситуация:
+   1. Установили argocd (через ansible), пароль админа сохранен в vault, удалили argocd из k8s
+   2. Записи в vault не удалились
+   3. При повторной установке argocd (через ansible), новый пароль админа не будет положен в vault
