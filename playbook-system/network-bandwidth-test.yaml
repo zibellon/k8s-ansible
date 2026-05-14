@@ -1,0 +1,148 @@
+---
+# =============================================================================
+# Measure network bandwidth between exactly 2 nodes via iperf3 (bidirectional)
+#
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+#     playbook-system/network-bandwidth-test.yaml \
+#     --limit <host_a>,<host_b>
+#
+# Requirements:
+#   - Exactly 2 distinct hosts via --limit; both must be in inventory
+#     (managers:workers) and have internal_ip defined.
+#
+# Steps:
+#   1. Validate inputs (assert: exactly 2 distinct hosts)
+#   2. Determine host_a / host_b (sorted lexicographically для детерминизма)
+#   3. Install iperf3 on both (daemon disabled)
+#   4. Block: start server on both, run client A→B then B→A
+#      Always: stop server on both (cleanup на любом failure)
+#   5. Format and print bandwidth report via debug: msg
+#
+# Output: stdout only (no file, no Vault, no cluster facts)
+# =============================================================================
+
+- name: Measure network bandwidth between 2 nodes
+  hosts: managers:workers
+  become: true
+  gather_facts: false
+
+  vars:
+    iperf3_port: 5201
+    iperf3_duration: 30
+    iperf3_streams: 4
+
+  tasks:
+    # === Phase 1: Validate inputs ===
+    - name: "[network-bandwidth-test] Assert exactly 2 distinct hosts via --limit"
+      assert:
+        that:
+          - ansible_play_hosts | length == 2
+          - ansible_play_hosts | unique | length == 2
+        fail_msg: |
+          ERROR: this playbook requires exactly 2 distinct hosts via --limit.
+          Got {{ ansible_play_hosts | length }} after --limit filtering: {{ ansible_play_hosts | join(', ') }}.
+          Raw --limit value: {{ ansible_limit | default('(none)') }}.
+          Usage: ansible-playbook ... playbook-system/network-bandwidth-test.yaml --limit host1,host2
+      run_once: true
+
+    # === Phase 2: Determine host_a / host_b deterministically ===
+    - name: "[network-bandwidth-test] Set host_a / host_b (sorted lexicographically)"
+      set_fact:
+        host_a_fact: "{{ ansible_play_hosts | sort | first }}"
+        host_b_fact: "{{ ansible_play_hosts | sort | last }}"
+
+    # === Phase 3: Validate internal_ip on both ===
+    - name: "[network-bandwidth-test] Assert internal_ip is defined on both hosts"
+      assert:
+        that:
+          - hostvars[host_a_fact].internal_ip is defined
+          - hostvars[host_a_fact].internal_ip | length > 0
+          - hostvars[host_b_fact].internal_ip is defined
+          - hostvars[host_b_fact].internal_ip | length > 0
+        fail_msg: "internal_ip must be defined on both {{ host_a_fact }} and {{ host_b_fact }}"
+      run_once: true
+
+    - name: "[network-bandwidth-test] Show selected hosts"
+      debug:
+        msg:
+          - "Host A: {{ host_a_fact }} (internal_ip: {{ hostvars[host_a_fact].internal_ip }})"
+          - "Host B: {{ host_b_fact }} (internal_ip: {{ hostvars[host_b_fact].internal_ip }})"
+      run_once: true
+
+    # === Phase 4: Install iperf3 on both hosts ===
+    - name: "[network-bandwidth-test] Install iperf3 on both hosts"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-iperf3-install.yaml"
+      vars:
+        dto_label_name: "network-bandwidth-test"
+
+    # === Phase 5: Run tests in block/always (AUTHORIZED §2.1 #5) ===
+    - name: "[network-bandwidth-test] Run bandwidth tests (block with cleanup)"
+      block:
+        - name: "[network-bandwidth-test] Start iperf3 server on both hosts"
+          include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-iperf3-server-start.yaml"
+          vars:
+            dto_label_name: "network-bandwidth-test"
+            dto_iperf3_port: "{{ iperf3_port }}"
+
+        - name: "[network-bandwidth-test] Run iperf3 client A→B"
+          command: >
+            iperf3
+            -c {{ hostvars[host_b_fact].internal_ip }}
+            -p {{ iperf3_port }}
+            -t {{ iperf3_duration }}
+            -P {{ iperf3_streams }}
+            -J
+          register: iperf3_a_to_b
+          failed_when: iperf3_a_to_b.rc != 0  # AUTHORIZED §2.1 #3
+          changed_when: false
+          when: inventory_hostname == host_a_fact
+
+        - name: "[network-bandwidth-test] Run iperf3 client B→A"
+          command: >
+            iperf3
+            -c {{ hostvars[host_a_fact].internal_ip }}
+            -p {{ iperf3_port }}
+            -t {{ iperf3_duration }}
+            -P {{ iperf3_streams }}
+            -J
+          register: iperf3_b_to_a
+          failed_when: iperf3_b_to_a.rc != 0  # AUTHORIZED §2.1 #3
+          changed_when: false
+          when: inventory_hostname == host_b_fact
+
+      always:
+        - name: "[network-bandwidth-test] Stop iperf3 server on both hosts"
+          include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-iperf3-server-stop.yaml"
+          vars:
+            dto_label_name: "network-bandwidth-test"
+            dto_iperf3_port: "{{ iperf3_port }}"
+
+    # === Phase 6: Format and print report ===
+    - name: "[network-bandwidth-test] Parse results and print report"
+      run_once: true
+      delegate_to: localhost
+      become: false
+      vars:
+        a_to_b_json: "{{ hostvars[host_a_fact].iperf3_a_to_b.stdout | from_json }}"
+        b_to_a_json: "{{ hostvars[host_b_fact].iperf3_b_to_a.stdout | from_json }}"
+        a_to_b_bps: "{{ a_to_b_json.end.sum_received.bits_per_second }}"
+        b_to_a_bps: "{{ b_to_a_json.end.sum_received.bits_per_second }}"
+        a_to_b_gbps: "{{ (a_to_b_bps | float / 1000000000) | round(2) }}"
+        b_to_a_gbps: "{{ (b_to_a_bps | float / 1000000000) | round(2) }}"
+        avg_gbps: "{{ ((a_to_b_bps | float + b_to_a_bps | float) / 2 / 1000000000) | round(2) }}"
+        a_to_b_retr: "{{ a_to_b_json.end.sum_sent.retransmits }}"
+        b_to_a_retr: "{{ b_to_a_json.end.sum_sent.retransmits }}"
+        iperf3_ver: "{{ a_to_b_json.start.version | default('unknown') }}"
+      debug:
+        msg:
+          - "=== Network Bandwidth Test ({{ iperf3_ver }}) ==="
+          - "Host A: {{ host_a_fact }} (internal_ip: {{ hostvars[host_a_fact].internal_ip }})"
+          - "Host B: {{ host_b_fact }} (internal_ip: {{ hostvars[host_b_fact].internal_ip }})"
+          - "Duration: {{ iperf3_duration }}s, parallel streams: {{ iperf3_streams }}, port: {{ iperf3_port }}"
+          - ""
+          - "  A → B:   {{ a_to_b_gbps }} Gbit/s   retransmits: {{ a_to_b_retr }}"
+          - "  B → A:   {{ b_to_a_gbps }} Gbit/s   retransmits: {{ b_to_a_retr }}"
+          - "  Average: {{ avg_gbps }} Gbit/s"
+          - ""
+          - "Result: Channel between {{ host_a_fact }} and {{ host_b_fact }} is approximately {{ avg_gbps }} Gbit/s"

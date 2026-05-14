@@ -1,0 +1,48 @@
+---
+# =============================================================================
+# Install iperf3 with daemon disabled (defense in depth: debconf + apt + systemd)
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] assert iperf3-install params"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+    fail_msg: "dto_label_name is required and must be non-empty"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Pre-check: is iperf3 installed?"
+  command: which iperf3
+  register: iperf3_pre_check
+  changed_when: false
+  failed_when: false
+
+- name: "[{{ dto_label_name }}] Preseed debconf: iperf3/start_daemon=false"
+  debconf:
+    name: iperf3
+    question: iperf3/start_daemon
+    value: "false"
+    vtype: boolean
+
+- name: "[{{ dto_label_name }}] Install iperf3 via apt"
+  apt:
+    name: iperf3
+    state: present
+    update_cache: true
+  when: iperf3_pre_check.rc != 0
+
+- name: "[{{ dto_label_name }}] Ensure iperf3 systemd unit disabled and stopped"
+  systemd:
+    name: iperf3
+    enabled: false
+    state: stopped
+  failed_when: false  # AUTHORIZED §2.1 #1: iperf3.service может отсутствовать на Debian
+
+- name: "[{{ dto_label_name }}] Verify iperf3 binary works"
+  command: iperf3 --version
+  register: iperf3_version_check
+  changed_when: false
+
+- name: "[{{ dto_label_name }}] Show iperf3 version"
+  debug:
+    msg: "iperf3 binary: {{ iperf3_version_check.stdout_lines[0] }}"

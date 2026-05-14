@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# Stop iperf3 server on a specific port, wait for port to be free, cleanup log
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] assert iperf3-server-stop params"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_iperf3_port is defined
+      - dto_iperf3_port | string | length > 0
+    fail_msg: "dto_label_name and dto_iperf3_port are required and must be non-empty"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Kill iperf3 server process on port {{ dto_iperf3_port }}"
+  command: pkill -f "iperf3 -s -p {{ dto_iperf3_port }}"
+  register: pkill_result
+  changed_when: pkill_result.rc == 0
+  failed_when: pkill_result.rc not in [0, 1]  # AUTHORIZED §2.1 #2: rc=1 = no match
+
+- name: "[{{ dto_label_name }}] Wait for iperf3 server port {{ dto_iperf3_port }} to be free"
+  wait_for:
+    port: "{{ dto_iperf3_port }}"
+    state: stopped
+    timeout: 10
+
+- name: "[{{ dto_label_name }}] Remove iperf3 server log file"
+  file:
+    path: "/tmp/iperf3-server-{{ dto_iperf3_port }}.log"
+    state: absent
