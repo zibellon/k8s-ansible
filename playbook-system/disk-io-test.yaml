@@ -15,14 +15,14 @@
 #
 # Requirements:
 #   - >= 1 host in inventory after --limit filtering.
-#   - fio_directory exists on every selected host (asserted).
+#   - fio_read_directory and fio_write_directory exist on every selected host (asserted).
 #   - sudo/root privileges (become: true).
 #
 # Steps:
-#   1. Validate inputs (assert: >=1 host; stat fio_directory existence per host).
+#   1. Validate inputs (assert: >=1 host; stat fio_read_directory + fio_write_directory existence per host).
 #   2. Install fio inline (idempotent: pre-check which fio + apt + verify).
 #   3. Block: fio randwrite first (creates file), then fio randread.
-#      Always: cleanup test files in fio_directory (regardless of failure).
+#      Always: cleanup test files in fio_read_directory + fio_write_directory (regardless of failure).
 #   4. Aggregate parsed JSON results on localhost, print vertical per-host
 #      stanzas + cluster summary via debug: msg.
 #
@@ -31,7 +31,7 @@
 #   disk-io-test-randread.<jobnum>.<file_index>
 #
 # Output: stdout only (no file, no Vault, no cluster facts).
-# Total temp space across N parallel hosts = N x fio_size (default 1 GiB).
+# Total temp space per host = fio_read_size + fio_write_size (default 1 GiB each = 2 GiB total). Across N parallel hosts = N x (fio_read_size + fio_write_size).
 # =============================================================================
 
 - name: Measure disk I/O performance via fio
@@ -50,26 +50,35 @@
           Raw --limit value: {{ ansible_limit | default('(none)') }}.
       run_once: true
 
-    - name: "[disk-io-test] Stat fio_directory on each host"
+    - name: "[disk-io-test] Stat fio_read_directory on each host"
       stat:
-        path: "{{ fio_directory }}"
-      register: fio_dir_stat
+        path: "{{ fio_read_directory }}"
+      register: fio_read_dir_stat
       changed_when: false
 
-    - name: "[disk-io-test] Assert fio_directory exists and is a directory"
+    - name: "[disk-io-test] Stat fio_write_directory on each host"
+      stat:
+        path: "{{ fio_write_directory }}"
+      register: fio_write_dir_stat
+      changed_when: false
+
+    - name: "[disk-io-test] Assert fio_read_directory and fio_write_directory exist and are directories"
       assert:
         that:
-          - fio_dir_stat.stat.exists
-          - fio_dir_stat.stat.isdir
+          - fio_read_dir_stat.stat.exists
+          - fio_read_dir_stat.stat.isdir
+          - fio_write_dir_stat.stat.exists
+          - fio_write_dir_stat.stat.isdir
         fail_msg: |
-          fio_directory '{{ fio_directory }}' does not exist or is not a directory on {{ inventory_hostname }}.
+          One of fio_read_directory '{{ fio_read_directory }}' / fio_write_directory '{{ fio_write_directory }}' does not exist or is not a directory on {{ inventory_hostname }}.
 
     - name: "[disk-io-test] Show selected hosts and parameters"
       debug:
         msg:
           - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
-          - "Directory: {{ fio_directory }}"
-          - "Parameters: bs={{ fio_blocksize }}, iodepth={{ fio_iodepth }}, runtime={{ fio_runtime }}s, size={{ fio_size }}, numjobs={{ fio_numjobs }}, direct=1, ioengine=libaio"
+          - "Random Read:  directory={{ fio_read_directory }}, bs={{ fio_read_blocksize }}, iodepth={{ fio_read_iodepth }}, runtime={{ fio_read_runtime }}s, size={{ fio_read_size }}, numjobs={{ fio_read_numjobs }}"
+          - "Random Write: directory={{ fio_write_directory }}, bs={{ fio_write_blocksize }}, iodepth={{ fio_write_iodepth }}, runtime={{ fio_write_runtime }}s, size={{ fio_write_size }}, numjobs={{ fio_write_numjobs }}"
+          - "Common: direct=1, ioengine=libaio"
       run_once: true
 
     # === Phase 2: Install fio inline ===
@@ -102,38 +111,38 @@
         - name: "[disk-io-test] Run fio randwrite (creates test file)"
           command: >
             fio
-            --directory={{ fio_directory }}
+            --directory={{ fio_write_directory }}
             --name=disk-io-test-randwrite
             --ioengine=libaio
             --direct=1
             --rw=randwrite
-            --bs={{ fio_blocksize }}
-            --numjobs={{ fio_numjobs }}
-            --size={{ fio_size }}
-            --runtime={{ fio_runtime }}
+            --bs={{ fio_write_blocksize }}
+            --numjobs={{ fio_write_numjobs }}
+            --size={{ fio_write_size }}
+            --runtime={{ fio_write_runtime }}
             --time_based
             --group_reporting
-            --iodepth={{ fio_iodepth }}
+            --iodepth={{ fio_write_iodepth }}
             --output-format=json
           register: fio_randwrite_result
           failed_when: fio_randwrite_result.rc != 0 # AUTHORIZED §2.1
           changed_when: false
 
-        - name: "[disk-io-test] Run fio randread (reads test file written above)"
+        - name: "[disk-io-test] Run fio randread (creates and reads its own test file)"
           command: >
             fio
-            --directory={{ fio_directory }}
+            --directory={{ fio_read_directory }}
             --name=disk-io-test-randread
             --ioengine=libaio
             --direct=1
             --rw=randread
-            --bs={{ fio_blocksize }}
-            --numjobs={{ fio_numjobs }}
-            --size={{ fio_size }}
-            --runtime={{ fio_runtime }}
+            --bs={{ fio_read_blocksize }}
+            --numjobs={{ fio_read_numjobs }}
+            --size={{ fio_read_size }}
+            --runtime={{ fio_read_runtime }}
             --time_based
             --group_reporting
-            --iodepth={{ fio_iodepth }}
+            --iodepth={{ fio_read_iodepth }}
             --output-format=json
           register: fio_randread_result
           failed_when: fio_randread_result.rc != 0 # AUTHORIZED §2.1
@@ -142,7 +151,9 @@
       always:
         - name: "[disk-io-test] Find fio test files"
           find:
-            paths: "{{ fio_directory }}"
+            paths:
+              - "{{ fio_read_directory }}"
+              - "{{ fio_write_directory }}"
             patterns:
               - "disk-io-test-randread.*"
               - "disk-io-test-randwrite.*"
@@ -220,8 +231,9 @@
         fio_version_for_header: "{{ (hostvars[ansible_play_hosts | first].fio_randread_result.stdout | from_json).fio_version | default('unknown') }}"
         header_lines:
           - "=== Disk I/O Test ({{ fio_version_for_header }}) ==="
-          - "Parameters: bs={{ fio_blocksize }}, iodepth={{ fio_iodepth }}, runtime={{ fio_runtime }}s, size={{ fio_size }}, numjobs={{ fio_numjobs }}, direct=1, ioengine=libaio"
-          - "Directory: {{ fio_directory }}"
+          - "Random Read params:  directory={{ fio_read_directory }}, bs={{ fio_read_blocksize }}, iodepth={{ fio_read_iodepth }}, runtime={{ fio_read_runtime }}s, size={{ fio_read_size }}, numjobs={{ fio_read_numjobs }}"
+          - "Random Write params: directory={{ fio_write_directory }}, bs={{ fio_write_blocksize }}, iodepth={{ fio_write_iodepth }}, runtime={{ fio_write_runtime }}s, size={{ fio_write_size }}, numjobs={{ fio_write_numjobs }}"
+          - "Common: direct=1, ioengine=libaio"
           - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
           - ""
       debug:
