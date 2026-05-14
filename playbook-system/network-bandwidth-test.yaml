@@ -65,11 +65,42 @@
           - "Host B: {{ host_b_fact }} (internal_ip: {{ hostvars[host_b_fact].internal_ip }})"
       run_once: true
 
-    # === Phase 4: Install iperf3 on both hosts ===
-    - name: "[network-bandwidth-test] Install iperf3 on both hosts"
-      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-iperf3-install.yaml"
-      vars:
-        dto_label_name: "network-bandwidth-test"
+    # === Phase 4: Install iperf3 inline (3-layer defense: debconf + apt + systemd) ===
+    - name: "[network-bandwidth-test] Pre-check: is iperf3 installed?"
+      command: which iperf3
+      register: iperf3_pre_check
+      changed_when: false
+      failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
+
+    - name: "[network-bandwidth-test] Preseed debconf: iperf3/start_daemon=false"
+      debconf:
+        name: iperf3
+        question: iperf3/start_daemon
+        value: "false"
+        vtype: boolean
+
+    - name: "[network-bandwidth-test] Install iperf3 via apt"
+      apt:
+        name: iperf3
+        state: present
+        update_cache: true
+      when: iperf3_pre_check.rc != 0
+
+    - name: "[network-bandwidth-test] Ensure iperf3 systemd unit disabled and stopped"
+      systemd:
+        name: iperf3
+        enabled: false
+        state: stopped
+      failed_when: false # AUTHORIZED §2.1: iperf3.service может отсутствовать на Debian
+
+    - name: "[network-bandwidth-test] Verify iperf3 binary works"
+      command: iperf3 --version
+      register: iperf3_version_check
+      changed_when: false
+
+    - name: "[network-bandwidth-test] Show iperf3 version"
+      debug:
+        msg: "iperf3 binary: {{ iperf3_version_check.stdout_lines[0] }}"
 
     # === Phase 5: Run tests in block/always (AUTHORIZED §2.1 #5) ===
     - name: "[network-bandwidth-test] Run bandwidth tests (block with cleanup)"
