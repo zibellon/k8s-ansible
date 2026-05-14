@@ -93,11 +93,36 @@ These layers are tracked separately. Adding them must not loosen Layer 1 or Laye
 | `make test-syntax` reports two `FAIL:` for one broken playbook | Broken file is included by another playbook | Fix the source file; both will go green |
 | `make test-helm` falls render task with `'<var>' is undefined` | Production playbook sets this fact via `tasks-pre-check.yaml` / set_fact / `tasks-eso-lookup.yaml`; test playbook hasn't been wired to do the same | Either (a) update `tests/helm-validate.yaml` to call the appropriate production task via `include_tasks: "{{ playbook_dir }}/../playbook-app/tasks/<task>.yaml"`, or (b) hardcode a mock in `hosts-vars-test/` |
 | `make test-helm` falls helm template with `Error: chart pull failed` | `<c>_chart_version` in inventory does not exist in upstream repo (yanked or typo'd) | Verify version exists at the published repo (e.g. `helm search repo <repo>/<chart> --versions`); update inventory if intentional |
-| `make test-helm` falls kubeconform with `key "<X>" already set in map` | Upstream chart bug — duplicate key produced by `toYaml` of merged values dict; K8s API server last-wins masks it in production | See §8 Known upstream issues; if new chart hits this, comment out the entry in `hosts-vars-test/upstream-charts.yaml` with explanation (как сделано для traefik) |
+| `make test-helm` falls kubeconform with `key "<X>" already set in map` | Upstream chart bug — duplicate key produced by `toYaml` of merged values dict; K8s API server last-wins masks it in production | See §9 Known upstream issues; if new chart hits this, comment out the entry in `hosts-vars-test/upstream-charts.yaml` with explanation (как сделано для traefik) |
 
-## 8. Known upstream issues
+## 8. Verification idiom for SUB DONE reports
 
-### 8.1 traefik chart 39.0.5 + helm 3.20.2 — `service.spec` deep-merge bug
+Per [`report-formats.md`](report-formats.md) §1.1 — SUB DONE отчёты обязаны содержать строку результата `make test` в секции `Verification`. Canonical extraction idiom:
+
+```bash
+make test 2>&1 | tail -5
+```
+
+**На success** последние 4 строки совпадают byte-for-byte с финальным блоком Makefile:
+
+```
+==========================================
+make test → exit 0 (all 4 stages passed)
+Wall-clock: Xm YYs
+==========================================
+```
+
+Где `X`/`YY` — wall-clock duration. Подстрока `make test → exit 0` — детерминированный success-маркер, присутствует **только** когда все 4 стадии (yamllint + ansible-lint + syntax-check + helm-validate) прошли. Копируй её в отчёт верботим.
+
+**На fail** success-блок отсутствует; `tail -5` показывает последние 5 строк output'а упавшей стадии. Make's fail-fast прерывает на первой упавшей — отображается ошибка **первой** не прошедшей стадии.
+
+**Expected runtime** — cold full run ~4-5 минут wall-clock. Основная latency в `helm repo add` для 13 charts (без кеширования между прогонами). Если прогон превышает ~10 минут без появления success-маркера — подозревай зависание; abort, investigate.
+
+**Anti-pattern (не делать):** повторный запуск `make test` с разными shell-pipe парсингами. Если первый прогон завершился (exit 0 или non-zero) — используй его результат. SUB-4 history: 40 минут wall-clock на 7 retry потому что маркер ещё не существовал; commit `22b7afe` его добавил.
+
+## 9. Known upstream issues
+
+### 9.1 traefik chart 39.0.5 + helm 3.20.2 — `service.spec` deep-merge bug
 
 **Symptom:** `make test-helm` reports `FAIL: traefik` with kubeconform error `key "type" already set in map` in the rendered Service.
 

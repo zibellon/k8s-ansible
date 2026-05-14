@@ -382,6 +382,8 @@ TeamLead **делегирует** (не делает сам):
 - `exit 0` → file-level verify пройден + tests pass → можно коммитить.
 - `exit ≠ 0` → возврат DevOps с конкретным выводом теста, без переговоров.
 
+**Canonical idiom для TeamLead:** `make test 2>&1 | tail -5` (см. [`testing.md`](testing.md) §8). Финальный success-блок Makefile содержит точную подстроку `make test → exit 0 (all 4 stages passed)` — если её нет в `tail -5` после ~5 минут — fail (последние 5 строк покажут где упало). Не запускать повторно через разные shell-pipes — anti-pattern.
+
 Если SUB-task правила **только** документацию (`.claude/rules/*.md`, `CLAUDE.md`, `todo.md`) — `make test` всё равно полезно прогнать одним коротким sanity-вызовом (убедиться что параллельный фикс ничего не сломал), но не обязательно. В отчёте достаточно отметить `make test → exit 0 (sanity)`.
 
 Документация runner'а и команд — [`testing.md`](testing.md).

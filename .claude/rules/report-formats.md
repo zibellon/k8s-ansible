@@ -46,6 +46,8 @@
 
 **Строгое правило — `make test`:** если SUB-task изменяет playbook, chart, task include, inventory, `.yamllint.yaml`, `.ansible-lint.yml`, `Makefile`, `tests/` — секция `Verification` **обязана** содержать строку с результатом `make test`. Формат: `make test → exit 0` (или `make test → exit N` с описанием fail). Если SUB трогает только документацию (`.claude/rules/*.md`, `CLAUDE.md`, `todo.md`) — достаточно `make test → exit 0 (sanity)` или явного «не запускал, правки только текстовые». Документация runner'а — [`testing.md`](testing.md). Контракт TeamLead'а на запуск — [`team-workflow.md`](team-workflow.md) §6 + §8.11.
 
+**Canonical idiom:** `make test 2>&1 | tail -5` (см. [`testing.md`](testing.md) §8). Финальный success-блок Makefile содержит точную подстроку `make test → exit 0` — копируй её в отчёт верботим. Отсутствие блока в `tail -5` после ~5 минут wall-clock = fail (последние 5 строк покажут где упало).
+
 ### 1.2 BLOCKED
 
 ```markdown
