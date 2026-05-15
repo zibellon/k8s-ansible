@@ -2,13 +2,13 @@
 # Helm Template + Kustomize Build — Prepare -k/ chart artifact for helm install
 # =============================================================================
 # Runs helm template to render a LOCAL_CUSTOM or KUSTOMIZE_WRAPPER chart,
-# then applies kustomize patches (namespace rebind + optional patches) and
+# then applies kustomize patches and
 # writes the resulting all.yaml into a fresh chart dir ready for helm install.
 #
 # Workflow on master_manager_fact:
 #   1. Create staging dir  (dto_kustomize_tmp_dir)
 #   2. helm template       → dto_kustomize_tmp_dir/template-output.yaml
-#   3. Render kustomization.yaml in staging (namespace + patches)
+#   3. Render kustomization.yaml in staging (patches only — namespace transformer intentionally NOT applied; multi-namespace charts depend on per-template namespace declarations rendered by helm template)
 #   4. Create output dir   (dto_kustomize_final_dir/templates/)
 #   5. Copy Chart.yaml     → dto_kustomize_final_dir/Chart.yaml
 #   6. kubectl kustomize   → dto_kustomize_final_dir/templates/all.yaml
@@ -78,7 +78,6 @@
     dest: "{{ dto_kustomize_tmp_dir }}/kustomization.yaml"
     mode: "0644"
     content: |
-      namespace: {{ dto_target_namespace }}
       resources:
         - template-output.yaml
       patches: {{ dto_patches_list | to_json }}
