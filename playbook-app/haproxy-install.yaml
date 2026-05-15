@@ -63,15 +63,27 @@
         dto_content: "{{ haproxy_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
+    - name: "[haproxy-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "haproxy-pre"
+        dto_release_name: "haproxy-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/haproxy/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/haproxy/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/haproxy/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/haproxy/pre-k"
+        dto_patches_list: "{{ haproxy_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ haproxy_namespace }}"
+      tags: [pre]
+
     - name: "[haproxy-pre] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "haproxy-pre"
         dto_helm_command: >
-          helm upgrade --install haproxy-pre {{ remote_charts_dir }}/haproxy/pre
+          helm upgrade --install haproxy-pre {{ remote_charts_dir }}/haproxy/pre-k
           --namespace {{ haproxy_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/haproxy/pre/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -166,15 +178,27 @@
         dto_content: "{{ haproxy_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
+    - name: "[haproxy-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "haproxy-post"
+        dto_release_name: "haproxy-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/haproxy/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/haproxy/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/haproxy/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/haproxy/post-k"
+        dto_patches_list: "{{ haproxy_post_kustomize_patches }}"
+        dto_target_namespace: "{{ haproxy_namespace }}"
+      tags: [post]
+
     - name: "[haproxy-post] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "haproxy-post"
         dto_helm_command: >
-          helm upgrade --install haproxy-post {{ remote_charts_dir }}/haproxy/post
+          helm upgrade --install haproxy-post {{ remote_charts_dir }}/haproxy/post-k
           --namespace {{ haproxy_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/haproxy/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
