@@ -102,15 +102,27 @@
         dto_content: "{{ gitlab_runner_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
+    - name: "[gitlab-runner-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "gitlab-runner-pre"
+        dto_release_name: "gitlab-runner-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab-runner/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/gitlab-runner/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/gitlab-runner/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/gitlab-runner/pre-k"
+        dto_patches_list: "{{ gitlab_runner_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ gitlab_runner_namespace }}"
+      tags: [pre]
+
     - name: "[gitlab-runner-pre] Install via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "gitlab-runner-pre"
         dto_helm_command: >
-          helm upgrade --install gitlab-runner-pre {{ remote_charts_dir }}/gitlab-runner/pre
+          helm upgrade --install gitlab-runner-pre {{ remote_charts_dir }}/gitlab-runner/pre-k
           --namespace {{ gitlab_runner_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/gitlab-runner/pre/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
