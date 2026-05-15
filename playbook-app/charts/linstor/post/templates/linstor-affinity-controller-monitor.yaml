@@ -1,0 +1,26 @@
+{{- if .Values.linstorAffinityController.podMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: linstor-affinity-controller
+  labels:
+    app.kubernetes.io/component: linstor-affinity-controller
+    {{- if .Values.linstorAffinityController.podMonitor.labels }}
+    {{- toYaml .Values.linstorAffinityController.podMonitor.labels | nindent 4 }}
+    {{- end }}
+spec:
+  podMetricsEndpoints:
+    - port: metrics
+      scheme: http
+      path: /metrics
+      {{- if .Values.linstorAffinityController.podMonitor.interval }}
+      interval: {{ .Values.linstorAffinityController.podMonitor.interval | quote }}
+      {{- end }}
+      {{- if .Values.linstorAffinityController.podMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ .Values.linstorAffinityController.podMonitor.scrapeTimeout | quote }}
+      {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: linstor-affinity-controller
+{{- end }}
