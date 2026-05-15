@@ -683,15 +683,10 @@ all:
     # Pristine templates/prometheus-operator.yaml не модифицируется — все customizations здесь.
     # Operator-side extension через mon_system_prometheus_operator_kustomize_patches_extra.
     mon_system_prometheus_operator_kustomize_patches:
-      # 1. ClusterRoleBinding subjects[0].namespace → mon_system_namespace (JSON Patch)
-      - target:
-          kind: ClusterRoleBinding
-          name: prometheus-operator
-        patch: |-
-          - op: replace
-            path: /subjects/0/namespace
-            value: "{{ mon_system_namespace }}"
-      # 2. Deployment metadata.namespace + customizations (resources, tolerations, nodeSelector)
+      # Customization Deployment: resources, tolerations, nodeSelector.
+      # metadata.namespace всех namespaced ресурсов и subjects[].namespace в ClusterRoleBinding
+      # обрабатываются builtin namespace transformer в kustomization.yaml через
+      # dto_target_namespace в tasks-kustomize-build.yaml.
       - target:
           kind: Deployment
           name: prometheus-operator
@@ -700,7 +695,6 @@ all:
           kind: Deployment
           metadata:
             name: prometheus-operator
-            namespace: "{{ mon_system_namespace }}"
           spec:
             template:
               spec:
@@ -716,26 +710,6 @@ all:
                       requests:
                         cpu: 100m
                         memory: 100Mi
-      # 3. ServiceAccount metadata.namespace → mon_system_namespace
-      - target:
-          kind: ServiceAccount
-          name: prometheus-operator
-        patch: |-
-          apiVersion: v1
-          kind: ServiceAccount
-          metadata:
-            name: prometheus-operator
-            namespace: "{{ mon_system_namespace }}"
-      # 4. Service metadata.namespace → mon_system_namespace
-      - target:
-          kind: Service
-          name: prometheus-operator
-        patch: |-
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: prometheus-operator
-            namespace: "{{ mon_system_namespace }}"
 
     # ---------
     # Prometheus CR Helm values (Prometheus instance + RBAC + Service)
