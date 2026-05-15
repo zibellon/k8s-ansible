@@ -62,8 +62,10 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
-    # Install-phase kustomize patches (applied by tasks-kustomize-build.yaml)
-    argocd_kustomize_patches:
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    argocd_pre_kustomize_patches: []
+    # Install-phase kustomize patches (operator-side customization for ArgoCD pristine upstream install.yaml)
+    argocd_install_kustomize_patches:
       - target:
           kind: ConfigMap
           name: argocd-cm
@@ -119,10 +121,14 @@ all:
         interval: "30s"
         scrapeTimeout: "15s"
         labels: {}
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    argocd_post_kustomize_patches: []
     # GitOps-phase values (AppProject + Applications chart)
     argocd_gitops_helm_values:
       namespace: "{{ argocd_namespace }}"
       gitOpsApps: "{{ argocd_git_ops_apps }}"
+    # GitOps-phase kustomize patches (operator-side customization, default empty)
+    argocd_gitops_kustomize_patches: []
     # -------
     # Secret name lookups — used by tasks-eso-lookup.yaml in argocd-configure.yaml
     # Values must match external_secret_name of corresponding eso_vault_integration_argocd_secrets entry
