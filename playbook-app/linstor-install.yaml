@@ -178,6 +178,39 @@
       tags: [install-cluster]
 
     # =========================================================================
+    # STEP 4: post (ServiceMonitor + PodMonitor)
+    # =========================================================================
+
+    - name: "[linstor-post] Copy linstor post chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "linstor-post"
+        dto_chart_name: "linstor-post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/linstor/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/linstor/post"
+      tags: [post]
+
+    - name: "[linstor-post] Copy values-override.yaml to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "linstor-post"
+        dto_dir: "{{ remote_charts_dir }}/linstor/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ linstor_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[linstor-post] Install or upgrade via Helm"
+      command: >
+        helm upgrade --install linstor-post {{ remote_charts_dir }}/linstor/post
+        --namespace {{ linstor_namespace }}
+        --values {{ remote_charts_dir }}/linstor/post/values-override.yaml
+        --cleanup-on-fail --atomic --wait --wait-for-jobs
+        --timeout {{ linstor_post_helm_timeout }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [post]
+
+    # =========================================================================
     # ALWAYS: Verification
     # =========================================================================
 
