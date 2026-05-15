@@ -120,15 +120,27 @@
         dto_content: "{{ mon_system_pre_helm_values | to_nice_yaml }}"
       tags: [pre]
 
+    - name: "[mon-system-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-pre"
+        dto_release_name: "mon-system-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/pre-k"
+        dto_patches_list: "{{ mon_system_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      tags: [pre]
+
     - name: "[mon-system-pre] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-pre"
         dto_helm_command: >
-          helm upgrade --install mon-system-pre {{ remote_charts_dir }}/mon-system/pre
+          helm upgrade --install mon-system-pre {{ remote_charts_dir }}/mon-system/pre-k
           --namespace {{ mon_system_namespace }}
           --create-namespace
-          --values {{ remote_charts_dir }}/mon-system/pre/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -150,21 +162,26 @@
       when: mon_system_prometheus_operator_enabled
       tags: [prometheus-operator]
 
-    - name: "[mon-system-prometheus-operator] Build merged kustomize patches list"
-      set_fact:
-        mon_system_prometheus_operator_kustomize_patches_merged: "{{ mon_system_prometheus_operator_kustomize_patches + (mon_system_prometheus_operator_kustomize_patches_extra | default([])) }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
+    - name: "[mon-system-prometheus-operator] Create empty values file (KUSTOMIZE_WRAPPER)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "mon-system-prometheus-operator"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/prometheus-operator"
+        dto_filename: "values-override.yaml"
+        dto_content: "{}"
       when: mon_system_prometheus_operator_enabled
       tags: [prometheus-operator]
 
-    - name: "[mon-system-prometheus-operator] Render prometheus-operator.yaml via kustomize"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-kustomize-build.yaml"
+    - name: "[mon-system-prometheus-operator] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
       vars:
         dto_label_name: "mon-system-prometheus-operator"
+        dto_release_name: "mon-system-prometheus-operator"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/prometheus-operator"
-        dto_source_filename: "prometheus-operator.yaml"
-        dto_patches_list: "{{ mon_system_prometheus_operator_kustomize_patches_merged }}"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/prometheus-operator/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/prometheus-operator-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/prometheus-operator-k"
+        dto_patches_list: "{{ mon_system_prometheus_operator_kustomize_patches }}"
         dto_target_namespace: "{{ mon_system_namespace }}"
       when: mon_system_prometheus_operator_enabled
       tags: [prometheus-operator]
@@ -174,7 +191,7 @@
       vars:
         dto_label_name: "mon-system-prometheus-operator"
         dto_helm_command: >
-          helm upgrade --install mon-system-prometheus-operator {{ remote_charts_dir }}/mon-system/prometheus-operator
+          helm upgrade --install mon-system-prometheus-operator {{ remote_charts_dir }}/mon-system/prometheus-operator-k
           --namespace {{ mon_system_namespace }}
           --create-namespace
           --cleanup-on-fail
@@ -221,14 +238,27 @@
       when: mon_system_prometheus_operator_enabled and mon_system_prometheus_enabled
       tags: [prometheus]
 
+    - name: "[mon-system-prometheus] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-prometheus"
+        dto_release_name: "mon-system-prometheus"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/prometheus"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/prometheus/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/prometheus-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/prometheus-k"
+        dto_patches_list: "{{ mon_system_prometheus_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_prometheus_operator_enabled and mon_system_prometheus_enabled
+      tags: [prometheus]
+
     - name: "[mon-system-prometheus] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-prometheus"
         dto_helm_command: >
-          helm upgrade --install mon-system-prometheus {{ remote_charts_dir }}/mon-system/prometheus
+          helm upgrade --install mon-system-prometheus {{ remote_charts_dir }}/mon-system/prometheus-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/prometheus/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -272,14 +302,27 @@
       when: mon_system_prometheus_operator_enabled and mon_system_alertmanager_enabled
       tags: [alertmanager]
 
+    - name: "[mon-system-alertmanager] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-alertmanager"
+        dto_release_name: "mon-system-alertmanager"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/alertmanager"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/alertmanager/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/alertmanager-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/alertmanager-k"
+        dto_patches_list: "{{ mon_system_alertmanager_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_prometheus_operator_enabled and mon_system_alertmanager_enabled
+      tags: [alertmanager]
+
     - name: "[mon-system-alertmanager] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-alertmanager"
         dto_helm_command: >
-          helm upgrade --install mon-system-alertmanager {{ remote_charts_dir }}/mon-system/alertmanager
+          helm upgrade --install mon-system-alertmanager {{ remote_charts_dir }}/mon-system/alertmanager-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/alertmanager/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -323,14 +366,27 @@
       when: mon_system_node_exporter_enabled
       tags: [node-exporter]
 
+    - name: "[mon-system-node-exporter] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-node-exporter"
+        dto_release_name: "mon-system-node-exporter"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/node-exporter"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/node-exporter/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/node-exporter-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/node-exporter-k"
+        dto_patches_list: "{{ mon_system_node_exporter_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_node_exporter_enabled
+      tags: [node-exporter]
+
     - name: "[mon-system-node-exporter] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-node-exporter"
         dto_helm_command: >
-          helm upgrade --install mon-system-node-exporter {{ remote_charts_dir }}/mon-system/node-exporter
+          helm upgrade --install mon-system-node-exporter {{ remote_charts_dir }}/mon-system/node-exporter-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/node-exporter/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -374,14 +430,27 @@
       when: mon_system_ksm_enabled
       tags: [ksm]
 
+    - name: "[mon-system-ksm] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-ksm"
+        dto_release_name: "mon-system-ksm"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/ksm"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/ksm/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/ksm-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/ksm-k"
+        dto_patches_list: "{{ mon_system_ksm_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_ksm_enabled
+      tags: [ksm]
+
     - name: "[mon-system-ksm] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-ksm"
         dto_helm_command: >
-          helm upgrade --install mon-system-ksm {{ remote_charts_dir }}/mon-system/ksm
+          helm upgrade --install mon-system-ksm {{ remote_charts_dir }}/mon-system/ksm-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/ksm/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -425,14 +494,27 @@
       when: mon_system_loki_enabled
       tags: [loki]
 
+    - name: "[mon-system-loki] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-loki"
+        dto_release_name: "mon-system-loki"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/loki"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/loki/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/loki-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/loki-k"
+        dto_patches_list: "{{ mon_system_loki_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_loki_enabled
+      tags: [loki]
+
     - name: "[mon-system-loki] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-loki"
         dto_helm_command: >
-          helm upgrade --install mon-system-loki {{ remote_charts_dir }}/mon-system/loki
+          helm upgrade --install mon-system-loki {{ remote_charts_dir }}/mon-system/loki-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/loki/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -476,14 +558,27 @@
       when: mon_system_vector_enabled
       tags: [vector]
 
+    - name: "[mon-system-vector] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-vector"
+        dto_release_name: "mon-system-vector"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/vector"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/vector/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/vector-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/vector-k"
+        dto_patches_list: "{{ mon_system_vector_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_vector_enabled
+      tags: [vector]
+
     - name: "[mon-system-vector] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-vector"
         dto_helm_command: >
-          helm upgrade --install mon-system-vector {{ remote_charts_dir }}/mon-system/vector
+          helm upgrade --install mon-system-vector {{ remote_charts_dir }}/mon-system/vector-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/vector/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -584,14 +679,27 @@
       when: mon_system_grafana_enabled
       tags: [grafana]
 
+    - name: "[mon-system-grafana] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana"
+        dto_release_name: "mon-system-grafana"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/grafana"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/grafana/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/grafana-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/grafana-k"
+        dto_patches_list: "{{ mon_system_grafana_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana]
+
     - name: "[mon-system-grafana] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-grafana"
         dto_helm_command: >
-          helm upgrade --install mon-system-grafana {{ remote_charts_dir }}/mon-system/grafana
+          helm upgrade --install mon-system-grafana {{ remote_charts_dir }}/mon-system/grafana-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/grafana/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
@@ -633,14 +741,26 @@
         dto_content: "{{ mon_system_post_helm_values | to_nice_yaml }}"
       tags: [post]
 
+    - name: "[mon-system-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-post"
+        dto_release_name: "mon-system-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/post-k"
+        dto_patches_list: "{{ mon_system_post_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      tags: [post]
+
     - name: "[mon-system-post] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
         dto_label_name: "mon-system-post"
         dto_helm_command: >
-          helm upgrade --install mon-system-post {{ remote_charts_dir }}/mon-system/post
+          helm upgrade --install mon-system-post {{ remote_charts_dir }}/mon-system/post-k
           --namespace {{ mon_system_namespace }}
-          --values {{ remote_charts_dir }}/mon-system/post/values-override.yaml
           --cleanup-on-fail
           --atomic
           --wait
