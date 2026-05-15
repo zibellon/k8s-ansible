@@ -8,7 +8,7 @@ For per-component install detail (chart subdirs, helm release names, enable flag
 
 ## 1. Prometheus Operator
 
-Lives in `mon-system` namespace. Installed via the `prometheus-operator` tag of `mon-system-install.yaml`. Customization (resources, tolerations, nodeSelector, namespace-rebind) is expressed declaratively через `mon_system_prometheus_operator_kustomize_patches` + `_extra` — pristine upstream `templates/prometheus-operator.yaml` не модифицируется. См. [`playbook-conventions.md`](playbook-conventions.md) §21 для kustomize→helm паттерна и [`components.md`](components.md) §17 для контекста mon-system stack.
+Lives in `mon-system` namespace. Installed via the `prometheus-operator` tag of `mon-system-install.yaml`. Customization (resources, tolerations, nodeSelector) is expressed declaratively через `mon_system_prometheus_operator_kustomize_patches` + `_extra` — pristine upstream `templates/prometheus-operator.yaml` не модифицируется. Namespace rebind делается отдельно через `dto_target_namespace: mon_system_namespace` в `tasks-kustomize-build.yaml` (builtin kustomize transformer). См. [`playbook-conventions.md`](playbook-conventions.md) §21 для kustomize→helm паттерна и [`components.md`](components.md) §17 для контекста mon-system stack.
 
 ### 1.1 Install phases
 

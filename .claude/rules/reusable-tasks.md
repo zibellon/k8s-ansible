@@ -62,10 +62,10 @@ General rules for callers:
 ### 1.4б `tasks-kustomize-build.yaml`
 
 - **Purpose.** На `master_manager_fact`: построить kustomize output из pristine upstream + список patches, перезаписать output поверх pristine в чарте, очистить временный staging. Используется в install-фазе компонентов, идущих через kustomize→helm паттерн (см. [`playbook-conventions.md`](playbook-conventions.md) §21).
-- **Input.** `dto_label_name` (string), `dto_chart_remote_dest` (string — путь чарта на сервере, без `/`), `dto_source_filename` (string — имя файла в `templates/`, например `install.yaml`), `dto_patches_list` (sequence — merged patches: base + extra).
-- **Validates (assert).** All 4 dto-params defined + non-empty (per Rule 19, [`playbook-conventions.md`](playbook-conventions.md) §19). Tag `[always]`.
+- **Input.** `dto_label_name` (string), `dto_chart_remote_dest` (string — путь чарта на сервере, без `/`), `dto_source_filename` (string — имя файла в `templates/`, например `install.yaml`), `dto_patches_list` (sequence — merged patches: base + extra), `dto_target_namespace` (string — kustomize builtin `namespace:` transformer applied to the generated `kustomization.yaml`).
+- **Validates (assert).** All 5 dto-params defined + non-empty (per Rule 19, [`playbook-conventions.md`](playbook-conventions.md) §19). Tag `[always]`.
 - **Output.** Side effect: `<dto_chart_remote_dest>/templates/<dto_source_filename>` перезаписан kustomize-output. No facts exported.
-- **Internals.** `mktemp -d` staging; copy pristine → staging; render `kustomization.yaml` (`resources: [<source>]`, `patches: <list>`) через `to_nice_yaml`; `kubectl kustomize` → перезапись `templates/<source>` в чарте; cleanup staging.
+- **Internals.** `mktemp -d` staging; copy pristine → staging; render `kustomization.yaml` (`namespace: <dto_target_namespace>`, `resources: [<source>]`, `patches: <list>`) через `to_nice_yaml`; `kubectl kustomize` → перезапись `templates/<source>` в чарте; cleanup staging. `namespace:` — builtin kustomize transformer: переписывает `metadata.namespace` всех namespaced ресурсов и `subjects[].namespace` в (Cluster)RoleBinding'ах; cluster-scoped (ClusterRole, CRD) не трогает.
 - **Callers.** `playbook-app/argocd-install.yaml` STEP 3 (install phase). `playbook-app/mon-system-install.yaml` STEP 3 (prometheus-operator phase).
 - **Idempotent.** Да: при одинаковом patches списке kustomize output идентичен, helm release не меняется.
 

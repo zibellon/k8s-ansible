@@ -207,12 +207,12 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 - `values.yaml` — `{}` (kustomize не использует Helm values; вся customization — в kustomize patches).
 - `templates/<name>.yaml` — pristine upstream `install.yaml` без Jinja-вставок (download from upstream as-is, никогда не модифицируется руками).
 
-21.3 Customization выражается списком `<c>_kustomize_patches` (база — в `hosts-vars/<c>.yaml`) + `<c>_kustomize_patches_extra` (operator-side, default `[]`). Каждый элемент: `{target: {kind, name}, patch: |- <strategic merge YAML or JSON Patch RFC 6902>}`. Тип patch'а определяется kustomize'ом автоматически по содержимому.
+21.3 Customization выражается списком `<c>_kustomize_patches` (база — в `hosts-vars/<c>.yaml`) + `<c>_kustomize_patches_extra` (operator-side, default `[]`). Каждый элемент: `{target: {kind, name}, patch: |- <strategic merge YAML or JSON Patch RFC 6902>}`. Тип patch'а определяется kustomize'ом автоматически по содержимому. **`metadata.namespace` rebind не выражают через patches** — для этого передаётся `dto_target_namespace` в `tasks-kustomize-build.yaml` (builtin kustomize transformer добавляет `namespace:` field в формируемый `kustomization.yaml`, надёжно переписывает `metadata.namespace` всех namespaced ресурсов + `subjects[].namespace` в (Cluster)RoleBinding'ах). Strategic Merge Patch на `metadata.namespace` в kustomize v5 не работает (namespace — часть resource identifier).
 
 21.4 Install-фаза в `<c>-install.yaml` использует reusable task `tasks-kustomize-build.yaml` (см. [`reusable-tasks.md`](reusable-tasks.md) §1.4б):
 - `tasks-copy-chart` копирует чарт на `master_manager_fact` (включая pristine `templates/<source>`).
 - `set_fact: <c>_kustomize_patches_merged = <c>_kustomize_patches + (<c>_kustomize_patches_extra | default([]))`.
-- `tasks-kustomize-build` рендерит `kustomization.yaml` в `/tmp/`, запускает `kubectl kustomize`, перезаписывает результатом `templates/<source>` в скопированном чарте.
+- `tasks-kustomize-build` рендерит `kustomization.yaml` в `/tmp/` (с обязательным полем `namespace: <dto_target_namespace>` сверху), запускает `kubectl kustomize`, перезаписывает результатом `templates/<source>` в скопированном чарте.
 - `tasks-helm-upgrade-async` (или эквивалент) — `helm upgrade --install` без `--values` (values.yaml пустой).
 
 21.5 Strategic merge поверх pristine: upstream defaults сохраняются автоматически. **Не копировать** upstream defaults в patches — это dead duplication. Только пользовательские customization'ы.
