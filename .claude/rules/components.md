@@ -214,16 +214,16 @@ Template fields:
 
 ## 16.5 `linstor`
 
-- **Chart path.** `charts/linstor/{pre,install-operator,install-cluster}/`.
+- **Chart path.** `charts/linstor/{pre,install-operator,install-cluster,post}/`.
 - **Install playbook.** `linstor-install.yaml`.
 - **Namespace.** `piraeus-datastore` (upstream Piraeus convention — не переименовываем).
-- **Releases.** `linstor-pre`, `piraeus-operator`, `linstor-cluster`.
+- **Releases.** `linstor-pre`, `piraeus-operator`, `linstor-cluster`, `linstor-post`.
 - **External Helm repos.** **Два OCI chart'a:**
   - `oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus`, version `piraeus_operator_helm_chart_version` (default `2.10.6`) — Piraeus operator (управляющий).
   - `oci://ghcr.io/piraeusdatastore/helm-charts/linstor-cluster`, version `linstor_cluster_helm_chart_version` (default `1.1.1`) — Datastore (`LinstorCluster` + `LinstorSatelliteConfiguration` + `LinstorNodeConnection` + monitoring + StorageClasses).
 - **Required vars.** `linstor_namespace`, `linstor_rollout_timeout`, `linstor_pre_timeout`, `piraeus_operator_helm_*` (chart vars для operator), `linstor_cluster_helm_*` (chart vars для cluster), `linstor_pre_helm_values`, `piraeus_operator_helm_values` (`installCRDs: true`, `tls.autogenerate`, `tls.renew`), `linstor_cluster_helm_values` (включает `linstorCluster.tolerations: [{operator: Exists}]`, `properties: [DrbdOptions/PeerDevice/c-min-rate/c-max-rate/c-fill-target/c-plan-ahead]` для sync rate tuning, `linstorSatelliteConfigurations` с `fileThinPool` pools per tier, 9 `storageClasses`).
 - **ESO integration.** No.
-- **ServiceMonitor.** Yes — через `linstor_cluster_helm_values.monitoring.enabled: true` (Piraeus operator деплоит свои ServiceMonitor resources).
+- **ServiceMonitor.** Yes — через `linstor_cluster_helm_values.monitoring.enabled: true` (Piraeus operator деплоит свои ServiceMonitor resources). **Также** post phase добавляет custom ServiceMonitor (`linstor-controller`) + PodMonitor'ы (`linstor-satellite`, `linstor-affinity-controller`), параметризованные через `linstor_post_helm_values` (operator переопределяет dict целиком; по умолчанию все 3 monitor'а enabled, interval `30s`, scrapeTimeout `15s`). **Внимание оператору:** проверить отсутствие duplicate scrape jobs между piraeus embedded monitoring и post phase monitors.
 - **Dependencies.** Cilium (CNI). Host prep через `playbook-system/linstor-prepare.yaml` (kernel-headers `linux-headers-$(uname -r)` + `apt-mark hold` + verify `/lib/modules/$(uname -r)/build` symlink) — Piraeus operator сам собирает DRBD module через kmod-loader Pod (init-container в satellite), на хосте `drbd-dkms` НЕ ставится.
 - **Non-install playbooks.** `linstor-restart.yaml` (rollout-restart 8 workloads из `linstor_restart_resources`).
 - **Notes.** 9 storageClasses (3 tier × 3 modes): tier prefix `lnstr-major-manager-*` (only managers), `lnstr-major-*` (cross-tier via multi-pool `"linstor-managers linstor-workers"`), `lnstr-major-worker-*` (only workers); modes `*-single-local` (replica=1, strict-local), `*-multi-sync` (replica=2 Protocol C), `*-multi-async` (replica=2 Protocol A). Tier filtering — через pool name per `LinstorSatelliteConfiguration` (Path B — единственный надёжный absolute-filter mechanism; `--replicas-on-same Aux/key=value` syntax не whitelisted на controller). DRBD sync rate tuning через namespace `DrbdOptions/PeerDevice/c-*` (не `Net/`, не `Disk/` — оба rejected с "not whitelisted" error). `fileThinPool` driver (sparse files на root FS — extra disk не требуется). Альтернатива Longhorn'у в L2 storage tier.
