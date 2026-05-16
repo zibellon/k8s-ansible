@@ -308,6 +308,7 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | Variable | Default | Purpose |
 |---|---|---|
 | `remote_charts_dir` | `"/opt/helm-charts"` | Where charts are rsynced on the master manager |
+| `fail2ban_jail_local` | block-scalar (sshd-only baseline) | Полное содержимое `/etc/fail2ban/jail.local`; рендерится `playbook-system/fail2ban-install.yaml` на всех узлах |
 
 ### 2.13 Bastion / SSH ProxyJump (optional)
 
