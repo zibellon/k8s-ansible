@@ -264,3 +264,27 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 21.6 Канонические примеры:
 - LOCAL_CUSTOM: `playbook-app/cilium-install.yaml` STEP 1+3 (pre/post) + `hosts-vars/cilium.yaml` `cilium_pre_kustomize_patches`.
 - KUSTOMIZE_WRAPPER: `playbook-app/argocd-install.yaml` (install phase, `dto_content: "{}"`) + `hosts-vars/argocd.yaml` `argocd_install_kustomize_patches`. Также `playbook-app/mon-system-install.yaml` (prometheus-operator phase) + `hosts-vars/mon-system.yaml` `mon_system_prometheus_operator_kustomize_patches`. (см. [`components.md`](components.md) §9 ArgoCD и §17 mon-system).
+
+21.7 **Opt-in namespace transformer** (только для KUSTOMIZE_WRAPPER). По default `tasks-helm-template-kustomize-build.yaml` НЕ применяет kustomize `namespace:` builtin transformer — LOCAL_CUSTOM charts намеренно multi-namespace (cilium-pre NPs в `kube-system` + `traefik-lb`, gitlab-runner-pre NPs в `gitlab` namespace, и т.п.), transformer бы collapse'нул всё в один namespace и сломал cross-namespace rules.
+
+KUSTOMIZE_WRAPPER phases (pristine upstream YAML без Jinja) типично содержат hardcoded namespace в `metadata.namespace` и в `subjects[].namespace` ClusterRoleBinding (например argocd/install/install.yaml — `namespace: argocd` × 3; prometheus-operator.yaml — `namespace: default` × 4). Helm 3 **не** переопределяет explicit `metadata.namespace` через `--namespace`, поэтому такой pristine деплоится в неправильный namespace.
+
+Для этого случая в `tasks-helm-template-kustomize-build.yaml` есть **optional bool param** `dto_kustomize_apply_namespace_transform` (default `false`). KUSTOMIZE_WRAPPER callers передают `true`:
+
+```yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+  vars:
+    # ... 8 required params ...
+    dto_kustomize_apply_namespace_transform: true
+  tags: [install]
+```
+
+Kustomize transformer переписывает:
+- `metadata.namespace` всех namespaced resources на `dto_target_namespace`.
+- `subjects[].namespace` для `kind: ServiceAccount` в RoleBinding / ClusterRoleBinding.
+- `webhooks[].clientConfig.service.namespace` в Mutating/ValidatingWebhookConfiguration.
+- `spec.service.namespace` в APIService.
+
+Cluster-scoped ресурсы (ClusterRole, CRD, и т.п.) не трогает. Cross-namespace references в data fields ConfigMap/Secret (например hardcoded DNS `<ns>.svc.cluster.local`) и в CR от CRD — **не** переписываются.
+
+**Monitoring при upstream bumps:** после `helm template ... | kubectl kustomize` для KUSTOMIZE_WRAPPER chart'а — `grep "<old-namespace>"` на rendered output. Должны остаться только labels (`app.kubernetes.io/part-of`) и names (`name: argocd-cm`), не namespace declarations или DNS substrings. Если grep ловит unexpected occurrences — upstream добавил resource kind kustomize не handles или hardcoded DNS в data field — нужен manual JSON Patch в `<c>_<phase>_kustomize_patches`.
