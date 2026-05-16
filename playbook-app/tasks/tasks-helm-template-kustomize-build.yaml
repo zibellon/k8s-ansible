@@ -21,12 +21,28 @@
 #   dto_kustomize_tmp_dir  — staging directory (no trailing /)
 #   dto_kustomize_final_dir — output directory (no trailing /)
 #   dto_patches_list       — kustomize patches list (empty [] is valid)
-#   dto_target_namespace   — kustomize builtin namespace transformer
+#   dto_target_namespace   — passed to helm template --namespace (for .Release.Namespace)
+#
+# Optional params:
+#   dto_kustomize_apply_namespace_transform — bool (default false). If true, kustomize
+#     `namespace:` builtin transformer is applied (rewrites metadata.namespace on every
+#     namespaced resource + subjects[].namespace in (Cluster)RoleBinding). Use ONLY for
+#     KUSTOMIZE_WRAPPER phases (argocd/install, mon-system/prometheus-operator) where
+#     pristine upstream YAML has hardcoded namespaces that need rebind to operator's
+#     target namespace. Do NOT use for LOCAL_CUSTOM phases — they have multi-namespace
+#     templates that would collapse into one namespace.
 #
 # Output: dto_kustomize_final_dir/templates/all.yaml + Chart.yaml
 # Caller then runs tasks-helm-upgrade-async.yaml (or helm upgrade directly)
 #   pointing at dto_kustomize_final_dir as the chart.
 # =============================================================================
+
+- name: "[{{ dto_label_name }}] Set defaults for optional params"
+  set_fact:
+    dto_kustomize_apply_namespace_transform: "{{ dto_kustomize_apply_namespace_transform | default(false) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
 
 - name: "[{{ dto_label_name }}] Assert all dto params are provided"
   assert:
@@ -47,6 +63,8 @@
       - dto_patches_list is sequence
       - dto_target_namespace is defined
       - dto_target_namespace | length > 0
+      - dto_kustomize_apply_namespace_transform is defined
+      - dto_kustomize_apply_namespace_transform is boolean
     fail_msg: >-
       tasks-helm-template-kustomize-build: all 8 params required:
       dto_label_name, dto_release_name, dto_chart_remote_dest, dto_values_file_path,
@@ -78,6 +96,9 @@
     dest: "{{ dto_kustomize_tmp_dir }}/kustomization.yaml"
     mode: "0644"
     content: |
+      {% if dto_kustomize_apply_namespace_transform %}
+      namespace: {{ dto_target_namespace }}
+      {% endif %}
       resources:
         - template-output.yaml
       patches: {{ dto_patches_list | to_json }}
