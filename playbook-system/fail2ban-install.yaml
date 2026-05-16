@@ -1,0 +1,80 @@
+# =============================================================================
+# Install and configure fail2ban on all nodes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/fail2ban-install.yaml --limit <host>
+# =============================================================================
+# - install fail2ban package via apt
+# - render /etc/fail2ban/jail.local from fail2ban_jail_local (inventory)
+# - enable + (re)start fail2ban service
+# =============================================================================
+
+---
+- name: Install and configure fail2ban
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    # Contract: fail2ban_jail_local must be defined and non-empty (single source of truth for config)
+    - name: Assert fail2ban_jail_local is defined and non-empty
+      assert:
+        that:
+          - fail2ban_jail_local is defined
+          - fail2ban_jail_local | length > 0
+        fail_msg: "fail2ban_jail_local must be defined in inventory (hosts-vars/ansible.yaml or override)"
+
+    - name: Install fail2ban package
+      apt:
+        name: fail2ban
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      register: fail2ban_apt_result
+
+    - name: Write /etc/fail2ban/jail.local
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: "{{ fail2ban_jail_local }}"
+        mode: '0644'
+        owner: root
+        group: root
+      register: fail2ban_jail_local_result
+
+    - name: Ensure fail2ban is enabled and running
+      systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+
+    - name: Restart fail2ban if package or config changed
+      systemd:
+        name: fail2ban
+        state: restarted
+      when: fail2ban_apt_result.changed or fail2ban_jail_local_result.changed
+
+    # ===== Verification =====
+    - name: Check fail2ban service is active
+      command: systemctl is-active fail2ban
+      register: fail2ban_active_check
+      changed_when: false
+
+    - name: Assert fail2ban is active
+      assert:
+        that:
+          - fail2ban_active_check.stdout | trim == 'active'
+        fail_msg: "fail2ban service is NOT active"
+        success_msg: "fail2ban: active"
+
+    - name: Get fail2ban-client status
+      command: fail2ban-client status
+      register: fail2ban_status
+      changed_when: false
+
+    - name: Print fail2ban status
+      debug:
+        var: fail2ban_status.stdout_lines
+
+    - name: Print final status
+      debug:
+        msg: "=== fail2ban Installation Complete ==="
