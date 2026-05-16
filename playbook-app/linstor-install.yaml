@@ -138,6 +138,16 @@
           - crd/linstorsatellites.piraeus.io
       tags: [install-operator]
 
+    - name: "[linstor-install-operator] Wait for OperatorControllerManager rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "linstor-install-operator"
+        dto_rollout_namespace: "{{ linstor_namespace }}"
+        dto_rollout_timeout: "{{ piraeus_operator_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/piraeus-operator-controller-manager
+      tags: [install-operator]
+
     # =========================================================================
     # STEP 3: install-cluster (LinstorCluster CRs + StorageClasses — external OCI chart)
     # =========================================================================
@@ -182,13 +192,18 @@
       vars:
         dto_label_name: "linstor-install-cluster"
         dto_rollout_namespace: "{{ linstor_namespace }}"
-        dto_rollout_timeout: "{{ linstor_rollout_timeout }}"
+        dto_rollout_timeout: "{{ linstor_cluster_rollout_timeout }}"
         dto_rollout_resources_list:
-          - deployment/linstor-controller
-          - deployment/linstor-csi-controller
-          - deployment/ha-controller
-          - deployment/affinity-controller
+          - deployment.apps/linstor-controller
+          - deployment.apps/linstor-csi-controller
+          - daemonset.apps/ha-controller
+          - deployment.apps/affinity-controller
+          - daemonset.apps/linstor-csi-nfs-server
+          - daemonset.apps/linstor-csi-node
           - daemonset/linstor-csi-node
+          # - daemonset.apps/linstor-satellite.k8s-manager-1
+          # - daemonset.apps/linstor-satellite.k8s-worker-1
+          # - daemonset.apps/linstor-satellite.k8s-worker-2
       tags: [install-cluster]
 
     # =========================================================================
