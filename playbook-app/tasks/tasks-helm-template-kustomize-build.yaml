@@ -37,13 +37,6 @@
 #   pointing at dto_kustomize_final_dir as the chart.
 # =============================================================================
 
-- name: "[{{ dto_label_name }}] Set defaults for optional params"
-  set_fact:
-    dto_kustomize_apply_namespace_transform: "{{ dto_kustomize_apply_namespace_transform | default(false) }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
 - name: "[{{ dto_label_name }}] Assert all dto params are provided"
   assert:
     that:
@@ -63,8 +56,6 @@
       - dto_patches_list is sequence
       - dto_target_namespace is defined
       - dto_target_namespace | length > 0
-      - dto_kustomize_apply_namespace_transform is defined
-      - dto_kustomize_apply_namespace_transform is boolean
     fail_msg: >-
       tasks-helm-template-kustomize-build: all 8 params required:
       dto_label_name, dto_release_name, dto_chart_remote_dest, dto_values_file_path,
@@ -96,7 +87,7 @@
     dest: "{{ dto_kustomize_tmp_dir }}/kustomization.yaml"
     mode: "0644"
     content: |
-      {% if dto_kustomize_apply_namespace_transform %}
+      {% if dto_kustomize_apply_namespace_transform | default(false) %}
       namespace: {{ dto_target_namespace }}
       {% endif %}
       resources:
