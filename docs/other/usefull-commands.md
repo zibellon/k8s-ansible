@@ -301,3 +301,6 @@ REVISION	UPDATED                 	STATUS         	CHART                   	APP V
 
 # првоерка статуса релиза
 `helm status teleport -n teleport`
+
+# Получить в yaml формате то, что helm реально применил в кластер
+`helm get manifest linstor-cluster -n piraeus-datastore`
