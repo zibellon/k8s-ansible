@@ -74,12 +74,14 @@ all:
           enabled: true
         nfsServer:
           enabled: true
-        # === Active cluster-wide DRBD sync rate tuning ===
-        # Namespace: DrbdOptions/PeerDevice (эмпирически проверено через
-        # `linstor controller drbd-options --c-*` + `list-properties`).
-        # Defaults слишком консервативны (c-min-rate=250 KB/s, c-fill-target=50 KiB).
-        # На VPS network эти tuned values дают ~120× ускорение sync.
+        # === Active cluster-wide DRBD properties (controller-level) ===
+        # Property keys verified через `linstor controller drbd-options --<flag>` на кластере.
+        # Defaults для sync rate слишком консервативны (c-min-rate=250 KB/s, c-fill-target=50 KiB);
+        # 2 из quorum-properties (on-no-quorum, auto-add-quorum-tiebreaker) уже задаются Piraeus
+        # operator'ом по умолчанию — фиксируем явно для защиты от изменения upstream-default'ов.
         properties:
+          # --- Sync rate tuning (DrbdOptions/PeerDevice) ---
+          # На VPS network эти tuned values дают ~120× ускорение sync.
           - name: DrbdOptions/PeerDevice/c-min-rate
             value: "10M"
           - name: DrbdOptions/PeerDevice/c-max-rate
@@ -88,6 +90,31 @@ all:
             value: "10M"
           - name: DrbdOptions/PeerDevice/c-plan-ahead
             value: "20"
+
+          # --- DRBD durability + split-brain protection ---
+          # End-to-end CRC за реплицируемый блок — защита от silent network bit-flip.
+          # crc32c — HW-accelerated, overhead <1%.
+          - name: DrbdOptions/Net/data-integrity-alg
+            value: "crc32c"
+
+          # Alg для on-demand scrubbing (`linstor resource verify <rd>`) — детектит bit rot.
+          - name: DrbdOptions/Net/verify-alg
+            value: "crc32c"
+
+          # Quorum policy — primary без quorum блокирует I/O (split-brain protection).
+          # КРИТИЧНО: без этого on-no-quorum: suspend-io не активен.
+          - name: DrbdOptions/Resource/quorum
+            value: "majority"
+
+          # Поведение при потере quorum — заморозить I/O, не возвращать I/O-error приложению.
+          # Piraeus default'ом задано `suspend-io`; фиксируем явно.
+          - name: DrbdOptions/Resource/on-no-quorum
+            value: "suspend-io"
+
+          # Авто-создание diskless tiebreaker для replica=2 RD (нужно для majority quorum математически).
+          # Piraeus default'ом задано `True`; фиксируем явно.
+          - name: DrbdOptions/auto-add-quorum-tiebreaker
+            value: "True"
 
       # === Encryption + TLS creation method (не используем) ===
       # linstorPassphrase: ""
