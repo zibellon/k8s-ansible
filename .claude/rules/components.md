@@ -197,7 +197,7 @@ Template fields:
 - **Releases.** `medik8s-pre`, `medik8s`, `medik8s-post`.
 - **Required vars.** `medik8s_namespace`, NHC (NodeHealthCheck) + SNR (Self-Node-Remediation) config.
 - **ESO integration.** No.
-- **Dependencies.** Cilium. Kernel module `softdog` enabled on nodes via `playbook-system/server-prepare.yaml` (blacklist-aware — uses a unit-service `modprobe` strategy rather than dropping a file in `/etc/modules-load.d/`).
+- **Dependencies.** Cilium. Kernel module `softdog` enabled on nodes via `playbook-system/node-prepare.yaml` (blacklist-aware — uses a unit-service `modprobe` strategy rather than dropping a file in `/etc/modules-load.d/`).
 - **Notes.** NodeHealthCheck operator + Self-Node-Remediation for hardware-failure auto-healing.
 
 ## 16. `metrics-server`
