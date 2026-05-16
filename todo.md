@@ -224,3 +224,19 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 - **Storage pools на LVM thinpool** — при появлении baremetal с extra disks переопределить `linstor_cluster_helm_values.linstorSatelliteConfigurations[*].storagePools` с `fileThinPool` на `lvmThinPool` + `source.hostDevices: [/dev/sdb]` (auto-pvcreate через operator). Имена pool'ов (`linstor-managers`/`linstor-workers`) остаются — SC переопределять не нужно. См. plan §"Out of scope" в `.claude/plans/teamlead-nested-volcano.md`.
 - **`LinstorNodeConnection` CR'ы для multi-NIC / cross-region** — `linstor_cluster_helm_values.linstorNodeConnections: []` сейчас пустой. Активировать когда понадобится DRBD replication через отдельный VLAN (`paths`) или разные DRBD protocols per node pair (`properties` с `DrbdOptions/Net/protocol: A` для cross-region).
 - **`monitoring.enabled: true` cross-namespace ingress** в `charts/linstor/pre/templates/network-policy.yaml` — когда `linstor_cluster_helm_values.monitoring.enabled: true` (уже так), Prometheus из `mon-system` должен иметь ingress к ServiceMonitor target'ам. Сейчас Prometheus scraping работает через intra-cluster pod IP routing — но если активируется strict NetworkPolicy enforcement, нужен explicit ingress rule.
+
+------
+
+## Migration notes — kustomize refactor (commits bae0aa8..0395f0b)
+
+**SUB-0a** (`tasks-helm-template-kustomize-build.yaml` создан): все LOCAL-managed chart phase'ы теперь используют unified flow — `helm template` → staging `-k-tmp/` → `kubectl kustomize` → output `-k/` → `helm install` из `-k/`. Старый `tasks-kustomize-build.yaml` удалён.
+
+**SUB-0a-fix** (commit 7e0c6d4): kustomize `namespace:` transformer удалён из flow — он ломал multi-namespace charts (переписывал `metadata.namespace` у ресурсов с явно заданным namespace). Namespace теперь подаётся исключительно через `helm template --namespace`.
+
+**SUB-10 SKIPPED**: medik8s не конвертировался — будет удалён отдельным SUB. Три фазы (pre/install/post) остаются на старом flow до удаления.
+
+**Переменная `argocd_kustomize_patches`** переименована в `argocd_install_kustomize_patches` (SUB-14). Companion `argocd_kustomize_patches_extra` удалён — оператор-side override заменяет base целиком (нет concat-semantics).
+
+**`mon_system_prometheus_operator_kustomize_patches_extra`** удалён (SUB-0b). Оператор-side override заменяет base целиком.
+
+**Extension point для всех компонентов**: `<c>_<phase>_kustomize_patches: []` (default пустой список = zero diff на первом deploy). NO `_extra` companion — оператор заменяет base целиком через `hosts-vars-override/`.

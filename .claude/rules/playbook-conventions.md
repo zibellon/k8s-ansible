@@ -87,7 +87,7 @@ This is a fundamental Ansible limitation, not a project choice. The single user 
 
 10.1 Use `tasks-copy-chart.yaml` — it archives, ships, and extracts. Faster and more reliable than `synchronize` for large charts.
 10.2 `chart_local_src` MUST end with `/` (trailing slash). `chart_remote_dest` MUST NOT end with `/`.
-10.3 `chart_name` MUST equal the Helm release name (used for the temp archive file name).
+10.3 `dto_chart_name` MUST equal the phase subdirectory name (`pre`, `post`, `install`, `cr`, `gitops`, `configure`, `postgresql`, `redis`, `minio`, etc.). It is used as the temp archive file name on the operator's machine (e.g. `/tmp/pre.tgz`), not as the Helm release name. Helm release name is composed separately in the helm command as `<c>-<phase>`.
 
 ## 11. Comment Banner (install playbook template)
 
@@ -198,23 +198,69 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 
 20.2 Tooling versions are pinned in `tests/Dockerfile`. If a playbook starts using a module from an Ansible collection that is not yet installed in the test image, add a `RUN ansible-galaxy collection install <ns>.<col>:<X.Y.Z>` line to `tests/Dockerfile` (with a pinned version), rebuild the image, and re-run `make test`. See [`testing.md`](testing.md) §7.
 
-## 21. Kustomize→Helm Pattern (для компонентов без upstream Helm chart)
+## 21. Unified Helm Template + Kustomize Pattern (все LOCAL-managed chart phase'ы)
 
-21.1 Применяется для компонентов, у которых официальная установка идёт **только** через `install.yaml` (без upstream Helm chart) — в проекте сейчас `argocd` и `prometheus-operator` (фаза внутри mon-system stack).
+21.1 Применяется ко **всем** LOCAL-managed chart phase'ам — 35 LOCAL_CUSTOM phase'ов + 2 KUSTOMIZE_WRAPPER phase'а через 15 компонентов. Единый flow, единый task.
 
-21.2 Структура local Helm chart:
-- `Chart.yaml` — стандартный.
-- `values.yaml` — `{}` (kustomize не использует Helm values; вся customization — в kustomize patches).
-- `templates/<name>.yaml` — pristine upstream `install.yaml` без Jinja-вставок (download from upstream as-is, никогда не модифицируется руками).
+21.2 Output structure для каждой phase на `master_manager_fact`:
 
-21.3 Customization выражается списком `<c>_kustomize_patches` (база — в `hosts-vars/<c>.yaml`) + `<c>_kustomize_patches_extra` (operator-side, default `[]`). Каждый элемент: `{target: {kind, name}, patch: |- <strategic merge YAML or JSON Patch RFC 6902>}`. Тип patch'а определяется kustomize'ом автоматически по содержимому. **`metadata.namespace` rebind не выражают через patches** — для этого передаётся `dto_target_namespace` в `tasks-kustomize-build.yaml` (builtin kustomize transformer добавляет `namespace:` field в формируемый `kustomization.yaml`, надёжно переписывает `metadata.namespace` всех namespaced ресурсов + `subjects[].namespace` в (Cluster)RoleBinding'ах). Strategic Merge Patch на `metadata.namespace` в kustomize v5 не работает (namespace — часть resource identifier).
+```
+{{ remote_charts_dir }}/<c>/<phase>/         # source — copied by tasks-copy-chart.yaml
+{{ remote_charts_dir }}/<c>/<phase>-k-tmp/   # staging: helm template output + kustomization.yaml
+{{ remote_charts_dir }}/<c>/<phase>-k/       # output: Chart.yaml + templates/all.yaml (helm install из этого)
+```
 
-21.4 Install-фаза в `<c>-install.yaml` использует reusable task `tasks-kustomize-build.yaml` (см. [`reusable-tasks.md`](reusable-tasks.md) §1.4б):
-- `tasks-copy-chart` копирует чарт на `master_manager_fact` (включая pristine `templates/<source>`).
-- `set_fact: <c>_kustomize_patches_merged = <c>_kustomize_patches + (<c>_kustomize_patches_extra | default([]))`.
-- `tasks-kustomize-build` рендерит `kustomization.yaml` в `/tmp/` (с обязательным полем `namespace: <dto_target_namespace>` сверху), запускает `kubectl kustomize`, перезаписывает результатом `templates/<source>` в скопированном чарте.
-- `tasks-helm-upgrade-async` (или эквивалент) — `helm upgrade --install` без `--values` (values.yaml пустой).
+Обе staging и output директории НЕ удаляются между runs — overwrite при re-run. Operator может инспектировать `-k-tmp/kustomization.yaml` и `-k/templates/all.yaml` для debug.
 
-21.5 Strategic merge поверх pristine: upstream defaults сохраняются автоматически. **Не копировать** upstream defaults в patches — это dead duplication. Только пользовательские customization'ы.
+21.3 Extension point: каждая phase имеет переменную `<c>_<phase>_kustomize_patches` (default `[]`) в `hosts-vars/<c>.yaml`. Без `_extra` companion — operator override полностью заменяет base (присваивание, не concat-merge). При `[]` kustomize output идентичен source chart — zero diff на production при первом выкате.
 
-21.6 Канонические примеры: `playbook-app/argocd-install.yaml` STEP 3 + `hosts-vars/argocd.yaml` `argocd_kustomize_patches` (см. также [`components.md`](components.md) §9 ArgoCD); `playbook-app/mon-system-install.yaml` STEP 3 (prometheus-operator phase) + `hosts-vars/mon-system.yaml` `mon_system_prometheus_operator_kustomize_patches` (см. также [`components.md`](components.md) §17 mon-system).
+Каждый элемент: `{target: {kind, name}, patch: |- <strategic merge YAML or JSON Patch RFC 6902>}`. Upstream defaults сохраняются автоматически — не копировать их в patches.
+
+21.4 Поток в `<c>-install.yaml` (одинаковый для LOCAL_CUSTOM и KUSTOMIZE_WRAPPER):
+
+```yaml
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+  vars:
+    dto_label_name: "<c>-install-<phase>"
+    dto_chart_name: "<phase>"
+    dto_chart_local_src: "{{ project_root }}/playbook-app/charts/<c>/<phase>/"
+    dto_chart_remote_dest: "{{ remote_charts_dir }}/<c>/<phase>"
+  tags: [<phase>]
+
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+  vars:
+    dto_label_name: "<c>-install-<phase>"
+    dto_dir: "{{ remote_charts_dir }}/<c>/<phase>"
+    dto_filename: "values-override.yaml"
+    dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"   # LOCAL_CUSTOM
+    # для KUSTOMIZE_WRAPPER: dto_content: "{}"
+  tags: [<phase>]
+
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+  vars:
+    dto_label_name: "<c>-install-<phase>"
+    dto_release_name: "<c>-<phase>"
+    dto_chart_remote_dest: "{{ remote_charts_dir }}/<c>/<phase>"
+    dto_values_file_path: "{{ remote_charts_dir }}/<c>/<phase>/values-override.yaml"
+    dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/<c>/<phase>-k-tmp"
+    dto_kustomize_final_dir: "{{ remote_charts_dir }}/<c>/<phase>-k"
+    dto_patches_list: "{{ <c>_<phase>_kustomize_patches }}"
+    dto_target_namespace: "{{ <c>_namespace }}"
+  tags: [<phase>]
+
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+  vars:
+    dto_label_name: "<c>-install-<phase>"
+    dto_helm_command: >
+      helm upgrade --install <c>-<phase> {{ remote_charts_dir }}/<c>/<phase>-k
+      --namespace {{ <c>_namespace }} --create-namespace
+      --cleanup-on-fail --atomic --wait --wait-for-jobs
+      --timeout {{ <c>_<phase>_helm_timeout }}
+  tags: [<phase>]
+```
+
+21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{}"` в `tasks-copy-helm-values.yaml`; `helm template --namespace` рендерит namespace context в ресурсы. Patches работают поверх rendered output.
+
+21.6 Канонические примеры:
+- LOCAL_CUSTOM: `playbook-app/cilium-install.yaml` STEP 1+3 (pre/post) + `hosts-vars/cilium.yaml` `cilium_pre_kustomize_patches`.
+- KUSTOMIZE_WRAPPER: `playbook-app/argocd-install.yaml` (install phase, `dto_content: "{}"`) + `hosts-vars/argocd.yaml` `argocd_install_kustomize_patches`. Также `playbook-app/mon-system-install.yaml` (prometheus-operator phase) + `hosts-vars/mon-system.yaml` `mon_system_prometheus_operator_kustomize_patches`. (см. [`components.md`](components.md) §9 ArgoCD и §17 mon-system).

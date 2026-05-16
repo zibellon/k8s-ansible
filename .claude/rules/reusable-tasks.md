@@ -59,15 +59,15 @@ General rules for callers:
 - **Idempotent.** Yes — `file: state=directory` and `copy` are both idempotent.
 - **Gotcha.** `dto_content` is evaluated at include-time in the caller's variable scope. Always pass the fully-rendered string (e.g., `"{{ my_helm_values | to_nice_yaml }}"`).
 
-### 1.4б `tasks-kustomize-build.yaml`
+### 1.4б `tasks-helm-template-kustomize-build.yaml`
 
-- **Purpose.** На `master_manager_fact`: построить kustomize output из pristine upstream + список patches, перезаписать output поверх pristine в чарте, очистить временный staging. Используется в install-фазе компонентов, идущих через kustomize→helm паттерн (см. [`playbook-conventions.md`](playbook-conventions.md) §21).
-- **Input.** `dto_label_name` (string), `dto_chart_remote_dest` (string — путь чарта на сервере, без `/`), `dto_source_filename` (string — имя файла в `templates/`, например `install.yaml`), `dto_patches_list` (sequence — merged patches: base + extra), `dto_target_namespace` (string — kustomize builtin `namespace:` transformer applied to the generated `kustomization.yaml`).
-- **Validates (assert).** All 5 dto-params defined + non-empty (per Rule 19, [`playbook-conventions.md`](playbook-conventions.md) §19). Tag `[always]`.
-- **Output.** Side effect: `<dto_chart_remote_dest>/templates/<dto_source_filename>` перезаписан kustomize-output. No facts exported.
-- **Internals.** `mktemp -d` staging; copy pristine → staging; render `kustomization.yaml` (`namespace: <dto_target_namespace>`, `resources: [<source>]`, `patches: <list>`) через `to_nice_yaml`; `kubectl kustomize` → перезапись `templates/<source>` в чарте; cleanup staging. `namespace:` — builtin kustomize transformer: переписывает `metadata.namespace` всех namespaced ресурсов и `subjects[].namespace` в (Cluster)RoleBinding'ах; cluster-scoped (ClusterRole, CRD) не трогает.
-- **Callers.** `playbook-app/argocd-install.yaml` STEP 3 (install phase). `playbook-app/mon-system-install.yaml` STEP 3 (prometheus-operator phase).
-- **Idempotent.** Да: при одинаковом patches списке kustomize output идентичен, helm release не меняется.
+- **Purpose.** На `master_manager_fact`: запустить `helm template` source chart → staging `<phase>-k-tmp/` → `kubectl kustomize` (with optional patches) → output `<phase>-k/templates/all.yaml`. Единый prepare-task для **всех** LOCAL-managed chart phase'ов (LOCAL_CUSTOM + KUSTOMIZE_WRAPPER). Helm install вызывает caller из `-k/` artifact. (см. [`playbook-conventions.md`](playbook-conventions.md) §21).
+- **Input.** `dto_label_name` (string), `dto_release_name` (string — helm release name, used for `helm template`), `dto_chart_remote_dest` (string — source chart path on master, без `/`), `dto_values_file_path` (string — path to values-override.yaml for `helm template --values`; for KUSTOMIZE_WRAPPER — file with `{}`), `dto_kustomize_tmp_dir` (string — staging directory `<phase>-k-tmp`, без `/`), `dto_kustomize_final_dir` (string — output directory `<phase>-k`, без `/`), `dto_patches_list` (sequence — kustomize patches; empty `[]` valid), `dto_target_namespace` (string — passed to `helm template --namespace` for namespace context in rendered resources).
+- **Validates (assert).** All 8 dto-params defined + non-empty (`dto_patches_list` — sequence; `[]` valid). Tag `[always]`.
+- **Output.** `dto_kustomize_final_dir/Chart.yaml` + `dto_kustomize_final_dir/templates/all.yaml`. No facts exported. Both staging and output dirs not cleaned between runs — overwritten on re-run.
+- **Internals.** 1) `file: state=directory dto_kustomize_tmp_dir`. 2) `shell: helm template <release> <source> --values <values_file> --namespace <namespace> > <tmp>/template-output.yaml`. 3) `copy: dest=<tmp>/kustomization.yaml` (renders `resources: [template-output.yaml]`, `patches: <list>` — namespace transformer intentionally NOT applied; multi-namespace charts depend on per-template namespace declarations rendered by helm template). 4) `file: state=directory <final>/templates`. 5) `copy: src=<source>/Chart.yaml dest=<final>/Chart.yaml remote_src=yes`. 6) `shell: kubectl kustomize <tmp> > <final>/templates/all.yaml`.
+- **Callers.** All 15 install playbooks for each LOCAL-managed phase: `cilium-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `vault-install.yaml`, `haproxy-install.yaml`, `traefik-install.yaml`, `longhorn-install.yaml`, `argocd-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `teleport-install.yaml`, `metrics-server-install.yaml`, `linstor-install.yaml`, `mon-system-install.yaml`.
+- **Idempotent.** Yes — всe 6 шагов overwrite-safe; детерминированный output при одинаковых inputs.
 
 ### 1.5 `tasks-add-helm-repo.yaml`
 
@@ -203,6 +203,16 @@ General rules for callers:
 - **Output.** Local file on each manager (0600, root:root).
 - **Callers.** `manager-join.yaml` (so new managers have unseal keys), `vault-install.yaml` post-phase.
 - **Idempotent.** Overwrites if secret changed.
+
+### 1.15a `tasks-wait-secret.yaml`
+
+- **Purpose.** Wait until a named K8s `Secret` exists in a given namespace. Typically called after `tasks-vault-put.yaml` / ESO force-sync to confirm ESO has materialized the secret before downstream tasks attempt to consume it.
+- **Input.** `dto_label_name` (string), `dto_wait_secret_name` (string — secret name), `dto_wait_secret_namespace` (string — namespace).
+- **Validates (assert).** All 3 params defined + non-empty. Tag `[always]`.
+- **Reads global var.** `secret_wait` (dict from `hosts-vars/k8s-base.yaml`: `secret_wait.retries`, `secret_wait.delay`) — controls the `until` loop. Not a caller-passed param.
+- **Output.** None — fails play if secret does not appear within the retry window.
+- **Callers.** `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `mon-system-install.yaml` (grafana phase), `argocd-install.yaml`.
+- **Idempotent.** Read-only wait (`changed_when: false`).
 
 ### 1.16 `tasks-helm-upgrade-async.yaml`
 
