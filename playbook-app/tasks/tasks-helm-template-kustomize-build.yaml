@@ -9,9 +9,22 @@
 #   1. Create staging dir  (dto_kustomize_tmp_dir)
 #   2. helm template       → dto_kustomize_tmp_dir/template-output.yaml
 #   3. Render kustomization.yaml in staging (patches + conditional `namespace:` field via dto_kustomize_apply_namespace_transform; default false — multi-namespace charts preserved)
-#   4. Create output dir   (dto_kustomize_final_dir/templates/)
+#   4. Create output templates dir   (dto_kustomize_final_dir/templates/)
 #   5. Copy Chart.yaml     → dto_kustomize_final_dir/Chart.yaml
-#   6. kubectl kustomize   → dto_kustomize_final_dir/templates/all.yaml
+#   6. Create output raw dir         (dto_kustomize_final_dir/raw/)
+#   7. kubectl kustomize   → dto_kustomize_final_dir/raw/all.yaml
+#   8. Write loader.yaml             → dto_kustomize_final_dir/templates/loader.yaml
+#                                      (single line: {{ .Files.Get "raw/all.yaml" }})
+#   9. Remove legacy dto_kustomize_final_dir/templates/all.yaml if present
+#                                      (migration cleanup; -k/ dirs are not purged between runs)
+#
+# Loader pattern rationale: helm install re-runs the Go template engine on every
+# file under templates/. Placing the rendered manifest in raw/ (not templates/)
+# bypasses the second template pass. templates/loader.yaml uses .Files.Get which
+# returns the file content as a string — NOT re-processed by the engine.
+# This preserves runtime template syntax verbatim in ConfigMap/Secret data:
+# Vector `{{ level }}`, ESO `{{ .access_key }}`, Prometheus alerts `{{ $value }}`,
+# Loki `{{ $labels.foo }}`, etc.
 #
 # Required params:
 #   dto_label_name         — task label prefix
@@ -32,7 +45,7 @@
 #     target namespace. Do NOT use for LOCAL_CUSTOM phases — they have multi-namespace
 #     templates that would collapse into one namespace.
 #
-# Output: dto_kustomize_final_dir/templates/all.yaml + Chart.yaml
+# Output: dto_kustomize_final_dir/{Chart.yaml, raw/all.yaml, templates/loader.yaml}
 # Caller then runs tasks-helm-upgrade-async.yaml (or helm upgrade directly)
 #   pointing at dto_kustomize_final_dir as the chart.
 # =============================================================================
@@ -118,9 +131,28 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] kubectl kustomize into output templates/all.yaml"
-  shell: "kubectl kustomize {{ dto_kustomize_tmp_dir }} > {{ dto_kustomize_final_dir }}/templates/all.yaml"
+- name: "[{{ dto_label_name }}] Create output raw dir"
+  file:
+    path: "{{ dto_kustomize_final_dir }}/raw"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] kubectl kustomize into output raw/all.yaml"
+  shell: "kubectl kustomize {{ dto_kustomize_tmp_dir }} > {{ dto_kustomize_final_dir }}/raw/all.yaml"
   changed_when: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Write templates/loader.yaml (single-line .Files.Get)"
+  copy:
+    dest: "{{ dto_kustomize_final_dir }}/templates/loader.yaml"
+    mode: "0644"
+    content: |
+      {% raw %}{{ .Files.Get "raw/all.yaml" }}{% endraw +%}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
