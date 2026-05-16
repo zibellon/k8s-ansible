@@ -309,6 +309,9 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 |---|---|---|
 | `remote_charts_dir` | `"/opt/helm-charts"` | Where charts are rsynced on the master manager |
 | `fail2ban_jail_local` | block-scalar (sshd-only baseline) | Полное содержимое `/etc/fail2ban/jail.local`; рендерится `playbook-system/fail2ban-install.yaml` на всех узлах |
+| `iperf3_port`, `iperf3_duration`, `iperf3_streams` | `5201` / `30` / `4` | Параметры iperf3 для `playbook-system/network-bandwidth-test.yaml` (порт server'а, длительность теста в секундах, параллельных streams) |
+| `fio_read_directory`, `fio_read_runtime`, `fio_read_size`, `fio_read_blocksize`, `fio_read_iodepth`, `fio_read_numjobs` | `"/mnt"` / `120` / `"1G"` / `"8k"` / `64` / `1` | Параметры random READ теста для `playbook-system/disk-io-test.yaml` |
+| `fio_write_directory`, `fio_write_runtime`, `fio_write_size`, `fio_write_blocksize`, `fio_write_iodepth`, `fio_write_numjobs` | `"/mnt"` / `120` / `"1G"` / `"8k"` / `64` / `1` | Параметры random WRITE теста для `playbook-system/disk-io-test.yaml` |
 
 ### 2.13 Bastion / SSH ProxyJump (optional)
 

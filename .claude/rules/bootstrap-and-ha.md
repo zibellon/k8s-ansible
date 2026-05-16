@@ -21,7 +21,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 
 ### 1.2 `node-install.yaml` (step 1)
 
-**Role.** Prepare a host for kubeadm join. Orchestrates twelve sub-plays, each idempotent.
+**Role.** Prepare a host for kubeadm join. Orchestrates thirteen sub-plays, each idempotent.
 
 | Step | Sub-play | What it does |
 |---|---|---|
@@ -32,11 +32,12 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 | 5 | `node-prepare.yaml` | Disable swap, load kernel modules (`br_netfilter`, `overlay`, `softdog`), sysctls (`net.ipv4.ip_forward`, `net.bridge.bridge-nf-call-*`, IPv6 counterparts), time sync. Blacklisted modules re-enabled via unit-service wrapping `modprobe` (survives reboots despite blacklists). |
 | 6 | `fail2ban-install.yaml` | Install `fail2ban` package via apt, render `/etc/fail2ban/jail.local` from `fail2ban_jail_local` (inventory), enable + (re)start service. Idempotent. |
 | 7 | `longhorn-prepare.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`) install via standard Ubuntu apt repos. Modules (`iscsi_tcp`, `dm_crypt`). |
-| 8 | `cilium-prepare.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
-| 9 | `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
-| 10 | `haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
-| 11 | `install-helm.yaml` | Managers only — install the `helm` binary via download (`helm_install_method: url`, default) or local tarball from `pkgs-sources/` (`helm_install_method: local_tarball`). Pre-check skips install if helm is already present. |
-| 12 | `install-k9s.yaml` | Managers only — install `k9s`. |
+| 8 | `linstor-prepare.yaml` | Install `linux-headers-$(uname -r)` via apt + `apt-mark hold` + verify `/lib/modules/$(uname -r)/build` symlink. Required by Piraeus operator kmod-loader (DRBD module built in-container at satellite init; only kernel-headers needed on host). |
+| 9 | `cilium-prepare.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
+| 10 | `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
+| 11 | `haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
+| 12 | `install-helm.yaml` | Managers only — install the `helm` binary via download (`helm_install_method: url`, default) or local tarball from `pkgs-sources/` (`helm_install_method: local_tarball`). Pre-check skips install if helm is already present. |
+| 13 | `install-k9s.yaml` | Managers only — install `k9s`. |
 
 **Pre-conditions.**
 
