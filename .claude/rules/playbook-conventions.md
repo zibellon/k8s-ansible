@@ -259,7 +259,7 @@ is guaranteed to be set when the task is called. For tasks that themselves set
   tags: [<phase>]
 ```
 
-21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{}"` в `tasks-copy-helm-values.yaml`; `helm template --namespace` рендерит namespace context в ресурсы. Patches работают поверх rendered output.
+21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{}"` в `tasks-copy-helm-values.yaml`; `helm template --namespace` устанавливает `.Release.Namespace` (для resources без explicit `metadata.namespace`). Resources с hardcoded `metadata.namespace` или `subjects[].namespace` в pristine YAML требуют opt-in kustomize transformer (см. §21.7). Patches работают поверх rendered output.
 
 21.6 Канонические примеры:
 - LOCAL_CUSTOM: `playbook-app/cilium-install.yaml` STEP 1+3 (pre/post) + `hosts-vars/cilium.yaml` `cilium_pre_kustomize_patches`.
