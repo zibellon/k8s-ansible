@@ -60,6 +60,9 @@ all:
             regex: "(^https://www.|^http://www.|^http://)(.+)"
             replacement: "https://${2}"
             permanent: true
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    traefik_pre_extra_objects: []
+
     # Pre-phase values (NetworkPolicies + ESO chart)
     # Примечание: eso.secrets — runtime-факт от tasks-eso-merge.yaml (tags: [always])
     # acmeSolverLabels — runtime-факт от tasks-resolve-acme-solver.yaml (tags: [always])
@@ -79,8 +82,11 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      extraObjects: "{{ traefik_pre_extra_objects }}"
     # Pre-phase kustomize patches (operator-side customization, default empty)
     traefik_pre_kustomize_patches: []
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    traefik_post_extra_objects: []
     # Post-phase values (Middlewares + Dashboard Ingress chart)
     traefik_post_helm_values:
       namespace: "{{ traefik_namespace }}"
@@ -100,6 +106,7 @@ all:
         vpnOnlyEnabled: "{{ traefik_dashboard_vpn_only_enabled }}"
         httpEnable: "{{ traefik_dashboard_ingress_http_enable }}"
         httpsEnable: "{{ traefik_dashboard_ingress_https_enable }}"
+      extraObjects: "{{ traefik_post_extra_objects }}"
     # Post-phase kustomize patches (operator-side customization, default empty)
     traefik_post_kustomize_patches: []
     # Helm chart values
