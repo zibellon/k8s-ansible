@@ -232,8 +232,8 @@ is guaranteed to be set when the task is called. For tasks that themselves set
     dto_label_name: "<c>-install-<phase>"
     dto_dir: "{{ remote_charts_dir }}/<c>/<phase>"
     dto_filename: "values-override.yaml"
-    dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"   # LOCAL_CUSTOM
-    # для KUSTOMIZE_WRAPPER: dto_content: "{}"
+    dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"
+    # Identical для LOCAL_CUSTOM и KUSTOMIZE_WRAPPER (см. §22.4 про minimum extraObjects wiring для WRAPPER)
   tags: [<phase>]
 
 - include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
@@ -259,11 +259,11 @@ is guaranteed to be set when the task is called. For tasks that themselves set
   tags: [<phase>]
 ```
 
-21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{}"` в `tasks-copy-helm-values.yaml`; `helm template --namespace` устанавливает `.Release.Namespace` (для resources без explicit `metadata.namespace`). Resources с hardcoded `metadata.namespace` или `subjects[].namespace` в pristine YAML требуют opt-in kustomize transformer (см. §21.7). Patches работают поверх rendered output.
+21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` в `tasks-copy-helm-values.yaml` — тот же синтаксис что и LOCAL_CUSTOM. В hosts-vars `<c>_<phase>_helm_values` dict содержит как минимум `extraObjects` wiring (см. §22.4 про унификацию). `helm template --namespace` устанавливает `.Release.Namespace` (для resources без explicit `metadata.namespace`). Resources с hardcoded `metadata.namespace` или `subjects[].namespace` в pristine YAML требуют opt-in kustomize transformer (см. §21.7). Patches работают поверх rendered output.
 
 21.6 Канонические примеры:
 - LOCAL_CUSTOM: `playbook-app/cilium-install.yaml` STEP 1+3 (pre/post) + `hosts-vars/cilium.yaml` `cilium_pre_kustomize_patches`.
-- KUSTOMIZE_WRAPPER: `playbook-app/argocd-install.yaml` (install phase, `dto_content: "{}"`) + `hosts-vars/argocd.yaml` `argocd_install_kustomize_patches`. Также `playbook-app/mon-system-install.yaml` (prometheus-operator phase) + `hosts-vars/mon-system.yaml` `mon_system_prometheus_operator_kustomize_patches`. (см. [`components.md`](components.md) §9 ArgoCD и §17 mon-system).
+- KUSTOMIZE_WRAPPER: `playbook-app/argocd-install.yaml` (install phase, `dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"`) + `hosts-vars/argocd.yaml` `argocd_install_kustomize_patches` (kustomize-стороны) + `argocd_install_helm_values` (минимум extraObjects wiring, см. §22.4). Также `playbook-app/mon-system-install.yaml` (prometheus-operator phase) + `hosts-vars/mon-system.yaml` `mon_system_prometheus_operator_kustomize_patches` + `mon_system_prometheus_operator_helm_values`. (см. [`components.md`](components.md) §9 ArgoCD и §17 mon-system).
 
 21.7 **Opt-in namespace transformer** (только для KUSTOMIZE_WRAPPER). По default `tasks-helm-template-kustomize-build.yaml` НЕ применяет kustomize `namespace:` builtin transformer — LOCAL_CUSTOM charts намеренно multi-namespace (cilium-pre NPs в `kube-system` + `traefik-lb`, gitlab-runner-pre NPs в `gitlab` namespace, и т.п.), transformer бы collapse'нул всё в один namespace и сломал cross-namespace rules.
 
