@@ -21,7 +21,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 
 ### 1.2 `node-install.yaml` (step 1)
 
-**Role.** Prepare a host for kubeadm join. Orchestrates thirteen sub-plays, each idempotent.
+**Role.** Prepare a host for kubeadm join. Orchestrates fourteen sub-plays, each idempotent.
 
 | Step | Sub-play | What it does |
 |---|---|---|
