@@ -182,8 +182,8 @@ Per-file source of truth in parentheses.
 | `node_monitor_grace_period` | `"30s"` | kube-controller-manager flag |
 | `node_drain_timeout` | `"10m"` | Default `kubectl drain --timeout` |
 | `softdog_timeout` | `30` | Watchdog (softdog) reboot timeout in seconds — used by medik8s |
-| `apt_additional_configs` | `[]` | List of ansible-managed apt files. Each entry: `{filePath, content}` where `filePath` is path under `/etc/apt/` (subdir + name, basename must start with `ansible-`; allowed subdirs: `sources.list.d/`, `apt.conf.d/`). Auto-cleanup: removing entry from variable deletes the file on next run |
-| `apt_preferences` | `[]` | List of ansible-managed apt pinning files in `/etc/apt/preferences.d/`. Each entry: `{name, content}` where `name` must start with `ansible-`. Auto-cleanup: same as `apt_additional_configs` |
+| `apt_additional_configs` | `[]` | List of ansible-managed apt files. Each entry: `{filePath, content}` where `filePath` is path under `/etc/apt/` (subdir + name, basename must start with `ansible-`; allowed subdirs: `sources.list.d/`, `apt.conf.d/`). Auto-cleanup: removing entry from variable deletes the file on next run. Implemented via `tasks-sync-managed-files.yaml` (one call per managed subdir). |
+| `apt_preferences` | `[]` | List of ansible-managed apt pinning files in `/etc/apt/preferences.d/`. Each entry: `{name, content}` where `name` must start with `ansible-`. Auto-cleanup: same as `apt_additional_configs`. Implemented via `tasks-sync-managed-files.yaml`. |
 | `crds_wait` | `{timeout: "60s", retries: 15, delay: 5}` | CRD wait config — used by `tasks-wait-crds.yaml` |
 | `secret_wait` | `{retries: 15, delay: 5}` | K8s Secret wait config — used by ESO sync tasks |
 | `rollout_wait` | `{retries: 15, delay: 5}` | Rollout wait config — used by `tasks-wait-rollout.yaml` |
@@ -309,7 +309,8 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | Variable | Default | Purpose |
 |---|---|---|
 | `remote_charts_dir` | `"/opt/helm-charts"` | Where charts are rsynced on the master manager |
-| `fail2ban_jail_local` | block-scalar (sshd-only baseline) | Полное содержимое `/etc/fail2ban/jail.local`; рендерится `playbook-system/fail2ban-install.yaml` на всех узлах |
+| `fail2ban_jail_d_files` | list-of-`{filename, content}` (defaults: `ansible-defaults.conf` с `[DEFAULT]` блоком + `ansible-sshd.conf` с `[sshd]` блоком) | Drop-in файлы в `/etc/fail2ban/jail.d/`. Filename ОБЯЗАН начинаться с `ansible-` (для auto-cleanup orphans). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/fail2ban-install.yaml` через `tasks-sync-managed-files.yaml`; legacy `/etc/fail2ban/jail.local` удаляется. |
+| `sshd_config_d_files` | list-of-`{filename, content}` (default: `ansible-hardening.conf` отключает password auth + KbdInteractive + EmptyPasswords) | Drop-in файлы в `/etc/ssh/sshd_config.d/`. Filename ОБЯЗАН начинаться с `ansible-` (для auto-cleanup orphans). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/sshd-configure.yaml` через `tasks-sync-managed-files.yaml`. Validation: `sshd -t` после write; reload (не restart) сохраняет существующую ansible-сессию. |
 | `iperf3_port`, `iperf3_duration`, `iperf3_streams` | `5201` / `30` / `4` | Параметры iperf3 для `playbook-system/network-bandwidth-test.yaml` (порт server'а, длительность теста в секундах, параллельных streams) |
 | `fio_read_directory`, `fio_read_runtime`, `fio_read_size`, `fio_read_blocksize`, `fio_read_iodepth`, `fio_read_numjobs` | `"/mnt"` / `120` / `"1G"` / `"8k"` / `64` / `1` | Параметры random READ теста для `playbook-system/disk-io-test.yaml` |
 | `fio_write_directory`, `fio_write_runtime`, `fio_write_size`, `fio_write_blocksize`, `fio_write_iodepth`, `fio_write_numjobs` | `"/mnt"` / `120` / `"1G"` / `"8k"` / `64` / `1` | Параметры random WRITE теста для `playbook-system/disk-io-test.yaml` |

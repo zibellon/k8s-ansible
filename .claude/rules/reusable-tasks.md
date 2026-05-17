@@ -335,7 +335,7 @@ General rules for callers:
 
 ---
 
-## 2. `playbook-system/tasks/` (20 tasks)
+## 2. `playbook-system/tasks/` (21 tasks)
 
 ### 2.1 Guard / preflight
 
@@ -487,6 +487,15 @@ General rules for callers:
 - **Output.** iperf3 server process on `dto_iperf3_port` killed; port free (verified via `wait_for state=stopped timeout=10`); log file removed.
 - **Callers.** `playbook-system/network-bandwidth-test.yaml` (Phase 5, `always:`).
 - **Idempotent.** Yes — `pkill` with rc=1 («no process matched») accepted via `failed_when: rc not in [0,1]`. Repeated stop is a no-op.
+
+### 2.8 `tasks-sync-managed-files.yaml`
+
+- **Purpose.** Reconcile contents of a `*/conf.d/`-style directory with an Ansible-managed desired-state list. Pattern: inventory = single source of truth, server state brought to match it. Phases: assert inputs → ensure target directory exists → find existing prefixed files → compute orphans (existing − expected) → delete orphans → write desired files → set output fact (bool, true on any change). Caller-supplied `dto_filename_prefix` gates orphan detection.
+- **Input.** `dto_label_name` (string, log prefix), `dto_target_dir` (string, absolute directory path), `dto_files_list` (sequence of `{filename, content}` items; empty list valid), `dto_filename_prefix` (string, prefix for managed files — e.g. `"ansible-"`), `dto_res_fact_changed` (string, name of output fact to set). Optional: `dto_file_mode` (default `'0644'`), `dto_file_owner` (default `'root'`), `dto_file_group` (default `'root'`).
+- **Validates (assert).** All 5 required `dto_*` params defined + non-empty. `dto_target_dir` starts with `/`. `dto_files_list` is sequence. Per-item: `filename` + `content` non-empty; `filename` starts with `dto_filename_prefix` and contains no `/`. Unique filenames in list. Tag `[always]`.
+- **Output.** Files in `dto_target_dir` matching `dto_files_list` (managed files written + orphans by `dto_filename_prefix` deleted). Output fact `{{ dto_res_fact_changed }}` set to `true` if any file was written or deleted, `false` otherwise.
+- **Callers.** `playbook-system/sshd-configure.yaml` (drop-ins in `/etc/ssh/sshd_config.d/`), `playbook-system/fail2ban-install.yaml` (drop-ins in `/etc/fail2ban/jail.d/`), `playbook-system/apt-configure.yaml` (three calls — `/etc/apt/sources.list.d/`, `/etc/apt/apt.conf.d/`, `/etc/apt/preferences.d/`).
+- **Idempotent.** Yes — on re-run with same `dto_files_list`, all `copy` and `file: state=absent` tasks are no-ops; output fact will be `false`.
 
 ---
 
