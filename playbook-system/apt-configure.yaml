@@ -15,6 +15,8 @@
 #
 # Default обоих переменных = [] → safe no-op на свежем сервере.
 #
+# Под капотом 3 вызова tasks-sync-managed-files.yaml (по одному на subdir).
+#
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/apt-configure.yaml
 #   ansible-playbook ... --limit <host>   (опционально, для одного узла)
@@ -27,7 +29,7 @@
   tasks:
 
     # =========================================================================
-    # PHASE 1: ASSERTS
+    # PHASE 1: ASSERTS (schema-specific — keep inline)
     # =========================================================================
 
     - name: "[apt-configure] Assert apt_additional_configs entries"
@@ -70,83 +72,80 @@
       tags: [always]
 
     # =========================================================================
-    # PHASE 2: FIND EXISTING ansible-* FILES
+    # PHASE 2: TRANSFORM INVENTORY SCHEMAS → PER-SUBDIR {filename, content} LISTS
     # =========================================================================
 
-    - name: "[apt-configure] Find existing ansible-* files in managed subdirs"
-      find:
-        paths:
-          - /etc/apt/sources.list.d
-          - /etc/apt/apt.conf.d
-          - /etc/apt/preferences.d
-        patterns: "ansible-*"
-        file_type: file
-      register: apt_existing_managed_files
-
-    # =========================================================================
-    # PHASE 3: COMPUTE ORPHANS (existing ∖ expected)
-    # =========================================================================
-
-    - name: "[apt-configure] Build expected file paths set"
+    - name: "[apt-configure] Initialize per-subdir file lists"
       set_fact:
-        apt_expected_paths: >-
-          {{
-            (apt_additional_configs | map(attribute='filePath')
-              | map('regex_replace', '^', '/etc/apt/') | list)
-            + (apt_preferences | map(attribute='name')
-              | map('regex_replace', '^', '/etc/apt/preferences.d/') | list)
-          }}
+        apt_sources_list_d_files: []
+        apt_conf_d_files: []
+        apt_preferences_d_files: []
 
-    - name: "[apt-configure] Compute orphan files (existing minus expected)"
+    - name: "[apt-configure] Build apt_sources_list_d_files from apt_additional_configs"
       set_fact:
-        apt_orphan_paths: >-
-          {{
-            apt_existing_managed_files.files
-              | map(attribute='path') | list
-              | difference(apt_expected_paths)
-          }}
-
-    # =========================================================================
-    # PHASE 4: DELETE ORPHANS
-    # =========================================================================
-
-    - name: "[apt-configure] Delete orphan ansible-* files"
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop: "{{ apt_orphan_paths }}"
-      register: apt_orphans_deleted
-
-    # =========================================================================
-    # PHASE 5: WRITE/UPDATE CURRENT FILES
-    # =========================================================================
-
-    - name: "[apt-configure] Write apt_additional_configs files"
-      copy:
-        dest: "/etc/apt/{{ item.filePath }}"
-        content: "{{ item.content }}"
-        mode: '0644'
+        apt_sources_list_d_files: >-
+          {{ apt_sources_list_d_files + [{
+               'filename': item.filePath | regex_replace('^sources\\.list\\.d/', ''),
+               'content': item.content
+             }] }}
       loop: "{{ apt_additional_configs }}"
-      when: apt_additional_configs | length > 0
-      register: apt_configs_write_result
+      when: item.filePath.startswith('sources.list.d/')
 
-    - name: "[apt-configure] Write apt_preferences files"
-      copy:
-        dest: "/etc/apt/preferences.d/{{ item.name }}"
-        content: "{{ item.content }}"
-        mode: '0644'
+    - name: "[apt-configure] Build apt_conf_d_files from apt_additional_configs"
+      set_fact:
+        apt_conf_d_files: >-
+          {{ apt_conf_d_files + [{
+               'filename': item.filePath | regex_replace('^apt\\.conf\\.d/', ''),
+               'content': item.content
+             }] }}
+      loop: "{{ apt_additional_configs }}"
+      when: item.filePath.startswith('apt.conf.d/')
+
+    - name: "[apt-configure] Build apt_preferences_d_files from apt_preferences"
+      set_fact:
+        apt_preferences_d_files: >-
+          {{ apt_preferences_d_files + [{
+               'filename': item.name,
+               'content': item.content
+             }] }}
       loop: "{{ apt_preferences }}"
-      when: apt_preferences | length > 0
-      register: apt_prefs_write_result
 
     # =========================================================================
-    # PHASE 6: REFRESH APT CACHE (only if anything changed)
+    # PHASE 3: SYNC EACH MANAGED DIRECTORY
+    # =========================================================================
+
+    - name: "[apt-configure] Sync /etc/apt/sources.list.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "apt-configure-sources"
+        dto_target_dir: "/etc/apt/sources.list.d"
+        dto_files_list: "{{ apt_sources_list_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "apt_sources_changed"
+
+    - name: "[apt-configure] Sync /etc/apt/apt.conf.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "apt-configure-conf"
+        dto_target_dir: "/etc/apt/apt.conf.d"
+        dto_files_list: "{{ apt_conf_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "apt_conf_d_changed"
+
+    - name: "[apt-configure] Sync /etc/apt/preferences.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "apt-configure-preferences"
+        dto_target_dir: "/etc/apt/preferences.d"
+        dto_files_list: "{{ apt_preferences_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "apt_prefs_changed"
+
+    # =========================================================================
+    # PHASE 4: REFRESH APT CACHE (only if anything changed)
     # =========================================================================
 
     - name: "[apt-configure] Update apt cache"
       apt:
         update_cache: true
-      when: >-
-        (apt_configs_write_result is defined and apt_configs_write_result.changed)
-        or (apt_prefs_write_result is defined and apt_prefs_write_result.changed)
-        or (apt_orphans_deleted is defined and apt_orphans_deleted.changed)
+      when: apt_sources_changed or apt_conf_d_changed or apt_prefs_changed
