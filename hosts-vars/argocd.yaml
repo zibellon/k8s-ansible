@@ -62,8 +62,16 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      extraObjects: "{{ argocd_pre_extra_objects }}"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    argocd_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
     argocd_pre_kustomize_patches: []
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    argocd_install_extra_objects: []
+    # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
+    argocd_install_helm_values:
+      extraObjects: "{{ argocd_install_extra_objects }}"
     # Install-phase kustomize patches (operator-side customization for ArgoCD pristine upstream install.yaml)
     argocd_install_kustomize_patches:
       - target:
@@ -121,12 +129,18 @@ all:
         interval: "30s"
         scrapeTimeout: "15s"
         labels: {}
+      extraObjects: "{{ argocd_post_extra_objects }}"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    argocd_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
     argocd_post_kustomize_patches: []
     # GitOps-phase values (AppProject + Applications chart)
     argocd_gitops_helm_values:
       namespace: "{{ argocd_namespace }}"
       gitOpsApps: "{{ argocd_git_ops_apps }}"
+      extraObjects: "{{ argocd_gitops_extra_objects }}"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    argocd_gitops_extra_objects: []
     # GitOps-phase kustomize patches (operator-side customization, default empty)
     argocd_gitops_kustomize_patches: []
     # -------
