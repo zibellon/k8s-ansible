@@ -33,6 +33,7 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | `_daemonset_rollout_timeout` | Same, for DaemonSet workloads | `"180s"` |
 | `_helm_values` | Full inline values dict (often large) | `dict` |
 | `_kustomize_patches` | Per-phase kustomize patches applied to all LOCAL-managed chart phases before helm install (see [`reusable-tasks.md`](reusable-tasks.md) §1.4б `tasks-helm-template-kustomize-build.yaml`, [`playbook-conventions.md`](playbook-conventions.md) §21). Each item: `{target: {kind, name}, patch: \|- ...}`. Default `[]`. Operator override replaces base (no concat-merge — no `_extra` companion). | `list` of dicts |
+| `_extra_objects` | Per-phase list of arbitrary K8s manifests appended via `templates/extra-objects.yaml` (operator-side, default `[]`). Operator override полностью заменяет base (нет `_extra` companion). См. [`playbook-conventions.md`](playbook-conventions.md) §22. | `list` of K8s manifest dicts |
 
 ### 1.2 Ingress & TLS suffixes
 

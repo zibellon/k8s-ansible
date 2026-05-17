@@ -288,3 +288,82 @@ Kustomize transformer переписывает:
 Cluster-scoped ресурсы (ClusterRole, CRD, и т.п.) не трогает. Cross-namespace references в data fields ConfigMap/Secret (например hardcoded DNS `<ns>.svc.cluster.local`) и в CR от CRD — **не** переписываются.
 
 **Monitoring при upstream bumps:** после `helm template ... | kubectl kustomize` для KUSTOMIZE_WRAPPER chart'а — `grep "<old-namespace>"` на rendered output. Должны остаться только labels (`app.kubernetes.io/part-of`) и names (`name: argocd-cm`), не namespace declarations или DNS substrings. Если grep ловит unexpected occurrences — upstream добавил resource kind kustomize не handles или hardcoded DNS в data field — нужен manual JSON Patch в `<c>_<phase>_kustomize_patches`.
+
+## 22. Extra Objects Extension Pattern
+
+22.1 Применяется ко **всем** LOCAL-managed chart phase subdirs — 43 phase subdirs через 15 components. Унифицированный operator-side extension point для добавления произвольных K8s объектов (Service, Ingress, ConfigMap, NetworkPolicy, и т.д.) без правки chart template'ов. Дополняет существующий `<c>_<phase>_kustomize_patches` (который только modifies/deletes existing resources; адд новых через kustomize невозможен).
+
+22.2 На каждый phase subdir — 3 артефакта:
+
+(a) **Template** `playbook-app/charts/<c>/<phase>/templates/extra-objects.yaml` — canonical content, byte-identical во всех 43 файлах:
+
+```yaml
+{{- if .Values.extraObjects }}
+{{- range .Values.extraObjects }}
+---
+{{ tpl (toYaml .) $ }}
+{{- end }}
+{{- end }}
+```
+
+(b) **Chart values default** `playbook-app/charts/<c>/<phase>/values.yaml` — в конце файла:
+
+```yaml
+# Custom K8s objects to render (operator-side, default empty)
+extraObjects: []
+```
+
+(c) **Inventory variable** `hosts-vars/<c>.yaml`:
+
+```yaml
+# extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+<c>_<phase>_extra_objects: []
+```
+
+С прокидыванием в `<c>_<phase>_helm_values` dict:
+
+```yaml
+<c>_<phase>_helm_values:
+  ...existing keys...
+  extraObjects: "{{ <c>_<phase>_extra_objects }}"
+```
+
+22.3 **Никаких playbook-правок** при добавлении extraObjects к **обычным** phases — playbook уже прокидывает `<c>_<phase>_helm_values | to_nice_yaml` через `tasks-copy-helm-values.yaml`. После добавления `extraObjects` в helm_values dict оно автоматически попадает в `values-override.yaml`.
+
+22.4 **KUSTOMIZE_WRAPPER phases** (`argocd/install`, `mon-system/prometheus-operator`) изначально прокидывали `dto_content: "{}"` (пустой dict, т.к. values не использовались — pristine upstream YAML). Унифицированы под общий pattern:
+
+- В `hosts-vars/<c>.yaml` создан стандартный `<c>_<phase>_helm_values` dict (содержит только `extraObjects` wiring).
+- В playbook'е `dto_content: "{}"` заменён на `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` — тот же синтаксис что и во всех остальных phases.
+
+После унификации pattern в playbook'е **идентичен** для всех 43 phase subdirs — никаких различий между KUSTOMIZE_WRAPPER и обычными phases.
+
+22.5 **Override через `hosts-vars-override/<c>.yaml`** — operator замена `<c>_<phase>_extra_objects` на список K8s manifests:
+
+```yaml
+<c>_<phase>_extra_objects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: my-custom-cm
+      namespace: "{{ <c>_namespace }}"
+    data:
+      hello: world
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: my-custom-np
+    spec:
+      ...
+```
+
+Каждый item — полная K8s manifest map. Helm template `tpl (toYaml .) $` рендерит каждый item с поддержкой Jinja-вставок (через `tpl`) — operator может ссылаться на values chart'а (`{{ .Values.namespace }}` и т.п.).
+
+22.6 **Out of scope** для extraObjects pattern:
+- `playbook-app/charts/longhorn-s3-restore/` (flat chart без phase subdirs, DR helper).
+- `playbook-app/charts/traefik/install/` (upstream Helm chart `traefik/traefik` — extraObjects уже поддерживается upstream'ом через `traefik_helm_values.extraObjects`, см. `hosts-vars/traefik.yaml`).
+- Все остальные upstream install phases (cilium/install, cert-manager/install, vault/install bank-vaults operator, и т.д.) — мы не авторим эти charts. Если upstream chart поддерживает `.Values.extraObjects` — можно прокинуть через `<c>_helm_values.extraObjects` точечно (как сделано в traefik), но это не часть унифицированного pattern.
+
+22.7 Канонические примеры:
+- Обычная phase: [`hosts-vars/cilium.yaml`](../../hosts-vars/cilium.yaml) (`cilium_pre_extra_objects`, `cilium_post_extra_objects` + wiring в `cilium_pre_helm_values.extraObjects` / `cilium_post_helm_values.extraObjects`).
+- KUSTOMIZE_WRAPPER: [`hosts-vars/argocd.yaml`](../../hosts-vars/argocd.yaml) (`argocd_install_helm_values` — мини-dict с одним key `extraObjects`) + [`playbook-app/argocd-install.yaml`](../../playbook-app/argocd-install.yaml) (install phase: `dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"`).
+
