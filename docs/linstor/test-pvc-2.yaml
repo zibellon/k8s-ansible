@@ -1,0 +1,53 @@
+# Test 2a: SC указывает только linstor-managers pool — replica только на manager.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: test-managers-only
+provisioner: linstor.csi.linbit.com
+parameters:
+  linstor.csi.linbit.com/autoPlace: "1"
+  linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
+  linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+  csi.storage.k8s.io/fstype: "ext4"
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+---
+# Test 2b: SC указывает только linstor-workers pool — replica только на worker.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: test-workers-only
+provisioner: linstor.csi.linbit.com
+parameters:
+  linstor.csi.linbit.com/autoPlace: "1"
+  linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker"
+  linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+  csi.storage.k8s.io/fstype: "ext4"
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc-managers
+  namespace: default
+spec:
+  storageClassName: test-managers-only
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc-workers
+  namespace: default
+spec:
+  storageClassName: test-workers-only
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi

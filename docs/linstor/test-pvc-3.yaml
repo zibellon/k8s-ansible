@@ -1,0 +1,25 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: test-multi-pool
+provisioner: linstor.csi.linbit.com
+parameters:
+  linstor.csi.linbit.com/autoPlace: "2"
+  linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker"
+  linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+  csi.storage.k8s.io/fstype: "ext4"
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc-multi
+  namespace: default
+spec:
+  storageClassName: test-multi-pool
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
