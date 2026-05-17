@@ -1,0 +1,125 @@
+---
+# =============================================================================
+# tasks-sync-managed-files.yaml
+# =============================================================================
+# Sync contents of a `*/conf.d/`-style directory with an Ansible-managed
+# desired-state list. Pattern: inventory = single source of truth, server state
+# is reconciled to match it.
+#
+# Logic (phases):
+#   1. Assert all dto_* params + per-item shape.
+#   2. Ensure target directory exists.
+#   3. Find existing files with the prefix.
+#   4. Compute orphans (existing − expected).
+#   5. Delete orphans.
+#   6. Write desired files.
+#   7. Set output fact (bool, true if anything was written or deleted).
+#
+# Required dto_* params:
+#   dto_label_name        — log prefix (string, non-empty)
+#   dto_target_dir        — absolute directory path (must start with '/')
+#   dto_files_list        — list of {filename, content}; empty list valid
+#   dto_filename_prefix   — prefix for managed files (e.g. "ansible-")
+#   dto_res_fact_changed  — name of output fact (string — name; the fact is bool)
+#
+# Optional dto_* params:
+#   dto_file_mode    — default '0644'
+#   dto_file_owner   — default 'root'
+#   dto_file_group   — default 'root'
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert sync-managed-files inputs"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_target_dir is defined
+      - dto_target_dir | length > 0
+      - dto_target_dir.startswith('/')
+      - dto_files_list is defined
+      - dto_files_list is sequence
+      - dto_filename_prefix is defined
+      - dto_filename_prefix | length > 0
+      - dto_res_fact_changed is defined
+      - dto_res_fact_changed | length > 0
+    fail_msg: "tasks-sync-managed-files: required dto_* params missing or invalid"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert per-item shape (filename + content + prefix)"
+  assert:
+    that:
+      - item.filename is defined
+      - item.filename | length > 0
+      - item.filename.startswith(dto_filename_prefix)
+      - "'/' not in item.filename"
+      - item.content is defined
+      - item.content | length > 0
+    fail_msg: >-
+      tasks-sync-managed-files[{{ dto_label_name }}]: item #{{ ansible_loop.index0 }}
+      must have non-empty filename + content; filename must start with
+      '{{ dto_filename_prefix }}' and contain no '/'
+  loop: "{{ dto_files_list }}"
+  loop_control:
+    extended: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert unique filenames"
+  assert:
+    that:
+      - dto_files_list | map(attribute='filename') | list | unique | length == dto_files_list | length
+    fail_msg: "tasks-sync-managed-files[{{ dto_label_name }}]: duplicate filenames in dto_files_list"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Ensure target directory exists"
+  file:
+    path: "{{ dto_target_dir }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: "[{{ dto_label_name }}] Find existing managed files"
+  find:
+    paths: "{{ dto_target_dir }}"
+    patterns: "{{ dto_filename_prefix }}*"
+    file_type: file
+  register: sync_existing_files
+
+- name: "[{{ dto_label_name }}] Compute expected file paths"
+  set_fact:
+    sync_expected_paths: >-
+      {{ dto_files_list
+         | map(attribute='filename')
+         | map('regex_replace', '^', dto_target_dir ~ '/')
+         | list }}
+
+- name: "[{{ dto_label_name }}] Compute orphan paths"
+  set_fact:
+    sync_orphan_paths: >-
+      {{ sync_existing_files.files
+         | map(attribute='path')
+         | list
+         | difference(sync_expected_paths) }}
+
+- name: "[{{ dto_label_name }}] Delete orphan files"
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ sync_orphan_paths }}"
+  register: sync_orphans_deleted
+
+- name: "[{{ dto_label_name }}] Write managed files"
+  copy:
+    dest: "{{ dto_target_dir }}/{{ item.filename }}"
+    content: "{{ item.content }}"
+    mode: "{{ dto_file_mode | default('0644') }}"
+    owner: "{{ dto_file_owner | default('root') }}"
+    group: "{{ dto_file_group | default('root') }}"
+  loop: "{{ dto_files_list }}"
+  register: sync_files_written
+
+- name: "[{{ dto_label_name }}] Set output changed fact"
+  set_fact:
+    "{{ dto_res_fact_changed }}": >-
+      {{ (sync_orphans_deleted is defined and sync_orphans_deleted.changed)
+         or (sync_files_written is defined and sync_files_written.changed) }}
