@@ -33,6 +33,10 @@ all:
     # Each entry creates one AppProject + one or more Applications in ArgoCD
     # Пример и переопределение — в hosts-vars-override/argocd.yaml
     argocd_git_ops_apps: []
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    argocd_pre_extra_objects: []
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    argocd_pre_kustomize_patches: []
     # Pre-phase values (ESO + NetworkPolicies chart)
     # eso_vault_integration_argocd_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
     # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
@@ -63,15 +67,10 @@ all:
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
       extraObjects: "{{ argocd_pre_extra_objects }}"
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    argocd_pre_extra_objects: []
-    # Pre-phase kustomize patches (operator-side customization, default empty)
-    argocd_pre_kustomize_patches: []
+    # ---
+    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_install_extra_objects: []
-    # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
-    argocd_install_helm_values:
-      extraObjects: "{{ argocd_install_extra_objects }}"
     # Install-phase kustomize patches (operator-side customization for ArgoCD pristine upstream install.yaml)
     argocd_install_kustomize_patches:
       - target:
@@ -105,6 +104,15 @@ all:
             name: argocd-cmd-params-cm
           data:
             server.insecure: "true"
+    # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
+    argocd_install_helm_values:
+      extraObjects: "{{ argocd_install_extra_objects }}"
+    # ---
+    # ---
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    argocd_post_extra_objects: []
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    argocd_post_kustomize_patches: []
     # Post-phase values (Ingress + ServiceMonitor chart)
     argocd_post_helm_values:
       namespace: "{{ argocd_namespace }}"
@@ -130,19 +138,17 @@ all:
         scrapeTimeout: "15s"
         labels: {}
       extraObjects: "{{ argocd_post_extra_objects }}"
+    # ---
+    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    argocd_post_extra_objects: []
-    # Post-phase kustomize patches (operator-side customization, default empty)
-    argocd_post_kustomize_patches: []
+    argocd_gitops_extra_objects: []
+    # GitOps-phase kustomize patches (operator-side customization, default empty)
+    argocd_gitops_kustomize_patches: []
     # GitOps-phase values (AppProject + Applications chart)
     argocd_gitops_helm_values:
       namespace: "{{ argocd_namespace }}"
       gitOpsApps: "{{ argocd_git_ops_apps }}"
       extraObjects: "{{ argocd_gitops_extra_objects }}"
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    argocd_gitops_extra_objects: []
-    # GitOps-phase kustomize patches (operator-side customization, default empty)
-    argocd_gitops_kustomize_patches: []
     # -------
     # Secret name lookups — used by tasks-eso-lookup.yaml in argocd-configure.yaml
     # Values must match external_secret_name of corresponding eso_vault_integration_argocd_secrets entry

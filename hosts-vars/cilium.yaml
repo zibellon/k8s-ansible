@@ -21,7 +21,23 @@ all:
     cilium_post_helm_timeout: "2m"
     # Rollout timeout
     cilium_rollout_timeout: "300s"
-
+    # ---
+    # ---
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    cilium_pre_extra_objects: []
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    cilium_pre_kustomize_patches: []
+    # Pre-phase values (NetworkPolicies chart)
+    # acme_pod_labels_result_fact - create in playbook runtime
+    cilium_pre_helm_values:
+      namespace: "{{ cilium_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      extraObjects: "{{ cilium_pre_extra_objects }}"
+    # ---
+    # ---
     # Helm chart values
     cilium_helm_values:
       operator:
@@ -128,21 +144,8 @@ all:
         range: "{{ node_port_start }},{{ node_port_end }}"
       hostFirewall:
         enabled: true
-
-    # Pre-phase values (NetworkPolicies chart)
-    # acme_pod_labels_result_fact - create in playbook runtime
-    cilium_pre_helm_values:
-      namespace: "{{ cilium_namespace }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        instanceName: "traefik-{{ traefik_namespace }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
-      extraObjects: "{{ cilium_pre_extra_objects }}"
-    # Pre-phase kustomize patches (operator-side customization, default empty)
-    cilium_pre_kustomize_patches: []
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    cilium_pre_extra_objects: []
-
+    # ---
+    # ---
     # Post-phase node IPs — built at playbook-time from inventory (groups/hostvars available then)
     cilium_post_node_ips_list: >-
       {{ ((groups['managers'] + groups['workers'])
@@ -154,6 +157,10 @@ all:
             | map('regex_replace', '$', '/32')
             | list) }}
 
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    cilium_post_extra_objects: []
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    cilium_post_kustomize_patches: []
     # Post-phase values (CiliumClusterwideNetworkPolicy + Hubble UI ingress)
     cilium_post_helm_values:
       namespace: "{{ cilium_namespace }}"
@@ -173,7 +180,3 @@ all:
           web: "{{ traefik_web_entrypoint }}"
           websecure: "{{ traefik_websecure_entrypoint }}"
       extraObjects: "{{ cilium_post_extra_objects }}"
-    # Post-phase kustomize patches (operator-side customization, default empty)
-    cilium_post_kustomize_patches: []
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    cilium_post_extra_objects: []

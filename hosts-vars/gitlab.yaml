@@ -74,6 +74,12 @@ all:
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lnstr-major-local"
 
+    # ---
+    # ---
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    gitlab_pre_extra_objects: []
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    gitlab_pre_kustomize_patches: []
     # Pre-phase values (ESO Resources + NetworkPolicies chart)
     # eso_vault_integration_gitlab_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
     # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
@@ -110,10 +116,12 @@ all:
         s3PathStyle: "{{ gitlab_minio_s3_path_style }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
       extraObjects: "{{ gitlab_pre_extra_objects }}"
+    # ---
+    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    gitlab_pre_extra_objects: []
-    # Pre-phase kustomize patches (operator-side customization, default empty)
-    gitlab_pre_kustomize_patches: []
+    gitlab_postgresql_extra_objects: []
+    # Postgresql-phase kustomize patches (operator-side customization, default empty)
+    gitlab_postgresql_kustomize_patches: []
     # PostgreSQL sub-release values
     # _local_gitlab_secret_name_postgresql_creds — runtime-факт от set_fact [always] в playbook
     gitlab_postgresql_helm_values:
@@ -123,10 +131,12 @@ all:
       storageSize: "{{ gitlab_postgresql_storage_size }}"
       credentialsSecretName: "{{ _local_gitlab_secret_name_postgresql_creds }}"
       extraObjects: "{{ gitlab_postgresql_extra_objects }}"
+    # ---
+    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    gitlab_postgresql_extra_objects: []
-    # Postgresql-phase kustomize patches (operator-side customization, default empty)
-    gitlab_postgresql_kustomize_patches: []
+    gitlab_redis_extra_objects: []
+    # Redis-phase kustomize patches (operator-side customization, default empty)
+    gitlab_redis_kustomize_patches: []
     # Redis sub-release values
     # _local_gitlab_secret_name_redis_creds — runtime-факт от set_fact [always] в playbook
     gitlab_redis_helm_values:
@@ -136,10 +146,12 @@ all:
       storageClass: "{{ gitlab_redis_storage_class }}"
       storageSize: "{{ gitlab_redis_storage_size }}"
       extraObjects: "{{ gitlab_redis_extra_objects }}"
+    # ---
+    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    gitlab_redis_extra_objects: []
-    # Redis-phase kustomize patches (operator-side customization, default empty)
-    gitlab_redis_kustomize_patches: []
+    gitlab_minio_extra_objects: []
+    # Minio-phase kustomize patches (operator-side customization, default empty)
+    gitlab_minio_kustomize_patches: []
     # MinIO sub-release values
     # _local_gitlab_secret_name_minio_root_creds — runtime-факт от set_fact [always] в playbook
     gitlab_minio_helm_values:
@@ -149,51 +161,8 @@ all:
       storageSize: "{{ gitlab_minio_storage_size }}"
       rootSecretName: "{{ _local_gitlab_secret_name_minio_root_creds }}"
       extraObjects: "{{ gitlab_minio_extra_objects }}"
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    gitlab_minio_extra_objects: []
-    # Minio-phase kustomize patches (operator-side customization, default empty)
-    gitlab_minio_kustomize_patches: []
-    # Post-phase values (Ingress chart)
-    gitlab_post_helm_values:
-      namespace: "{{ gitlab_namespace }}"
-      sshPortExternal: "{{ gitlab_ssh_port_external }}"
-      gitlab:
-        ingressClass: "{{ gitlab_ingress_class_name }}"
-        domain: "{{ gitlab_ui_domain }}"
-        registryDomain: "{{ gitlab_registry_domain }}"
-        pagesDomain: "{{ gitlab_pages_domain }}"
-        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
-        uiSecretName: "{{ gitlab_ui_https_secret_name }}"
-        registrySecretName: "{{ gitlab_registry_https_secret_name }}"
-        pagesSecretName: "{{ gitlab_pages_https_secret_name }}"
-        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
-        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-        httpEnable: "{{ gitlab_ingress_http_enable }}"
-        httpsEnable: "{{ gitlab_ingress_https_enable }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        entryPoints:
-          web: "{{ traefik_web_entrypoint }}"
-          websecure: "{{ traefik_websecure_entrypoint }}"
-      minio:
-        ingressClass: "{{ gitlab_ingress_class_name }}"
-        consoleDomain: "{{ gitlab_minio_console_domain }}"
-        apiDomain: "{{ gitlab_minio_api_domain }}"
-        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
-        consoleSecretName: "{{ gitlab_minio_console_https_secret_name }}"
-        apiSecretName: "{{ gitlab_minio_api_https_secret_name }}"
-        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
-        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-        httpEnable: "{{ gitlab_minio_ingress_http_enable }}"
-        httpsEnable: "{{ gitlab_minio_ingress_https_enable }}"
-      haproxy:
-        namespace: "{{ haproxy_namespace }}"
-        ingressClass: "{{ haproxy_ingress_class }}"
-      extraObjects: "{{ gitlab_post_extra_objects }}"
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    gitlab_post_extra_objects: []
-    # Post-phase kustomize patches (operator-side customization, default empty)
-    gitlab_post_kustomize_patches: []
+    # ---
+    # ---
     # Helm chart values
     gitlab_helm_values:
       global:
@@ -424,6 +393,50 @@ all:
         install: false
       upgradeCheck:
         enabled: true
+    # ---
+    # ---
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    gitlab_post_extra_objects: []
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    gitlab_post_kustomize_patches: []
+    # Post-phase values (Ingress chart)
+    gitlab_post_helm_values:
+      namespace: "{{ gitlab_namespace }}"
+      sshPortExternal: "{{ gitlab_ssh_port_external }}"
+      gitlab:
+        ingressClass: "{{ gitlab_ingress_class_name }}"
+        domain: "{{ gitlab_ui_domain }}"
+        registryDomain: "{{ gitlab_registry_domain }}"
+        pagesDomain: "{{ gitlab_pages_domain }}"
+        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
+        uiSecretName: "{{ gitlab_ui_https_secret_name }}"
+        registrySecretName: "{{ gitlab_registry_https_secret_name }}"
+        pagesSecretName: "{{ gitlab_pages_https_secret_name }}"
+        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+        httpEnable: "{{ gitlab_ingress_http_enable }}"
+        httpsEnable: "{{ gitlab_ingress_https_enable }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      minio:
+        ingressClass: "{{ gitlab_ingress_class_name }}"
+        consoleDomain: "{{ gitlab_minio_console_domain }}"
+        apiDomain: "{{ gitlab_minio_api_domain }}"
+        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
+        consoleSecretName: "{{ gitlab_minio_console_https_secret_name }}"
+        apiSecretName: "{{ gitlab_minio_api_https_secret_name }}"
+        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+        httpEnable: "{{ gitlab_minio_ingress_http_enable }}"
+        httpsEnable: "{{ gitlab_minio_ingress_https_enable }}"
+      haproxy:
+        namespace: "{{ haproxy_namespace }}"
+        ingressClass: "{{ haproxy_ingress_class }}"
+      extraObjects: "{{ gitlab_post_extra_objects }}"
+    
     # -------
     # Secret name lookups — used by tasks-eso-lookup.yaml in gitlab-install.yaml / gitlab-configure.yaml
     # Values must match external_secret_name of corresponding eso_vault_integration_gitlab_secrets entry
