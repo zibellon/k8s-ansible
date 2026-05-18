@@ -353,20 +353,12 @@ General rules for callers:
 
 ### 2.2 Cluster state discovery
 
-#### `tasks-gather-cluster-facts.yaml`
-
-- **Purpose.** The single cluster-state fact collector. Chains `tasks-set-master-manager.yaml` → `tasks-set-is-cluster-init.yaml` → `tasks-set-is-node-joined.yaml`. Never fails on missing cluster — returns bools.
-- **Input.** None.
-- **Output.** On every host: `master_manager_fact`, `is_master_manager_exist`, `is_cluster_init`, `is_node_joined`, `joined_node_ips` (list), `joined_node_hostnames` (list).
-- **Callers.** Top of `manager-join.yaml`, `worker-join.yaml`, `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`, `node-info.yaml`.
-- **Idempotent.** Read-only.
-
 #### `tasks-set-master-manager.yaml`
 
-- **Purpose.** Internal helper called by `tasks-pre-check.yaml`, `tasks-gather-cluster-facts.yaml`, и каждым из 5 playbook'ов с reboot (для resolve `bastion_host_fact` до вызова `tasks-reboot-cluster.yaml`). Iterates inventory `managers` group, picks the host with `is_master: true`. Additionally iterates `all` group and picks the host with `is_bastion: true` (optional on-node bastion — see [`variables.md`](variables.md) §2.14.1). Bastion finding co-located here as conscious tech-debt — to be split into separate task in a future refactor.
+- **Purpose.** Internal helper called by `tasks-pre-check.yaml`, каждым из 9 system playbook'ов которым нужны cluster state facts, и каждым из 5 playbook'ов с reboot (для resolve `bastion_host_fact` до вызова `tasks-reboot-cluster.yaml`). Iterates inventory `managers` group, picks the host with `is_master: true`. Additionally iterates `all` group and picks the host with `is_bastion: true` (optional on-node bastion — see [`variables.md`](variables.md) §2.14.1). Bastion finding co-located here as conscious tech-debt — to be split into separate task in a future refactor.
 - **Input.** None.
 - **Output.** `master_manager_fact` (string), `is_master_manager_exist` (bool), `bastion_host_fact` (string, undefined if no `is_bastion: true` host), `is_bastion_host_exist` (bool).
-- **Callers.** `tasks-pre-check.yaml`, `tasks-gather-cluster-facts.yaml`; в начале `tasks:` каждого playbook'а который использует `tasks-reboot-cluster.yaml` — `set-hostname.yaml`, `node-prepare.yaml`, `cilium-prepare.yaml`, `longhorn-prepare.yaml`, `linux-service-configure.yaml`.
+- **Callers.** `tasks-pre-check.yaml`; в начале `tasks:` каждого system playbook'а которому нужны cluster state facts — `cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`, `node-drain-on.yaml`, `node-drain-off.yaml`, `node-remove.yaml`; в начале `tasks:` каждого playbook'а который использует `tasks-reboot-cluster.yaml` — `set-hostname.yaml`, `node-prepare.yaml`, `cilium-prepare.yaml`, `longhorn-prepare.yaml`, `linux-service-configure.yaml`.
 - **Idempotent.** Pure fact derivation.
 
 #### `tasks-set-is-cluster-init.yaml`

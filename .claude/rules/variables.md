@@ -158,7 +158,7 @@ Per-file source of truth in parentheses.
 | `containerd_install_method` | `"url"` | Install method: `"url"` (default — download from `containerd_url` + `containerd_service_url`) or `"local_tarball"` (offline; paths relative to `project_root`, files kept in `pkgs-sources/`) |
 | `containerd_local_tarball_path` | `""` | Path to local containerd tarball relative to `project_root` (used only when `containerd_install_method: local_tarball`) |
 | `containerd_service_local_path` | `""` | Path to local `containerd.service` unit file relative to `project_root` (used only when `containerd_install_method: local_tarball`) |
-| `containerd_additional_configs` | `[{dirName: "_default", content: "..."}]` | List of drop-in configs in `/etc/containerd/certs.d/<dirName>/hosts.toml`. Default has one `_default` entry pointing all registries (catch-all) at `mirror.gcr.io`. **Единая точка AirGap-интерсепции** для образов всех компонентов — заменяет per-component `_image_registry` overrides. См. `hosts-vars/k8s-base.yaml` для развёрнутого описания + примеров |
+| `containerd_additional_configs` | `[{dirName: "_default", content: "..."}]` | List of drop-in configs in `/etc/containerd/certs.d/<dirName>/hosts.toml`. Default has one `_default` entry pointing all registries (catch-all) at `mirror.gcr.io`. **Единая точка AirGap-интерсепции** для образов всех компонентов — заменяет per-component `_image_registry` overrides. **Full-sync семантика:** любая поддиректория в `/etc/containerd/certs.d/`, которой нет в этом списке (включая ручные `mkdir` оператора), удаляется на следующем прогоне `node-install.yaml`. См. `hosts-vars/k8s-base.yaml` для развёрнутого описания + примеров |
 | `runc_version` | `"v1.4.2"` | OCI runtime |
 | `runc_download_host` | `"https://github.com"` | Download host for runc binary — AirGap override |
 | `runc_install_method` | `"url"` | Install method: `"url"` (default — download from `runc_url`) or `"local_file"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
@@ -293,12 +293,12 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 
 | Variable | Produced by | Consumed where |
 |---|---|---|
-| `master_manager_fact` | `tasks-set-master-manager.yaml` (via `tasks-pre-check.yaml` / `tasks-gather-cluster-facts.yaml`) | Every `delegate_to:` in `playbook-app/` |
+| `master_manager_fact` | `tasks-set-master-manager.yaml` (via `tasks-pre-check.yaml`; или explicit include в начале `tasks:` системных playbook'ов) | Every `delegate_to:` in `playbook-app/` |
 | `is_master_manager_exist` | `tasks-set-master-manager.yaml` | Guards in bootstrap plays |
-| `bastion_host_fact`, `is_bastion_host_exist` | `tasks-set-master-manager.yaml` (co-located with master finding; вызывается через `tasks-gather-cluster-facts.yaml` или явный include в начале `tasks:` каждого playbook'а с reboot) | `tasks-reboot-cluster.yaml` для ordered reboot (non-bastion first, bastion last) |
+| `bastion_host_fact`, `is_bastion_host_exist` | `tasks-set-master-manager.yaml` (co-located with master finding; вызывается через explicit include в начале `tasks:` системных playbook'ов и playbook'ов с reboot) | `tasks-reboot-cluster.yaml` для ordered reboot (non-bastion first, bastion last) |
 | `is_cluster_init` | `tasks-set-is-cluster-init.yaml` | Skip re-init logic |
 | `is_node_joined` | `tasks-set-is-node-joined.yaml` | Skip re-join logic |
-| `joined_node_ips` | `tasks-gather-cluster-facts.yaml` | Cilium host-firewall `nodeIpsList`, certSANs |
+| `joined_node_ips` | `tasks-set-is-node-joined.yaml` | Cilium host-firewall `nodeIpsList`, certSANs |
 | `joined_node_hostnames` | same | Logging / validation |
 | `vault_policies_final` | `tasks-vault-policies-roles-merge.yaml` | Rendered into `vault/install/values-override.yaml` |
 | `vault_roles_final` | same | Same |

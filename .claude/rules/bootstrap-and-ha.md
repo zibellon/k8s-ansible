@@ -56,7 +56,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 **Sequence.**
 
 1. `tasks-require-limit` + `tasks-require-manager`.
-2. `tasks-gather-cluster-facts` — reports `is_cluster_init: false`.
+2. `tasks-set-master-manager` + `tasks-set-is-cluster-init` + `tasks-set-is-node-joined` — collect cluster state facts; reports `is_cluster_init: false`.
 3. Generate 32-byte ETCD encryption key → write `/etc/kubernetes/pki/encryption-config.yaml`. Key name `key{{ lookup('pipe','date +%s') }}`. Provider `aescbc` with `identity` fallback (read-compat).
 4. `tasks-kubeadm-config-create` — render `/etc/kubernetes/kubeadm-config.yaml` from `kubeadm_config_template`. `certSANs` = every manager's `ansible_host` + `api_server_advertise_address` + `haproxy_apiserver_lb_host` + `localhost`.
 5. `kubeadm init --config /etc/kubernetes/kubeadm-config.yaml`. The kubeadm config has `ClusterConfiguration.proxy.disabled: true`, so kube-proxy is never installed — Cilium will replace it.
@@ -85,7 +85,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 **Sequence.**
 
 1. `tasks-require-limit` + `tasks-require-manager`.
-2. `tasks-gather-cluster-facts` — reports `is_cluster_init: true`, identifies `master_manager_fact`.
+2. `tasks-set-master-manager` + `tasks-set-is-cluster-init` + `tasks-set-is-node-joined` — collect cluster state facts; reports `is_cluster_init: true`, identifies `master_manager_fact`.
 3. On master: `kubeadm init phase upload-certs --upload-certs` — prints a cert key valid ~2h.
 4. **Distribute ETCD encryption config**: slurp `/etc/kubernetes/pki/encryption-config.yaml` from master → write on joiner, mode 0600.
 5. **Distribute Vault unseal creds (if Vault installed)**: `tasks-vault-distribute-creds.yaml` writes `/etc/kubernetes/vault-unseal.json`.
@@ -137,7 +137,7 @@ Skipping step 2 causes join timeouts that appear as "TLS handshake timeout" in k
 **Sequence.**
 
 1. `tasks-require-limit` + `tasks-require-worker`.
-2. `tasks-gather-cluster-facts`.
+2. `tasks-set-master-manager` + `tasks-set-is-cluster-init` + `tasks-set-is-node-joined` — collect cluster state facts.
 3. On master: `kubeadm token create --print-join-command` (no cert-key — workers don't get control-plane certs).
 4. On joiner: run the join command.
 5. `tasks-kubelet-health-wait`, `tasks-apply-node-labels`.
@@ -192,7 +192,7 @@ Key state items that propagate:
 
 **Sequence (per manager, `serial: 1`).**
 
-1. `tasks-gather-cluster-facts` — confirm cluster init, skip un-joined hosts.
+1. `tasks-set-master-manager` + `tasks-set-is-cluster-init` + `tasks-set-is-node-joined` — confirm cluster init, skip un-joined hosts.
 2. `tasks-kubeadm-config-create` — regenerate `/etc/kubernetes/kubeadm-config.yaml` with the new SAN list. `certSANs` built from current inventory (all joined managers' `ansible_host` + `api_server_advertise_address` + `haproxy_apiserver_lb_host` + `localhost`).
 3. Remove `/etc/kubernetes/pki/apiserver.{crt,key}`.
 4. `kubeadm init phase certs apiserver` — generates a fresh apiserver cert with the new SANs.
@@ -330,7 +330,7 @@ Used in three places:
 | `etcd-key-rotate.yaml` (steps 2, 4, 6) | apiserver (via `task-apiserver-restart`) | Quorum + consistent `encryption-config.yaml` transition |
 | `haproxy-apiserver-lb-update.yaml` | HAProxy systemd service | Every kubelet depends on its local HAProxy; one node offline at a time |
 
-All three rely on `tasks-gather-cluster-facts.yaml` at the top to skip un-joined hosts.
+All three rely on `tasks-set-master-manager.yaml` + `tasks-set-is-cluster-init.yaml` + `tasks-set-is-node-joined.yaml` at the top to skip un-joined hosts.
 
 Note: these three playbooks intentionally do **not** use `tasks-require-limit.yaml` — they operate cluster-wide via `serial: 1` (running with `--limit <single-host>` would defeat the rolling-update purpose). This is by design, not an oversight.
 

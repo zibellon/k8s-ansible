@@ -24,7 +24,7 @@ Imperative rules for writing or modifying playbooks. For the *why* behind the ru
 
 ## 4. Fact Gathering
 
-4.1 Cluster state facts come from `tasks-gather-cluster-facts.yaml`. Never reimplement its checks.
+4.1 Cluster state facts come from three task-includes — `tasks-set-master-manager.yaml` + `tasks-set-is-cluster-init.yaml` + `tasks-set-is-node-joined.yaml`. Call them in this order at the top of plays that need cluster state. Never reimplement their checks.
 4.2 `master_manager_fact` is the only permitted source of truth for "the manager to run cluster ops on". Derive it via `tasks-pre-check.yaml` or `tasks-set-master-manager.yaml`.
 4.3 Facts used later in the same play by downstream tags MUST be produced by `tags: [always]` tasks — otherwise `--tags post` runs will see undefined variables.
 
