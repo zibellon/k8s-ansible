@@ -371,10 +371,11 @@ General rules for callers:
 
 #### `tasks-set-master-manager.yaml`
 
-- **Purpose.** Pick the manager with `is_master: true` from inventory.
-- **Output.** `master_manager_fact`, `is_master_manager_exist`.
-- **Callers.** `tasks-gather-cluster-facts.yaml`.
-- **Idempotent.** Yes.
+- **Purpose.** Internal helper called by `tasks-pre-check.yaml`, `tasks-gather-cluster-facts.yaml`, и каждым из 5 playbook'ов с reboot (для resolve `bastion_host_fact` до вызова `tasks-reboot-cluster.yaml`). Iterates inventory `managers` group, picks the host with `is_master: true`. Additionally iterates `all` group and picks the host with `is_bastion: true` (optional on-node bastion — see [`variables.md`](variables.md) §2.14.1). Bastion finding co-located here as conscious tech-debt — to be split into separate task in a future refactor.
+- **Input.** None.
+- **Output.** `master_manager_fact` (string), `is_master_manager_exist` (bool), `bastion_host_fact` (string, undefined if no `is_bastion: true` host), `is_bastion_host_exist` (bool).
+- **Callers.** `tasks-pre-check.yaml`, `tasks-gather-cluster-facts.yaml`; в начале `tasks:` каждого playbook'а который использует `tasks-reboot-cluster.yaml` — `set-hostname.yaml`, `node-prepare.yaml`, `cilium-prepare.yaml`, `longhorn-prepare.yaml`, `linux-service-configure.yaml`.
+- **Idempotent.** Pure fact derivation.
 
 #### `tasks-set-is-cluster-init.yaml`
 
@@ -428,6 +429,17 @@ General rules for callers:
 - **Note.** Singular `task-` prefix (not `tasks-`) — historical, keep as-is.
 - **Callers.** `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml` — always under `serial: 1` to preserve quorum.
 - **Idempotent.** Yes.
+
+#### `tasks-reboot-cluster.yaml`
+
+- **Purpose.** Bastion-aware ordered cluster reboot. Reboots non-bastion hosts first (parallel), then bastion host last. Avoids race condition where bastion-as-on-node-host kills ProxyJump tunnel during its own reboot.
+- **Input.** `dto_label_name` (string, log prefix), `dto_reboot_when_condition` (bool — per-host pre-computed condition; caller evaluates fact-based logic and passes resulting bool).
+- **Validates (assert).** Both required params defined + non-empty; `dto_reboot_when_condition is boolean`. Tag `[always]`.
+- **Precondition.** Caller must resolve `bastion_host_fact` before invoking (typically by including `tasks-set-master-manager.yaml` as the first task in the playbook's `tasks:` block). This task does NOT auto-resolve facts — dependency is explicit at the playbook level (SRP).
+- **Output.** Hosts rebooted in two-phase order (non-bastion parallel, then bastion). Reboot message hardcoded as `"Reboot"` in both phases. No facts modified.
+- **Callers.** `set-hostname.yaml`, `node-prepare.yaml`, `cilium-prepare.yaml`, `longhorn-prepare.yaml`, `linux-service-configure.yaml`.
+- **Idempotent.** Yes — reboot module is no-op if condition false.
+- **Backward compat.** If `bastion_host_fact` is undefined (no `is_bastion: true` in inventory) — task 1 reboots ALL hosts in parallel (`inventory_hostname != ''` always true), task 2 skipped. Equivalent to old inline `reboot:` behavior.
 
 ### 2.4 HAProxy LB
 

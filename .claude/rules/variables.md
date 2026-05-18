@@ -295,6 +295,7 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 |---|---|---|
 | `master_manager_fact` | `tasks-set-master-manager.yaml` (via `tasks-pre-check.yaml` / `tasks-gather-cluster-facts.yaml`) | Every `delegate_to:` in `playbook-app/` |
 | `is_master_manager_exist` | `tasks-set-master-manager.yaml` | Guards in bootstrap plays |
+| `bastion_host_fact`, `is_bastion_host_exist` | `tasks-set-master-manager.yaml` (co-located with master finding; вызывается через `tasks-gather-cluster-facts.yaml` или явный include в начале `tasks:` каждого playbook'а с reboot) | `tasks-reboot-cluster.yaml` для ordered reboot (non-bastion first, bastion last) |
 | `is_cluster_init` | `tasks-set-is-cluster-init.yaml` | Skip re-init logic |
 | `is_node_joined` | `tasks-set-is-node-joined.yaml` | Skip re-join logic |
 | `joined_node_ips` | `tasks-gather-cluster-facts.yaml` | Cilium host-firewall `nodeIpsList`, certSANs |
@@ -351,6 +352,17 @@ Notes:
 - **Opt-in.** If `bastion_host` / `bastion_user` are absent from overrides, the inventory operates in classic public-IP mode — the global `ansible_ssh_common_args` from `hosts-vars/ansible.yaml` applies, no `ProxyJump`.
 - **Multi-cluster.** Each `hosts-vars-override-<cluster>/` directory selects its own scheme independently — no global state in the repo.
 - **Skeleton example.** See the commented-out template at the end of [`hosts-vars/hosts.yaml`](../../hosts-vars/hosts.yaml).
+
+### 2.14.1 On-node bastion (когда bastion — один из узлов кластера)
+
+Альтернативный режим: bastion — это manager или worker сам же (например, единственный узел с публичным IP). Требует двух дополнительных шагов поверх общей схемы (§2.14):
+
+1. **Inventory флаг `is_bastion: true`** ставится на host'е, который выступает jump-host'ом. Поведение аналогично `is_master: true` — exactly one (или zero) host в inventory имеет этот флаг.
+2. **Bastion-хост сам не должен использовать ProxyJump** — он же и есть jump-host. Его group (managers или workers) НЕ должна иметь `ansible_ssh_common_args` с `ProxyJump`. Обычно это значит: bastion-хост в **отдельной** ansible-group или в default'ной без override'а `ansible_ssh_common_args`.
+
+Эффект: `tasks-set-master-manager.yaml` (он же ищет и bastion) устанавливает `bastion_host_fact`, и `tasks-reboot-cluster.yaml` упорядочивает reboot — сначала non-bastion (parallel через bastion), затем bastion (direct connection, ProxyJump уже не нужен). Без этого reboot всех хостов параллельно убивал бы bastion первым, разрывая ProxyJump для остальных.
+
+Если `is_bastion` не задан ни на одном host'е (external bastion, public-IP scheme, single-host) — `bastion_host_fact` undefined, reboot работает старым параллельным способом (backward-compat).
 
 ---
 

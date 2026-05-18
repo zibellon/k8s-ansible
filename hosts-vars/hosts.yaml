@@ -109,3 +109,43 @@ all:
 #             - "lh-worker"
 #             - "lh-major"
 #             - "lh-minor"
+
+# =============================================================================
+# On-node bastion variant (bastion — это один из managers/workers, не внешний)
+# Подходит когда только у одного узла кластера есть публичный IP.
+# Этот узел становится jump-host'ом для остальных, и ребутится последним
+# в reboot-task (см. .claude/rules/variables.md §2.14.1).
+# =============================================================================
+
+# all:
+#   children:
+#     managers:
+#       hosts:
+#         k8s-manager-1:
+#           ansible_host: 89.169.164.234         # public IP (directly reachable)
+#           ansible_user: ubuntu
+#           new_hostname: k8s-manager-1
+#           is_master: true
+#           is_bastion: true                     # <-- on-node bastion flag
+#           internal_ip: "10.129.0.32"
+#           api_server_advertise_address: "10.129.0.32"
+#           api_server_bind_port: 6443
+#           longhorn_node_tags:
+#             - "lh-manager"
+#             - "lh-major"
+#
+#     workers:
+#       vars:
+#         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyCommand="ssh -i ~/.ssh/<key> -W %h:%p -o StrictHostKeyChecking=no ubuntu@89.169.164.234"'
+#       hosts:
+#         k8s-worker-1:
+#           ansible_host: 10.129.0.37            # private IP (== internal_ip)
+#           ansible_user: ubuntu
+#           new_hostname: k8s-worker-1
+#           internal_ip: "10.129.0.37"
+#           node_labels:
+#             - "node-role.kubernetes.io/worker="
+#           longhorn_node_tags:
+#             - "lh-worker"
+#             - "lh-major"
+#             - "lh-minor"
