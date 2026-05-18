@@ -32,8 +32,12 @@ all:
     zitadel_postgresql_storage_size: "10Gi"
     # ---
     zitadel_postgresql_username: "zitadel"
+    # ---
+    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     zitadel_pre_extra_objects: []
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    zitadel_pre_kustomize_patches: []
     # Pre-phase values (ESO Resources + NetworkPolicies chart)
     # eso_vault_integration_zitadel_secrets_merged — runtime-факт от tasks-eso-merge.yaml [always]
     # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
@@ -58,10 +62,12 @@ all:
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
       extraObjects: "{{ zitadel_pre_extra_objects }}"
-    # Pre-phase kustomize patches (operator-side customization, default empty)
-    zitadel_pre_kustomize_patches: []
+    # ---
+    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     zitadel_postgresql_extra_objects: []
+    # Postgresql-phase kustomize patches (operator-side customization, default empty)
+    zitadel_postgresql_kustomize_patches: []
     # PostgreSQL sub-release values
     # _local_zitadel_secret_name_postgresql_creds — runtime-факт от tasks-eso-lookup.yaml [always] в playbook
     zitadel_postgresql_helm_values:
@@ -71,36 +77,8 @@ all:
       storageSize: "{{ zitadel_postgresql_storage_size }}"
       credentialsSecretName: "{{ _local_zitadel_secret_name_postgresql_creds }}"
       extraObjects: "{{ zitadel_postgresql_extra_objects }}"
-    # Postgresql-phase kustomize patches (operator-side customization, default empty)
-    zitadel_postgresql_kustomize_patches: []
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    zitadel_post_extra_objects: []
-    # Post-phase values (Ingress chart)
-    # zitadel_resources / zitadel_node_selector / zitadel_tolerations / zitadel_affinity
-    # не определены в hosts-vars/ — берутся из hosts-vars-override/zitadel.yaml
-    zitadel_post_helm_values:
-      namespace: "{{ zitadel_namespace }}"
-      resources: "{{ zitadel_resources }}"
-      nodeSelector: "{{ zitadel_node_selector }}"
-      tolerations: "{{ zitadel_tolerations }}"
-      affinity: "{{ zitadel_affinity }}"
-      ingress:
-        ingressClass: "{{ zitadel_ingress_class_name }}"
-        domain: "{{ zitadel_domain }}"
-        clusterIssuer: "{{ zitadel_cluster_issuer_name }}"
-        tlsSecretName: "{{ zitadel_tls_secret_name }}"
-        vpnOnlyEnabled: "{{ zitadel_vpn_only_enabled }}"
-        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
-        httpEnable: "{{ zitadel_ingress_http_enable }}"
-        httpsEnable: "{{ zitadel_ingress_https_enable }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        entryPoints:
-          web: "{{ traefik_web_entrypoint }}"
-          websecure: "{{ traefik_websecure_entrypoint }}"
-      extraObjects: "{{ zitadel_post_extra_objects }}"
-    # Post-phase kustomize patches (operator-side customization, default empty)
-    zitadel_post_kustomize_patches: []
+    # ---
+    # ---
     # Helm chart values
     zitadel_helm_values:
       replicaCount: 1
@@ -160,6 +138,36 @@ all:
         # --masterkeyFile убран: chart 9.x сам пробрасывает --masterkeyFromEnv из secret
         additionalArgs:
           - "--init-projections=true"
+    # ---
+    # ---
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    zitadel_post_extra_objects: []
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    zitadel_post_kustomize_patches: []
+    # Post-phase values (Ingress chart)
+    # zitadel_resources / zitadel_node_selector / zitadel_tolerations / zitadel_affinity
+    # не определены в hosts-vars/ — берутся из hosts-vars-override/zitadel.yaml
+    zitadel_post_helm_values:
+      namespace: "{{ zitadel_namespace }}"
+      resources: "{{ zitadel_resources }}"
+      nodeSelector: "{{ zitadel_node_selector }}"
+      tolerations: "{{ zitadel_tolerations }}"
+      affinity: "{{ zitadel_affinity }}"
+      ingress:
+        ingressClass: "{{ zitadel_ingress_class_name }}"
+        domain: "{{ zitadel_domain }}"
+        clusterIssuer: "{{ zitadel_cluster_issuer_name }}"
+        tlsSecretName: "{{ zitadel_tls_secret_name }}"
+        vpnOnlyEnabled: "{{ zitadel_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+        httpEnable: "{{ zitadel_ingress_http_enable }}"
+        httpsEnable: "{{ zitadel_ingress_https_enable }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      extraObjects: "{{ zitadel_post_extra_objects }}"
     # -------
     # Secret name lookups — used by tasks-eso-lookup.yaml in zitadel-install.yaml
     # Values must match external_secret_name of corresponding eso_vault_integration_zitadel_secrets entry
