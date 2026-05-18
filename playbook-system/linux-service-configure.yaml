@@ -1,0 +1,294 @@
+---
+# =============================================================================
+# Configure linux services (apt / fail2ban / sshd) + reboot on change
+# =============================================================================
+# Объединяет три прежних playbook'а: apt-configure, fail2ban-install, sshd-configure.
+# Все три применяют ansible-managed drop-in файлы по префиксу "ansible-" через
+# tasks-sync-managed-files.yaml и проходят последовательно в одном bootstrap-pass.
+#
+# Phases:
+#   1. APT — sync /etc/apt/{sources.list.d, apt.conf.d, preferences.d}/ files
+#            from apt_additional_configs + apt_preferences. Refresh apt cache.
+#   2. FAIL2BAN — install package, sync /etc/fail2ban/jail.d/ from
+#                 fail2ban_jail_d_files, remove legacy jail.local, restart on change.
+#   3. SSHD — sync /etc/ssh/sshd_config.d/ from sshd_config_d_files, validate via
+#             sshd -t, reload (not restart) on change.
+#   4. REBOOT — conditional reboot if any of the 5 sync facts is true:
+#               apt_sources_changed / apt_conf_d_changed / apt_prefs_changed /
+#               fail2ban_files_changed / sshd_files_changed.
+#
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+#     playbook-system/linux-service-configure.yaml [--limit <host>]
+# =============================================================================
+
+- name: Configure linux services (apt / fail2ban / sshd) + conditional reboot
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+
+    # =========================================================================
+    # PHASE: APT — sync managed files in /etc/apt/{sources.list.d, apt.conf.d, preferences.d}/
+    # =========================================================================
+
+    - name: "[apt-configure] Assert apt_additional_configs entries"
+      assert:
+        that:
+          - item.filePath is defined
+          - item.filePath | length > 0
+          - "'..' not in item.filePath"
+          - >-
+            item.filePath.startswith("sources.list.d/ansible-")
+            or item.filePath.startswith("apt.conf.d/ansible-")
+          - item.content is defined
+          - item.content | length > 0
+        fail_msg: >-
+          apt_additional_configs[{{ idx }}]: filePath must
+          start with "sources.list.d/ansible-" or "apt.conf.d/ansible-",
+          content required, no '..' in path
+      loop: "{{ apt_additional_configs }}"
+      loop_control:
+        label: "{{ item.filePath | default('<no filePath>') }}"
+        index_var: idx
+      when: apt_additional_configs | length > 0
+      tags: [always]
+
+    - name: "[apt-configure] Assert apt_preferences entries"
+      assert:
+        that:
+          - item.name is defined
+          - item.name | length > 0
+          - item.name.startswith("ansible-")
+          - "'/' not in item.name"
+          - item.content is defined
+          - item.content | length > 0
+        fail_msg: >-
+          apt_preferences[{{ idx }}]: name must start with
+          "ansible-", no '/' in name, content required
+      loop: "{{ apt_preferences }}"
+      loop_control:
+        label: "{{ item.name | default('<no name>') }}"
+        index_var: idx
+      when: apt_preferences | length > 0
+      tags: [always]
+
+    - name: "[apt-configure] Initialize per-subdir file lists"
+      set_fact:
+        apt_sources_list_d_files: []
+        apt_conf_d_files: []
+        apt_preferences_d_files: []
+
+    - name: "[apt-configure] Build apt_sources_list_d_files from apt_additional_configs"
+      set_fact:
+        apt_sources_list_d_files: >-
+          {{ apt_sources_list_d_files + [{
+               'filename': item.filePath | regex_replace('^sources\\.list\\.d/', ''),
+               'content': item.content
+             }] }}
+      loop: "{{ apt_additional_configs }}"
+      loop_control:
+        label: "{{ item.filePath }}"
+      when: item.filePath.startswith('sources.list.d/')
+
+    - name: "[apt-configure] Build apt_conf_d_files from apt_additional_configs"
+      set_fact:
+        apt_conf_d_files: >-
+          {{ apt_conf_d_files + [{
+               'filename': item.filePath | regex_replace('^apt\\.conf\\.d/', ''),
+               'content': item.content
+             }] }}
+      loop: "{{ apt_additional_configs }}"
+      loop_control:
+        label: "{{ item.filePath }}"
+      when: item.filePath.startswith('apt.conf.d/')
+
+    - name: "[apt-configure] Build apt_preferences_d_files from apt_preferences"
+      set_fact:
+        apt_preferences_d_files: >-
+          {{ apt_preferences_d_files + [{
+               'filename': item.name,
+               'content': item.content
+             }] }}
+      loop: "{{ apt_preferences }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "[apt-configure] Sync /etc/apt/sources.list.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "apt-configure-sources"
+        dto_target_dir: "/etc/apt/sources.list.d"
+        dto_files_list: "{{ apt_sources_list_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "apt_sources_changed"
+
+    - name: "[apt-configure] Sync /etc/apt/apt.conf.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "apt-configure-conf"
+        dto_target_dir: "/etc/apt/apt.conf.d"
+        dto_files_list: "{{ apt_conf_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "apt_conf_d_changed"
+
+    - name: "[apt-configure] Sync /etc/apt/preferences.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "apt-configure-preferences"
+        dto_target_dir: "/etc/apt/preferences.d"
+        dto_files_list: "{{ apt_preferences_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "apt_prefs_changed"
+
+    - name: "[apt-configure] Update apt cache"
+      apt:
+        update_cache: true
+      when: apt_sources_changed or apt_conf_d_changed or apt_prefs_changed
+
+    # =========================================================================
+    # PHASE: FAIL2BAN — install package, sync jail.d/, remove legacy jail.local
+    # =========================================================================
+
+    - name: "[fail2ban-install] Assert legacy fail2ban_jail_local is not used"
+      assert:
+        that:
+          - fail2ban_jail_local is not defined
+        fail_msg: >-
+          Variable `fail2ban_jail_local` is deprecated. Migrate content to
+          `fail2ban_jail_d_files` (list of {filename, content}). See
+          .claude/rules/variables.md §2.12.
+      tags: [always]
+
+    - name: "[fail2ban-install] Assert fail2ban_jail_d_files is defined"
+      assert:
+        that:
+          - fail2ban_jail_d_files is defined
+          - fail2ban_jail_d_files is sequence
+        fail_msg: "fail2ban_jail_d_files must be defined in inventory (hosts-vars/ansible.yaml or override)"
+      tags: [always]
+
+    - name: "[fail2ban-install] Install fail2ban package"
+      apt:
+        name: fail2ban
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      register: fail2ban_apt_result
+
+    - name: "[fail2ban-install] Sync /etc/fail2ban/jail.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "fail2ban-install"
+        dto_target_dir: "/etc/fail2ban/jail.d"
+        dto_files_list: "{{ fail2ban_jail_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "fail2ban_files_changed"
+
+    - name: "[fail2ban-install] Remove legacy /etc/fail2ban/jail.local"
+      file:
+        path: /etc/fail2ban/jail.local
+        state: absent
+      register: fail2ban_jail_local_removed
+
+    - name: "[fail2ban-install] Ensure fail2ban is enabled and running"
+      systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+
+    - name: "[fail2ban-install] Restart fail2ban if package, config, or legacy file changed"
+      systemd:
+        name: fail2ban
+        state: restarted
+      when: >-
+        fail2ban_apt_result.changed
+        or fail2ban_files_changed
+        or fail2ban_jail_local_removed.changed
+
+    - name: "[fail2ban-install] Check fail2ban service is active"
+      command: systemctl is-active fail2ban
+      register: fail2ban_active_check
+      changed_when: false
+
+    - name: "[fail2ban-install] Assert fail2ban is active"
+      assert:
+        that:
+          - fail2ban_active_check.stdout | trim == 'active'
+        fail_msg: "fail2ban service is NOT active"
+        success_msg: "fail2ban: active"
+
+    - name: "[fail2ban-install] Get fail2ban-client status"
+      command: fail2ban-client status
+      register: fail2ban_status
+      changed_when: false
+
+    - name: "[fail2ban-install] Print fail2ban status"
+      debug:
+        var: fail2ban_status.stdout_lines
+
+    - name: "[fail2ban-install] Print final status"
+      debug:
+        msg: "=== fail2ban Installation Complete ==="
+
+    # =========================================================================
+    # PHASE: SSHD — sync sshd_config.d/, validate, reload on change
+    # =========================================================================
+
+    - name: "[sshd-configure] Assert sshd_config_d_files is defined"
+      assert:
+        that:
+          - sshd_config_d_files is defined
+          - sshd_config_d_files is sequence
+        fail_msg: "sshd_config_d_files must be defined in inventory (hosts-vars/ansible.yaml or override)"
+      tags: [always]
+
+    - name: "[sshd-configure] Sync /etc/ssh/sshd_config.d/"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
+      vars:
+        dto_label_name: "sshd-configure"
+        dto_target_dir: "/etc/ssh/sshd_config.d"
+        dto_files_list: "{{ sshd_config_d_files }}"
+        dto_filename_prefix: "ansible-"
+        dto_res_fact_changed: "sshd_files_changed"
+
+    - name: "[sshd-configure] Validate full sshd config (sshd -t)"
+      command: sshd -t
+      changed_when: false
+
+    - name: "[sshd-configure] Reload sshd"
+      systemd:
+        name: ssh
+        state: reloaded
+      when: sshd_files_changed
+
+    - name: "[sshd-configure] Check ssh service is active"
+      command: systemctl is-active ssh
+      register: ssh_active_check
+      changed_when: false
+
+    - name: "[sshd-configure] Assert ssh is active"
+      assert:
+        that:
+          - ssh_active_check.stdout | trim == 'active'
+        fail_msg: "ssh service is NOT active"
+        success_msg: "ssh: active"
+
+    - name: "[sshd-configure] Print final status"
+      debug:
+        msg: "=== sshd-configure complete (sshd_files_changed={{ sshd_files_changed }}) ==="
+
+    # =========================================================================
+    # PHASE: REBOOT — conditional reboot if any sync fact is true
+    # =========================================================================
+
+    - name: "[linux-service-configure] Reboot servers if any linux service config changed"
+      reboot:
+        reboot_timeout: 300
+        msg: "Reboot after linux service configuration"
+      when: >-
+        apt_sources_changed
+        or apt_conf_d_changed
+        or apt_prefs_changed
+        or fail2ban_files_changed
+        or sshd_files_changed
