@@ -118,8 +118,6 @@
 ## Важно_1. Установка изначально производится только с тагом `--tags install`
 ## pre + post = станавливаются позже. После cert-manager, ESO, Traefik, Haproxy
 ## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
 ## `--tags pre, install, post`
 ## ---
 ##
@@ -133,8 +131,6 @@
 ## metrics-server. Официальный helm
 ## ---
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
-## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install`
 ## ---
@@ -150,8 +146,6 @@
 ## ---
 ## Важно_1: Сейчас, через этот ansible - можно настроить только ClusterIssuer (Переменная: cert_manager_cluster_issuers)
 ## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
 ## `--tags pre, install, post`
 ## ---
 ## 
@@ -165,8 +159,6 @@
 ## ---
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/external-secrets-install.yaml`
-## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install`
 ## ---
@@ -185,8 +177,6 @@
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/traefik-install.yaml`
 ## Есть работа с `vault + ESO`
 ## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
 ## `--tags pre, install, post`
 ## ---
 ##
@@ -202,8 +192,6 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/haproxy-install.yaml`
 ## Есть работа с `vault + ESO`
-## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
@@ -221,14 +209,37 @@
 ## Тут не запускается никаких контейнеров
 ## Устанавливается: NetworkPolicy, kube-system (NetworkPolicy), CiliumClusterWideNetworkPolicy
 ## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
 ##
 - установка + обновление (версия, конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags pre,post`
   - Ставится: network-policy (для kube-system), ingress (hubble-ui)
 
 ## ---
+## Linstor. (Piraeus-operator) Официальный helm (два helm-chart)
+## ---
+## Автоматически подхватывает конфиг, который генерируется через CRD
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/linstor-install.yaml`
+## ---
+## `--tags pre, install-operator, install-cluster, post`
+## ---
+##
+- установка + обновление (версия, конфиг)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/linstor-install.yaml`
+  - Ставится: network-policy, operator, controller, satellite
+  - Все конфиги, ставятся через CR (как Vault): StorageClasses, storegaPool, настройки
+- Обновление NetworkPolicy
+  - Есть официальный набор: https://github.com/piraeusdatastore/piraeus-operator/tree/v2/config/extras/monitoring
+  - Это версия для kustomize, не для helm
+  - НО - она не используется, написана своя версия NetworkPolicy
+- обновление мониторинг
+  - Есть официальный набор: https://github.com/piraeusdatastore/piraeus-operator/tree/v2/config/extras/monitoring
+  - Это версия для kustomize, не для helm
+  - Три файла xxxxx-monitor = они нам нужны
+  - скачать эти файлы, адаптировать под Helm (буквально несколько строк)
+
+## ---
+## DEPRECATED
 ## longhorn. Официальный helm
 ## ---
 ## Есть UI, который доступен по URL -> требуется Certificate (cert-manager-CRD)
@@ -246,8 +257,6 @@
 ## Важно_2. `node-tags`: для их автоматической установки на Nodes используется отдельный playbook `... playbook-app/longhorn-tags-sync.yaml`
 ## Синхронизация `node-tags` вызывается отдельно
 ## То есть: после установки longhorn, после добавления node, после изменения `node-tags` в `hosts-vars-xxx`
-## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags pre, install, post`
 ## ---
@@ -281,8 +290,6 @@
 ## Есть volume -> требуется Longhorn
 ## Ожидание готовности deployment/daemonset
 ## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
 ## `--tags pre, operator, vault-cr, post`
 ## ---
 ##
@@ -291,7 +298,7 @@
   - Ставится: operator, vault-0 (CRDs, StatefulSet)
 - Обновление
   - все устанавливается через официальный helm-chart
-  - НО RBAC - почему-то решили ставить отдельно. Почему - загадка
+  - НО RBAC: почему-то решили ставить отдельно. Почему - загадка
   - собрать официальный yaml: `kubectl kustomize https://github.com/bank-vaults/vault-operator/deploy/rbac > vault-rbac-official.yaml`
   - поправить содержимое под HELM
   - перенести в `playbook-app/charts/vault/pre`
@@ -359,8 +366,6 @@
 ## - `gitaly` - StatefulSet, количество реплик определяется через global.gitaly.internal.names. По дефолту = 1. RollingUpdate + StatefulSet = убить, а потом создать
 ##   - Но если их больше чем 1 - там какая-то возня начинается с Praefect (репликация git-данных между узлами)
 ## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
 ## `--tags pre, postgresql, redis, minio, install, post`
 ## ---
 ## 
@@ -388,8 +393,6 @@
 ## Важно_2
 ## - все данные для minio (s3-cache) = будут созданы автоматически
 ## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
 ## `--tags pre, install`
 ## 
 - установка + обновление (версия + конфиг)
@@ -407,8 +410,6 @@
 ## Важно_1: нужно выполнить команду `ssh-keyscan` на те git-репозитории, которые планируется использовать для argocd
 ## Добавить их публичные ключи в `hosts-vars-override/ (argocd_cm_ssh_known_hosts_extra)`. Это массив из строк
 ## Без этого, argocd не сможет к ним подключиться (недоверенный host)
-## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ## `--tags crds, pre, install, post`
 ## ---
