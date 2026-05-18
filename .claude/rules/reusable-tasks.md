@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (33 tasks)
+## 1. `playbook-app/tasks/` (32 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -22,14 +22,6 @@ General rules for callers:
 - **Output.** Fact `master_manager_fact`. Fails play if no manager has `is_master: true`.
 - **Callers.** Every `<c>-install.yaml`, also `-configure`, `-restart`, `-rotate` playbooks.
 - **Idempotent.** Read-only; safe to call repeatedly.
-
-### 1.2 `tasks-set-master-manager.yaml`
-
-- **Purpose.** Internal helper called by `tasks-pre-check.yaml`. Iterates inventory `managers` group, picks the host with `is_master: true`.
-- **Input.** None.
-- **Output.** `master_manager_fact`, `is_master_manager_exist` (bool).
-- **Callers.** `tasks-pre-check.yaml`, rarely standalone.
-- **Idempotent.** Pure fact derivation.
 
 ### 1.3 `tasks-forbid-kube-system.yaml`
 
