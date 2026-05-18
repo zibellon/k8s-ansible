@@ -285,22 +285,76 @@
     # containerd-defaults для 2.x — отдельной правки config.toml не требует.
     # Оператор переопределяет список целиком в hosts-vars-override/k8s-base.yaml.
 
-    - name: Create additional containerd config directories
+    - name: "[main-components] Ensure /etc/containerd/certs.d/ exists"
+      file:
+        path: /etc/containerd/certs.d
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: "[main-components] Find existing subdirs in /etc/containerd/certs.d/"
+      find:
+        paths: /etc/containerd/certs.d
+        file_type: directory
+        recurse: no
+      register: containerd_certs_d_existing
+
+    - name: "[main-components] Compute expected /etc/containerd/certs.d/ subdir paths"
+      set_fact:
+        containerd_certs_d_expected: >-
+          {{ containerd_additional_configs
+             | map(attribute='dirName')
+             | map('regex_replace', '^', '/etc/containerd/certs.d/')
+             | list }}
+
+    - name: "[main-components] Compute orphan /etc/containerd/certs.d/ subdirs"
+      set_fact:
+        containerd_certs_d_orphans: >-
+          {{ containerd_certs_d_existing.files
+             | map(attribute='path')
+             | list
+             | difference(containerd_certs_d_expected) }}
+
+    - name: "[main-components] Delete orphan /etc/containerd/certs.d/ subdirs"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ containerd_certs_d_orphans }}"
+      loop_control:
+        label: "{{ item }}"
+      register: containerd_certs_d_orphans_deleted
+
+    - name: "[main-components] Ensure managed /etc/containerd/certs.d/ subdirs exist"
       file:
         path: "/etc/containerd/certs.d/{{ item.dirName }}"
         state: directory
         mode: '0755'
+        owner: root
+        group: root
       loop: "{{ containerd_additional_configs }}"
-      when: containerd_additional_configs | length > 0
+      loop_control:
+        label: "{{ item.dirName }}"
+      register: containerd_certs_d_dirs_written
 
-    - name: Create additional containerd config files
+    - name: "[main-components] Write hosts.toml for each managed /etc/containerd/certs.d/ subdir"
       copy:
         dest: "/etc/containerd/certs.d/{{ item.dirName }}/hosts.toml"
         content: "{{ item.content }}"
         mode: '0644'
+        owner: root
+        group: root
       loop: "{{ containerd_additional_configs }}"
-      when: containerd_additional_configs | length > 0
-      register: containerd_additional_config_result
+      loop_control:
+        label: "{{ item.dirName }}"
+      register: containerd_certs_d_files_written
+
+    - name: "[main-components] Set containerd_certs_d_changed fact"
+      set_fact:
+        containerd_certs_d_changed: >-
+          {{ (containerd_certs_d_orphans_deleted is defined and containerd_certs_d_orphans_deleted.changed)
+             or (containerd_certs_d_dirs_written is defined and containerd_certs_d_dirs_written.changed)
+             or (containerd_certs_d_files_written is defined and containerd_certs_d_files_written.changed) }}
 
     - name: Restart containerd
       systemd:
@@ -308,7 +362,7 @@
         state: restarted
       when: >-
         containerd_cgroup_result.changed or
-        (containerd_additional_config_result is defined and containerd_additional_config_result.changed) or
+        (containerd_certs_d_changed is defined and containerd_certs_d_changed) or
         containerd_config_result.changed
 
     # =========================================================================
