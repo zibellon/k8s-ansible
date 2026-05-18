@@ -1,0 +1,54 @@
+all:
+  vars:
+    # работа с iperf. Для проверки сети
+    iperf3_port: 5201
+    iperf3_duration: 30
+    iperf3_streams: 4
+
+    # работа с fio (random READ). Для проверки производительности диска
+    fio_read_directory: "/mnt"
+    fio_read_runtime: 120
+    fio_read_size: "1G"
+    fio_read_blocksize: "8k"
+    fio_read_iodepth: 64
+    fio_read_numjobs: 1
+
+    # работа с fio (random WRITE). Для проверки производительности диска
+    fio_write_directory: "/mnt"
+    fio_write_runtime: 120
+    fio_write_size: "1G"
+    fio_write_blocksize: "8k"
+    fio_write_iodepth: 64
+    fio_write_numjobs: 1
+
+    # fail2ban — security daemon, защита от brute-force.
+    # Каждый item рендерится в /etc/fail2ban/jail.d/<filename>. Filename ОБЯЗАН
+    # начинаться с "ansible-" (для auto-cleanup). Оператор для смены full-replace'ит
+    # массив через hosts-vars-override/ansible.yaml. Применяется playbook-system/fail2ban-install.yaml.
+    fail2ban_jail_d_files:
+      - filename: ansible-defaults.conf
+        content: |
+          [DEFAULT]
+          bantime  = 1h
+          findtime = 10m
+          maxretry = 5
+          backend  = systemd
+      - filename: ansible-sshd.conf
+        content: |
+          [sshd]
+          enabled = true
+          port    = ssh
+          filter  = sshd
+          logpath = %(sshd_log)s
+
+    # sshd hardening — drop-ins в /etc/ssh/sshd_config.d/.
+    # Каждый item: {filename, content}. Filename ОБЯЗАН начинаться с "ansible-"
+    # (для auto-cleanup). Оператор для смены набора full-replace'ит массив через
+    # hosts-vars-override/ansible.yaml. Применяется playbook-system/sshd-configure.yaml.
+    sshd_config_d_files:
+      - filename: ansible-hardening.conf
+        content: |
+          # Ansible-managed sshd hardening — disable password auth, keys only.
+          PasswordAuthentication no
+          PermitEmptyPasswords no
+          KbdInteractiveAuthentication no
