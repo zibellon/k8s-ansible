@@ -10,7 +10,7 @@
 #   1. APT — sync /etc/apt/{sources.list.d, apt.conf.d, preferences.d}/ files
 #            from apt_additional_configs + apt_preferences. Refresh apt cache.
 #   2. FAIL2BAN — install package, sync /etc/fail2ban/jail.d/ from
-#                 fail2ban_jail_d_files, remove legacy jail.local, restart on change.
+#                 fail2ban_jail_d_files, restart on change.
 #   3. SSHD — sync /etc/ssh/sshd_config.d/ from sshd_config_d_files, validate via
 #             sshd -t, reload (not restart) on change.
 #   4. REBOOT — conditional reboot if any of the 5 sync facts is true:
@@ -147,7 +147,7 @@
       when: apt_sources_changed or apt_conf_d_changed or apt_prefs_changed
 
     # =========================================================================
-    # PHASE: FAIL2BAN — install package, sync jail.d/, remove legacy jail.local
+    # PHASE: FAIL2BAN — install package, sync jail.d/
     # =========================================================================
 
     - name: "[fail2ban-install] Assert legacy fail2ban_jail_local is not used"
@@ -184,12 +184,6 @@
         dto_files_list: "{{ fail2ban_jail_d_files }}"
         dto_filename_prefix: "ansible-"
         dto_res_fact_changed: "fail2ban_files_changed"
-
-    - name: "[fail2ban-install] Remove legacy /etc/fail2ban/jail.local"
-      file:
-        path: /etc/fail2ban/jail.local
-        state: absent
-      register: fail2ban_jail_local_removed
 
     - name: "[fail2ban-install] Ensure fail2ban is enabled and running"
       systemd:
