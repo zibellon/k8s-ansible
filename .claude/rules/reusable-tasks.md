@@ -494,7 +494,7 @@ General rules for callers:
 - **Input.** `dto_label_name` (string, log prefix), `dto_target_dir` (string, absolute directory path), `dto_files_list` (sequence of `{filename, content}` items; empty list valid), `dto_filename_prefix` (string, prefix for managed files — e.g. `"ansible-"`), `dto_res_fact_changed` (string, name of output fact to set). Optional: `dto_file_mode` (default `'0644'`), `dto_file_owner` (default `'root'`), `dto_file_group` (default `'root'`).
 - **Validates (assert).** All 5 required `dto_*` params defined + non-empty. `dto_target_dir` starts with `/`. `dto_files_list` is sequence. Per-item: `filename` + `content` non-empty; `filename` starts with `dto_filename_prefix` and contains no `/`. Unique filenames in list. Tag `[always]`.
 - **Output.** Files in `dto_target_dir` matching `dto_files_list` (managed files written + orphans by `dto_filename_prefix` deleted). Output fact `{{ dto_res_fact_changed }}` set to `true` if any file was written or deleted, `false` otherwise.
-- **Callers.** `playbook-system/sshd-configure.yaml` (drop-ins in `/etc/ssh/sshd_config.d/`), `playbook-system/fail2ban-install.yaml` (drop-ins in `/etc/fail2ban/jail.d/`), `playbook-system/apt-configure.yaml` (three calls — `/etc/apt/sources.list.d/`, `/etc/apt/apt.conf.d/`, `/etc/apt/preferences.d/`).
+- **Callers.** `playbook-system/linux-service-configure.yaml` (five calls — APT phase: three calls in `/etc/apt/{sources.list.d, apt.conf.d, preferences.d}/`; FAIL2BAN phase: one call in `/etc/fail2ban/jail.d/`; SSHD phase: one call in `/etc/ssh/sshd_config.d/`).
 - **Idempotent.** Yes — on re-run with same `dto_files_list`, all `copy` and `file: state=absent` tasks are no-ops; output fact will be `false`.
 
 ---

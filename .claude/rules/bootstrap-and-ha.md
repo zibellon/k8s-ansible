@@ -21,24 +21,22 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 
 ### 1.2 `node-install.yaml` (step 1)
 
-**Role.** Prepare a host for kubeadm join. Orchestrates fourteen sub-plays, each idempotent.
+**Role.** Prepare a host for kubeadm join. Orchestrates twelve sub-plays, each idempotent.
 
 | Step | Sub-play | What it does |
 |---|---|---|
 | 1 | `setup-ssh-keys.yaml` | Ensures `authorized_keys` contains the operator's pubkey. |
-| 2 | `apt-configure.yaml` | Applies ansible-managed apt files (mirrors / extra sources / `apt.conf` overrides / pinning) from `apt_additional_configs` and `apt_preferences`. Default `[]` → no-op. Files are isolated by `ansible-` prefix; cloud-init defaults and other repos (`ubuntu.sources`, `kubernetes.list`, vbernat PPA) are not touched. Auto-cleanup orphans: removing entry deletes the file on next run. |
+| 2 | `set-hostname.yaml` | Persists `hostname` + `/etc/hosts` entry. |
 | 3 | `preflight.yaml` | Waits for cloud-init to finish (if installed), stops any running `unattended-upgrade` cooperatively, masks `unattended-upgrades.service` and `apt-daily*` timers permanently (policy: OS updates via rolling upgrade, not in background), runs `dpkg --configure -a` to recover any interrupted transaction. On managers also asserts `api_server_advertise_address` is present on a real network interface — fails fast with a clear message if inventory points to a non-existent IP, instead of letting kubeadm hang 4 minutes on `wait-control-plane`. |
-| 4 | `set-hostname.yaml` | Persists `hostname` + `/etc/hosts` entry. |
+| 4 | `linux-service-configure.yaml` | Объединяет три прежних шага. **APT phase**: applies ansible-managed apt files (mirrors / extra sources / `apt.conf` overrides / pinning) from `apt_additional_configs` and `apt_preferences`. Default `[]` → no-op. Files are isolated by `ansible-` prefix; cloud-init defaults and other repos (`ubuntu.sources`, `kubernetes.list`, vbernat PPA) are not touched. Auto-cleanup orphans: removing entry deletes the file on next run. **FAIL2BAN phase**: installs `fail2ban` package via apt, renders `fail2ban_jail_d_files` (list of `{filename, content}`) into `/etc/fail2ban/jail.d/` via `tasks-sync-managed-files.yaml` (auto-cleanup orphans by `ansible-` prefix), removes legacy `/etc/fail2ban/jail.local` if present, enables + (re)starts service. Migration assert catches deprecated `fail2ban_jail_local` variable. **SSHD phase**: renders `sshd_config_d_files` (list of `{filename, content}`) into `/etc/ssh/sshd_config.d/` via `tasks-sync-managed-files.yaml`, validates full sshd config via `sshd -t`, `systemctl reload ssh` (not restart) on change. Default content disables password auth + KbdInteractive + EmptyPasswords. **REBOOT phase**: conditional reboot if any of 5 sync facts changed (`apt_sources_changed`, `apt_conf_d_changed`, `apt_prefs_changed`, `fail2ban_files_changed`, `sshd_files_changed`). Idempotent. |
 | 5 | `node-prepare.yaml` | Disable swap, load kernel modules (`br_netfilter`, `overlay`, `softdog`), sysctls (`net.ipv4.ip_forward`, `net.bridge.bridge-nf-call-*`, IPv6 counterparts), time sync. Blacklisted modules re-enabled via unit-service wrapping `modprobe` (survives reboots despite blacklists). |
-| 6 | `fail2ban-install.yaml` | Install `fail2ban` package via apt, render `fail2ban_jail_d_files` (list of `{filename, content}`) into `/etc/fail2ban/jail.d/` via `tasks-sync-managed-files.yaml` (auto-cleanup orphans by `ansible-` prefix), remove legacy `/etc/fail2ban/jail.local` if present (would override `jail.d/` in fail2ban load order), enable + (re)start service. Migration assert catches deprecated `fail2ban_jail_local` variable. Idempotent. |
-| 7 | `sshd-configure.yaml` | Render `sshd_config_d_files` (list of `{filename, content}`) into `/etc/ssh/sshd_config.d/` via `tasks-sync-managed-files.yaml` (auto-cleanup orphans by `ansible-` prefix), validate full sshd config via `sshd -t`, `systemctl reload ssh` (not restart) on change. Default content disables password auth + KbdInteractive + EmptyPasswords. Idempotent. |
-| 8 | `longhorn-prepare.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`) install via standard Ubuntu apt repos. Modules (`iscsi_tcp`, `dm_crypt`). |
-| 9 | `linstor-prepare.yaml` | Install `linux-headers-$(uname -r)` via apt + `apt-mark hold` + verify `/lib/modules/$(uname -r)/build` symlink. Required by Piraeus operator kmod-loader (DRBD module built in-container at satellite init; only kernel-headers needed on host). |
-| 10 | `cilium-prepare.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
-| 11 | `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
-| 12 | `haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
-| 13 | `install-helm.yaml` | Managers only — install the `helm` binary via download (`helm_install_method: url`, default) or local tarball from `pkgs-sources/` (`helm_install_method: local_tarball`). Pre-check skips install if helm is already present. |
-| 14 | `install-k9s.yaml` | Managers only — install `k9s`. |
+| 6 | `longhorn-prepare.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`) install via standard Ubuntu apt repos. Modules (`iscsi_tcp`, `dm_crypt`). |
+| 7 | `linstor-prepare.yaml` | Install `linux-headers-$(uname -r)` via apt + `apt-mark hold` + verify `/lib/modules/$(uname -r)/build` symlink. Required by Piraeus operator kmod-loader (DRBD module built in-container at satellite init; only kernel-headers needed on host). |
+| 8 | `cilium-prepare.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
+| 9 | `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
+| 10 | `haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
+| 11 | `install-helm.yaml` | Managers only — install the `helm` binary via download (`helm_install_method: url`, default) or local tarball from `pkgs-sources/` (`helm_install_method: local_tarball`). Pre-check skips install if helm is already present. |
+| 12 | `install-k9s.yaml` | Managers only — install `k9s`. |
 
 **Pre-conditions.**
 
