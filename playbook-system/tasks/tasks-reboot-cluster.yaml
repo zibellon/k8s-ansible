@@ -1,0 +1,52 @@
+# =============================================================================
+# Bastion-aware ordered cluster reboot
+# =============================================================================
+# Reboots hosts in two phases (avoids race when bastion = on-node host):
+#   1. Non-bastion hosts reboot in parallel (through bastion if ProxyJump used).
+#   2. Bastion host reboots last (direct connection, ProxyJump no longer needed).
+#
+# Precondition: caller MUST resolve bastion_host_fact before invoking this task
+# (typically by calling tasks-set-master-manager.yaml at the start of the
+# playbook's tasks: block). This task does NOT auto-resolve facts — dependency
+# is explicit at the playbook level.
+#
+# If `bastion_host_fact` is undefined (no on-node bastion in inventory, valid
+# для external bastion / public-IP / single-host schemes) — Phase 1 reboots
+# ALL hosts in parallel (default ('') compares non-equal to every real
+# inventory_hostname), Phase 2 is skipped. This is the old behavior.
+#
+# Input params:
+#   - dto_label_name (string, required)         — log prefix
+#   - dto_reboot_when_condition (bool, required) — per-host pre-computed flag:
+#                                                  caller evaluates its own
+#                                                  fact-based condition and
+#                                                  passes the resulting bool
+#   - dto_reboot_msg (string, optional)         — message passed to reboot module
+# =============================================================================
+
+- name: "[{{ dto_label_name }}-reboot-cluster] Assert input parameters"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_reboot_when_condition is defined
+      - dto_reboot_when_condition is boolean
+  tags: [always]
+
+- name: "[{{ dto_label_name }}-reboot-cluster] Reboot non-bastion hosts first (parallel)"
+  reboot:
+    reboot_timeout: 300
+    msg: "{{ dto_reboot_msg | default('Reboot') }}"
+  when:
+    - dto_reboot_when_condition
+    - inventory_hostname != (bastion_host_fact | default(''))
+
+- name: "[{{ dto_label_name }}-reboot-cluster] Reboot bastion host last"
+  reboot:
+    reboot_timeout: 300
+    msg: "{{ dto_reboot_msg | default('Reboot bastion') }}"
+  when:
+    - dto_reboot_when_condition
+    - bastion_host_fact is defined
+    - bastion_host_fact | length > 0
+    - inventory_hostname == bastion_host_fact

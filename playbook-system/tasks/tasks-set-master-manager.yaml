@@ -1,7 +1,14 @@
 # =============================================================================
-# Find master manager from hosts.yaml
+# Find master manager + bastion host from inventory
 # =============================================================================
-# Sets fact: master_manager_fact, is_master_manager_exist
+# Sets facts:
+#   - master_manager_fact (string)     -- master manager hostname (is_master: true)
+#   - is_master_manager_exist (bool)   -- master manager found in inventory
+#   - bastion_host_fact (string)       -- bastion host hostname (is_bastion: true, optional)
+#   - is_bastion_host_exist (bool)     -- bastion host found in inventory
+#
+# Note: bastion finding co-located here (не отдельный task) — осознанный
+# технический долг, до будущего рефакторинга cluster-facts chain.
 # =============================================================================
 
 - name: Find master manager
@@ -17,4 +24,19 @@
 - name: Print master manager status
   debug:
     msg: "Master manager: {{ master_manager_fact | default('NOT FOUND') }} (exists: {{ is_master_manager_exist }})"
+  run_once: true
+
+- name: Find bastion host
+  set_fact:
+    bastion_host_fact: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+  when: hostvars[item].is_bastion | default(false)
+
+- name: Set is_bastion_host_exist fact
+  set_fact:
+    is_bastion_host_exist: "{{ bastion_host_fact is defined and bastion_host_fact | length > 0 }}"
+
+- name: Print bastion host status
+  debug:
+    msg: "Bastion host: {{ bastion_host_fact | default('NOT SET — reboot will be parallel on all hosts') }} (exists: {{ is_bastion_host_exist }})"
   run_once: true

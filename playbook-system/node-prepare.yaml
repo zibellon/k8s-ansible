@@ -16,6 +16,9 @@
   gather_facts: false
 
   tasks:
+    - name: "Resolve master-manager and bastion facts"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-set-master-manager.yaml"
+
     # =========================================================================
     # DISABLE SWAP
     # =========================================================================
@@ -112,16 +115,21 @@
     # REBOOT
     # =========================================================================
 
-    - name: Reboot servers
-      reboot:
-        reboot_timeout: 300
-        msg: "Reboot"
-      when: >-
-        sysctl_conf_create_result.changed
-        or modules_conf_create_result.changed
-        or softdog_conf_result.changed
-        or softdog_service_result.changed
-        or (swap_pre_check.stdout | length > 0)
+    - name: Compute reboot condition
+      set_fact:
+        node_prepare_needs_reboot: >-
+          {{ sysctl_conf_create_result.changed
+             or modules_conf_create_result.changed
+             or softdog_conf_result.changed
+             or softdog_service_result.changed
+             or (swap_pre_check.stdout | length > 0) }}
+
+    - name: Reboot servers if kernel modules/sysctl/softdog/swap changed
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-reboot-cluster.yaml"
+      vars:
+        dto_label_name: "node-prepare"
+        dto_reboot_when_condition: "{{ node_prepare_needs_reboot }}"
+        dto_reboot_msg: "Reboot"
 
     # =========================================================================
     # FINAL VERIFICATION

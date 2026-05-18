@@ -12,6 +12,9 @@
   gather_facts: false
 
   tasks:
+    - name: "Resolve master-manager and bastion facts"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-set-master-manager.yaml"
+
     # =========================================================================
     # LLVM + CLANG INSTALLATION
     # =========================================================================
@@ -114,13 +117,18 @@
     # REBOOT
     # =========================================================================
 
-    - name: Reboot servers
-      reboot:
-        reboot_timeout: 300
-        msg: "Rebooting"
-      when: >-
-        cilium_modules_conf_create_result.changed
-        or (bpf_mount_unit_create_result is defined and bpf_mount_unit_create_result.changed)
+    - name: Compute reboot condition
+      set_fact:
+        cilium_prepare_needs_reboot: >-
+          {{ cilium_modules_conf_create_result.changed
+             or (bpf_mount_unit_create_result is defined and bpf_mount_unit_create_result.changed) }}
+
+    - name: Reboot servers if cilium modules/BPF mount changed
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-reboot-cluster.yaml"
+      vars:
+        dto_label_name: "cilium-prepare"
+        dto_reboot_when_condition: "{{ cilium_prepare_needs_reboot }}"
+        dto_reboot_msg: "Rebooting"
 
     # =========================================================================
     # FINAL VERIFICATION

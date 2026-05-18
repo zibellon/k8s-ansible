@@ -17,6 +17,9 @@
   gather_facts: false
 
   tasks:
+    - name: "Resolve master-manager and bastion facts"
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-set-master-manager.yaml"
+
     # =========================================================================
     # KERNEL MODULES
     # =========================================================================
@@ -124,14 +127,19 @@
     # REBOOT
     # =========================================================================
 
-    - name: Reboot
-      reboot:
-        reboot_timeout: 300
-        msg: "Rebooting"
-      when: >-
-        longhorn_modules_conf_create_result.changed
-        or (shared_root_service_create_result is defined and shared_root_service_create_result.changed)
-        or (multipath_conf_create_result is defined and multipath_conf_create_result.changed)
+    - name: Compute reboot condition
+      set_fact:
+        longhorn_prepare_needs_reboot: >-
+          {{ longhorn_modules_conf_create_result.changed
+             or (shared_root_service_create_result is defined and shared_root_service_create_result.changed)
+             or (multipath_conf_create_result is defined and multipath_conf_create_result.changed) }}
+
+    - name: Reboot servers if longhorn modules/services changed
+      include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-reboot-cluster.yaml"
+      vars:
+        dto_label_name: "longhorn-prepare"
+        dto_reboot_when_condition: "{{ longhorn_prepare_needs_reboot }}"
+        dto_reboot_msg: "Rebooting"
 
     # =========================================================================
     # FINAL VERIFICATION
