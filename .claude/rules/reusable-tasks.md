@@ -327,7 +327,7 @@ General rules for callers:
 
 ---
 
-## 2. `playbook-system/tasks/` (21 tasks)
+## 2. `playbook-system/tasks/` (20 tasks)
 
 ### 2.1 Guard / preflight
 
