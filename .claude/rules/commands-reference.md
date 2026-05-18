@@ -208,7 +208,7 @@ After the test iperf3 server processes are killed on both hosts; the `iperf3` pa
 
 ### 4.8 Disk I/O diagnostics
 
-Measure disk performance via `fio` (random write + random read, 8k blocks, iodepth=64, 2 minutes per direction) on 1...N selected nodes. Defaults configurable via `fio_read_*` and `fio_write_*` keys in `hosts-vars/ansible.yaml` (6 vars each: `_directory`, `_runtime`, `_size`, `_blocksize`, `_iodepth`, `_numjobs`). Used for DRBD/Longhorn replication rate capacity planning.
+Measure disk performance via `fio` (random write + random read, 8k blocks, iodepth=64, 2 minutes per direction) on 1...N selected nodes. Defaults configurable via `fio_read_*` and `fio_write_*` keys in `hosts-vars/linux-pkgs.yaml` (6 vars each: `_directory`, `_runtime`, `_size`, `_blocksize`, `_iodepth`, `_numjobs`). Used for DRBD/Longhorn replication rate capacity planning.
 
 ```bash
 # All hosts in parallel (~4 min wall-clock independent of N):

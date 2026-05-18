@@ -309,13 +309,18 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | Variable | Default | Purpose |
 |---|---|---|
 | `remote_charts_dir` | `"/opt/helm-charts"` | Where charts are rsynced on the master manager |
+
+### 2.13 Linux package & diagnostic settings (`hosts-vars/linux-pkgs.yaml`)
+
+| Variable | Default | Purpose |
+|---|---|---|
 | `fail2ban_jail_d_files` | list-of-`{filename, content}` (defaults: `ansible-defaults.conf` с `[DEFAULT]` блоком + `ansible-sshd.conf` с `[sshd]` блоком) | Drop-in файлы в `/etc/fail2ban/jail.d/`. Filename ОБЯЗАН начинаться с `ansible-` (для auto-cleanup orphans). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/linux-service-configure.yaml` (FAIL2BAN phase) через `tasks-sync-managed-files.yaml`; legacy `/etc/fail2ban/jail.local` удаляется. |
 | `sshd_config_d_files` | list-of-`{filename, content}` (default: `ansible-hardening.conf` отключает password auth + KbdInteractive + EmptyPasswords) | Drop-in файлы в `/etc/ssh/sshd_config.d/`. Filename ОБЯЗАН начинаться с `ansible-` (для auto-cleanup orphans). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/linux-service-configure.yaml` (SSHD phase) через `tasks-sync-managed-files.yaml`. Validation: `sshd -t` после write; reload (не restart) сохраняет существующую ansible-сессию. |
 | `iperf3_port`, `iperf3_duration`, `iperf3_streams` | `5201` / `30` / `4` | Параметры iperf3 для `playbook-system/network-bandwidth-test.yaml` (порт server'а, длительность теста в секундах, параллельных streams) |
 | `fio_read_directory`, `fio_read_runtime`, `fio_read_size`, `fio_read_blocksize`, `fio_read_iodepth`, `fio_read_numjobs` | `"/mnt"` / `120` / `"1G"` / `"8k"` / `64` / `1` | Параметры random READ теста для `playbook-system/disk-io-test.yaml` |
 | `fio_write_directory`, `fio_write_runtime`, `fio_write_size`, `fio_write_blocksize`, `fio_write_iodepth`, `fio_write_numjobs` | `"/mnt"` / `120` / `"1G"` / `"8k"` / `64` / `1` | Параметры random WRITE теста для `playbook-system/disk-io-test.yaml` |
 
-### 2.13 Bastion / SSH ProxyJump (optional)
+### 2.14 Bastion / SSH ProxyJump (optional)
 
 Optional opt-in connection mode for environments where manager/worker nodes have no public IP and are reachable only via a bastion host (e.g. cloud VPC). Activated by defining `bastion_host` + `bastion_user` in `hosts-vars-override/hosts.yaml` under `all.vars`, and overriding `ansible_ssh_common_args` on the `managers` / `workers` groups with a `ProxyJump` clause. In this mode `ansible_host` is a private IP for every node (typically equal to `internal_ip`).
 
