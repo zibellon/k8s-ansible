@@ -221,6 +221,13 @@
 ## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
 ## Есть ожидание готовности CRDs. Если добавляются новые CRDs - их ожидание надо добавить в `playbook-app/linstor-install.yaml`
 ## ---
+## Важно_1: может работать в абсолютно разных условиях
+## 1. VPD/VDS + 1 диск с OS = используется sparse-file (fileThinPool / filePool)
+## 2. VPD/VDS + 1 диск с OS + N диск RAW = sparse-file (fileThinPool / filePool) + lvmThinPool / lvmPool (для RAW устройств)
+## 3. BareMetal + N диск RAW = lvmThinPool / lvmPool
+## ---
+
+## ---
 ## `--tags pre, install-operator, install-cluster, post`
 ## ---
 ##
