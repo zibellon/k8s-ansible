@@ -44,12 +44,13 @@
           - item.content is defined
           - item.content | length > 0
         fail_msg: >-
-          apt_additional_configs[{{ ansible_loop.index0 }}]: filePath must
+          apt_additional_configs[{{ idx }}]: filePath must
           start with "sources.list.d/ansible-" or "apt.conf.d/ansible-",
           content required, no '..' in path
       loop: "{{ apt_additional_configs }}"
       loop_control:
-        extended: true
+        label: "{{ item.filePath | default('<no filePath>') }}"
+        index_var: idx
       when: apt_additional_configs | length > 0
       tags: [always]
 
@@ -63,11 +64,12 @@
           - item.content is defined
           - item.content | length > 0
         fail_msg: >-
-          apt_preferences[{{ ansible_loop.index0 }}]: name must start with
+          apt_preferences[{{ idx }}]: name must start with
           "ansible-", no '/' in name, content required
       loop: "{{ apt_preferences }}"
       loop_control:
-        extended: true
+        label: "{{ item.name | default('<no name>') }}"
+        index_var: idx
       when: apt_preferences | length > 0
       tags: [always]
 
@@ -89,6 +91,8 @@
                'content': item.content
              }] }}
       loop: "{{ apt_additional_configs }}"
+      loop_control:
+        label: "{{ item.filePath }}"
       when: item.filePath.startswith('sources.list.d/')
 
     - name: "[apt-configure] Build apt_conf_d_files from apt_additional_configs"
@@ -99,6 +103,8 @@
                'content': item.content
              }] }}
       loop: "{{ apt_additional_configs }}"
+      loop_control:
+        label: "{{ item.filePath }}"
       when: item.filePath.startswith('apt.conf.d/')
 
     - name: "[apt-configure] Build apt_preferences_d_files from apt_preferences"
@@ -109,6 +115,8 @@
                'content': item.content
              }] }}
       loop: "{{ apt_preferences }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     # =========================================================================
     # PHASE 3: SYNC EACH MANAGED DIRECTORY

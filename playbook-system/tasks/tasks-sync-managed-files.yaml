@@ -55,12 +55,13 @@
       - item.content is defined
       - item.content | length > 0
     fail_msg: >-
-      tasks-sync-managed-files[{{ dto_label_name }}]: item #{{ ansible_loop.index0 }}
+      tasks-sync-managed-files[{{ dto_label_name }}]: item #{{ idx }}
       must have non-empty filename + content; filename must start with
       '{{ dto_filename_prefix }}' and contain no '/'
   loop: "{{ dto_files_list }}"
   loop_control:
-    extended: true
+    label: "{{ item.filename | default('<no filename>') }}"
+    index_var: idx
   tags: [always]
 
 - name: "[{{ dto_label_name }}] Assert unique filenames"
@@ -106,6 +107,8 @@
     path: "{{ item }}"
     state: absent
   loop: "{{ sync_orphan_paths }}"
+  loop_control:
+    label: "{{ item }}"
   register: sync_orphans_deleted
 
 - name: "[{{ dto_label_name }}] Write managed files"
@@ -116,6 +119,8 @@
     owner: "{{ dto_file_owner | default('root') }}"
     group: "{{ dto_file_group | default('root') }}"
   loop: "{{ dto_files_list }}"
+  loop_control:
+    label: "{{ item.filename }}"
   register: sync_files_written
 
 - name: "[{{ dto_label_name }}] Set output changed fact"
