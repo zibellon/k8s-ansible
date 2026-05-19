@@ -107,9 +107,9 @@ all:
       checkInterval: 30
       unregisterRunners: false
       runners:
-        secret: "{{ _local_gitlab_runner_secret_name_auth_token }}"
+        secret: "{{ gitlab_runner_secret_auth_token.body.target.name }}"
         cache:
-          secretName: "{{ _local_gitlab_runner_secret_name_minio_cache_creds }}"
+          secretName: "{{ gitlab_runner_secret_minio_cache_creds.body.target.name }}"
         config: "{{ gitlab_runner_config }}"
       rbac:
         create: true
@@ -150,14 +150,13 @@ all:
           enabled: true
           interval: "30s"
           scrapeTimeout: "15s"
-    # -------
-    # Secret name lookups — used by tasks-eso-lookup.yaml in gitlab-runner-install.yaml
-    # Values must match external_secret_name of corresponding eso_vault_integration_gitlab_runner_secrets entry
-    # -------
-    gitlab_runner_secret_name_auth_token: "eso-gitlab-runner-auth-token"
-    gitlab_runner_secret_name_minio_cache_creds: "eso-gitlab-runner-minio-cache-creds"
     # ---------
-    # GitLab Runner
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_gitlab_runner_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/.
     # ---------
     eso_vault_integration_gitlab_runner:
       sa_name: "eso-main"
@@ -165,39 +164,45 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
+    # SPECIAL: runner_token maps Vault key 'token' → k8s key 'runner-token'.
+    # runner-registration-token must be present as empty string for chart compatibility.
+    gitlab_runner_secret_auth_token:
+      external_secret_name: "eso-gitlab-runner-auth-token"
+      vault_path: "/gitlab-runner/token"
+      body:
+        target:
+          name: "eso-gitlab-runner-auth-token"
+          template:
+            engineVersion: v2
+            data:
+              runner-registration-token: ""
+              runner-token: "{% raw %}{{ .token }}{% endraw %}"
+        data:
+          - secretKey: token
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/token"
+              property: token
+
+    # SPECIAL: minio_runner_cache remaps access_key/secret_key → accesskey/secretkey
+    # as expected by the official gitlab-runner chart runners.cache.secretName.
+    gitlab_runner_secret_minio_cache_creds:
+      external_secret_name: "eso-gitlab-runner-minio-cache-creds"
+      vault_path: "/gitlab-runner/minio/cache"
+      body:
+        target:
+          name: "eso-gitlab-runner-minio-cache-creds"
+        data:
+          - secretKey: accesskey
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
+              property: access_key
+          - secretKey: secretkey
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
+              property: secret_key
+
     eso_vault_integration_gitlab_runner_secrets:
-      # SPECIAL: runner_token maps Vault key 'token' → k8s key 'runner-token'.
-      # runner-registration-token must be present as empty string for chart compatibility.
-      - external_secret_name: "{{ gitlab_runner_secret_name_auth_token }}"
-        vault_path: "/gitlab-runner/token"
-        body:
-          target:
-            name: "{{ gitlab_runner_secret_name_auth_token }}"
-            template:
-              engineVersion: v2
-              data:
-                runner-registration-token: ""
-                runner-token: "{% raw %}{{ .token }}{% endraw %}"
-          data:
-            - secretKey: token
-              remoteRef:
-                key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/token"
-                property: token
-      # SPECIAL: minio_runner_cache remaps access_key/secret_key → accesskey/secretkey
-      # as expected by the official gitlab-runner chart runners.cache.secretName.
-      - external_secret_name: "{{ gitlab_runner_secret_name_minio_cache_creds }}"
-        vault_path: "/gitlab-runner/minio/cache"
-        body:
-          target:
-            name: "{{ gitlab_runner_secret_name_minio_cache_creds }}"
-          data:
-            - secretKey: accesskey
-              remoteRef:
-                key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
-                property: access_key
-            - secretKey: secretkey
-              remoteRef:
-                key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
-                property: secret_key
+      - "{{ gitlab_runner_secret_auth_token }}"
+      - "{{ gitlab_runner_secret_minio_cache_creds }}"
 
     eso_vault_integration_gitlab_runner_secrets_extra: []
