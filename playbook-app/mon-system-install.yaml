@@ -600,7 +600,127 @@
       tags: [vector]
 
     # =========================================================================
-    # STEP 10: grafana (Grafana Deployment + PVC + Service, with Vault/ESO lifecycle)
+    # STEP 10: grafana-postgresql (Postgres Deployment + Service + PVC backing Grafana)
+    # =========================================================================
+
+    - name: "[mon-system-grafana-postgresql-vault-secrets] Lookup postgresql secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
+        dto_eso_secrets_list: "{{ eso_vault_integration_mon_system_secrets_merged }}"
+        dto_external_secret_name: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+        dto_res_fact_name_secret: "_local_grafana_secret_name_postgresql_creds"
+        dto_res_fact_name_vault_path: "_local_grafana_vault_path_postgresql_creds"
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql-vault-secrets] Get PostgreSQL credentials from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_postgresql_creds }}"
+        dto_vault_get_field: password
+        dto_vault_get_res_fact_name: "grafana_postgresql_vault"
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql-vault-secrets] Generate PostgreSQL password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
+        dto_generate_fact_name: "_grafana_postgresql_password_generated"
+      when: mon_system_grafana_enabled and not grafana_postgresql_vault_exists
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql-vault-secrets] Store PostgreSQL credentials in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_postgresql_creds }}"
+        dto_vault_put_data:
+          username: "{{ mon_system_grafana_postgresql_username }}"
+          password: "{{ _grafana_postgresql_password_generated }}"
+      when: mon_system_grafana_enabled and not grafana_postgresql_vault_exists
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql-vault-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
+        dto_eso_sync_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql-vault-secrets] Wait for secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
+        dto_wait_secret_name: "{{ _local_grafana_secret_name_postgresql_creds }}"
+        dto_wait_secret_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql"
+        dto_chart_name: "grafana-postgresql"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/mon-system/grafana-postgresql/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/grafana-postgresql"
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql"
+        dto_dir: "{{ remote_charts_dir }}/mon-system/grafana-postgresql"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ mon_system_grafana_postgresql_helm_values | to_nice_yaml }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql"
+        dto_release_name: "mon-system-grafana-postgresql"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/mon-system/grafana-postgresql"
+        dto_values_file_path: "{{ remote_charts_dir }}/mon-system/grafana-postgresql/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/mon-system/grafana-postgresql-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/mon-system/grafana-postgresql-k"
+        dto_patches_list: "{{ mon_system_grafana_postgresql_kustomize_patches }}"
+        dto_target_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql] Install or upgrade via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql"
+        dto_helm_command: >
+          helm upgrade --install mon-system-grafana-postgresql {{ remote_charts_dir }}/mon-system/grafana-postgresql-k
+          --namespace {{ mon_system_namespace }}
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ mon_system_grafana_postgresql_helm_timeout }}
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    - name: "[mon-system-grafana-postgresql] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "mon-system-grafana-postgresql"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_grafana_postgresql_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/mon-system-grafana-postgresql
+      when: mon_system_grafana_enabled
+      tags: [grafana-postgresql]
+
+    # =========================================================================
+    # STEP 11: grafana (Grafana Deployment + PVC + Service, with Vault/ESO lifecycle)
     # =========================================================================
 
     - name: "[mon-system-grafana-vault-secrets] Lookup admin secret"
@@ -721,7 +841,7 @@
       tags: [grafana]
 
     # =========================================================================
-    # STEP 11: post (Ingresses + Certificates + ServiceMonitors + system-*)
+    # STEP 12: post (Ingresses + Certificates + ServiceMonitors + system-*)
     # =========================================================================
 
     - name: "[mon-system-post] Copy post chart to remote"
