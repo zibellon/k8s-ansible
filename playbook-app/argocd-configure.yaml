@@ -33,16 +33,6 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
       tags: [always]
 
-    - name: "[argocd-configure-init] Lookup argocd-root secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "argocd-configure-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_argocd_secrets_merged }}"
-        dto_external_secret_name: "{{ argocd_secret_name_admin_creds }}"
-        dto_res_fact_name_secret: "_local_argocd_secret_name_admin_creds"
-        dto_res_fact_name_vault_path: "_local_argocd_vault_path_admin_creds"
-      tags: [always]
-
     # =========================================================================
     # STEP 0: CONFIGURE DEFAULT APP PROJECT
     # =========================================================================
@@ -86,7 +76,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "argocd-admin-password"
-        dto_vault_get_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ _local_argocd_vault_path_admin_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "argocd_admin_pw_vault"
       tags: [always]
@@ -199,7 +189,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "argocd-admin-password"
-        dto_vault_put_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ _local_argocd_vault_path_admin_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
         dto_vault_put_data:
           username: "{{ argocd_admin_username }}"
           password: "{{ active_admin_password }}"
@@ -226,7 +216,7 @@
           - "ArgoCD Web UI: https://{{ argocd_ui_domain }}"
           - ""
           - "Admin credentials stored in Vault:"
-          - "  Path: {{ eso_vault_integration_argocd.kv_engine_path }}{{ _local_argocd_vault_path_admin_creds }}"
+          - "  Path: {{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
           - "  Fields: username, password"
           - ""
           - "Password source: {{ admin_password_source }}"

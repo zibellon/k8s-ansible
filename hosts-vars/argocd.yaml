@@ -149,13 +149,14 @@ all:
       namespace: "{{ argocd_namespace }}"
       gitOpsApps: "{{ argocd_git_ops_apps }}"
       extraObjects: "{{ argocd_gitops_extra_objects }}"
-    # -------
-    # Secret name lookups — used by tasks-eso-lookup.yaml in argocd-configure.yaml
-    # Values must match external_secret_name of corresponding eso_vault_integration_argocd_secrets entry
-    # -------
-    argocd_secret_name_admin_creds: "eso-argocd-admin-creds"
     # ---------
-    # ArgoCD (SSH repo-creds)
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_argocd_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/ (типично — git-ops repo credentials
+    # с argocd.argoproj.io/secret-type labels).
     # ---------
     eso_vault_integration_argocd:
       sa_name: "eso-main"
@@ -163,16 +164,20 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
+    # never rendered (is_need_eso: false) — body присутствует для консистентности схемы.
+    # Используется только playbook'ом argocd-configure.yaml для чтения/записи в Vault.
+    argocd_secret_admin_creds:
+      external_secret_name: "eso-argocd-admin-creds"
+      vault_path: "/argocd/admin/creds"
+      is_need_eso: false
+      body:
+        target:
+          name: "eso-argocd-admin-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/admin/creds"
+
     eso_vault_integration_argocd_secrets:
-      # never rendered (is_need_eso: false) — body присутствует для консистентности схемы
-      - external_secret_name: "{{ argocd_secret_name_admin_creds }}"
-        vault_path: "/argocd/admin/creds"
-        is_need_eso: false
-        body:
-          target:
-            name: "{{ argocd_secret_name_admin_creds }}"
-          dataFrom:
-            - extract:
-                key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/admin/creds"
+      - "{{ argocd_secret_admin_creds }}"
 
     eso_vault_integration_argocd_secrets_extra: []
