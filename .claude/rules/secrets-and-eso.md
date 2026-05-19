@@ -95,14 +95,14 @@ eso_vault_integration_<c>:
 
 ### 2.4 `eso_vault_integration_<c>_secrets` (list, per component)
 
-Also lives in `hosts-vars/<c>.yaml`. Each entry declares one `ExternalSecret` to be materialized into a K8s `Secret`.
+Also lives in `hosts-vars/<c>.yaml`. Each **base secret** is a separate top-level dict-variable `<c>_secret_<logical>` containing the full ExternalSecret structure. The array `eso_vault_integration_<c>_secrets` is a list of Jinja-string-references to these named dict-variables. `_extra` remains a list of full dict-items (operator extension via `hosts-vars-override/`).
 
 **Canonical field set:**
 
 | Field | Required | Purpose |
 |---|---|---|
-| `external_secret_name` | yes | `metadata.name` of the `ExternalSecret`; also the lookup key for playbooks via `tasks-eso-lookup.yaml`. Conventionally set as a Jinja-ref to `<c>_secret_name_<logical>`. |
-| `vault_path` | yes | Returned by `tasks-eso-lookup.yaml` to playbooks for `vault kv put` rotation flows. |
+| `external_secret_name` | yes | `metadata.name` of the `ExternalSecret` CR. Conventionally matches `body.target.name`. |
+| `vault_path` | yes | Path in Vault (without `kv_engine_path` prefix). Used directly by playbooks via `<c>_secret_<logical>.vault_path` for `tasks-vault-put`/`tasks-vault-get`. |
 | `body` | yes | Full `spec` content starting from `target:`. Passed to the chart as `toYaml $secret.body`. Contains `target.name`, and either `dataFrom` (simple extract) or `data` (field remapping) or `target.template.*` (ESO template rendering). |
 | `is_need_eso` | no | If `false`, the chart skips this entry entirely. |
 | `refresh_interval` | no | Overrides the chart-level default from `esoResourcesConfig.externalSecretRefreshInterval`. |
@@ -110,47 +110,51 @@ Also lives in `hosts-vars/<c>.yaml`. Each entry declares one `ExternalSecret` to
 **Minimal flat example (simple `dataFrom.extract`):**
 
 ```yaml
-eso_vault_integration_<c>_secrets:
-  - external_secret_name: "{{ <c>_secret_name_admin }}"
-    vault_path: "/<c>/admin"
-    body:
-      target:
-        name: "{{ <c>_secret_name_admin }}"
-      dataFrom:
-        - extract:
-            key: "{{ eso_vault_integration_<c>.kv_engine_path }}/data/<c>/admin"
-```
+# Каждый base-секрет — отдельная top-level переменная
+<c>_secret_admin:
+  external_secret_name: "eso-<c>-admin"
+  vault_path: "/<c>/admin"
+  body:
+    target:
+      name: "eso-<c>-admin"
+    dataFrom:
+      - extract:
+          key: "{{ eso_vault_integration_<c>.kv_engine_path }}/data/<c>/admin"
 
-Note: `external_secret_name` and `body.target.name` both reference the same `<c>_secret_name_<logical>` variable (defined in `hosts-vars/<c>.yaml`), so renaming the secret only requires changing one place.
+# Массив — список ссылок на named-переменные
+eso_vault_integration_<c>_secrets:
+  - "{{ <c>_secret_admin }}"
+```
 
 **Complex example (ESO template rendering for multi-field secret):**
 
 ```yaml
-  - external_secret_name: "{{ gitlab_secret_name_registry_connection_config }}"
-    vault_path: "/gitlab/minio/registry"
-    body:
-      target:
-        name: "{{ gitlab_secret_name_registry_connection_config }}"
-        template:
-          engineVersion: v2
-          data:
-            config: |
-              s3:
-                bucket: registry
-                accesskey: {% raw %}{{ .access_key }}{% endraw +%}
-                secretkey: {% raw %}{{ .secret_key }}{% endraw +%}
-                regionendpoint: https://minio.example.com
-                region: us-east-1
-                v4auth: true
-      data:
-        - secretKey: access_key
-          remoteRef:
-            key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-            property: access_key
-        - secretKey: secret_key
-          remoteRef:
-            key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-            property: secret_key
+gitlab_secret_registry_connection_config:
+  external_secret_name: "eso-gitlab-registry-connection-config"
+  vault_path: "/gitlab/minio/registry"
+  body:
+    target:
+      name: "eso-gitlab-registry-connection-config"
+      template:
+        engineVersion: v2
+        data:
+          config: |
+            s3:
+              bucket: registry
+              accesskey: {% raw %}{{ .access_key }}{% endraw +%}
+              secretkey: {% raw %}{{ .secret_key }}{% endraw +%}
+              regionendpoint: https://minio.example.com
+              region: us-east-1
+              v4auth: true
+    data:
+      - secretKey: access_key
+        remoteRef:
+          key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
+          property: access_key
+      - secretKey: secret_key
+        remoteRef:
+          key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
+          property: secret_key
 ```
 
 **`{% raw %}{% endraw +%}` rule:** ESO template placeholders like `{{ .access_key }}` inside `body` values must be wrapped in `{% raw %}...{% endraw +%}` to prevent Ansible/Jinja2 from interpreting them during inventory loading. The `+%}` modifier is **required** when the closing tag sits inside a multi-line block scalar (e.g. `data: connection: |`): without it, Ansible's `trim_blocks=True` strips the newline after `{% endraw %}` and the next inventory line gets glued onto the same line, producing invalid YAML in the rendered K8s Secret. Inline form `key: "{% raw %}{{ .x }}{% endraw %}"` (closing tag followed by `"` before the newline) does NOT need `+%}` because the quote guards the newline. Affects: `gitlab` (registry_connection_config, backup_s3_connection_config — `+%}` required) and `gitlab-runner` (runner_token — inline quoted form, plain `{% endraw %}` is fine).
@@ -161,17 +165,17 @@ Note: `external_secret_name` and `body.target.name` both reference the same `<c>
 
 These are expressed entirely within `body.target.template.metadata.labels` — the chart template does not need to know about them.
 
-**`_extra` entries** follow the same field schema but use literal string values (not Jinja-refs to `<c>_secret_name_*`, since there are no canonical named variables for user-defined extras).
+**`_extra` entries** follow the same field schema as named dict-variables (full dict with `external_secret_name`, `vault_path`, `body`, etc.) but are written inline in `hosts-vars-override/` — no top-level named variable; extension for operators.
 
 Extension: `eso_vault_integration_<c>_secrets_extra`.
 
-Runtime-produced merged view: `eso_vault_integration_<c>_secrets_merged = base + extra`.
+Runtime-produced merged view: `eso_vault_integration_<c>_secrets_merged = base + extra` (where base is already resolved by Ansible before merge).
 
 ---
 
 ## 3. Merge Tasks — Contracts
 
-The former monolithic `tasks-eso-merge.yaml` was split into two independent tasks (SUB-1). Full contracts in [`reusable-tasks.md`](reusable-tasks.md) §1.8a–§1.8c.
+The former monolithic `tasks-eso-merge.yaml` was split into two independent tasks (SUB-1). Full contracts in [`reusable-tasks.md`](reusable-tasks.md) §1.8a–§1.8b.
 
 ### 3.1 `tasks-vault-policies-roles-merge.yaml`
 
@@ -320,11 +324,18 @@ Idempotency: if `tasks-vault-get.yaml` reports the Vault path already exists, sk
 
 Checklist — keep strictly in order.
 
-1. **Add named lookup variables** in `hosts-vars/<c>.yaml` — one per logical secret that playbooks need to reference:
+1. **Add named dict-variables** in `hosts-vars/<c>.yaml` — one per base secret. Each variable is a full dict with fields `external_secret_name`, `vault_path`, `body` (and optional `is_need_eso`, `refresh_interval`). Example (see §2.4 for full schema):
    ```yaml
-   <c>_secret_name_admin: "eso-<c>-admin"
+   <c>_secret_admin:
+     external_secret_name: "eso-<c>-admin"
+     vault_path: "/<c>/admin"
+     body:
+       target:
+         name: "eso-<c>-admin"
+       dataFrom:
+         - extract:
+             key: "{{ eso_vault_integration_<c>.kv_engine_path }}/data/<c>/admin"
    ```
-   These are used as Jinja-refs in the `_secrets` list and as lookup keys passed to `tasks-eso-lookup.yaml`.
 
 2. **Add the `eso_vault_integration_<c>` object** in `hosts-vars/<c>.yaml`:
    ```yaml
@@ -336,17 +347,10 @@ Checklist — keep strictly in order.
      is_need_eso: true
    ```
 
-3. **Define the base secrets list** in `hosts-vars/<c>.yaml`:
+3. **Define the base secrets list** in `hosts-vars/<c>.yaml` as an array of Jinja-string-references to the named dict-variables from Step 1:
    ```yaml
    eso_vault_integration_<c>_secrets:
-     - external_secret_name: "{{ <c>_secret_name_admin }}"
-       vault_path: "/<c>/admin"
-       body:
-         target:
-           name: "{{ <c>_secret_name_admin }}"
-         dataFrom:
-           - extract:
-               key: "{{ eso_vault_integration_<c>.kv_engine_path }}/data/<c>/admin"
+     - "{{ <c>_secret_admin }}"
    ```
 
 4. **Add an `_extra` entry in `hosts-extra.example.yaml`** so users know the extension point exists:
@@ -374,7 +378,7 @@ Checklist — keep strictly in order.
 
 8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 8 components and requires no modification.
 
-9. **In `<c>-install.yaml`** include `tasks-eso-secrets-merge.yaml` (tag `[always]`). If any playbook needs to resolve a specific secret by name (e.g., for rotation), also add `tasks-eso-lookup.yaml` calls.
+9. **In `<c>-install.yaml`** include `tasks-eso-secrets-merge.yaml` (tag `[always]`). In playbooks that need to reference a specific secret (e.g., for rotation), access it directly via the named variable: `{{ <c>_secret_<logical>.vault_path }}` (for `tasks-vault-get`/`tasks-vault-put` paths) and `{{ <c>_secret_<logical>.body.target.name }}` (for `tasks-wait-secret`, kubectl, etc.).
 
 10. **Apply the new Vault policy/role**:
     ```
@@ -444,7 +448,6 @@ All under `eso-secret/` KV engine.
 | New manager can't unseal | `/etc/kubernetes/vault-unseal.json` missing | Re-run `tasks-vault-distribute-creds.yaml` (part of `manager-join.yaml`) |
 | `tasks-vault-policies-roles-merge.yaml` fails "duplicate policy" | Base + `_extra` both define the same policy name | Remove duplicate from `_extra`; only triggered by `vault-install.yaml`, not by component install playbooks |
 | `tasks-eso-secrets-merge.yaml` fails "Duplicate external_secret_name" | Base + `_extra` (or multiple `_extra` entries) define ExternalSecrets with the same `external_secret_name` | Rename one of the conflicting entries |
-| `tasks-eso-lookup.yaml` fails "ExternalSecret not found" | `<c>_secret_name_<logical>` variable points to a name not present in `eso_vault_integration_<c>_secrets_merged` | Check spelling of the named variable and of `external_secret_name` in the corresponding `_secrets` entry |
 
 ---
 
@@ -457,3 +460,4 @@ All under `eso-secret/` KV engine.
 - **SUB-7** removed `hosts-vars/vault-eso.yaml`; all 8 `eso_vault_integration_<c>` integration blocks now live in the corresponding per-component `hosts-vars/<c>.yaml`.
 - **`vault_policies` / `vault_roles`** remain in `hosts-vars/vault.yaml` (not per-component).
 - **mon-system consolidation (SUB-1..11)** removed six per-component charts/playbooks/vars (mon-prometheus-operator, mon-grafana, mon-loki, mon-vector, mon-node-exporter, mon-kube-state-metrics) and replaced them with a single consolidated mon-system stack: namespace `mon-system`, inventory `hosts-vars/mon-system.yaml`, chart tree `playbook-app/charts/mon-system/`, playbook `playbook-app/mon-system-install.yaml`. The grafana ESO integration was renamed `eso_vault_integration_grafana` → `eso_vault_integration_mon_system`; Vault policy/role `grafana.eso-main` → `mon-system.eso-main`; Vault path prefix `eso-secret/grafana/*` → `eso-secret/mon-system/*`; SA `grafana` ns binding → `mon-system` ns binding. The 8-component list in `tasks-eso-secrets-merge.yaml` now includes `mon_system` (not `grafana`).
+- **ESO refactor (named-variable objects)** removed `tasks-eso-lookup.yaml`. Replaced array-of-dicts pattern in `eso_vault_integration_<c>_secrets` (with Jinja-refs to `<c>_secret_name_<logical>` strings) with array-of-references to top-level named dict-variables `<c>_secret_<logical>` (each containing full ExternalSecret structure: `external_secret_name`, `vault_path`, `body`). `<c>_secret_name_<logical>` string variables removed; all references in `*_helm_values` and playbooks migrated to direct `<c>_secret_<logical>.body.target.name` / `<c>_secret_<logical>.vault_path` notation. `_extra` remains a list of full dict-items (format preserved).

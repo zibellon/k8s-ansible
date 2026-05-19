@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (32 tasks)
+## 1. `playbook-app/tasks/` (31 tasks)
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -64,7 +64,7 @@ General rules for callers:
 ### 1.5 `tasks-add-helm-repo.yaml`
 
 - **Purpose.** Universal helm chart-source preparation for both HTTP repositories and OCI registries. For HTTP: `helm repo add` + `helm repo update`. For OCI: noop (Helm 3 supports `oci://` URL natively in `helm install`). In both cases exports a dynamic fact with the chart-source string (ready for substitution into `helm upgrade --install <release> <SOURCE> ...`).
-- **Input (L1, always required).** `dto_label_name`, `dto_helm_is_oci` (bool), `dto_helm_url` (HTTP repo URL **or** full OCI chart URL), `dto_helm_chart_version`, `dto_helm_chart_source_res_fact_name` (output fact name — dynamic pattern, как в `tasks-eso-lookup.yaml`).
+- **Input (L1, always required).** `dto_label_name`, `dto_helm_is_oci` (bool), `dto_helm_url` (HTTP repo URL **or** full OCI chart URL), `dto_helm_chart_version`, `dto_helm_chart_source_res_fact_name` (output fact name — dynamic pattern).
 - **Input (L2, required only when `dto_helm_is_oci=false`).** `dto_helm_repo_name`, `dto_helm_chart_name`.
 - **Validates (assert).** L1 — все 5 параметров defined + non-empty (`dto_helm_is_oci is boolean`). L2 — `when: not dto_helm_is_oci`, оба параметра defined + `length > 0`.
 - **Output (dynamic fact, name from `dto_helm_chart_source_res_fact_name`).**
@@ -119,20 +119,6 @@ General rules for callers:
 - **Validates (per-component).** Unique `external_secret_name` across the merged list; unique `body.target.name` across the merged list. Fails with component name + duplicate value.
 - **Callers.** Every ESO-integrated install/configure playbook at `tags: [always]`: `traefik-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-configure.yaml`, `gitlab-runner-install.yaml`, `argocd-install.yaml`, `argocd-configure.yaml`, `zitadel-install.yaml`, `mon-system-install.yaml`. Also `vault-install.yaml` (after `tasks-vault-policies-roles-merge.yaml`).
 - **Idempotent.** Pure merge + validation.
-
-### 1.8c `tasks-eso-lookup.yaml`
-
-- **Purpose.** Find one entry in a `*_secrets_merged` list by `external_secret_name`, export its `body.target.name` (as `target_secret_name`) and `vault_path` as named Ansible facts. Fails with a clear message if the entry is not found.
-- **Input.**
-  - `dto_label_name` (required string — log prefix).
-  - `dto_eso_secrets_list` (required sequence — the merged `*_secrets_merged` list to search).
-  - `dto_external_secret_name` (required string — lookup key).
-  - `dto_res_fact_name_secret` (required string — output fact name for `target_secret_name`).
-  - `dto_res_fact_name_vault_path` (required string — output fact name for `vault_path`).
-- **Validates (assert).** All 5 params defined + non-empty; `dto_eso_secrets_list` is a sequence.
-- **Output.** Two named facts (`dto_res_fact_name_secret` → `body.target.name` of the matched item; `dto_res_fact_name_vault_path` → `vault_path` of the matched item). Fails with list size and searched name if no match found.
-- **Callers.** Any playbook that needs to resolve a specific ExternalSecret's target name or Vault path: `gitlab-install.yaml` (7 lookups), `gitlab-configure.yaml` (1), `gitlab-runner-install.yaml` (3), `zitadel-install.yaml` (2), `mon-system-install.yaml` (1), `argocd-configure.yaml` (1). Tag `[always]`.
-- **Idempotent.** Pure lookup — no side effects.
 
 ### 1.9 `tasks-resolve-acme-solver.yaml`
 

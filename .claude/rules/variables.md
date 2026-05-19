@@ -69,18 +69,21 @@ eso_vault_integration_<c>:
   is_need_eso: true
 ```
 
-**Named lookup variables** (`<c>_secret_name_<logical>`) — one per logical secret that playbooks need to reference by name (for Vault rotation flows or chart value injection). Example:
+**Named dict-variables** (`<c>_secret_<logical>`) — one per base secret. Each variable is a full dict with fields matching `secrets-and-eso.md` §2.4 (`external_secret_name`, `vault_path`, `body`, optional `is_need_eso`, `refresh_interval`). Example:
 ```yaml
-zitadel_secret_name_postgresql_creds: "eso-zitadel-postgresql-creds"
-zitadel_secret_name_masterkey:       "eso-zitadel-masterkey"
+zitadel_secret_postgresql_creds:
+  external_secret_name: "eso-zitadel-postgresql-creds"
+  vault_path: "/zitadel/postgresql/creds"
+  body:
+    target:
+      name: "eso-zitadel-postgresql-creds"
+    dataFrom:
+      - extract:
+          key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/postgresql/creds"
 ```
-These variables serve two purposes:
-- Used as Jinja-refs in the base `_secrets` list so that `external_secret_name` and `body.target.name` are set from one canonical place.
-- Passed to `tasks-eso-lookup.yaml` at playbook runtime to look up the full entry (returning `body.target.name` + `vault_path` as facts).
+These variables serve two purposes: (1) referenced by name in the base `eso_vault_integration_<c>_secrets` array (a list of Jinja-string-references `"{{ <c>_secret_<logical> }}"`), and (2) accessed directly from `*_helm_values` and `<c>-{install,configure}.yaml` playbooks via `<c>_secret_<logical>.body.target.name` and `<c>_secret_<logical>.vault_path`.
 
-For `_extra` entries defined in `hosts-vars-override/`, literal strings are used instead of Jinja-refs (no canonical named variables for user-defined extras).
-
-**Secrets list** (`eso_vault_integration_<c>_secrets`) and **extension layer** (`eso_vault_integration_<c>_secrets_extra`). At runtime `tasks-eso-secrets-merge.yaml` produces `eso_vault_integration_<c>_secrets_merged = base + extra`. See [`secrets-and-eso.md`](secrets-and-eso.md) §2.4 for the full item schema (`external_secret_name`, `vault_path`, `body`, optional `is_need_eso`, `refresh_interval`).
+**Secrets list** (`eso_vault_integration_<c>_secrets`) and **extension layer** (`eso_vault_integration_<c>_secrets_extra`). Base is a list of Jinja-string-references to named dict-variables (e.g. `- "{{ <c>_secret_<logical> }}"`). `_extra` is a list of full dict-items (operator extension, same format but inline). At runtime `tasks-eso-secrets-merge.yaml` produces `eso_vault_integration_<c>_secrets_merged = base + extra` (base already resolved by Ansible before merge). For field schema see [`secrets-and-eso.md`](secrets-and-eso.md) §2.4.
 
 ### 1.5 The `*_extra` concat-merge pattern
 
