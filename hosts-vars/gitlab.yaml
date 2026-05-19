@@ -53,6 +53,10 @@ all:
     gitlab_postgresql_image: "docker.io/postgres:16-alpine"
     gitlab_postgresql_storage_class: "lnstr-major-multi-sync"
     gitlab_postgresql_storage_size: "4Gi"
+    gitlab_postgresql_username: "gitlab"
+    gitlab_postgresql_database_name: "gitlabhq_production"
+    gitlab_postgresql_secret_key_username: "username"
+    gitlab_postgresql_secret_key_password: "password"
 
     # GitLab Redis
     gitlab_redis_image: "docker.io/redis/redis-stack-server:latest"
@@ -126,10 +130,14 @@ all:
     # _local_gitlab_secret_name_postgresql_creds — runtime-факт от set_fact [always] в playbook
     gitlab_postgresql_helm_values:
       namespace: "{{ gitlab_namespace }}"
+      databaseName: "{{ gitlab_postgresql_database_name }}"
       image: "{{ gitlab_postgresql_image }}"
       storageClass: "{{ gitlab_postgresql_storage_class }}"
       storageSize: "{{ gitlab_postgresql_storage_size }}"
-      credentialsSecretName: "{{ _local_gitlab_secret_name_postgresql_creds }}"
+      credentials:
+        secretName: "{{ _local_gitlab_secret_name_postgresql_creds }}"
+        usernameKey: "{{ gitlab_postgresql_secret_key_username }}"
+        passwordKey: "{{ gitlab_postgresql_secret_key_password }}"
       extraObjects: "{{ gitlab_postgresql_extra_objects }}"
     # ---
     # ---
@@ -189,12 +197,12 @@ all:
         psql:
           host: gitlab-postgresql
           port: 5432
-          database: gitlabhq_production
-          username: gitlab
+          database: "{{ gitlab_postgresql_database_name }}"
+          username: "{{ gitlab_postgresql_username }}"
           password:
             useSecret: true
             secret: "{{ _local_gitlab_secret_name_postgresql_creds }}"
-            key: password
+            key: "{{ gitlab_postgresql_secret_key_password }}"
         redis:
           host: gitlab-redis
           port: 6379

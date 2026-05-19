@@ -188,7 +188,7 @@
       vars:
         dto_label_name: "gitlab-postgresql-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_postgresql_creds }}"
-        dto_vault_get_field: password
+        dto_vault_get_field: "{{ gitlab_postgresql_secret_key_password }}"
         dto_vault_get_res_fact_name: "gitlab_postgresql_vault"
       tags: [postgresql]
 
@@ -200,14 +200,20 @@
       when: not gitlab_postgresql_vault_exists
       tags: [postgresql]
 
+    - name: "[gitlab-postgresql-secrets] Prepare PostgreSQL Vault put data"
+      set_fact:
+        _gitlab_postgresql_put_data:
+          "{{ gitlab_postgresql_secret_key_username }}": "{{ gitlab_postgresql_username }}"
+          "{{ gitlab_postgresql_secret_key_password }}": "{{ _gitlab_postgresql_password_generated }}"
+      when: not gitlab_postgresql_vault_exists
+      tags: [postgresql]
+
     - name: "[gitlab-postgresql-secrets] Store PostgreSQL credentials in Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "gitlab-postgresql-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_postgresql_creds }}"
-        dto_vault_put_data:
-          username: gitlab
-          password: "{{ _gitlab_postgresql_password_generated }}"
+        dto_vault_put_data: "{{ _gitlab_postgresql_put_data }}"
       when: not gitlab_postgresql_vault_exists
       tags: [postgresql]
 
