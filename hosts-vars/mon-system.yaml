@@ -16,6 +16,7 @@ all:
     mon_system_loki_enabled: true
     mon_system_vector_enabled: true
     mon_system_grafana_enabled: true
+    mon_system_postgresql_grafana_enabled: true
     mon_system_loki_service_monitor_enabled: true
     mon_system_ksm_service_monitor_enabled: true
     mon_system_node_exporter_service_monitor_enabled: true
@@ -34,6 +35,7 @@ all:
     mon_system_ksm_helm_timeout: "3m"
     mon_system_loki_helm_timeout: "5m"
     mon_system_vector_helm_timeout: "5m"
+    mon_system_postgresql_grafana_helm_timeout: "3m"
     mon_system_grafana_helm_timeout: "3m"
     mon_system_post_helm_timeout: "3m"
 
@@ -56,6 +58,7 @@ all:
     # Values must match external_secret_name of corresponding eso_vault_integration_mon_system_secrets entry.
     # ----------------------------------------------------------------------------
     mon_system_secret_name_grafana_admin_creds: "eso-mon-system-grafana-admin-creds"
+    mon_system_secret_name_grafana_postgresql_creds: "eso-mon-system-grafana-postgresql-creds"
 
     eso_vault_integration_mon_system_secrets:
       - external_secret_name: "{{ mon_system_secret_name_grafana_admin_creds }}"
@@ -66,6 +69,14 @@ all:
           dataFrom:
             - extract:
                 key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/admin/creds"
+      - external_secret_name: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+        vault_path: "/mon-system/grafana/postgresql/creds"
+        body:
+          target:
+            name: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+          dataFrom:
+            - extract:
+                key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/postgresql/creds"
 
     eso_vault_integration_mon_system_secrets_extra: []
 
@@ -621,6 +632,17 @@ all:
         reporting_enabled: false
 
     # ----------------------------------------------------------------------------
+    # PostgreSQL backing Grafana state (handwritten chart, ESO-managed credentials)
+    # ----------------------------------------------------------------------------
+    mon_system_postgresql_grafana_image: "docker.io/postgres:16-alpine"
+    mon_system_postgresql_grafana_rollout_timeout: "120s"
+    mon_system_postgresql_grafana_port: 5432
+    mon_system_postgresql_grafana_storage_class: "lnstr-major-multi-sync"
+    mon_system_postgresql_grafana_storage_size: "10Gi"
+    mon_system_postgresql_grafana_username: "grafana"
+    mon_system_postgresql_grafana_database_name: "grafana"
+
+    # ----------------------------------------------------------------------------
     # Grafana — Deployment + PVC + Service (with Vault/ESO admin password lifecycle)
     # ----------------------------------------------------------------------------
     mon_system_grafana_image: "docker.io/grafana/grafana:12.4.2"
@@ -633,6 +655,16 @@ all:
     mon_system_grafana_ingress_https_enable: true
     mon_system_grafana_vpn_only_enabled: false
     mon_system_grafana_admin_username: "admin"
+
+    mon_system_grafana_database:
+      type: "postgres"
+      host: "mon-system-postgresql-grafana.{{ mon_system_namespace }}.svc.{{ cluster_dns_domain }}:{{ mon_system_postgresql_grafana_port }}"
+      name: "{{ mon_system_postgresql_grafana_database_name }}"
+      user: "{{ mon_system_postgresql_grafana_username }}"
+      sslMode: "disable"
+      maxOpenConns: 20
+      maxIdleConns: 10
+      connMaxLifetime: "30m"
 
     # ============================================================================
     # Helm values dicts — one per Helm release (10 + post = 11 phases)
@@ -875,6 +907,30 @@ all:
     mon_system_vector_kustomize_patches: []
 
     # ---------
+    # PostgreSQL (backing Grafana) Helm values
+    mon_system_postgresql_grafana_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      image: "{{ mon_system_postgresql_grafana_image }}"
+      databaseName: "{{ mon_system_postgresql_grafana_database_name }}"
+      username: "{{ mon_system_postgresql_grafana_username }}"
+      port: "{{ mon_system_postgresql_grafana_port }}"
+      storageClass: "{{ mon_system_postgresql_grafana_storage_class }}"
+      storageSize: "{{ mon_system_postgresql_grafana_storage_size }}"
+      credentialsSecretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+      tolerations: []
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      affinity: {}
+      resources: {}
+      extraObjects: "{{ mon_system_postgresql_grafana_extra_objects }}"
+
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_postgresql_grafana_extra_objects: []
+
+    # postgresql-grafana phase kustomize patches (operator-side customization, default empty)
+    mon_system_postgresql_grafana_kustomize_patches: []
+
+    # ---------
     # Grafana Helm values (Deployment + PVC + Service)
     # adminSecret.name — K8s Secret created by ESO (mon-system/pre/), populated
     # from Vault path /mon-system/grafana/admin/creds with keys username + password
@@ -889,11 +945,8 @@ all:
         name: "{{ mon_system_secret_name_grafana_admin_creds }}"
         usernameKey: username
         passwordKey: password
-      pvc:
-        storageClassName: "lnstr-major-multi-sync"
-        storageSize: "1Gi"
-        accessMode: "ReadWriteOnce"
-        subpath: "some-data"
+      database: "{{ mon_system_grafana_database }}"
+      databasePasswordSecretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
       tolerations: []
       nodeSelector:
         node-role.kubernetes.io/worker: ""
