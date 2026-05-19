@@ -47,76 +47,6 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
       tags: [always]
 
-    - name: "[gitlab-install-init] Lookup postgresql secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "gitlab-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_postgresql_creds }}"
-        dto_res_fact_name_secret: "_local_gitlab_secret_name_postgresql_creds"
-        dto_res_fact_name_vault_path: "_local_gitlab_vault_path_postgresql_creds"
-      tags: [always]
-
-    - name: "[gitlab-install-init] Lookup redis secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "gitlab-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_redis_creds }}"
-        dto_res_fact_name_secret: "_local_gitlab_secret_name_redis_creds"
-        dto_res_fact_name_vault_path: "_local_gitlab_vault_path_redis_creds"
-      tags: [always]
-
-    - name: "[gitlab-install-init] Lookup minio-root secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "gitlab-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_minio_root_creds }}"
-        dto_res_fact_name_secret: "_local_gitlab_secret_name_minio_root_creds"
-        dto_res_fact_name_vault_path: "_local_gitlab_vault_path_minio_root_creds"
-      tags: [always]
-
-    - name: "[gitlab-install-init] Lookup minio-registry secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "gitlab-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_minio_registry_creds }}"
-        dto_res_fact_name_secret: "_local_gitlab_secret_name_minio_registry_creds"
-        dto_res_fact_name_vault_path: "_local_gitlab_vault_path_minio_registry_creds"
-      tags: [always]
-
-    - name: "[gitlab-install-init] Lookup registry-minio-connection secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "gitlab-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_registry_connection_config }}"
-        dto_res_fact_name_secret: "_local_gitlab_secret_name_registry_connection_config"
-        dto_res_fact_name_vault_path: "_local_gitlab_vault_path_registry_connection_config"
-      tags: [always]
-
-    - name: "[gitlab-install-init] Lookup minio-connection secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "gitlab-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_backup_s3_connection_config }}"
-        dto_res_fact_name_secret: "_local_gitlab_secret_name_backup_s3_connection_config"
-        dto_res_fact_name_vault_path: "_local_gitlab_vault_path_backup_s3_connection_config"
-      tags: [always]
-
-    - name: "[gitlab-install-init] Lookup gitlab-root secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "gitlab-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_gitlab_secrets_merged }}"
-        dto_external_secret_name: "{{ gitlab_secret_name_root_creds }}"
-        dto_res_fact_name_secret: "_local_gitlab_secret_name_root_creds"
-        dto_res_fact_name_vault_path: "_local_gitlab_vault_path_root_creds"
-      tags: [always]
-
     # =========================================================================
     # INIT: Resolve ClusterIssuer + ACME solver pod labels
     # =========================================================================
@@ -187,7 +117,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "gitlab-postgresql-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_postgresql_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
         dto_vault_get_field: "{{ gitlab_postgresql_secret_key_password }}"
         dto_vault_get_res_fact_name: "gitlab_postgresql_vault"
       tags: [postgresql]
@@ -212,7 +142,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "gitlab-postgresql-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_postgresql_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
         dto_vault_put_data: "{{ _gitlab_postgresql_put_data }}"
       when: not gitlab_postgresql_vault_exists
       tags: [postgresql]
@@ -228,7 +158,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "gitlab-postgresql-secrets"
-        dto_wait_secret_name: "{{ _local_gitlab_secret_name_postgresql_creds }}"
+        dto_wait_secret_name: "{{ gitlab_secret_postgresql_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [postgresql]
 
@@ -300,7 +230,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "gitlab-redis-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_redis_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "gitlab_redis_vault"
       tags: [redis]
@@ -318,7 +248,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "gitlab-redis-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_redis_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
         dto_vault_put_data:
           password: "{{ _gitlab_redis_password }}"
           redis_args: "--save 1 1 --notify-keyspace-events KEA --requirepass {{ _gitlab_redis_password }}"
@@ -336,7 +266,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "gitlab-redis-secrets"
-        dto_wait_secret_name: "{{ _local_gitlab_secret_name_redis_creds }}"
+        dto_wait_secret_name: "{{ gitlab_secret_redis_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [redis]
 
@@ -408,7 +338,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "gitlab-minio-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_minio_root_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "gitlab_minio_root_vault"
       tags: [minio]
@@ -425,7 +355,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "gitlab-minio-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_minio_root_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
         dto_vault_put_data:
           username: "{{ gitlab_minio_root_user }}"
           password: "{{ _gitlab_minio_root_password_generated }}"
@@ -443,7 +373,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "gitlab-minio-secrets"
-        dto_wait_secret_name: "{{ _local_gitlab_secret_name_minio_root_creds }}"
+        dto_wait_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [minio]
 
@@ -525,7 +455,7 @@
       vars:
         dto_label_name: "gitlab-minio-setup"
         dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ _local_gitlab_secret_name_minio_root_creds }}"
+        dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
         dto_secret_field: "username"
         dto_secret_res_fact_name: "minio_root_username"
       tags: [minio]
@@ -535,7 +465,7 @@
       vars:
         dto_label_name: "gitlab-minio-setup"
         dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ _local_gitlab_secret_name_minio_root_creds }}"
+        dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
         dto_secret_field: "password"
         dto_secret_res_fact_name: "minio_root_password"
       tags: [minio]
@@ -545,7 +475,7 @@
         that:
           - minio_root_username_exists
           - minio_root_password_exists
-        fail_msg: "MinIO root credentials not found in secret {{ _local_gitlab_secret_name_minio_root_creds }} (namespace {{ gitlab_namespace }})"
+        fail_msg: "MinIO root credentials not found in secret {{ gitlab_secret_minio_root_creds.body.target.name }} (namespace {{ gitlab_namespace }})"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [minio]
@@ -580,7 +510,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "gitlab-minio-setup"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_minio_registry_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
         dto_vault_get_field: access_key
         dto_vault_get_res_fact_name: "gitlab_registry_access_key_vault"
       tags: [minio]
@@ -600,7 +530,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "gitlab-minio-setup"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_minio_registry_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
         dto_vault_put_data:
           access_key: "{{ (registry_accesskey_result.stdout | from_json).accessKey }}"
           secret_key: "{{ (registry_accesskey_result.stdout | from_json).secretKey }}"
@@ -619,7 +549,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "gitlab-minio-setup"
-        dto_wait_secret_name: "{{ _local_gitlab_secret_name_minio_registry_creds }}"
+        dto_wait_secret_name: "{{ gitlab_secret_minio_registry_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [minio]
 
@@ -782,10 +712,10 @@
           - "GitLab SSH: {{ gitlab_ui_domain }}:{{ gitlab_ssh_port_external }}"
           - ""
           - "Credentials stored in Vault:"
-          - "  PostgreSQL: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_postgresql_creds }}"
-          - "  Redis: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_redis_creds }}"
-          - "  MinIO root: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_minio_root_creds }}"
-          - "  MinIO registry: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ _local_gitlab_vault_path_minio_registry_creds }}"
+          - "  PostgreSQL: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
+          - "  Redis: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
+          - "  MinIO root: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
+          - "  MinIO registry: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
           - ""
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."
