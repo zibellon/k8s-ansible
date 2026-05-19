@@ -32,6 +32,9 @@ all:
     zitadel_postgresql_storage_size: "10Gi"
     # ---
     zitadel_postgresql_username: "zitadel"
+    zitadel_postgresql_database_name: "zitadel"
+    zitadel_postgresql_secret_key_username: "username"
+    zitadel_postgresql_secret_key_password: "password"
     # ---
     # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
@@ -72,10 +75,14 @@ all:
     # _local_zitadel_secret_name_postgresql_creds — runtime-факт от tasks-eso-lookup.yaml [always] в playbook
     zitadel_postgresql_helm_values:
       namespace: "{{ zitadel_namespace }}"
+      databaseName: "{{ zitadel_postgresql_database_name }}"
       image: "{{ zitadel_postgresql_image }}"
       storageClass: "{{ zitadel_postgresql_storage_class }}"
       storageSize: "{{ zitadel_postgresql_storage_size }}"
-      credentialsSecretName: "{{ _local_zitadel_secret_name_postgresql_creds }}"
+      credentials:
+        secretName: "{{ _local_zitadel_secret_name_postgresql_creds }}"
+        usernameKey: "{{ zitadel_postgresql_secret_key_username }}"
+        passwordKey: "{{ zitadel_postgresql_secret_key_password }}"
       extraObjects: "{{ zitadel_postgresql_extra_objects }}"
     # ---
     # ---
@@ -99,16 +106,16 @@ all:
             Postgres:
               Host: zitadel-postgresql
               Port: 5432
-              Database: zitadel
+              Database: "{{ zitadel_postgresql_database_name }}"
               MaxOpenConns: 20
               MaxIdleConns: 10
               ConnMaxLifetime: "30m"
               Admin:
-                Username: zitadel
+                Username: "{{ zitadel_postgresql_username }}"
                 SSL:
                   Mode: disable
               User:
-                Username: zitadel
+                Username: "{{ zitadel_postgresql_username }}"
                 SSL:
                   Mode: disable
       env:
@@ -116,12 +123,12 @@ all:
           valueFrom:
             secretKeyRef:
               name: "{{ _local_zitadel_secret_name_postgresql_creds }}"
-              key: password
+              key: "{{ zitadel_postgresql_secret_key_password }}"
         - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
           valueFrom:
             secretKeyRef:
               name: "{{ _local_zitadel_secret_name_postgresql_creds }}"
-              key: password
+              key: "{{ zitadel_postgresql_secret_key_password }}"
       service:
         type: ClusterIP
         port: 8080

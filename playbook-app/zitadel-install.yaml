@@ -143,7 +143,7 @@
       vars:
         dto_label_name: "zitadel-postgresql-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_postgresql_creds }}"
-        dto_vault_get_field: password
+        dto_vault_get_field: "{{ zitadel_postgresql_secret_key_password }}"
         dto_vault_get_res_fact_name: "zitadel_postgresql_vault"
       tags: [postgresql]
 
@@ -155,14 +155,20 @@
       when: not zitadel_postgresql_vault_exists
       tags: [postgresql]
 
+    - name: "[zitadel-postgresql-secrets] Prepare PostgreSQL Vault put data"
+      set_fact:
+        _zitadel_postgresql_put_data:
+          "{{ zitadel_postgresql_secret_key_username }}": "{{ zitadel_postgresql_username }}"
+          "{{ zitadel_postgresql_secret_key_password }}": "{{ _zitadel_postgresql_password_generated }}"
+      when: not zitadel_postgresql_vault_exists
+      tags: [postgresql]
+
     - name: "[zitadel-postgresql-secrets] Store PostgreSQL credentials in Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "zitadel-postgresql-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_postgresql_creds }}"
-        dto_vault_put_data:
-          username: "{{ zitadel_postgresql_username }}"
-          password: "{{ _zitadel_postgresql_password_generated }}"
+        dto_vault_put_data: "{{ _zitadel_postgresql_put_data }}"
       when: not zitadel_postgresql_vault_exists
       tags: [postgresql]
 
