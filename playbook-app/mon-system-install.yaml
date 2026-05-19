@@ -603,22 +603,11 @@
     # STEP 10: grafana-postgresql (Postgres Deployment + Service + PVC backing Grafana)
     # =========================================================================
 
-    - name: "[mon-system-grafana-postgresql-vault-secrets] Lookup postgresql secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
-        dto_eso_secrets_list: "{{ eso_vault_integration_mon_system_secrets_merged }}"
-        dto_external_secret_name: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
-        dto_res_fact_name_secret: "_local_grafana_secret_name_postgresql_creds"
-        dto_res_fact_name_vault_path: "_local_grafana_vault_path_postgresql_creds"
-      when: mon_system_grafana_enabled
-      tags: [grafana-postgresql]
-
     - name: "[mon-system-grafana-postgresql-vault-secrets] Get PostgreSQL credentials from Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_postgresql_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_postgresql_creds.vault_path }}"
         dto_vault_get_field: "{{ mon_system_grafana_postgresql_secret_key_password }}"
         dto_vault_get_res_fact_name: "grafana_postgresql_vault"
       when: mon_system_grafana_enabled
@@ -644,7 +633,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_postgresql_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_postgresql_creds.vault_path }}"
         dto_vault_put_data: "{{ _grafana_postgresql_put_data }}"
       when: mon_system_grafana_enabled and not grafana_postgresql_vault_exists
       tags: [grafana-postgresql]
@@ -661,7 +650,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
-        dto_wait_secret_name: "{{ _local_grafana_secret_name_postgresql_creds }}"
+        dto_wait_secret_name: "{{ mon_system_secret_grafana_postgresql_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ mon_system_namespace }}"
       when: mon_system_grafana_enabled
       tags: [grafana-postgresql]
@@ -729,22 +718,11 @@
     # STEP 11: grafana (Grafana Deployment + PVC + Service, with Vault/ESO lifecycle)
     # =========================================================================
 
-    - name: "[mon-system-grafana-vault-secrets] Lookup admin secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "mon-system-grafana-vault-secrets"
-        dto_eso_secrets_list: "{{ eso_vault_integration_mon_system_secrets_merged }}"
-        dto_external_secret_name: "{{ mon_system_secret_name_grafana_admin_creds }}"
-        dto_res_fact_name_secret: "_local_grafana_secret_name_admin_creds"
-        dto_res_fact_name_vault_path: "_local_grafana_vault_path_admin_creds"
-      when: mon_system_grafana_enabled
-      tags: [grafana]
-
     - name: "[mon-system-grafana-vault-secrets] Get admin credentials from Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "mon-system-grafana-vault-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_admin_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_admin_creds.vault_path }}"
         dto_vault_get_field: password
         dto_vault_get_res_fact_name: "grafana_admin_vault"
       when: mon_system_grafana_enabled
@@ -762,7 +740,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "mon-system-grafana-vault-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ _local_grafana_vault_path_admin_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_admin_creds.vault_path }}"
         dto_vault_put_data:
           username: "{{ mon_system_grafana_admin_username }}"
           password: "{{ _grafana_admin_password_generated }}"
@@ -781,7 +759,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "mon-system-grafana-vault-secrets"
-        dto_wait_secret_name: "{{ _local_grafana_secret_name_admin_creds }}"
+        dto_wait_secret_name: "{{ mon_system_secret_grafana_admin_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ mon_system_namespace }}"
       when: mon_system_grafana_enabled
       tags: [grafana]

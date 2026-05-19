@@ -44,7 +44,12 @@ all:
     # SA name + SecretStore name follow project convention: constants `eso-main`
     # and `eso-main.vault` shared across all 8 ESO-integrated namespaces.
     # Role name follows `<namespace>.eso-main` pattern.
-    # See secrets-and-eso.md §2.3 for canonical pattern.
+    # Базовые секреты (нужны для запуска Grafana) — отдельные named-переменные
+    # с полным dict-объектом. eso_vault_integration_mon_system_secrets — массив
+    # ссылок на named-переменные (chart eso-external-secret.yaml рендерит
+    # .Values.eso.secrets единообразно как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/.
+    # See secrets-and-eso.md §2.4 for canonical pattern.
     eso_vault_integration_mon_system:
       sa_name: "eso-main"
       role_name: "mon-system.eso-main"
@@ -52,30 +57,29 @@ all:
       kv_engine_path: "eso-secret"
       is_need_eso: true
 
-    # ----------------------------------------------------------------------------
-    # ESO secret-name lookups — used by tasks-eso-lookup.yaml in mon-system-install.yaml.
-    # Values must match external_secret_name of corresponding eso_vault_integration_mon_system_secrets entry.
-    # ----------------------------------------------------------------------------
-    mon_system_secret_name_grafana_admin_creds: "eso-mon-system-grafana-admin-creds"
-    mon_system_secret_name_grafana_postgresql_creds: "eso-mon-system-grafana-postgresql-creds"
+    mon_system_secret_grafana_admin_creds:
+      external_secret_name: "eso-mon-system-grafana-admin-creds"
+      vault_path: "/mon-system/grafana/admin/creds"
+      body:
+        target:
+          name: "eso-mon-system-grafana-admin-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/admin/creds"
+
+    mon_system_secret_grafana_postgresql_creds:
+      external_secret_name: "eso-mon-system-grafana-postgresql-creds"
+      vault_path: "/mon-system/grafana/postgresql/creds"
+      body:
+        target:
+          name: "eso-mon-system-grafana-postgresql-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/postgresql/creds"
 
     eso_vault_integration_mon_system_secrets:
-      - external_secret_name: "{{ mon_system_secret_name_grafana_admin_creds }}"
-        vault_path: "/mon-system/grafana/admin/creds"
-        body:
-          target:
-            name: "{{ mon_system_secret_name_grafana_admin_creds }}"
-          dataFrom:
-            - extract:
-                key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/admin/creds"
-      - external_secret_name: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
-        vault_path: "/mon-system/grafana/postgresql/creds"
-        body:
-          target:
-            name: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
-          dataFrom:
-            - extract:
-                key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/postgresql/creds"
+      - "{{ mon_system_secret_grafana_admin_creds }}"
+      - "{{ mon_system_secret_grafana_postgresql_creds }}"
 
     eso_vault_integration_mon_system_secrets_extra: []
 
@@ -908,7 +912,7 @@ all:
       storageClass: "{{ mon_system_grafana_postgresql_storage_class }}"
       storageSize: "{{ mon_system_grafana_postgresql_storage_size }}"
       credentials:
-        secretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+        secretName: "{{ mon_system_secret_grafana_postgresql_creds.body.target.name }}"
         usernameKey: "{{ mon_system_grafana_postgresql_secret_key_username }}"
         passwordKey: "{{ mon_system_grafana_postgresql_secret_key_password }}"
       tolerations: []
@@ -936,7 +940,7 @@ all:
         installPlugins: "grafana-piechart-panel"
         externalUrl: "{{ mon_system_grafana_external_url }}"
       adminSecret:
-        name: "{{ mon_system_secret_name_grafana_admin_creds }}"
+        name: "{{ mon_system_secret_grafana_admin_creds.body.target.name }}"
         usernameKey: username
         passwordKey: password
       database:
@@ -947,7 +951,7 @@ all:
         maxOpenConns: 20
         maxIdleConns: 10
         connMaxLifetime: "30m"
-        credentialsSecretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+        credentialsSecretName: "{{ mon_system_secret_grafana_postgresql_creds.body.target.name }}"
         usernameKey: "{{ mon_system_grafana_postgresql_secret_key_username }}"
         passwordKey: "{{ mon_system_grafana_postgresql_secret_key_password }}"
       tolerations: []
