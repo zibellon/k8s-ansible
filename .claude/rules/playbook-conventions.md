@@ -112,7 +112,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 ## 12. ESO Integration (if component is ESO-enabled)
 
 12.1 Add `eso_vault_integration_<c>` object in the component's vars file (see `secrets-and-eso.md` for schema).
-12.2 Include `tasks-eso-secrets-merge.yaml` (tag `[always]`, no arguments). It merges `eso_vault_integration_<c>_secrets + _extra` and produces `eso_vault_integration_<c>_secrets_merged` facts.
+12.2 Include two sequential pre-check task blocks (tag `[always]`): `tasks-vault-config-verify.yaml` (only `dto_label_name`) and `tasks-eso-verify.yaml` (`dto_label_name`, `dto_eso_secrets_list` = inline merge `eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([]))`, `dto_eso_integration_object`, `dto_namespace`). See [`reusable-tasks.md`](reusable-tasks.md) §3.1 for the canonical template.
 12.3 In the `pre/` chart, render `ServiceAccount` and `SecretStore`. Copy the canonical `eso-external-secret.yaml` template from any existing component — it is identical across all 8 and uses `toYaml $secret.body | indent 2` to emit whatever body is defined in inventory.
 12.4 If the component installs before Vault exists (bootstrap-time), gate ESO resources with `<c>_is_need_eso: false` in the chart templates and seed the secret via `tasks-vault-put.yaml` from a `-configure` playbook afterwards.
 
@@ -144,7 +144,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 17.1 Inline `kubectl apply -f <url-or-heredoc>` — always wrap resources in a Helm chart so `--tags`, `--atomic`, and release history work.
 17.2 Hard-coded pod labels for ACME solver `NetworkPolicy` — always resolve from `cert_manager_cluster_issuers`.
-17.3 Bypassing `tasks-eso-secrets-merge.yaml` by hard-coding a secrets list inline in `values-override.yaml` — misses `_extra` and loses uniqueness validation.
+17.3 Bypassing `tasks-eso-verify.yaml` by hard-coding a secrets list inline in `values-override.yaml` без вызова verify — теряет uniqueness validation и policy path coverage check. Всегда используй inline merge `<c>_secrets + (extra | default([]))` в `<c>_pre_helm_values.eso.secrets` + вызов verify task'ов.
 17.3a Hard-coding a literal `kv_engine_path` string inside `body.dataFrom.extract.key` instead of using `{{ eso_vault_integration_<c>.kv_engine_path }}` — prevents override without editing every item.
 17.4 `gather_facts: true` in `playbook-app/` plays.
 17.5 Hard-coded hostnames in `delegate_to:` — always `"{{ master_manager_fact }}"`.

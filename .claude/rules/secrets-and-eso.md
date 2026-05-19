@@ -87,10 +87,9 @@ Lives **exclusively** in `hosts-vars/<c>.yaml` (per-component file). The former 
 ```yaml
 eso_vault_integration_<c>:
   sa_name: "eso-main"                # constant — same SA name in every namespace
-  role_name: "<c>.eso-main"          # `<namespace>.eso-main` — must exist in vault_roles_final
+  role_name: "<c>.eso-main"          # `<namespace>.eso-main` — must exist in merged `vault_roles + vault_roles_extra`
   secret_store_name: "eso-main.vault"  # constant — same SecretStore name in every namespace
   kv_engine_path: "eso-secret"       # referenced via Jinja in _secrets entries
-  is_need_eso: true
 ```
 
 ### 2.4 `eso_vault_integration_<c>_secrets` (list, per component)
@@ -169,44 +168,57 @@ These are expressed entirely within `body.target.template.metadata.labels` — t
 
 Extension: `eso_vault_integration_<c>_secrets_extra`.
 
-Runtime-produced merged view: `eso_vault_integration_<c>_secrets_merged = base + extra` (where base is already resolved by Ansible before merge).
+Inline merge at usage sites: `<c>_pre_helm_values.eso.secrets: "{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"` — no runtime fact, expression resolved by Ansible Jinja at render time.
 
 ---
 
-## 3. Merge Tasks — Contracts
+## 3. Verify Tasks — Contracts
 
-The former monolithic `tasks-eso-merge.yaml` was split into two independent tasks (SUB-1). Full contracts in [`reusable-tasks.md`](reusable-tasks.md) §1.8a–§1.8b.
+The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting two merge tasks (`tasks-vault-policies-roles-merge.yaml`, `tasks-eso-secrets-merge.yaml`) were further refactored in ESO refactor v2 into **pure validation** tasks without `set_fact`. Inline merge `base + (extra | default([]))` is performed directly at usage sites (in `<c>_pre_helm_values.eso.secrets`, `hosts-vars/vault.yaml` `vault_spec.externalConfig`). Full contracts in [`reusable-tasks.md`](reusable-tasks.md) §1.8a–§1.8b.
 
-### 3.1 `tasks-vault-policies-roles-merge.yaml`
+### 3.1 `tasks-vault-config-verify.yaml`
 
-**Purpose.** Merge Vault policies + roles, validate consistency.
+**Purpose.** Pure validation pre-check для Vault policies + roles. Read-only, no `set_fact`.
 
-**Output facts:** `vault_policies_final`, `vault_roles_final`.
+**Input (dto):** `dto_label_name` (log prefix).
 
-**Validation:**
-- Unique policy names; unique role names.
-- Every role's `policies` entries exist in `vault_policies_final`.
+**Reads (inventory):** `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (inline merge внутри vars каждого assert/fail).
 
-**Callers:** Only `vault-install.yaml` (tag `[always]`). **Not** called from component install playbooks.
+**Validates:**
+- Unique `name` in merged policies.
+- Unique `name` in merged roles.
+- Referential integrity: each role's `policies` references existing policy.
 
-### 3.2 `tasks-eso-secrets-merge.yaml`
+**Callers:** `vault-install.yaml` + 10 ESO-integrated install/configure playbook'ов + `tests/helm-validate.yaml` (12 callers total).
 
-**Purpose.** Merge per-component `*_secrets + *_secrets_extra` for all 8 ESO-integrated components. Validate per-component uniqueness.
+### 3.2 `tasks-eso-verify.yaml`
 
-**Output facts:** `eso_vault_integration_<c>_secrets_merged` for each of the 8 components.
+**Purpose.** Pure validation pre-check для одного ESO-integrated компонента. Read-only, no `set_fact`. Вызывается **после** `tasks-vault-config-verify.yaml` в playbook'е (две независимые task'и, не include task-from-task).
 
-**Validation:** Unique `external_secret_name` and unique `body.target.name` within each merged list.
+**Input (dto):**
+- `dto_label_name` (log prefix).
+- `dto_eso_secrets_list` (final base + extra array — inline Jinja expression в caller'е).
+- `dto_eso_integration_object` (mapping — `eso_vault_integration_<c>`).
+- `dto_namespace` (K8s namespace компонента).
 
-**Callers:** Every ESO-integrated install/configure playbook (tag `[always]`): `traefik-install`, `haproxy-install`, `longhorn-install`, `gitlab-install`, `gitlab-configure`, `gitlab-runner-install`, `argocd-install`, `argocd-configure`, `zitadel-install`, `mon-system-install`. Also `vault-install.yaml`.
+**Reads (inventory):** `vault_policies/_extra`, `vault_roles/_extra` (inline merge).
 
-**Idempotency.** Pure merge + validation. No side effects.
+**Validates (4 groups):**
+- A. Input asserts.
+- B. SecretStore→Vault connectivity scoped к role: role exists, SA binding, namespace binding, policies count > 0, each role.policies exists.
+- C. ESO uniqueness: `external_secret_name`, `body.target.name`.
+- D. Policy path coverage scoped к role's policies: каждый Vault path (из `body.dataFrom[].extract.key` и `body.data[].remoteRef.key`) должен быть substring какого-либо path-prefix из policies этой role (после stripping `/*`).
+
+**Callers:** 10 ESO-integrated install/configure playbook'ов (8 install + 2 configure).
 
 ---
 
-## 4. The Five Vault/ESO Task Primitives
+## 4. The Seven Vault/ESO Task Primitives
 
 | Task | Use |
 |---|---|
+| `tasks-vault-config-verify.yaml` | Pre-check: validate Vault policies + roles uniqueness + role→policy refs. |
+| `tasks-eso-verify.yaml` | Pre-check per-component: connectivity, uniqueness, policy coverage. |
 | `tasks-vault-get.yaml` | Read a single KV field into a named fact + `<fact>_exists` boolean. Safe on missing paths. |
 | `tasks-vault-put.yaml` | `vault kv put` + annotate ExternalSecret + wait for target K8s Secret to be present/updated. |
 | `tasks-generate-secret.yaml` | Generate random N-char secret into a named fact. |
@@ -219,7 +231,7 @@ Full contracts (input/output/callers) in [`reusable-tasks.md`](reusable-tasks.md
 
 ## 5. SecretStore + ExternalSecret Templates
 
-Rendered by each component's `<c>/pre/` Helm chart from `eso_vault_integration_<c>_secrets_merged`.
+Rendered by each component's `<c>/pre/` Helm chart from `<c>_pre_helm_values.eso.secrets` (which is inline `eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([]))` — no runtime fact).
 
 ### 5.1 ServiceAccount
 
@@ -374,11 +386,11 @@ Checklist — keep strictly in order.
      policies: ["eso-<c>"]
    ```
 
-7. **Update `tasks-eso-secrets-merge.yaml`** to include the new component in its loop (the 8-component list is hard-coded — extend it with the new `<c>` name).
+7. **Add `eso_vault_integration_<c>` integration object + `<c>_pre_helm_values.eso` block** в `hosts-vars/<c>.yaml`. `<c>_pre_helm_values.eso.secrets` — inline merge: `"{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"`. Никаких runtime fact'ов / 8-component hard-coded lists больше нет.
 
 8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 8 components and requires no modification.
 
-9. **In `<c>-install.yaml`** include `tasks-eso-secrets-merge.yaml` (tag `[always]`). In playbooks that need to reference a specific secret (e.g., for rotation), access it directly via the named variable: `{{ <c>_secret_<logical>.vault_path }}` (for `tasks-vault-get`/`tasks-vault-put` paths) and `{{ <c>_secret_<logical>.body.target.name }}` (for `tasks-wait-secret`, kubectl, etc.).
+9. **В `<c>-install.yaml` (и configure если нужно)** добавь два последовательных pre-check блока: `tasks-vault-config-verify.yaml` (dto: `dto_label_name`) + `tasks-eso-verify.yaml` (dto: `dto_label_name`, `dto_eso_secrets_list` = inline base+extra, `dto_eso_integration_object`, `dto_namespace`). Шаблон в [`reusable-tasks.md`](reusable-tasks.md) §3.1.
 
 10. **Apply the new Vault policy/role**:
     ```
@@ -442,12 +454,12 @@ All under `eso-secret/` KV engine.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `ExternalSecret` stuck in `SecretSyncedError` | Vault policy missing `read` on the path, or role doesn't bind the SA | Run `vault-install.yaml --tags install` after updating policies; inspect `ExternalSecret` status for error detail |
-| `SecretStore` shows `ValidationFailed` | `role_name` missing in Vault or `kubernetes` auth mount path wrong | Confirm `vault_roles_final` has the role; check bank-vaults logs |
+| `SecretStore` shows `ValidationFailed` | `role_name` missing in Vault or `kubernetes` auth mount path wrong | Confirm merged `vault_roles + vault_roles_extra` has the role (run `tasks-vault-config-verify.yaml`); check bank-vaults logs |
 | K8s Secret exists but pod doesn't see new value | Pod was not restarted after Secret change | `<c>-restart.yaml` (Reloader will automate this in future) |
 | Vault sealed after reboot | Auto-unseal CronJob didn't run | Run manually on a manager: `kubectl -n vault exec vault-0 -- vault operator unseal <key>` × threshold |
 | New manager can't unseal | `/etc/kubernetes/vault-unseal.json` missing | Re-run `tasks-vault-distribute-creds.yaml` (part of `manager-join.yaml`) |
-| `tasks-vault-policies-roles-merge.yaml` fails "duplicate policy" | Base + `_extra` both define the same policy name | Remove duplicate from `_extra`; only triggered by `vault-install.yaml`, not by component install playbooks |
-| `tasks-eso-secrets-merge.yaml` fails "Duplicate external_secret_name" | Base + `_extra` (or multiple `_extra` entries) define ExternalSecrets with the same `external_secret_name` | Rename one of the conflicting entries |
+| `tasks-vault-config-verify.yaml` fails "duplicate policy names in merged vault_policies" | Base + `_extra` both define the same policy name | Remove duplicate from `_extra`; only triggered by `vault-install.yaml`, not by component install playbooks |
+| `tasks-eso-verify.yaml` fails "duplicate external_secret_name in dto_eso_secrets_list" | Base + `_extra` (or multiple `_extra` entries) define ExternalSecrets with the same `external_secret_name` | Rename one of the conflicting entries |
 
 ---
 
@@ -461,3 +473,4 @@ All under `eso-secret/` KV engine.
 - **`vault_policies` / `vault_roles`** remain in `hosts-vars/vault.yaml` (not per-component).
 - **mon-system consolidation (SUB-1..11)** removed six per-component charts/playbooks/vars (mon-prometheus-operator, mon-grafana, mon-loki, mon-vector, mon-node-exporter, mon-kube-state-metrics) and replaced them with a single consolidated mon-system stack: namespace `mon-system`, inventory `hosts-vars/mon-system.yaml`, chart tree `playbook-app/charts/mon-system/`, playbook `playbook-app/mon-system-install.yaml`. The grafana ESO integration was renamed `eso_vault_integration_grafana` → `eso_vault_integration_mon_system`; Vault policy/role `grafana.eso-main` → `mon-system.eso-main`; Vault path prefix `eso-secret/grafana/*` → `eso-secret/mon-system/*`; SA `grafana` ns binding → `mon-system` ns binding. The 8-component list in `tasks-eso-secrets-merge.yaml` now includes `mon_system` (not `grafana`).
 - **ESO refactor (named-variable objects)** removed `tasks-eso-lookup.yaml`. Replaced array-of-dicts pattern in `eso_vault_integration_<c>_secrets` (with Jinja-refs to `<c>_secret_name_<logical>` strings) with array-of-references to top-level named dict-variables `<c>_secret_<logical>` (each containing full ExternalSecret structure: `external_secret_name`, `vault_path`, `body`). `<c>_secret_name_<logical>` string variables removed; all references in `*_helm_values` and playbooks migrated to direct `<c>_secret_<logical>.body.target.name` / `<c>_secret_<logical>.vault_path` notation. `_extra` remains a list of full dict-items (format preserved).
+- **ESO refactor v2 (verify tasks + inline merge)** removed `tasks-eso-secrets-merge.yaml` and `tasks-vault-policies-roles-merge.yaml`. Two new pure-validation tasks (`tasks-vault-config-verify.yaml` + `tasks-eso-verify.yaml`) replace them — no `set_fact`, no runtime facts. Magic runtime facts `eso_vault_integration_<c>_secrets_merged`, `vault_policies_final`, `vault_roles_final` removed; inline merge `base + (extra | default([]))` performed at usage sites (`<c>_pre_helm_values.eso.secrets`, `hosts-vars/vault.yaml` `vault_spec.externalConfig`). Store-level `is_need_eso` (`eso_vault_integration_<c>.is_need_eso` + chart `.Values.eso.isNeedEso`) removed; gating только item-level через `body.is_need_eso` per-secret. ESO callers вызывают **два task'а последовательно** (vault-config-verify + eso-verify) — task НЕ вызывает другие task'и через include.

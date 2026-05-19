@@ -113,7 +113,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install
 - `--tags gitops` — for `argocd` (AppProjects + Applications)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
 
-`tags: [always]` tasks (`tasks-pre-check`, `tasks-eso-secrets-merge`, `tasks-resolve-acme-solver`) run regardless of `--tags`, so facts are always set.
+`tags: [always]` tasks (`tasks-pre-check`, `tasks-vault-config-verify`, `tasks-eso-verify`, `tasks-resolve-acme-solver`) run regardless of `--tags`.
 
 ---
 

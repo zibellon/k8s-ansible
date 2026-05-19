@@ -92,12 +92,12 @@ Every `<c>-install.yaml` in `playbook-app/` produces three Helm releases:
 
 Each phase is an independent Helm release — re-runnable with `--tags pre|install|post`. Some components add extra phases (`crds/`, `prometheus/`, `postgresql/`, etc.). Full contract in [`playbook-conventions.md`](.claude/rules/playbook-conventions.md) §6.
 
-### 1.7 Two merge tasks
+### 1.7 Two verify tasks
 
-- **`tasks-vault-policies-roles-merge.yaml`** — merges `vault_policies` + `vault_policies_extra`, `vault_roles` + `vault_roles_extra`. Called only from `vault-install.yaml`.
-- **`tasks-eso-secrets-merge.yaml`** — merges `eso_vault_integration_<c>_secrets` + `_extra` for each of 8 ESO-integrated components. Called from every ESO-integrated install/configure playbook.
+- **`tasks-vault-config-verify.yaml`** — pure validation pre-check для Vault config: проверяет uniqueness `name` в merged `vault_policies + vault_policies_extra` и `vault_roles + vault_roles_extra`, а также referential integrity (`role.policies` → existing policy). Вызывается из `vault-install.yaml` и всех 10 ESO-integrated install/configure playbook'ов + `tests/helm-validate.yaml`.
+- **`tasks-eso-verify.yaml`** — pure validation pre-check для одного компонента: 4 группы (input asserts, SecretStore→Vault connectivity scoped к role, ESO uniqueness `external_secret_name`/`body.target.name`, policy path coverage scoped к role's policies). Вызывается из всех 10 ESO-integrated install/configure playbook'ов.
 
-Details in [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) §3 and [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1.8.
+Оба task'а pure read-only — не создают runtime facts. Inline merge `base + (extra | default([]))` выполняется прямо в местах использования (`<c>_pre_helm_values.eso.secrets`, `vault_spec.externalConfig.policies/roles`). Подробности — [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) §3 и [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1.8a–§1.8b.
 
 ---
 

@@ -280,7 +280,7 @@ The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in
 
 ## 20. ESO-integrated Components (8)
 
-Only these have `eso_vault_integration_<c>` objects and are processed by `tasks-eso-secrets-merge.yaml`:
+Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-verify.yaml`:
 
 `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`
 

@@ -95,30 +95,35 @@ General rules for callers:
 - **Callers.** End of `install` phase on every component; also `-restart` playbooks.
 - **Idempotent.** Read-only wait.
 
-### 1.8a `tasks-vault-policies-roles-merge.yaml`
+### 1.8a `tasks-vault-config-verify.yaml`
 
-- **Purpose.** Merge base + `_extra` for Vault policies and roles. Validate internal consistency.
-- **Input.** Reads from inventory: `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (all optional — `_extra` default `[]`).
-- **Output (runtime facts).**
-  - `vault_policies_final` — `vault_policies + (vault_policies_extra | default([]))`.
-  - `vault_roles_final` — `vault_roles + (vault_roles_extra | default([]))`.
+- **Purpose.** Pure validation pre-check для Vault policies + roles. Read-only, без `set_fact`. Каждый caller передаёт только `dto_label_name`; `vault_policies/_extra` и `vault_roles/_extra` читаются inline.
+- **Input.** `dto_label_name` (required string).
 - **Validates.**
-  - Unique `name` within `vault_policies_final` — fails with the duplicate name.
-  - Unique `name` within `vault_roles_final` — fails with the duplicate name.
-  - Every role's `policies` list entries exist in `vault_policies_final` — fails with role name + missing policy.
-- **Callers.** Only `playbook-app/vault-install.yaml` (at `tags: [always]`). Not called from component install playbooks.
-- **Idempotent.** Pure merge + validation.
+  - Unique `name` в merged `vault_policies + (vault_policies_extra | default([]))`.
+  - Unique `name` в merged `vault_roles + (vault_roles_extra | default([]))`.
+  - Referential integrity: каждая role в merged_roles → каждая policy в `role.policies` существует в merged_policies (fail с указанием missing policy + role name).
+- **Output.** None.
+- **Callers.** `vault-install.yaml` (pre-check перед helm install Vault); 10 ESO-integrated install/configure playbook'ов + `tests/helm-validate.yaml` — вызывают **первым**, перед `tasks-eso-verify.yaml`.
+- **Idempotent.** Read-only.
 
-### 1.8b `tasks-eso-secrets-merge.yaml`
+### 1.8b `tasks-eso-verify.yaml`
 
-- **Purpose.** Merge per-component base + `_extra` secrets lists for all 8 ESO-integrated components. Validate uniqueness within each merged list.
-- **Input.** Reads from inventory: `eso_vault_integration_<c>_secrets` and `eso_vault_integration_<c>_secrets_extra` for each of the 8 components: `traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`. `_extra` defaults to `[]` if absent.
-- **Merge order.** Base + extra (extra appended at the end).
-- **Output (runtime facts).**
-  - `eso_vault_integration_<c>_secrets_merged` for each of the 8 components — list of ExternalSecret dicts.
-- **Validates (per-component).** Unique `external_secret_name` across the merged list; unique `body.target.name` across the merged list. Fails with component name + duplicate value.
-- **Callers.** Every ESO-integrated install/configure playbook at `tags: [always]`: `traefik-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `gitlab-install.yaml`, `gitlab-configure.yaml`, `gitlab-runner-install.yaml`, `argocd-install.yaml`, `argocd-configure.yaml`, `zitadel-install.yaml`, `mon-system-install.yaml`. Also `vault-install.yaml` (after `tasks-vault-policies-roles-merge.yaml`).
-- **Idempotent.** Pure merge + validation.
+- **Purpose.** Pure validation pre-check для одного ESO-integrated компонента. Read-only, без `set_fact`. Вызывается **после** `tasks-vault-config-verify.yaml` (две независимые task'и, не include task-from-task).
+- **Input.**
+  - `dto_label_name` (required string).
+  - `dto_eso_secrets_list` (required sequence — финальный массив base + extra после Ansible Jinja resolution).
+  - `dto_eso_integration_object` (required mapping — `eso_vault_integration_<c>` со всеми полями: `sa_name`, `role_name`, `secret_store_name`, `kv_engine_path`).
+  - `dto_namespace` (required string — K8s namespace компонента).
+- **Reads (inventory).** `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (inline merge внутри vars).
+- **Validates (4 groups).**
+  - **A. Input asserts.**
+  - **B. SecretStore→Vault connectivity (scoped к role этого компонента):** role exists, SA binding, namespace binding, policies count > 0, each role.policies exists.
+  - **C. ESO uniqueness:** `external_secret_name` + `body.target.name` unique в `dto_eso_secrets_list`.
+  - **D. Policy path coverage (scoped к role's policies):** каждый item Vault path (`body.dataFrom[].extract.key` + `body.data[].remoteRef.key`) должен быть substring хотя бы одного path-prefix из policies этой role (после stripping `/*`).
+- **Output.** None.
+- **Callers.** 10 ESO-integrated install/configure playbook'ов (8 install + 2 configure). NOT called from `tests/helm-validate.yaml` (test driver рендерит upstream charts — нет component scope).
+- **Idempotent.** Read-only.
 
 ### 1.9 `tasks-resolve-acme-solver.yaml`
 
@@ -497,7 +502,17 @@ General rules for callers:
     dto_target_namespace: "{{ <c>_namespace }}"
   tags: [always]
 
-- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-config-verify.yaml"
+  vars:
+    dto_label_name: "<c>-install-init"
+  tags: [always]
+
+- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+  vars:
+    dto_label_name: "<c>-install-init"
+    dto_eso_secrets_list: "{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"
+    dto_eso_integration_object: "{{ eso_vault_integration_<c> }}"
+    dto_namespace: "{{ <c>_namespace }}"
   tags: [always]
 
 # If ingress uses ACME:
