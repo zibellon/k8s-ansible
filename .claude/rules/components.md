@@ -189,17 +189,6 @@ Template fields:
 - **Dependencies.** Cilium, cert-manager, traefik.
 - **Notes.** `configure/` phase runs after the server is up and applies the declarative resource list.
 
-## 15. `medik8s`
-
-- **Chart path.** `charts/medik8s/{pre,install,post}/`.
-- **Install playbook.** `medik8s-install.yaml`.
-- **Namespace.** `medik8s`.
-- **Releases.** `medik8s-pre`, `medik8s`, `medik8s-post`.
-- **Required vars.** `medik8s_namespace`, NHC (NodeHealthCheck) + SNR (Self-Node-Remediation) config.
-- **ESO integration.** No.
-- **Dependencies.** Cilium. Kernel module `softdog` enabled on nodes via `playbook-system/node-prepare.yaml` (blacklist-aware — uses a unit-service `modprobe` strategy rather than dropping a file in `/etc/modules-load.d/`).
-- **Notes.** NodeHealthCheck operator + Self-Node-Remediation for hardware-failure auto-healing.
-
 ## 16. `metrics-server`
 
 - **Chart path.** `charts/metrics-server/{pre,install}/` (no `post/`).
@@ -265,7 +254,6 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 | `gitlab-runner` | gitlab-runner | no |
 | `zitadel` | zitadel | no |
 | `teleport` | teleport | no |
-| `medik8s` | medik8s | no |
 | `kube-system` | metrics-server (exceptional) | upstream |
 | `piraeus-datastore` | linstor (Piraeus operator + LinstorCluster + satellites + CSI + HA controller + affinity controller + NFS server) | **yes** — upstream Piraeus convention |
 | `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
@@ -282,7 +270,7 @@ L3  vault
 L4  traefik        haproxy
 L5  mon-system
 L6  zitadel
-L7  argocd    gitlab    teleport    medik8s
+L7  argocd    gitlab    teleport
 L8  gitlab-runner
 ```
 

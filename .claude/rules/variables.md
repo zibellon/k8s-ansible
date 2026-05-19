@@ -181,7 +181,7 @@ Per-file source of truth in parentheses.
 | `node_port_start`, `node_port_end` | `1`, `50000` | NodePort range (apiserver `service-node-port-range`) |
 | `node_monitor_grace_period` | `"30s"` | kube-controller-manager flag |
 | `node_drain_timeout` | `"10m"` | Default `kubectl drain --timeout` |
-| `softdog_timeout` | `30` | Watchdog (softdog) reboot timeout in seconds — used by medik8s |
+| `softdog_timeout` | `30` | Watchdog (softdog) reboot timeout in seconds |
 | `apt_additional_configs` | `[]` | List of ansible-managed apt files. Each entry: `{filePath, content}` where `filePath` is path under `/etc/apt/` (subdir + name, basename must start with `ansible-`; allowed subdirs: `sources.list.d/`, `apt.conf.d/`). Auto-cleanup: removing entry from variable deletes the file on next run. Implemented via `tasks-sync-managed-files.yaml` (one call per managed subdir). |
 | `apt_preferences` | `[]` | List of ansible-managed apt pinning files in `/etc/apt/preferences.d/`. Each entry: `{name, content}` where `name` must start with `ansible-`. Auto-cleanup: same as `apt_additional_configs`. Implemented via `tasks-sync-managed-files.yaml`. |
 | `crds_wait` | `{timeout: "60s", retries: 15, delay: 5}` | CRD wait config — used by `tasks-wait-crds.yaml` |

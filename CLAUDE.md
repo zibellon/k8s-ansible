@@ -72,7 +72,7 @@ Merge order: `hosts-vars/` → `hosts-vars-override/` → inline play vars. Arra
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  L7 Observability (mon-system — 8 workloads)                    │  playbook-app/mon-system-*
-│  L6 Applications (argocd, gitlab, teleport, zitadel, medik8s)   │  playbook-app/
+│  L6 Applications (argocd, gitlab, teleport, zitadel)            │  playbook-app/
 │  L5 Platform    (vault, external-secrets, cert-manager)         │  playbook-app/
 │  L4 Storage     (longhorn)                                      │  playbook-app/
 │  L3 Ingress     (traefik @ traefik-lb, haproxy @ haproxy-lb)    │  playbook-app/

@@ -524,14 +524,6 @@
 # ЕЩЕ НЕ ГОТОВО
 # ---------
 
-## medik8s. Установка идет через kubectl apply -f ...
-## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
-##
-- установка
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/medik8s-install.yaml`
-
 ## Zitadel. официальный helm
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`

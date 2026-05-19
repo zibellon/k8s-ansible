@@ -13,19 +13,18 @@
 - post. Вот тут ставим что-то, что ставится только после установки основного компонента (для cilium, в этом шаге ставим CiliumClusterwideNetworkPolicy - можно сделать тол ко после установки crds)
 
 ## Что дополнить и доделать
-1. medik8s. проверить и дополнить установку + конфигурацию. Расписать про модуль ядра, который находится в blacklist у системных конфигураций, и который надо включать НЕ ЧЕРЕЗ указание файла, а через unit-service, который будет делать modeprobe (при старте системы)
-2. Сделать отдельный playbook - для проверки состояния кластера. Все статистики по всему что есть. Как-то так, чтобы можно было его запустить и получить сводку по всем серверам и всем контейнерам и всем компонентам. Что там вообще происходит, все ли работает и так далее
-3. Добавить контроль по: убирать taint с control-plane или нет
+1. Сделать отдельный playbook - для проверки состояния кластера. Все статистики по всему что есть. Как-то так, чтобы можно было его запустить и получить сводку по всем серверам и всем контейнерам и всем компонентам. Что там вообще происходит, все ли работает и так далее
+2. Добавить контроль по: убирать taint с control-plane или нет
    1. Типо - хотим запускать что-то на голове или нет. Учесть этот момент в longhorn. Мб на manager будет большой диск, и ему грех простаивать ? Подумать про эту механику. Если там будет taint - то как будут работать остальные компоненты ?
-4. Обновить tasks = tasks-set-is-cluster-init.yaml + tasks-set-is-node-joined.yaml
+3. Обновить tasks = tasks-set-is-cluster-init.yaml + tasks-set-is-node-joined.yaml
    1. Там надо понимать, была ли инициализация кластера на manager | worker node ?
-5.  argocd
+4.  argocd
     1.  правила безопасности, чтобы нельзя было никому навредить
-6.  Добавить установку https://github.com/stakater/Reloader
+5.  Добавить установку https://github.com/stakater/Reloader
     1.  перезапуск подов, если configMap | secret - изменились
-7.  Добавить установку https://zitadel.com/docs
+6.  Добавить установку https://zitadel.com/docs
     1.  система авторизации и управления доступами
-8.  Есть playbook
+7.  Есть playbook
     1.  которые запускаются до инициализации
     2.  которые запускаются после инициализации
     3.  которые должны быть строго с лимитами
@@ -81,12 +80,6 @@
          6. удалить временный файл
 
 ------
-
-# mediks
-- kubectl kustomize https://github.com/medik8s/node-healthcheck-operator/config/default?ref=main > nhc-full.yaml
-- kubectl kustomize https://github.com/medik8s/self-node-remediation/config/default?ref=main > snr-full.yaml
-
-self-node-remediation
 
 # Что по ansible - на потом
 
@@ -232,8 +225,6 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 **SUB-0a** (`tasks-helm-template-kustomize-build.yaml` создан): все LOCAL-managed chart phase'ы теперь используют unified flow — `helm template` → staging `-k-tmp/` → `kubectl kustomize` → output `-k/` → `helm install` из `-k/`. Старый `tasks-kustomize-build.yaml` удалён.
 
 **SUB-0a-fix** (commit 7e0c6d4): kustomize `namespace:` transformer удалён из flow — он ломал multi-namespace charts (переписывал `metadata.namespace` у ресурсов с явно заданным namespace). Namespace теперь подаётся исключительно через `helm template --namespace`.
-
-**SUB-10 SKIPPED**: medik8s не конвертировался — будет удалён отдельным SUB. Три фазы (pre/install/post) остаются на старом flow до удаления.
 
 **Переменная `argocd_kustomize_patches`** переименована в `argocd_install_kustomize_patches` (SUB-14). Companion `argocd_kustomize_patches_extra` удалён — оператор-side override заменяет base целиком (нет concat-semantics).
 
