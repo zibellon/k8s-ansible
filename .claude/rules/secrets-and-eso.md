@@ -429,7 +429,7 @@ All under `eso-secret/` KV engine.
 | `gitlab-runner` | `eso-secret/gitlab-runner/*` | registration token, S3 cache creds |
 | `zitadel` | `eso-secret/zitadel/*` | `postgresql`, `masterkey` |
 | `argocd` | `eso-secret/argocd/*` | `admin` (password), optional OIDC client-secret, plus git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` |
-| `mon_system` | `eso-secret/mon-system/*` | `grafana/admin/creds` (password), optional `grafana/oidc` client-secret, optional `grafana/<ds>` datasource creds |
+| `mon_system` | `eso-secret/mon-system/*` | `grafana/admin/creds` (password), `grafana/postgresql/creds` (username + password for backing Postgres), optional `grafana/oidc` client-secret, optional `grafana/<ds>` datasource creds |
 
 ---
 

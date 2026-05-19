@@ -88,6 +88,14 @@ Vault path for grafana credentials: `eso-secret/mon-system/grafana/admin/creds`.
 
 Dashboards are provisioned declaratively via Helm values from `hosts-vars/mon-system.yaml`. User-added dashboards extend via the `*_extra` pattern (see [`variables.md`](variables.md) §1.5).
 
+### 3.3 Database backend
+
+Grafana state (dashboards, users, datasources, alerts) lives in a dedicated single-replica PostgreSQL instance deployed by the `grafana-postgresql` tag of `mon-system-install.yaml` (chart `mon-system/grafana-postgresql/`, release `mon-system-grafana-postgresql`, in the same `mon-system` namespace). Grafana itself is stateless — `/var/lib/grafana` is an `emptyDir` mount used only for plugin install cache at startup (`GF_INSTALL_PLUGINS`).
+
+Connection is wired via `GF_DATABASE_*` env vars (type, host, name, user, sslMode, conn pool) sourced from the `mon_system_grafana_helm_values.database` dict in inventory. `GF_DATABASE_PASSWORD` comes via `secretKeyRef` on the ESO-managed K8s Secret `eso-mon-system-grafana-postgresql-creds` (Vault path `eso-secret/mon-system/grafana/postgresql/creds`, fields `username` + `password`).
+
+The `grafana-postgresql` phase has no independent enable flag — it is gated by `mon_system_grafana_enabled` (Postgres is meaningless without Grafana). Install order: `grafana-postgresql` (STEP 10) runs before `grafana` (STEP 11), so the Postgres Service `mon-system-grafana-postgresql.mon-system.svc.cluster.local:5432` is reachable by the time Grafana starts. Intra-namespace traffic is allowed by the consolidated `allow-internal-traffic` NetworkPolicy in `mon-system/pre/`.
+
 ---
 
 ## 4. Alertmanager
