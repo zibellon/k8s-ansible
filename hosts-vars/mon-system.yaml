@@ -640,6 +640,8 @@ all:
     mon_system_grafana_postgresql_storage_size: "10Gi"
     mon_system_grafana_postgresql_username: "grafana"
     mon_system_grafana_postgresql_database_name: "grafana"
+    mon_system_grafana_postgresql_secret_key_username: "username"
+    mon_system_grafana_postgresql_secret_key_password: "password"
 
     # ----------------------------------------------------------------------------
     # Grafana — Deployment + PVC + Service (with Vault/ESO admin password lifecycle)
@@ -905,7 +907,10 @@ all:
       port: "{{ mon_system_grafana_postgresql_port }}"
       storageClass: "{{ mon_system_grafana_postgresql_storage_class }}"
       storageSize: "{{ mon_system_grafana_postgresql_storage_size }}"
-      credentialsSecretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+      credentials:
+        secretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+        usernameKey: "{{ mon_system_grafana_postgresql_secret_key_username }}"
+        passwordKey: "{{ mon_system_grafana_postgresql_secret_key_password }}"
       tolerations: []
       nodeSelector:
         node-role.kubernetes.io/worker: ""
@@ -938,12 +943,13 @@ all:
         type: "postgres"
         host: "mon-system-grafana-postgresql.{{ mon_system_namespace }}.svc.{{ cluster_dns_domain }}:{{ mon_system_grafana_postgresql_port }}"
         name: "{{ mon_system_grafana_postgresql_database_name }}"
-        user: "{{ mon_system_grafana_postgresql_username }}"
         sslMode: "disable"
         maxOpenConns: 20
         maxIdleConns: 10
         connMaxLifetime: "30m"
-        passwordSecretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+        credentialsSecretName: "{{ mon_system_secret_name_grafana_postgresql_creds }}"
+        usernameKey: "{{ mon_system_grafana_postgresql_secret_key_username }}"
+        passwordKey: "{{ mon_system_grafana_postgresql_secret_key_password }}"
       tolerations: []
       nodeSelector:
         node-role.kubernetes.io/worker: ""
