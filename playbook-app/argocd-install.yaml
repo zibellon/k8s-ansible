@@ -39,8 +39,19 @@
     # INIT: Merge ESO integrations and resolve ArgoCD config
     # =========================================================================
 
-    - name: "[argocd-install-init] Merge ESO secrets"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
+    - name: "[argocd-install-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "argocd-install-init"
+      tags: [always]
+
+    - name: "[argocd-install-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "argocd-install-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_argocd_secrets + (eso_vault_integration_argocd_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_argocd }}"
+        dto_namespace: "{{ argocd_namespace }}"
       tags: [always]
 
 

@@ -319,12 +319,12 @@ all:
           enabled: true
           exclude:
             auth: true
-        policies: "{{ vault_policies_final }}"
+        policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
         auth:
           - type: kubernetes
             config:
               kubernetes_host: "{{ vault_kubernetes_host }}"
-            roles: "{{ vault_roles_final }}"
+            roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
         secrets:
           - path: secret
             type: kv
@@ -359,8 +359,8 @@ all:
     # CR-phase kustomize patches (operator-side customization, default empty)
     vault_cr_kustomize_patches: []
     # CR-phase values (Vault Custom Resource chart)
-    # vault_spec содержит runtime-факты (vault_policies_final, vault_roles_final),
-    # которые вычисляются tasks-eso-merge.yaml (tags: [always]).
+    # vault_spec использует inline merge vault_policies/vault_roles + extras;
+    # validation выполняется через tasks-vault-config-verify.yaml.
     vault_cr_helm_values:
       namespace: "{{ vault_namespace }}"
       vaultSpec: "{{ vault_spec }}"

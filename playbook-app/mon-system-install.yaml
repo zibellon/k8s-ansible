@@ -46,8 +46,19 @@
     # INIT: Merge ESO integrations + resolve ACME solver labels
     # =========================================================================
 
-    - name: "[mon-system-init] Merge ESO secrets"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
+    - name: "[mon-system-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "mon-system-init"
+      tags: [always]
+
+    - name: "[mon-system-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "mon-system-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_mon_system_secrets + (eso_vault_integration_mon_system_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_mon_system }}"
+        dto_namespace: "{{ mon_system_namespace }}"
       tags: [always]
 
     - name: "[mon-system-init] Resolve ACME solver"
