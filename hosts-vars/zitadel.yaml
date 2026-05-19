@@ -72,7 +72,7 @@ all:
     # Postgresql-phase kustomize patches (operator-side customization, default empty)
     zitadel_postgresql_kustomize_patches: []
     # PostgreSQL sub-release values
-    # _local_zitadel_secret_name_postgresql_creds — runtime-факт от tasks-eso-lookup.yaml [always] в playbook
+    # secretName берётся из named-переменной zitadel_secret_postgresql_creds.body.target.name
     zitadel_postgresql_helm_values:
       namespace: "{{ zitadel_namespace }}"
       databaseName: "{{ zitadel_postgresql_database_name }}"
@@ -80,7 +80,7 @@ all:
       storageClass: "{{ zitadel_postgresql_storage_class }}"
       storageSize: "{{ zitadel_postgresql_storage_size }}"
       credentials:
-        secretName: "{{ _local_zitadel_secret_name_postgresql_creds }}"
+        secretName: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
         usernameKey: "{{ zitadel_postgresql_secret_key_username }}"
         passwordKey: "{{ zitadel_postgresql_secret_key_password }}"
       extraObjects: "{{ zitadel_postgresql_extra_objects }}"
@@ -94,7 +94,7 @@ all:
       tolerations: []
       affinity: {}
       zitadel:
-        masterkeySecretName: "{{ _local_zitadel_secret_name_masterkey }}"
+        masterkeySecretName: "{{ zitadel_secret_masterkey.body.target.name }}"
         # masterkeySecretKeyName удалён — в chart 9.x ключ в secret hardcoded: "masterkey"
         configmapConfig:
           ExternalDomain: "{{ zitadel_domain }}"
@@ -122,12 +122,12 @@ all:
         - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: "{{ _local_zitadel_secret_name_postgresql_creds }}"
+              name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
               key: "{{ zitadel_postgresql_secret_key_password }}"
         - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: "{{ _local_zitadel_secret_name_postgresql_creds }}"
+              name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
               key: "{{ zitadel_postgresql_secret_key_password }}"
       service:
         type: ClusterIP
@@ -175,14 +175,13 @@ all:
           web: "{{ traefik_web_entrypoint }}"
           websecure: "{{ traefik_websecure_entrypoint }}"
       extraObjects: "{{ zitadel_post_extra_objects }}"
-    # -------
-    # Secret name lookups — used by tasks-eso-lookup.yaml in zitadel-install.yaml
-    # Values must match external_secret_name of corresponding eso_vault_integration_zitadel_secrets entry
-    # -------
-    zitadel_secret_name_postgresql_creds: "eso-zitadel-postgresql-creds"
-    zitadel_secret_name_masterkey: "eso-zitadel-masterkey"
     # ---------
-    # ZITADEL (postgresql + masterkey)
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_zitadel_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/.
     # ---------
     eso_vault_integration_zitadel:
       sa_name: "eso-main"
@@ -190,22 +189,28 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
+    zitadel_secret_postgresql_creds:
+      external_secret_name: "eso-zitadel-postgresql-creds"
+      vault_path: "/zitadel/postgresql/creds"
+      body:
+        target:
+          name: "eso-zitadel-postgresql-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/postgresql/creds"
+
+    zitadel_secret_masterkey:
+      external_secret_name: "eso-zitadel-masterkey"
+      vault_path: "/zitadel/masterkey"
+      body:
+        target:
+          name: "eso-zitadel-masterkey"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/masterkey"
+
     eso_vault_integration_zitadel_secrets:
-      - external_secret_name: "{{ zitadel_secret_name_postgresql_creds }}"
-        vault_path: "/zitadel/postgresql/creds"
-        body:
-          target:
-            name: "{{ zitadel_secret_name_postgresql_creds }}"
-          dataFrom:
-            - extract:
-                key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/postgresql/creds"
-      - external_secret_name: "{{ zitadel_secret_name_masterkey }}"
-        vault_path: "/zitadel/masterkey"
-        body:
-          target:
-            name: "{{ zitadel_secret_name_masterkey }}"
-          dataFrom:
-            - extract:
-                key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/masterkey"
+      - "{{ zitadel_secret_postgresql_creds }}"
+      - "{{ zitadel_secret_masterkey }}"
 
     eso_vault_integration_zitadel_secrets_extra: []

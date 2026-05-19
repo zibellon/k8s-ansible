@@ -49,26 +49,6 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-secrets-merge.yaml"
       tags: [always]
 
-    - name: "[zitadel-install-init] Lookup postgresql secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "zitadel-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
-        dto_external_secret_name: "{{ zitadel_secret_name_postgresql_creds }}"
-        dto_res_fact_name_secret: "_local_zitadel_secret_name_postgresql_creds"
-        dto_res_fact_name_vault_path: "_local_zitadel_vault_path_postgresql_creds"
-      tags: [always]
-
-    - name: "[zitadel-install-init] Lookup masterkey secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-lookup.yaml"
-      vars:
-        dto_label_name: "zitadel-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_zitadel_secrets_merged }}"
-        dto_external_secret_name: "{{ zitadel_secret_name_masterkey }}"
-        dto_res_fact_name_secret: "_local_zitadel_secret_name_masterkey"
-        dto_res_fact_name_vault_path: "_local_zitadel_vault_path_masterkey"
-      tags: [always]
-
     # =========================================================================
     # INIT: Resolve ClusterIssuer + ACME solver pod labels
     # =========================================================================
@@ -142,7 +122,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "zitadel-postgresql-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_postgresql_creds }}"
+        dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_postgresql_creds.vault_path }}"
         dto_vault_get_field: "{{ zitadel_postgresql_secret_key_password }}"
         dto_vault_get_res_fact_name: "zitadel_postgresql_vault"
       tags: [postgresql]
@@ -167,7 +147,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "zitadel-postgresql-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_postgresql_creds }}"
+        dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_postgresql_creds.vault_path }}"
         dto_vault_put_data: "{{ _zitadel_postgresql_put_data }}"
       when: not zitadel_postgresql_vault_exists
       tags: [postgresql]
@@ -183,7 +163,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "zitadel-postgresql-secrets"
-        dto_wait_secret_name: "{{ _local_zitadel_secret_name_postgresql_creds }}"
+        dto_wait_secret_name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ zitadel_namespace }}"
       tags: [postgresql]
 
@@ -255,7 +235,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-get.yaml"
       vars:
         dto_label_name: "zitadel-masterkey-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_masterkey }}"
+        dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_masterkey.vault_path }}"
         dto_vault_get_field: masterkey
         dto_vault_get_res_fact_name: "zitadel_masterkey_vault"
       tags: [install]
@@ -272,7 +252,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-put.yaml"
       vars:
         dto_label_name: "zitadel-masterkey-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_masterkey }}"
+        dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_masterkey.vault_path }}"
         dto_vault_put_data:
           masterkey: "{{ _zitadel_masterkey_generated }}"
       when: not zitadel_masterkey_vault_exists
@@ -289,7 +269,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "zitadel-masterkey-secrets"
-        dto_wait_secret_name: "{{ _local_zitadel_secret_name_masterkey }}"
+        dto_wait_secret_name: "{{ zitadel_secret_masterkey.body.target.name }}"
         dto_wait_secret_namespace: "{{ zitadel_namespace }}"
       tags: [install]
 
@@ -427,8 +407,8 @@
           - "ZITADEL UI: https://{{ zitadel_domain }}"
           - ""
           - "Credentials stored in Vault:"
-          - "  PostgreSQL: {{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_postgresql_creds }}"
-          - "  Masterkey:  {{ eso_vault_integration_zitadel.kv_engine_path }}{{ _local_zitadel_vault_path_masterkey }}"
+          - "  PostgreSQL: {{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_postgresql_creds.vault_path }}"
+          - "  Masterkey:  {{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_masterkey.vault_path }}"
           - ""
           - "IMPORTANT: The masterkey is immutable."
           - "  Do NOT regenerate it after first install."
