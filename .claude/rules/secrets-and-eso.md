@@ -219,7 +219,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 |---|---|
 | `tasks-vault-config-verify.yaml` | Pre-check: validate Vault policies + roles uniqueness + role→policy refs. |
 | `tasks-eso-verify.yaml` | Pre-check per-component: connectivity, uniqueness, policy coverage. |
-| `tasks-vault-get.yaml` | Read a single KV field into a named fact + `<fact>_exists` boolean. Safe on missing paths. |
+| `tasks-vault-get.yaml` | Read a single KV field into a named fact + a caller-named exists boolean fact. Safe on missing paths. |
 | `tasks-vault-put.yaml` | `vault kv put` + annotate ExternalSecret + wait for target K8s Secret to be present/updated. |
 | `tasks-generate-secret.yaml` | Generate random N-char secret into a named fact. |
 | `tasks-eso-force-sync.yaml` | Annotate ExternalSecrets with `force-sync=<epoch>` to trigger ESO reconciliation. |
