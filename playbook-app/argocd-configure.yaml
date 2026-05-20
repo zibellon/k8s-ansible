@@ -97,7 +97,7 @@
       vars:
         dto_label_name: "argocd-admin-password"
         dto_vault_get_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
-        dto_vault_get_field: password
+        dto_vault_get_field: "{{ argocd_admin_secret_key_password }}"
         dto_vault_get_res_fact_name: "{{ _local_argocd_admin_pw_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_argocd_admin_pw_vault_exists_key }}"
       tags: [always]
@@ -212,9 +212,11 @@
       vars:
         dto_label_name: "argocd-admin-password"
         dto_vault_put_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
-        dto_vault_put_data:
-          username: "{{ argocd_admin_username }}"
-          password: "{{ lookup('vars', _local_active_admin_password_key) }}"
+        dto_vault_put_data: >-
+          {{ {
+               argocd_admin_secret_key_username: argocd_admin_username,
+               argocd_admin_secret_key_password: lookup('vars', _local_active_admin_password_key)
+             } }}
       when: lookup('vars', _local_admin_password_source_key) == "k8s_secret"
       tags: [always]
 
