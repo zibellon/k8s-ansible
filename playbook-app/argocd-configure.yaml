@@ -18,6 +18,15 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_argocd_admin_pw_vault_key: "_local_argocd_admin_pw_vault"
+    _local_argocd_admin_pw_vault_exists_key: "_local_argocd_admin_pw_vault_exists"
+    _local_k8s_argocd_initial_password_key: "_local_k8s_argocd_initial_password"
+    _local_k8s_argocd_initial_password_exists_key: "_local_k8s_argocd_initial_password_exists"
+    _local_active_admin_password_key: "_local_active_admin_password"
+    _local_admin_password_source_key: "_local_admin_password_source"
+
   tasks:
     - name: "[argocd-configure-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -89,7 +98,8 @@
         dto_label_name: "argocd-admin-password"
         dto_vault_get_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
         dto_vault_get_field: password
-        dto_vault_get_res_fact_name: "argocd_admin_pw_vault"
+        dto_vault_get_res_fact_name: "{{ _local_argocd_admin_pw_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_argocd_admin_pw_vault_exists_key }}"
       tags: [always]
 
     - name: "[argocd-admin-password] Get admin password from k8s initial secret"
@@ -99,17 +109,18 @@
         dto_secret_namespace: "{{ argocd_namespace }}"
         dto_secret_name: "argocd-initial-admin-secret"
         dto_secret_field: "password"
-        dto_secret_res_fact_name: "k8s_argocd_initial_password"
+        dto_secret_res_fact_name: "{{ _local_k8s_argocd_initial_password_key }}"
+        dto_secret_res_exists_fact_name: "{{ _local_k8s_argocd_initial_password_exists_key }}"
       tags: [always]
 
     - name: "[argocd-admin-password] Validate Vault password (plaintext)"
       shell: |
         kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
           argocd login localhost:8080 --username admin \
-          --password "{{ argocd_admin_pw_vault }}" \
+          --password "{{ lookup('vars', _local_argocd_admin_pw_vault_key) }}" \
           --plaintext > /dev/null 2>&1
-      register: vault_login_http
-      when: argocd_admin_pw_vault_exists
+      register: _local_vault_login_http
+      when: lookup('vars', _local_argocd_admin_pw_vault_exists_key)
       failed_when: false
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
@@ -120,10 +131,10 @@
       shell: |
         kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
           argocd login localhost:8080 --username admin \
-          --password "{{ argocd_admin_pw_vault }}" \
+          --password "{{ lookup('vars', _local_argocd_admin_pw_vault_key) }}" \
           --insecure > /dev/null 2>&1
-      register: vault_login_https
-      when: argocd_admin_pw_vault_exists
+      register: _local_vault_login_https
+      when: lookup('vars', _local_argocd_admin_pw_vault_exists_key)
       failed_when: false
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
@@ -132,11 +143,11 @@
 
     - name: "[argocd-admin-password] Set active password from Vault if valid"
       set_fact:
-        active_admin_password: "{{ argocd_admin_pw_vault }}"
-        admin_password_source: "vault"
+        "{{ _local_active_admin_password_key }}": "{{ lookup('vars', _local_argocd_admin_pw_vault_key) }}"
+        "{{ _local_admin_password_source_key }}": "vault"
       when:
-        - argocd_admin_pw_vault_exists
-        - (vault_login_http.rc | default(1)) == 0 or (vault_login_https.rc | default(1)) == 0
+        - lookup('vars', _local_argocd_admin_pw_vault_exists_key)
+        - (_local_vault_login_http.rc | default(1)) == 0 or (_local_vault_login_https.rc | default(1)) == 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -145,12 +156,12 @@
       shell: |
         kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
           argocd login localhost:8080 --username "{{ argocd_admin_username }}" \
-          --password "{{ k8s_argocd_initial_password }}" \
+          --password "{{ lookup('vars', _local_k8s_argocd_initial_password_key) }}" \
           --plaintext > /dev/null 2>&1
-      register: k8s_login_http
+      register: _local_k8s_login_http
       when:
-        - active_admin_password is not defined
-        - k8s_argocd_initial_password_exists
+        - _local_active_admin_password_key not in hostvars[inventory_hostname]
+        - lookup('vars', _local_k8s_argocd_initial_password_exists_key)
       failed_when: false
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
@@ -161,12 +172,12 @@
       shell: |
         kubectl exec -n {{ argocd_namespace }} deployment/argocd-server -- \
           argocd login localhost:8080 --username "{{ argocd_admin_username }}" \
-          --password "{{ k8s_argocd_initial_password }}" \
+          --password "{{ lookup('vars', _local_k8s_argocd_initial_password_key) }}" \
           --insecure > /dev/null 2>&1
-      register: k8s_login_https
+      register: _local_k8s_login_https
       when:
-        - active_admin_password is not defined
-        - k8s_argocd_initial_password_exists
+        - _local_active_admin_password_key not in hostvars[inventory_hostname]
+        - lookup('vars', _local_k8s_argocd_initial_password_exists_key)
       failed_when: false
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
@@ -175,12 +186,12 @@
 
     - name: "[argocd-admin-password] Set active password from k8s secret if valid"
       set_fact:
-        active_admin_password: "{{ k8s_argocd_initial_password }}"
-        admin_password_source: "k8s_secret"
+        "{{ _local_active_admin_password_key }}": "{{ lookup('vars', _local_k8s_argocd_initial_password_key) }}"
+        "{{ _local_admin_password_source_key }}": "k8s_secret"
       when:
-        - active_admin_password is not defined
-        - k8s_argocd_initial_password_exists
-        - (k8s_login_http.rc | default(1)) == 0 or (k8s_login_https.rc | default(1)) == 0
+        - _local_active_admin_password_key not in hostvars[inventory_hostname]
+        - lookup('vars', _local_k8s_argocd_initial_password_exists_key)
+        - (_local_k8s_login_http.rc | default(1)) == 0 or (_local_k8s_login_https.rc | default(1)) == 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -189,9 +200,9 @@
       fail:
         msg: >
           No valid admin password found.
-          Vault password: {{ 'present but invalid' if argocd_admin_pw_vault_exists else 'not set' }}.
-          K8s secret password: {{ 'present but invalid' if k8s_argocd_initial_password_exists else 'not set' }}.
-      when: active_admin_password is not defined
+          Vault password: {{ 'present but invalid' if lookup('vars', _local_argocd_admin_pw_vault_exists_key) else 'not set' }}.
+          K8s secret password: {{ 'present but invalid' if lookup('vars', _local_k8s_argocd_initial_password_exists_key) else 'not set' }}.
+      when: _local_active_admin_password_key not in hostvars[inventory_hostname]
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -203,13 +214,13 @@
         dto_vault_put_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
         dto_vault_put_data:
           username: "{{ argocd_admin_username }}"
-          password: "{{ active_admin_password }}"
-      when: admin_password_source == "k8s_secret"
+          password: "{{ lookup('vars', _local_active_admin_password_key) }}"
+      when: lookup('vars', _local_admin_password_source_key) == "k8s_secret"
       tags: [always]
 
     - name: "[argocd-admin-password] Print password resolution result"
       debug:
-        msg: "Admin password resolved from source: {{ admin_password_source }}"
+        msg: "Admin password resolved from source: {{ lookup('vars', _local_admin_password_source_key) }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -230,7 +241,7 @@
           - "  Path: {{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_secret_admin_creds.vault_path }}"
           - "  Fields: username, password"
           - ""
-          - "Password source: {{ admin_password_source }}"
+          - "Password source: {{ lookup('vars', _local_admin_password_source_key) }}"
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
