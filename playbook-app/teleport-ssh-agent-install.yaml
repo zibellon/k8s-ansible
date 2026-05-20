@@ -27,6 +27,11 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_teleport_ssh_agent_join_token_key: "_local_teleport_ssh_agent_join_token"
+    _local_teleport_ssh_agent_ca_pin_key: "_local_teleport_ssh_agent_ca_pin"
+
   tasks:
 
     # =========================================================================
@@ -47,7 +52,7 @@
       shell: |
         kubectl exec -n {{ teleport_namespace }} deploy/teleport-auth -- \
           tctl tokens add --type=node --ttl=1h --format=json
-      register: teleport_token_output
+      register: _local_teleport_token_output
       changed_when: true
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -55,8 +60,8 @@
 
     - name: "[teleport-ssh-agent-init] Parse token and ca_pin from JSON"
       set_fact:
-        teleport_ssh_agent_join_token: "{{ (teleport_token_output.stdout | from_json).token }}"
-        teleport_ssh_agent_ca_pin: "{{ (teleport_token_output.stdout | from_json).ca_pins | first }}"
+        "{{ _local_teleport_ssh_agent_join_token_key }}": "{{ (_local_teleport_token_output.stdout | from_json).token }}"
+        "{{ _local_teleport_ssh_agent_ca_pin_key }}": "{{ (_local_teleport_token_output.stdout | from_json).ca_pins | first }}"
       tags: [always]
 
     # =========================================================================
@@ -127,10 +132,10 @@
               format:
                 output: json
             proxy_server: {{ teleport_web_public_addr }}
-            ca_pin: "{{ teleport_ssh_agent_ca_pin }}"
+            ca_pin: "{{ lookup('vars', _local_teleport_ssh_agent_ca_pin_key) }}"
             join_params:
               method: token
-              token_name: {{ teleport_ssh_agent_join_token }}
+              token_name: {{ lookup('vars', _local_teleport_ssh_agent_join_token_key) }}
           auth_service:
             enabled: false
           proxy_service:

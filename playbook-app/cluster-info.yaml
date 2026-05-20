@@ -20,6 +20,10 @@
   hosts: managers
   become: true
   gather_facts: false
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_cluster_info_is_no_tags_key: "_local_cluster_info_is_no_tags"
+    _local_cluster_info_target_namespaces_key: "_local_cluster_info_target_namespaces"
   tasks:
     # === STEP 1: pre-check ===
     - name: "[cluster-info] Pre-check"
@@ -31,7 +35,7 @@
     # === STEP 2: detect whether user passed --tags ===
     - name: "[cluster-info] Detect whether --tags was passed"
       set_fact:
-        cluster_info_is_no_tags: "{{ ansible_run_tags | length == 1 and ansible_run_tags[0] == 'all' }}"
+        "{{ _local_cluster_info_is_no_tags_key }}": "{{ ansible_run_tags | length == 1 and ansible_run_tags[0] == 'all' }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -39,17 +43,17 @@
     # === STEP 3: discover all namespaces (only when no --tags passed) ===
     - name: "[cluster-info] Get all namespaces from cluster"
       command: kubectl get namespace -o jsonpath={.items[*].metadata.name}
-      register: cluster_info_all_ns
+      register: _local_cluster_info_all_ns
       changed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      when: cluster_info_is_no_tags
+      when: lookup('vars', _local_cluster_info_is_no_tags_key)
       tags: [always]
 
     # === STEP 4: build target_namespaces list ===
     - name: "[cluster-info] Build target_namespaces list"
       set_fact:
-        cluster_info_target_namespaces: "{{ cluster_info_all_ns.stdout.split() if cluster_info_is_no_tags else (ansible_run_tags | list) }}"
+        "{{ _local_cluster_info_target_namespaces_key }}": "{{ _local_cluster_info_all_ns.stdout.split() if lookup('vars', _local_cluster_info_is_no_tags_key) else (ansible_run_tags | list) }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -57,7 +61,7 @@
     # === STEP 5: print target list (operator visibility) ===
     - name: "[cluster-info] Print target namespaces"
       debug:
-        var: cluster_info_target_namespaces
+        var: "{{ _local_cluster_info_target_namespaces_key }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
@@ -68,7 +72,7 @@
       vars:
         dto_label_name: "cluster-info"
         dto_namespace_name: "{{ ns_item }}"
-      loop: "{{ cluster_info_target_namespaces }}"
+      loop: "{{ lookup('vars', _local_cluster_info_target_namespaces_key) }}"
       loop_control:
         loop_var: ns_item
       tags: [always]

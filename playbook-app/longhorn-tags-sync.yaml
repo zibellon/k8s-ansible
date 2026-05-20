@@ -15,6 +15,11 @@
   become: false
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_lh_tags_desired_key: "_local_lh_tags_desired"
+    _local_lh_tags_set_key: "_local_lh_tags_set"
+
   tasks:
     - name: "[longhorn-tags-sync] Pre-check"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -23,15 +28,15 @@
 
     - name: "[longhorn-tags-sync] Set tag facts for {{ new_hostname }}"
       set_fact:
-        _lh_tags_desired: "{{ longhorn_node_tags | default([]) }}"
-        _lh_tags_set: "{{ longhorn_node_tags is defined and longhorn_node_tags | length > 0 }}"
+        "{{ _local_lh_tags_desired_key }}": "{{ longhorn_node_tags | default([]) }}"
+        "{{ _local_lh_tags_set_key }}": "{{ longhorn_node_tags is defined and longhorn_node_tags | length > 0 }}"
 
     - name: "[longhorn-tags-sync] Check if nodes.longhorn.io exists for {{ new_hostname }}"
       command: >-
         kubectl get nodes.longhorn.io {{ new_hostname }}
         -n longhorn-system --ignore-not-found -o name
       delegate_to: "{{ master_manager_fact }}"
-      register: longhorn_node_crd_check
+      register: _local_longhorn_node_crd_check
       changed_when: false
       failed_when: false
 
@@ -41,17 +46,17 @@
           longhorn_node_tags is set for {{ new_hostname }} but
           nodes.longhorn.io/{{ new_hostname }} not found in longhorn-system.
           Is Longhorn installed?
-      when: _lh_tags_set and longhorn_node_crd_check.stdout == ""
+      when: lookup('vars', _local_lh_tags_set_key) and _local_longhorn_node_crd_check.stdout == ""
 
     - name: "[longhorn-tags-sync] Patch spec.tags for {{ new_hostname }}"
       command: >-
         kubectl patch nodes.longhorn.io {{ new_hostname }}
         -n longhorn-system --type=merge
-        -p '{"spec":{"tags":{{ _lh_tags_desired | to_json }}}}'
+        -p '{"spec":{"tags":{{ lookup('vars', _local_lh_tags_desired_key) | to_json }}}}'
       delegate_to: "{{ master_manager_fact }}"
-      when: longhorn_node_crd_check.stdout != ""
-      register: longhorn_patch_result
-      changed_when: "'no change' not in longhorn_patch_result.stdout"
+      when: _local_longhorn_node_crd_check.stdout != ""
+      register: _local_longhorn_patch_result
+      changed_when: "'no change' not in _local_longhorn_patch_result.stdout"
 
     # =========================================================================
     # VERIFICATION
@@ -60,11 +65,11 @@
       command: kubectl get nodes.longhorn.io -A -o yaml
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      register: longhorn_nodes_result
+      register: _local_longhorn_nodes_result
       changed_when: false
 
     - name: "[longhorn-tags-sync] Print Longhorn nodes state"
       debug:
-        msg: "{{ longhorn_nodes_result.stdout_lines }}"
+        msg: "{{ _local_longhorn_nodes_result.stdout_lines }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
