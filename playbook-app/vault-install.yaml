@@ -22,6 +22,12 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_vault_operator_helm_chart_source_key: "_local_vault_operator_helm_chart_source"
+    _local_vault_cr_root_token_key: "_local_vault_cr_root_token"
+    _local_vault_cr_root_token_exists_key: "_local_vault_cr_root_token_exists"
+
   tasks:
     - name: "[vault-install-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -114,7 +120,7 @@
         dto_helm_is_oci: "{{ vault_operator_helm_is_oci }}"
         dto_helm_url: "{{ vault_operator_helm_url }}"
         dto_helm_chart_version: "{{ vault_operator_helm_chart_version }}"
-        dto_helm_chart_source_res_fact_name: "vault_operator_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_vault_operator_helm_chart_source_key }}"
       tags: [operator]
 
     - name: "[vault-operator] Create values file"
@@ -131,7 +137,7 @@
       vars:
         dto_label_name: "vault-operator"
         dto_helm_command: >
-          helm upgrade --install vault-operator {{ vault_operator_helm_chart_source }}
+          helm upgrade --install vault-operator {{ lookup('vars', _local_vault_operator_helm_chart_source_key) }}
           --namespace {{ vault_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/vault/operator/values-override.yaml
@@ -234,12 +240,13 @@
         dto_secret_namespace: "{{ vault_namespace }}"
         dto_secret_name: "{{ vault_unsealer_secret_name }}"
         dto_secret_field: "vault-root"
-        dto_secret_res_fact_name: "vault_cr_root_token"
+        dto_secret_res_fact_name: "{{ _local_vault_cr_root_token_key }}"
+        dto_secret_res_exists_fact_name: "{{ _local_vault_cr_root_token_exists_key }}"
       tags: [vault-cr]
 
     - name: "[vault-cr] Assert vault-root field is populated"
       assert:
-        that: vault_cr_root_token_exists
+        that: lookup('vars', _local_vault_cr_root_token_exists_key)
         fail_msg: "vault-root field is empty in secret {{ vault_unsealer_secret_name }} (bank-vaults may still be initializing)"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
