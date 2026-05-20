@@ -17,6 +17,10 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_metrics_server_helm_chart_source_key: "_local_metrics_server_helm_chart_source"
+
   tasks:
     - name: "[metrics-server-install-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -94,7 +98,7 @@
         dto_helm_chart_version: "{{ metrics_server_helm_chart_version }}"
         dto_helm_repo_name: "{{ metrics_server_helm_repo_name }}"
         dto_helm_chart_name: "{{ metrics_server_helm_chart_name }}"
-        dto_helm_chart_source_res_fact_name: "metrics_server_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_metrics_server_helm_chart_source_key }}"
       tags: [install]
 
     - name: "[metrics-server-install] Create values file"
@@ -111,7 +115,7 @@
       vars:
         dto_label_name: "metrics-server-install"
         dto_helm_command: >
-          helm upgrade --install metrics-server {{ metrics_server_helm_chart_source }}
+          helm upgrade --install metrics-server {{ lookup('vars', _local_metrics_server_helm_chart_source_key) }}
           --namespace {{ metrics_server_namespace }}
           --create-namespace
           --version {{ metrics_server_helm_chart_version }}

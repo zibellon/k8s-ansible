@@ -18,6 +18,10 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_cert_manager_helm_chart_source_key: "_local_cert_manager_helm_chart_source"
+
   tasks:
     - name: "[cert-manager-install-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -95,7 +99,7 @@
         dto_helm_chart_version: "{{ cert_manager_helm_chart_version }}"
         dto_helm_repo_name: "{{ cert_manager_helm_repo_name }}"
         dto_helm_chart_name: "{{ cert_manager_helm_chart_name }}"
-        dto_helm_chart_source_res_fact_name: "cert_manager_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_cert_manager_helm_chart_source_key }}"
       tags: [install]
 
     - name: "[cert-manager-install] Create values file"
@@ -112,7 +116,7 @@
       vars:
         dto_label_name: "cert-manager-install"
         dto_helm_command: >
-          helm upgrade --install cert-manager {{ cert_manager_helm_chart_source }}
+          helm upgrade --install cert-manager {{ lookup('vars', _local_cert_manager_helm_chart_source_key) }}
           --namespace {{ cert_manager_namespace }}
           --version {{ cert_manager_helm_chart_version }}
           --create-namespace

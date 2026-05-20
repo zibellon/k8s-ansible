@@ -21,6 +21,11 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_piraeus_operator_helm_chart_source_key: "_local_piraeus_operator_helm_chart_source"
+    _local_linstor_cluster_helm_chart_source_key: "_local_linstor_cluster_helm_chart_source"
+
   tasks:
     # =========================================================================
     # ALWAYS: pre-check + forbid kube-system
@@ -99,7 +104,7 @@
         dto_helm_is_oci: "{{ piraeus_operator_helm_is_oci }}"
         dto_helm_url: "{{ piraeus_operator_helm_url }}"
         dto_helm_chart_version: "{{ piraeus_operator_helm_chart_version }}"
-        dto_helm_chart_source_res_fact_name: "piraeus_operator_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_piraeus_operator_helm_chart_source_key }}"
       tags: [install-operator]
 
     - name: "[linstor-install-operator] Create values file"
@@ -116,7 +121,7 @@
       vars:
         dto_label_name: "linstor-install-operator"
         dto_helm_command: >
-          helm upgrade --install piraeus-operator {{ piraeus_operator_helm_chart_source }}
+          helm upgrade --install piraeus-operator {{ lookup('vars', _local_piraeus_operator_helm_chart_source_key) }}
           --namespace {{ linstor_namespace }}
           --version {{ piraeus_operator_helm_chart_version }}
           --values {{ remote_charts_dir }}/linstor/install-operator/values-override.yaml
@@ -159,7 +164,7 @@
         dto_helm_is_oci: "{{ linstor_cluster_helm_is_oci }}"
         dto_helm_url: "{{ linstor_cluster_helm_url }}"
         dto_helm_chart_version: "{{ linstor_cluster_helm_chart_version }}"
-        dto_helm_chart_source_res_fact_name: "linstor_cluster_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_linstor_cluster_helm_chart_source_key }}"
       tags: [install-cluster]
 
     - name: "[linstor-install-cluster] Create values file"
@@ -176,7 +181,7 @@
       vars:
         dto_label_name: "linstor-install-cluster"
         dto_helm_command: >
-          helm upgrade --install linstor-cluster {{ linstor_cluster_helm_chart_source }}
+          helm upgrade --install linstor-cluster {{ lookup('vars', _local_linstor_cluster_helm_chart_source_key) }}
           --namespace {{ linstor_namespace }}
           --version {{ linstor_cluster_helm_chart_version }}
           --values {{ remote_charts_dir }}/linstor/install-cluster/values-override.yaml

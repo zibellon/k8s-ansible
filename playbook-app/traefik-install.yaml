@@ -18,6 +18,10 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_traefik_helm_chart_source_key: "_local_traefik_helm_chart_source"
+
   tasks:
     - name: "[traefik-install-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -122,7 +126,7 @@
         dto_helm_chart_version: "{{ traefik_helm_chart_version }}"
         dto_helm_repo_name: "{{ traefik_helm_repo_name }}"
         dto_helm_chart_name: "{{ traefik_helm_chart_name }}"
-        dto_helm_chart_source_res_fact_name: "traefik_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_traefik_helm_chart_source_key }}"
       tags: [install]
 
     - name: "[traefik-install] Create values file"
@@ -139,7 +143,7 @@
       vars:
         dto_label_name: "traefik-install"
         dto_helm_command: >
-          helm upgrade --install traefik {{ traefik_helm_chart_source }}
+          helm upgrade --install traefik {{ lookup('vars', _local_traefik_helm_chart_source_key) }}
           --namespace {{ traefik_namespace }}
           --create-namespace
           --version {{ traefik_helm_chart_version }}
