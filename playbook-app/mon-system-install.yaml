@@ -747,7 +747,7 @@
       vars:
         dto_label_name: "mon-system-grafana-vault-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_admin_creds.vault_path }}"
-        dto_vault_get_field: password
+        dto_vault_get_field: "{{ mon_system_grafana_admin_secret_key_password }}"
         dto_vault_get_res_fact_name: "{{ _local_grafana_admin_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_grafana_admin_vault_exists_key }}"
       when: mon_system_grafana_enabled
@@ -766,9 +766,11 @@
       vars:
         dto_label_name: "mon-system-grafana-vault-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_admin_creds.vault_path }}"
-        dto_vault_put_data:
-          username: "{{ mon_system_grafana_admin_username }}"
-          password: "{{ lookup('vars', _local_grafana_admin_password_generated_key) }}"
+        dto_vault_put_data: >-
+          {{ {
+               mon_system_grafana_admin_secret_key_username: mon_system_grafana_admin_username,
+               mon_system_grafana_admin_secret_key_password: lookup('vars', _local_grafana_admin_password_generated_key)
+             } }}
       when: mon_system_grafana_enabled and not lookup('vars', _local_grafana_admin_vault_exists_key)
       tags: [grafana]
 
