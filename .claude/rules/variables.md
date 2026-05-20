@@ -138,6 +138,26 @@ middlewares:
 {% endif %}
 ```
 
+### 1.8 Local runtime facts — the `_local_` convention
+
+Runtime variables created and consumed **within a single playbook** (generated secrets, `tasks-vault-get` / `tasks-k8s-secret-get` / `tasks-add-helm-repo` result facts, `set_fact` helpers, `register:` results) carry a `_local_` prefix. This separates them from inventory variables, `*_extra` arrays, and cross-playbook contract facts (`master_manager_fact`, `acme_*_result_fact`, `is_cluster_init`, … — see §2.11; those are **not** prefixed).
+
+- **Naming.** Final name = `_local_` + base name with any single leading `_` stripped. E.g. `gitlab_postgresql_vault` → `_local_gitlab_postgresql_vault`; `_grafana_admin_password_generated` → `_local_grafana_admin_password_generated`.
+- **Name hoisting.** For a fact whose name is supplied as a string (a `dto_*_fact_name` param of a reusable task, or a `set_fact` key), declare the name once in the play-level `vars:` block as `_local_<base>_key: "_local_<base>"`, then set and read the fact **through that key variable** — never by hardcoded string.
+- **Dynamic set.** `dto_<...>_fact_name: "{{ _local_<base>_key }}"`, or inline `set_fact: "{{ _local_<base>_key }}": <value>`.
+- **Dynamic get.** `{{ lookup('vars', _local_<base>_key) }}` — type-preserving (`bool` stays `bool`, `str` stays `str`).
+- **Definedness check.** `_local_<base>_key in hostvars[inventory_hostname]` — a plain `lookup('vars', ...)` raises on an undefined variable, so membership is used for `is defined` / `is not defined` checks.
+- **`register:` exception.** A `register:` variable name cannot be templated — such variables get the `_local_` prefix only (no key variable, no `lookup`), referenced normally as `{{ _local_<name> }}`.
+
+```yaml
+vars:
+  _local_admin_pw_generated_key: "_local_admin_pw_generated"
+# set (via a reusable task param):
+dto_generate_fact_name: "{{ _local_admin_pw_generated_key }}"
+# get:
+password: "{{ lookup('vars', _local_admin_pw_generated_key) }}"
+```
+
 ---
 
 ## Tier 2 — Global & Cross-cutting Catalog
@@ -372,3 +392,4 @@ Notes:
 3. If the variable is cross-cutting (used by more than one component or at bootstrap time), add it to Tier 2 above.
 4. If the array should be user-extendable, add both `<name>` (base) and `<name>_extra` (override layer) and merge at runtime with `+`.
 5. Never put secrets in `hosts-vars/`. Only in `hosts-vars-override/`.
+6. Local runtime facts (created and consumed within a single playbook) follow the `_local_` prefix convention — see §1.8.
