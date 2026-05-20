@@ -20,6 +20,10 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_cilium_helm_chart_source_key: "_local_cilium_helm_chart_source"
+
   tasks:
     - name: "[cilium-install-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -105,7 +109,7 @@
         dto_helm_chart_version: "{{ cilium_helm_chart_version }}"
         dto_helm_repo_name: "{{ cilium_helm_repo_name }}"
         dto_helm_chart_name: "{{ cilium_helm_chart_name }}"
-        dto_helm_chart_source_res_fact_name: "cilium_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_cilium_helm_chart_source_key }}"
       tags: [install]
 
     - name: "[cilium-install] Create values file"
@@ -122,7 +126,7 @@
       vars:
         dto_label_name: "cilium-install"
         dto_helm_command: >
-          helm upgrade --install cilium {{ cilium_helm_chart_source }}
+          helm upgrade --install cilium {{ lookup('vars', _local_cilium_helm_chart_source_key) }}
           --version {{ cilium_helm_chart_version }}
           --namespace {{ cilium_namespace }}
           --create-namespace
@@ -250,7 +254,7 @@
 
     - name: "[cilium-verify] Get CiliumClusterwideNetworkPolicy status"
       command: kubectl get ciliumclusterwidenetworkpolicies -n {{ cilium_namespace }}
-      register: ccnp_status
+      register: _local_ccnp_status
       changed_when: false
       failed_when: false
       delegate_to: "{{ master_manager_fact }}"
@@ -259,7 +263,7 @@
 
     - name: "[cilium-verify] Print CiliumClusterwideNetworkPolicy status"
       debug:
-        msg: "{{ ccnp_status.stdout_lines }}"
+        msg: "{{ _local_ccnp_status.stdout_lines }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
