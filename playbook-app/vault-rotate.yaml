@@ -33,6 +33,18 @@
   vars:
     vault_rekey_shares: "{{ vault_key_shares }}"
     vault_rekey_threshold: "{{ vault_key_threshold }}"
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_vault_sealed_key: "_local_vault_sealed"
+    _local_vault_initialized_key: "_local_vault_initialized"
+    _local_vault_rekey_temp_exists_key: "_local_vault_rekey_temp_exists"
+    _local_vault_creds_key: "_local_vault_creds"
+    _local_current_unseal_keys_key: "_local_current_unseal_keys"
+    _local_vault_root_token_key: "_local_vault_root_token"
+    _local_rekey_nonce_key: "_local_rekey_nonce"
+    _local_rekey_required_key: "_local_rekey_required"
+    _local_new_keys_hex_key: "_local_new_keys_hex"
+    _local_vault_rekey_payload_key: "_local_vault_rekey_payload"
+    _local_rekey_from_literals_key: "_local_rekey_from_literals"
 
   tasks:
     - name: "[vault-rotate-pre-check] Validate target"
@@ -48,23 +60,23 @@
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
         vault status -format=json
-      register: _vault_status_raw
+      register: _local_vault_status_raw
       changed_when: false
-      failed_when: _vault_status_raw.rc not in [0, 2]
+      failed_when: _local_vault_status_raw.rc not in [0, 2]
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
     - name: "[vault-rotate] Parse Vault status"
       set_fact:
-        _vault_sealed: "{{ (_vault_status_raw.stdout | from_json).sealed }}"
-        _vault_initialized: "{{ (_vault_status_raw.stdout | from_json).initialized }}"
+        "{{ _local_vault_sealed_key }}": "{{ (_local_vault_status_raw.stdout | from_json).sealed }}"
+        "{{ _local_vault_initialized_key }}": "{{ (_local_vault_status_raw.stdout | from_json).initialized }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
     - name: "[vault-rotate] Fail if not initialized"
       fail:
         msg: "Vault is not initialized. Run vault-install.yaml first."
-      when: not (_vault_initialized | bool)
+      when: not (lookup('vars', _local_vault_initialized_key) | bool)
       run_once: true
 
     - name: "[vault-rotate] Fail if sealed"
@@ -72,7 +84,7 @@
         msg: >
           Vault is sealed. bank-vaults should unseal it automatically.
           Check pod: kubectl logs vault-0 -n {{ vault_namespace }} -c bank-vaults
-      when: _vault_sealed | bool
+      when: lookup('vars', _local_vault_sealed_key) | bool
       run_once: true
 
     - name: "[vault-rotate] Show current status"
@@ -88,13 +100,13 @@
     - name: "[vault-rotate] Stat temp-file on master"
       stat:
         path: "{{ vault_rekey_temp_file_path }}"
-      register: _vault_rekey_temp_stat
+      register: _local_vault_rekey_temp_stat
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
     - name: "[vault-rotate] Set temp-file flag"
       set_fact:
-        _vault_rekey_temp_exists: "{{ _vault_rekey_temp_stat.stat.exists }}"
+        "{{ _local_vault_rekey_temp_exists_key }}": "{{ _local_vault_rekey_temp_stat.stat.exists }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -104,7 +116,7 @@
           {{ 'RECOVERY branch: temp-file exists at '
              + vault_rekey_temp_file_path
              + ' — will skip rekey and resume from it.'
-             if _vault_rekey_temp_exists
+             if lookup('vars', _local_vault_rekey_temp_exists_key)
              else 'ROTATE branch: no temp-file — will perform full rekey.' }}
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -114,25 +126,25 @@
     # =========================================================================
 
     - name: "[vault-rotate] STEP 3A: normal rotate"
-      when: not _vault_rekey_temp_exists | bool
+      when: not lookup('vars', _local_vault_rekey_temp_exists_key) | bool
       block:
 
         - name: "[vault-rotate-3A] Read current credentials from K8s Secret"
           command: >
             kubectl get secret {{ vault_unsealer_secret_name }}
             -n {{ vault_namespace }} -o json
-          register: _vault_secret_raw
+          register: _local_vault_secret_raw
           changed_when: false
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3A] Decode credentials dict"
           set_fact:
-            _vault_creds: >-
+            "{{ _local_vault_creds_key }}": >-
               {{ dict(
-                   (_vault_secret_raw.stdout | from_json).data.keys() | list
+                   (_local_vault_secret_raw.stdout | from_json).data.keys() | list
                    | zip(
-                       (_vault_secret_raw.stdout | from_json).data.values()
+                       (_local_vault_secret_raw.stdout | from_json).data.values()
                        | map('b64decode') | list
                      )
                  ) }}
@@ -141,20 +153,20 @@
 
         - name: "[vault-rotate-3A] Extract current unseal keys and root token"
           set_fact:
-            _current_unseal_keys: >-
-              {{ _vault_creds
+            "{{ _local_current_unseal_keys_key }}": >-
+              {{ lookup('vars', _local_vault_creds_key)
                  | dict2items
                  | selectattr('key', 'match', 'vault-unseal-.*')
                  | sort(attribute='key')
                  | map(attribute='value')
                  | list }}
-            _vault_root_token: "{{ _vault_creds['vault-root'] }}"
+            "{{ _local_vault_root_token_key }}": "{{ lookup('vars', _local_vault_creds_key)['vault-root'] }}"
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3A] Show current key count"
           debug:
-            msg: "Found {{ _current_unseal_keys | length }} unseal keys in K8s Secret."
+            msg: "Found {{ lookup('vars', _local_current_unseal_keys_key) | length }} unseal keys in K8s Secret."
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
@@ -166,22 +178,22 @@
             -key-shares={{ vault_rekey_shares }}
             -key-threshold={{ vault_rekey_threshold }}
             -format=json
-          register: _rekey_init_raw
+          register: _local_rekey_init_raw
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3A] Parse rekey nonce and required count"
           set_fact:
-            _rekey_nonce: "{{ (_rekey_init_raw.stdout | from_json).nonce }}"
-            _rekey_required: "{{ (_rekey_init_raw.stdout | from_json).required }}"
+            "{{ _local_rekey_nonce_key }}": "{{ (_local_rekey_init_raw.stdout | from_json).nonce }}"
+            "{{ _local_rekey_required_key }}": "{{ (_local_rekey_init_raw.stdout | from_json).required }}"
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3A] Show rekey init info"
           debug:
             msg:
-              - "Rekey initiated. Nonce: {{ _rekey_nonce }}"
-              - "Keys required: {{ _rekey_required }}"
+              - "Rekey initiated. Nonce: {{ lookup('vars', _local_rekey_nonce_key) }}"
+              - "Keys required: {{ lookup('vars', _local_rekey_required_key) }}"
               - "New shares: {{ vault_rekey_shares }}, new threshold: {{ vault_rekey_threshold }}"
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
@@ -190,39 +202,39 @@
           command: >
             kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
             vault operator rekey
-            -nonce={{ _rekey_nonce }}
+            -nonce={{ lookup('vars', _local_rekey_nonce_key) }}
             -format=json
             {{ item }}
-          loop: "{{ _current_unseal_keys[: (_rekey_required | int)] }}"
+          loop: "{{ lookup('vars', _local_current_unseal_keys_key)[: (lookup('vars', _local_rekey_required_key) | int)] }}"
           loop_control:
             index_var: idx
             loop_var: item
-            label: "Key {{ idx + 1 }} of {{ _rekey_required }}"
-          register: _rekey_results
+            label: "Key {{ idx + 1 }} of {{ lookup('vars', _local_rekey_required_key) }}"
+          register: _local_rekey_results
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3A] Extract new keys from rekey result"
           set_fact:
-            _new_keys_hex: "{{ (_rekey_results.results[-1].stdout | from_json)['keys'] }}"
+            "{{ _local_new_keys_hex_key }}": "{{ (_local_rekey_results.results[-1].stdout | from_json)['keys'] }}"
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3A] Fail if no new keys returned"
           fail:
             msg: "Rekey failed — new keys not returned. Check Vault logs."
-          when: _new_keys_hex is not defined or _new_keys_hex | length == 0
+          when: _local_new_keys_hex_key not in hostvars[inventory_hostname] or lookup('vars', _local_new_keys_hex_key) | length == 0
           run_once: true
 
         - name: "[vault-rotate-3A] Build rekey payload dict"
           set_fact:
-            _vault_rekey_payload: >-
-              {{ {'vault-root': _vault_root_token}
+            "{{ _local_vault_rekey_payload_key }}": >-
+              {{ {'vault-root': lookup('vars', _local_vault_root_token_key)}
                  | combine(dict(
-                     range(_new_keys_hex | length)
+                     range(lookup('vars', _local_new_keys_hex_key) | length)
                      | map('string')
                      | map('regex_replace', '^', 'vault-unseal-')
-                     | zip(_new_keys_hex)
+                     | zip(lookup('vars', _local_new_keys_hex_key))
                    )) }}
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
@@ -239,7 +251,7 @@
               - "Re-running vault-rotate.yaml will resume from temp-file"
               - "automatically — no second rekey."
               - "----------------------------------------------"
-              - "{{ _vault_rekey_payload | to_nice_json }}"
+              - "{{ lookup('vars', _local_vault_rekey_payload_key) | to_nice_json }}"
               - "=============================================="
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
@@ -256,7 +268,7 @@
 
         - name: "[vault-rotate-3A] Write temp-file with new keys + root token"
           copy:
-            content: "{{ _vault_rekey_payload | to_nice_json }}"
+            content: "{{ lookup('vars', _local_vault_rekey_payload_key) | to_nice_json }}"
             dest: "{{ vault_rekey_temp_file_path }}"
             mode: "0600"
             owner: root
@@ -269,7 +281,7 @@
     # =========================================================================
 
     - name: "[vault-rotate] STEP 3B: recovery from temp-file"
-      when: _vault_rekey_temp_exists | bool
+      when: lookup('vars', _local_vault_rekey_temp_exists_key) | bool
       block:
 
         - name: "[vault-rotate-3B] Announce recovery"
@@ -283,22 +295,22 @@
         - name: "[vault-rotate-3B] Slurp temp-file contents"
           slurp:
             src: "{{ vault_rekey_temp_file_path }}"
-          register: _vault_rekey_temp_slurp
+          register: _local_vault_rekey_temp_slurp
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3B] Parse temp-file JSON"
           set_fact:
-            _vault_rekey_payload: "{{ _vault_rekey_temp_slurp.content | b64decode | from_json }}"
+            "{{ _local_vault_rekey_payload_key }}": "{{ _local_vault_rekey_temp_slurp.content | b64decode | from_json }}"
           delegate_to: "{{ master_manager_fact }}"
           run_once: true
 
         - name: "[vault-rotate-3B] Validate temp-file structure"
           assert:
             that:
-              - _vault_rekey_payload is mapping
-              - "'vault-root' in _vault_rekey_payload"
-              - _vault_rekey_payload.keys() | select('match', '^vault-unseal-[0-9]+$') | list | length > 0
+              - lookup('vars', _local_vault_rekey_payload_key) is mapping
+              - "'vault-root' in lookup('vars', _local_vault_rekey_payload_key)"
+              - lookup('vars', _local_vault_rekey_payload_key).keys() | select('match', '^vault-unseal-[0-9]+$') | list | length > 0
             fail_msg: >-
               Temp file {{ vault_rekey_temp_file_path }} is corrupted or incomplete.
               Expected JSON dict with 'vault-root' and at least one 'vault-unseal-<N>' key.
@@ -308,13 +320,13 @@
           run_once: true
 
     # =========================================================================
-    # STEP 4: REPLACE K8S SECRET (from _vault_rekey_payload — both branches)
+    # STEP 4: REPLACE K8S SECRET (from _local_vault_rekey_payload — both branches)
     # =========================================================================
 
     - name: "[vault-rotate] Build --from-literal args from payload"
       set_fact:
-        _rekey_from_literals: >-
-          {% for k, v in _vault_rekey_payload.items() %}
+        "{{ _local_rekey_from_literals_key }}": >-
+          {% for k, v in lookup('vars', _local_vault_rekey_payload_key).items() %}
           --from-literal={{ k }}={{ v }}
           {% endfor %}
       delegate_to: "{{ master_manager_fact }}"
@@ -324,7 +336,7 @@
       shell: >
         kubectl create secret generic {{ vault_unsealer_secret_name }}
         -n {{ vault_namespace }}
-        {{ _rekey_from_literals }}
+        {{ lookup('vars', _local_rekey_from_literals_key) }}
         --dry-run=client -o yaml | kubectl replace -f -
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -357,9 +369,9 @@
       command: >
         kubectl exec -n {{ vault_namespace }} vault-0 -c vault --
         vault status -format=json
-      register: _vault_final_status
+      register: _local_vault_final_status
       changed_when: false
-      failed_when: _vault_final_status.rc not in [0, 2]
+      failed_when: _local_vault_final_status.rc not in [0, 2]
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -369,7 +381,7 @@
           - "=============================================="
           - "VAULT REKEY COMPLETED"
           - "=============================================="
-          - "Sealed: {{ (_vault_final_status.stdout | from_json).sealed }}"
+          - "Sealed: {{ (_local_vault_final_status.stdout | from_json).sealed }}"
           - "New key shares: {{ vault_rekey_shares }}"
           - "New key threshold: {{ vault_rekey_threshold }}"
           - "Distributed to: {{ groups['managers'] | join(', ') }}"
