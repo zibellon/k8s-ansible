@@ -57,7 +57,7 @@ Each entry defines a Vault ACL policy:
 ```yaml
 vault_policies:
   - name: "eso-argocd"
-    policy: |
+    rules: |
       path "eso-secret/data/argocd/*"  { capabilities = ["read"] }
       path "eso-secret/metadata/argocd/*" { capabilities = ["read"] }
 ```
@@ -71,11 +71,11 @@ Each entry binds a Kubernetes ServiceAccount + namespace to one or more policies
 ```yaml
 vault_roles:
   - name: "eso-argocd"
-    bound_service_account_names: ["argocd-eso-sa"]
-    bound_service_account_namespaces: ["argocd"]
-    policies: ["eso-argocd"]
-    token_ttl: "1h"
-    token_max_ttl: "24h"
+    bound_service_account_names: "argocd-eso-sa"
+    bound_service_account_namespaces: "argocd"
+    policies:
+      - "eso-argocd"
+    ttl: "1h"
 ```
 
 Extension: `vault_roles_extra`.
@@ -373,7 +373,7 @@ Checklist — keep strictly in order.
 5. **Add the Vault policy** in `hosts-vars/vault.yaml` → `vault_policies`:
    ```yaml
    - name: "eso-<c>"
-     policy: |
+     rules: |
        path "eso-secret/data/<c>/*"     { capabilities = ["read"] }
        path "eso-secret/metadata/<c>/*" { capabilities = ["read"] }
    ```
@@ -381,9 +381,11 @@ Checklist — keep strictly in order.
 6. **Add the Vault role** in `hosts-vars/vault.yaml` → `vault_roles`:
    ```yaml
    - name: "eso-<c>"
-     bound_service_account_names: ["<c>-eso-sa"]
-     bound_service_account_namespaces: ["<c>-ns"]
-     policies: ["eso-<c>"]
+     bound_service_account_names: "<c>-eso-sa"
+     bound_service_account_namespaces: "<c>-ns"
+     policies:
+       - "eso-<c>"
+     ttl: "1h"
    ```
 
 7. **Add `eso_vault_integration_<c>` integration object + `<c>_pre_helm_values.eso` block** в `hosts-vars/<c>.yaml`. `<c>_pre_helm_values.eso.secrets` — inline merge: `"{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"`. Никаких runtime fact'ов / 8-component hard-coded lists больше нет.
