@@ -25,6 +25,26 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_gitlab_postgresql_vault_key: "_local_gitlab_postgresql_vault"
+    _local_gitlab_postgresql_vault_exists_key: "_local_gitlab_postgresql_vault_exists"
+    _local_gitlab_postgresql_password_generated_key: "_local_gitlab_postgresql_password_generated"
+    _local_gitlab_postgresql_put_data_key: "_local_gitlab_postgresql_put_data"
+    _local_gitlab_redis_vault_key: "_local_gitlab_redis_vault"
+    _local_gitlab_redis_vault_exists_key: "_local_gitlab_redis_vault_exists"
+    _local_gitlab_redis_password_key: "_local_gitlab_redis_password"
+    _local_gitlab_minio_root_vault_key: "_local_gitlab_minio_root_vault"
+    _local_gitlab_minio_root_vault_exists_key: "_local_gitlab_minio_root_vault_exists"
+    _local_gitlab_minio_root_password_generated_key: "_local_gitlab_minio_root_password_generated"
+    _local_minio_root_username_key: "_local_minio_root_username"
+    _local_minio_root_username_exists_key: "_local_minio_root_username_exists"
+    _local_minio_root_password_key: "_local_minio_root_password"
+    _local_minio_root_password_exists_key: "_local_minio_root_password_exists"
+    _local_gitlab_registry_access_key_vault_key: "_local_gitlab_registry_access_key_vault"
+    _local_gitlab_registry_access_key_vault_exists_key: "_local_gitlab_registry_access_key_vault_exists"
+    _local_gitlab_helm_chart_source_key: "_local_gitlab_helm_chart_source"
+
   tasks:
     - name: "[gitlab-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -130,23 +150,24 @@
         dto_label_name: "gitlab-postgresql-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
         dto_vault_get_field: "{{ gitlab_postgresql_secret_key_password }}"
-        dto_vault_get_res_fact_name: "gitlab_postgresql_vault"
+        dto_vault_get_res_fact_name: "{{ _local_gitlab_postgresql_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_postgresql_vault_exists_key }}"
       tags: [postgresql]
 
     - name: "[gitlab-postgresql-secrets] Generate PostgreSQL password"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
         dto_label_name: "gitlab-postgresql-secrets"
-        dto_generate_fact_name: "_gitlab_postgresql_password_generated"
-      when: not gitlab_postgresql_vault_exists
+        dto_generate_fact_name: "{{ _local_gitlab_postgresql_password_generated_key }}"
+      when: not lookup('vars', _local_gitlab_postgresql_vault_exists_key)
       tags: [postgresql]
 
     - name: "[gitlab-postgresql-secrets] Prepare PostgreSQL Vault put data"
       set_fact:
-        _gitlab_postgresql_put_data:
+        "{{ _local_gitlab_postgresql_put_data_key }}":
           "{{ gitlab_postgresql_secret_key_username }}": "{{ gitlab_postgresql_username }}"
-          "{{ gitlab_postgresql_secret_key_password }}": "{{ _gitlab_postgresql_password_generated }}"
-      when: not gitlab_postgresql_vault_exists
+          "{{ gitlab_postgresql_secret_key_password }}": "{{ lookup('vars', _local_gitlab_postgresql_password_generated_key) }}"
+      when: not lookup('vars', _local_gitlab_postgresql_vault_exists_key)
       tags: [postgresql]
 
     - name: "[gitlab-postgresql-secrets] Store PostgreSQL credentials in Vault"
@@ -154,8 +175,8 @@
       vars:
         dto_label_name: "gitlab-postgresql-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
-        dto_vault_put_data: "{{ _gitlab_postgresql_put_data }}"
-      when: not gitlab_postgresql_vault_exists
+        dto_vault_put_data: "{{ lookup('vars', _local_gitlab_postgresql_put_data_key) }}"
+      when: not lookup('vars', _local_gitlab_postgresql_vault_exists_key)
       tags: [postgresql]
 
     - name: "[gitlab-postgresql-secrets] Trigger ESO sync"
@@ -243,7 +264,8 @@
         dto_label_name: "gitlab-redis-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
         dto_vault_get_field: password
-        dto_vault_get_res_fact_name: "gitlab_redis_vault"
+        dto_vault_get_res_fact_name: "{{ _local_gitlab_redis_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_redis_vault_exists_key }}"
       tags: [redis]
 
     # redis_args embeds the password, so we generate it here before the put
@@ -251,8 +273,8 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
         dto_label_name: "gitlab-redis-secrets"
-        dto_generate_fact_name: "_gitlab_redis_password"
-      when: not gitlab_redis_vault_exists
+        dto_generate_fact_name: "{{ _local_gitlab_redis_password_key }}"
+      when: not lookup('vars', _local_gitlab_redis_vault_exists_key)
       tags: [redis]
 
     - name: "[gitlab-redis-secrets] Store Redis credentials in Vault"
@@ -261,9 +283,9 @@
         dto_label_name: "gitlab-redis-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
         dto_vault_put_data:
-          password: "{{ _gitlab_redis_password }}"
-          redis_args: "--save 1 1 --notify-keyspace-events KEA --requirepass {{ _gitlab_redis_password }}"
-      when: not gitlab_redis_vault_exists
+          password: "{{ lookup('vars', _local_gitlab_redis_password_key) }}"
+          redis_args: "--save 1 1 --notify-keyspace-events KEA --requirepass {{ lookup('vars', _local_gitlab_redis_password_key) }}"
+      when: not lookup('vars', _local_gitlab_redis_vault_exists_key)
       tags: [redis]
 
     - name: "[gitlab-redis-secrets] Trigger ESO sync"
@@ -351,15 +373,16 @@
         dto_label_name: "gitlab-minio-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
         dto_vault_get_field: password
-        dto_vault_get_res_fact_name: "gitlab_minio_root_vault"
+        dto_vault_get_res_fact_name: "{{ _local_gitlab_minio_root_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_minio_root_vault_exists_key }}"
       tags: [minio]
 
     - name: "[gitlab-minio-secrets] Generate MinIO root password"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
         dto_label_name: "gitlab-minio-secrets"
-        dto_generate_fact_name: "_gitlab_minio_root_password_generated"
-      when: not gitlab_minio_root_vault_exists
+        dto_generate_fact_name: "{{ _local_gitlab_minio_root_password_generated_key }}"
+      when: not lookup('vars', _local_gitlab_minio_root_vault_exists_key)
       tags: [minio]
 
     - name: "[gitlab-minio-secrets] Store MinIO root credentials in Vault"
@@ -369,8 +392,8 @@
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
         dto_vault_put_data:
           username: "{{ gitlab_minio_root_user }}"
-          password: "{{ _gitlab_minio_root_password_generated }}"
-      when: not gitlab_minio_root_vault_exists
+          password: "{{ lookup('vars', _local_gitlab_minio_root_password_generated_key) }}"
+      when: not lookup('vars', _local_gitlab_minio_root_vault_exists_key)
       tags: [minio]
 
     - name: "[gitlab-minio-secrets] Trigger ESO sync"
@@ -456,7 +479,7 @@
         kubectl get pods -n {{ gitlab_namespace }}
         -l app.kubernetes.io/name=gitlab-minio
         -o jsonpath='{.items[0].metadata.name}'
-      register: minio_pod_name
+      register: _local_minio_pod_name
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [minio]
@@ -468,7 +491,8 @@
         dto_secret_namespace: "{{ gitlab_namespace }}"
         dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
         dto_secret_field: "username"
-        dto_secret_res_fact_name: "minio_root_username"
+        dto_secret_res_fact_name: "{{ _local_minio_root_username_key }}"
+        dto_secret_res_exists_fact_name: "{{ _local_minio_root_username_exists_key }}"
       tags: [minio]
 
     - name: "[gitlab-minio-setup] Get MinIO root password from secret"
@@ -478,14 +502,15 @@
         dto_secret_namespace: "{{ gitlab_namespace }}"
         dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
         dto_secret_field: "password"
-        dto_secret_res_fact_name: "minio_root_password"
+        dto_secret_res_fact_name: "{{ _local_minio_root_password_key }}"
+        dto_secret_res_exists_fact_name: "{{ _local_minio_root_password_exists_key }}"
       tags: [minio]
 
     - name: "[gitlab-minio-setup] Assert MinIO root credentials are present"
       assert:
         that:
-          - minio_root_username_exists
-          - minio_root_password_exists
+          - lookup('vars', _local_minio_root_username_exists_key)
+          - lookup('vars', _local_minio_root_password_exists_key)
         fail_msg: "MinIO root credentials not found in secret {{ gitlab_secret_minio_root_creds.body.target.name }} (namespace {{ gitlab_namespace }})"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -493,10 +518,10 @@
 
     - name: "[gitlab-minio-setup] Configure mc alias"
       command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
+        kubectl exec -n {{ gitlab_namespace }} {{ _local_minio_pod_name.stdout }} --
         mc alias set myminio http://localhost:9000
-        '{{ minio_root_username }}'
-        '{{ minio_root_password }}'
+        '{{ lookup('vars', _local_minio_root_username_key) }}'
+        '{{ lookup('vars', _local_minio_root_password_key) }}'
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [minio]
@@ -504,7 +529,7 @@
     # Create buckets
     - name: "[gitlab-minio-setup] Create buckets"
       command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
+        kubectl exec -n {{ gitlab_namespace }} {{ _local_minio_pod_name.stdout }} --
         mc mb myminio/{{ item }} --ignore-existing
       loop:
         - registry
@@ -523,16 +548,17 @@
         dto_label_name: "gitlab-minio-setup"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
         dto_vault_get_field: access_key
-        dto_vault_get_res_fact_name: "gitlab_registry_access_key_vault"
+        dto_vault_get_res_fact_name: "{{ _local_gitlab_registry_access_key_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_registry_access_key_vault_exists_key }}"
       tags: [minio]
 
     - name: "[gitlab-minio-setup] Create access key for registry"
       command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ minio_root_username }}
+        kubectl exec -n {{ gitlab_namespace }} {{ _local_minio_pod_name.stdout }} --
+        mc admin accesskey create myminio {{ lookup('vars', _local_minio_root_username_key) }}
         --name 'registry-key' --json
-      register: registry_accesskey_result
-      when: not gitlab_registry_access_key_vault_exists
+      register: _local_registry_accesskey_result
+      when: not lookup('vars', _local_gitlab_registry_access_key_vault_exists_key)
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [minio]
@@ -543,10 +569,10 @@
         dto_label_name: "gitlab-minio-setup"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
         dto_vault_put_data:
-          access_key: "{{ (registry_accesskey_result.stdout | from_json).accessKey }}"
-          secret_key: "{{ (registry_accesskey_result.stdout | from_json).secretKey }}"
+          access_key: "{{ (_local_registry_accesskey_result.stdout | from_json).accessKey }}"
+          secret_key: "{{ (_local_registry_accesskey_result.stdout | from_json).secretKey }}"
           bucket_name: registry
-      when: not gitlab_registry_access_key_vault_exists
+      when: not lookup('vars', _local_gitlab_registry_access_key_vault_exists_key)
       tags: [minio]
 
     - name: "[gitlab-minio-setup] Trigger ESO sync"
@@ -586,7 +612,7 @@
         dto_helm_chart_version: "{{ gitlab_helm_chart_version }}"
         dto_helm_repo_name: "{{ gitlab_helm_repo_name }}"
         dto_helm_chart_name: "{{ gitlab_helm_chart_name }}"
-        dto_helm_chart_source_res_fact_name: "gitlab_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_gitlab_helm_chart_source_key }}"
       tags: [install]
 
     - name: "[gitlab-install] Install via Helm (async)"
@@ -594,7 +620,7 @@
       vars:
         dto_label_name: "gitlab-install"
         dto_helm_command: >
-          helm upgrade --install gitlab {{ gitlab_helm_chart_source }}
+          helm upgrade --install gitlab {{ lookup('vars', _local_gitlab_helm_chart_source_key) }}
           --namespace {{ gitlab_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/gitlab/install/values-override.yaml
