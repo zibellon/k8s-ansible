@@ -28,6 +28,16 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_grafana_postgresql_vault_key: "_local_grafana_postgresql_vault"
+    _local_grafana_postgresql_vault_exists_key: "_local_grafana_postgresql_vault_exists"
+    _local_grafana_postgresql_password_generated_key: "_local_grafana_postgresql_password_generated"
+    _local_grafana_postgresql_put_data_key: "_local_grafana_postgresql_put_data"
+    _local_grafana_admin_vault_key: "_local_grafana_admin_vault"
+    _local_grafana_admin_vault_exists_key: "_local_grafana_admin_vault_exists"
+    _local_grafana_admin_password_generated_key: "_local_grafana_admin_password_generated"
+
   tasks:
     - name: "[mon-system-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -620,7 +630,8 @@
         dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_postgresql_creds.vault_path }}"
         dto_vault_get_field: "{{ mon_system_grafana_postgresql_secret_key_password }}"
-        dto_vault_get_res_fact_name: "grafana_postgresql_vault"
+        dto_vault_get_res_fact_name: "{{ _local_grafana_postgresql_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_grafana_postgresql_vault_exists_key }}"
       when: mon_system_grafana_enabled
       tags: [grafana-postgresql]
 
@@ -628,16 +639,16 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
         dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
-        dto_generate_fact_name: "_grafana_postgresql_password_generated"
-      when: mon_system_grafana_enabled and not grafana_postgresql_vault_exists
+        dto_generate_fact_name: "{{ _local_grafana_postgresql_password_generated_key }}"
+      when: mon_system_grafana_enabled and not lookup('vars', _local_grafana_postgresql_vault_exists_key)
       tags: [grafana-postgresql]
 
     - name: "[mon-system-grafana-postgresql-vault-secrets] Prepare PostgreSQL Vault put data"
       set_fact:
-        _grafana_postgresql_put_data:
+        "{{ _local_grafana_postgresql_put_data_key }}":
           "{{ mon_system_grafana_postgresql_secret_key_username }}": "{{ mon_system_grafana_postgresql_username }}"
-          "{{ mon_system_grafana_postgresql_secret_key_password }}": "{{ _grafana_postgresql_password_generated }}"
-      when: mon_system_grafana_enabled and not grafana_postgresql_vault_exists
+          "{{ mon_system_grafana_postgresql_secret_key_password }}": "{{ lookup('vars', _local_grafana_postgresql_password_generated_key) }}"
+      when: mon_system_grafana_enabled and not lookup('vars', _local_grafana_postgresql_vault_exists_key)
       tags: [grafana-postgresql]
 
     - name: "[mon-system-grafana-postgresql-vault-secrets] Store PostgreSQL credentials in Vault"
@@ -645,8 +656,8 @@
       vars:
         dto_label_name: "mon-system-grafana-postgresql-vault-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_postgresql_creds.vault_path }}"
-        dto_vault_put_data: "{{ _grafana_postgresql_put_data }}"
-      when: mon_system_grafana_enabled and not grafana_postgresql_vault_exists
+        dto_vault_put_data: "{{ lookup('vars', _local_grafana_postgresql_put_data_key) }}"
+      when: mon_system_grafana_enabled and not lookup('vars', _local_grafana_postgresql_vault_exists_key)
       tags: [grafana-postgresql]
 
     - name: "[mon-system-grafana-postgresql-vault-secrets] Trigger ESO sync"
@@ -735,7 +746,8 @@
         dto_label_name: "mon-system-grafana-vault-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_admin_creds.vault_path }}"
         dto_vault_get_field: password
-        dto_vault_get_res_fact_name: "grafana_admin_vault"
+        dto_vault_get_res_fact_name: "{{ _local_grafana_admin_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_grafana_admin_vault_exists_key }}"
       when: mon_system_grafana_enabled
       tags: [grafana]
 
@@ -743,8 +755,8 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
         dto_label_name: "mon-system-grafana-vault-secrets"
-        dto_generate_fact_name: "_grafana_admin_password_generated"
-      when: mon_system_grafana_enabled and not grafana_admin_vault_exists
+        dto_generate_fact_name: "{{ _local_grafana_admin_password_generated_key }}"
+      when: mon_system_grafana_enabled and not lookup('vars', _local_grafana_admin_vault_exists_key)
       tags: [grafana]
 
     - name: "[mon-system-grafana-vault-secrets] Store admin credentials in Vault"
@@ -754,8 +766,8 @@
         dto_vault_put_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_grafana_admin_creds.vault_path }}"
         dto_vault_put_data:
           username: "{{ mon_system_grafana_admin_username }}"
-          password: "{{ _grafana_admin_password_generated }}"
-      when: mon_system_grafana_enabled and not grafana_admin_vault_exists
+          password: "{{ lookup('vars', _local_grafana_admin_password_generated_key) }}"
+      when: mon_system_grafana_enabled and not lookup('vars', _local_grafana_admin_vault_exists_key)
       tags: [grafana]
 
     - name: "[mon-system-grafana-vault-secrets] Trigger ESO sync"
