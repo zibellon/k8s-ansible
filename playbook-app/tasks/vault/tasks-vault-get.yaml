@@ -3,17 +3,18 @@
 # =============================================================================
 # Reads exactly one field from a Vault KV v2 path and publishes it as a
 # named fact. Never fails on missing path or field — callers branch on
-# <fact_name>_exists.
+# the caller-named exists fact.
 #
 # Required vars:
 #   dto_label_name          — task label prefix
 #   dto_vault_get_path      — full KV path incl. mount, e.g. "eso-secret/gitlab/root"
 #   dto_vault_get_field     — field to extract (required; one field per call)
-#   dto_vault_get_res_fact_name — output fact name (sets <name> and <name>_exists)
+#   dto_vault_get_res_fact_name        — output fact name for the field value
+#   dto_vault_get_res_exists_fact_name — output fact name for the exists bool
 #
 # Output facts (set on master_manager_fact):
 #   {{ dto_vault_get_res_fact_name }}        — string value of the field ('' if missing)
-#   {{ dto_vault_get_res_fact_name }}_exists — bool (true only if path exists AND field non-empty)
+#   {{ dto_vault_get_res_exists_fact_name }} — bool (true only if path exists AND field non-empty)
 #
 # Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
 # =============================================================================
@@ -29,9 +30,12 @@
       - dto_vault_get_field | length > 0
       - dto_vault_get_res_fact_name is defined
       - dto_vault_get_res_fact_name | length > 0
+      - dto_vault_get_res_exists_fact_name is defined
+      - dto_vault_get_res_exists_fact_name | length > 0
     fail_msg: >-
       tasks-vault-get: all params required:
-      dto_label_name, dto_vault_get_path, dto_vault_get_field, dto_vault_get_res_fact_name
+      dto_label_name, dto_vault_get_path, dto_vault_get_field,
+      dto_vault_get_res_fact_name, dto_vault_get_res_exists_fact_name
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -71,7 +75,7 @@
 - name: "[{{ dto_label_name }}] Set result fact"
   set_fact:
     "{{ dto_vault_get_res_fact_name }}": "{{ _vault_get_data[dto_vault_get_field] | default('') | string }}"
-    "{{ dto_vault_get_res_fact_name + '_exists' }}": >-
+    "{{ dto_vault_get_res_exists_fact_name }}": >-
       {{
         _vault_get_path_exists | bool
         and (_vault_get_data[dto_vault_get_field] | default('') | string | length > 0)
@@ -83,7 +87,7 @@
 - name: "[{{ dto_label_name }}] Set fact to all host"
   set_fact:
     "{{ dto_vault_get_res_fact_name }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_fact_name] }}"
-    "{{ dto_vault_get_res_fact_name + '_exists' }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_fact_name + '_exists'] }}"
+    "{{ dto_vault_get_res_exists_fact_name }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_exists_fact_name] }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
