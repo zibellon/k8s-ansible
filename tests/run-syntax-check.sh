@@ -24,7 +24,7 @@ for f in playbook-system/*.yaml playbook-app/*.yaml; do
 done
 
 # === Cycle 2: task files (wrapped in import_tasks playbook) ===
-for f in playbook-system/tasks/*.yaml playbook-app/tasks/*.yaml; do
+for f in playbook-system/tasks/*.yaml playbook-app/tasks/*.yaml playbook-app/tasks/vault/*.yaml; do
   cat > "$WRAPPER" <<EOF
 - hosts: localhost
   gather_facts: false
