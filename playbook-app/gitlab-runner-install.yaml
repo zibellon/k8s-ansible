@@ -191,7 +191,7 @@
       vars:
         dto_label_name: "gitlab-runner-minio"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_minio_cache_creds.vault_path }}"
-        dto_vault_get_field: access_key
+        dto_vault_get_field: "{{ gitlab_runner_minio_cache_secret_key_access_key }}"
         dto_vault_get_res_fact_name: "{{ _local_runner_cache_access_key_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_runner_cache_access_key_vault_exists_key }}"
       tags: [install]
@@ -212,10 +212,12 @@
       vars:
         dto_label_name: "gitlab-runner-minio"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_minio_cache_creds.vault_path }}"
-        dto_vault_put_data:
-          access_key: "{{ (_local_runner_cache_accesskey_result.stdout | from_json).accessKey }}"
-          secret_key: "{{ (_local_runner_cache_accesskey_result.stdout | from_json).secretKey }}"
-          bucket_name: runner-cache
+        dto_vault_put_data: >-
+          {{ {
+               gitlab_runner_minio_cache_secret_key_access_key: (_local_runner_cache_accesskey_result.stdout | from_json).accessKey,
+               gitlab_runner_minio_cache_secret_key_secret_key: (_local_runner_cache_accesskey_result.stdout | from_json).secretKey,
+               gitlab_runner_minio_cache_secret_key_bucket_name: 'runner-cache'
+             } }}
       when: not lookup('vars', _local_runner_cache_access_key_vault_exists_key)
       tags: [install]
 
