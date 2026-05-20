@@ -34,6 +34,7 @@
     _local_gitlab_redis_vault_key: "_local_gitlab_redis_vault"
     _local_gitlab_redis_vault_exists_key: "_local_gitlab_redis_vault_exists"
     _local_gitlab_redis_password_key: "_local_gitlab_redis_password"
+    _local_gitlab_redis_args_key: "_local_gitlab_redis_args"
     _local_gitlab_minio_root_vault_key: "_local_gitlab_minio_root_vault"
     _local_gitlab_minio_root_vault_exists_key: "_local_gitlab_minio_root_vault_exists"
     _local_gitlab_minio_root_password_generated_key: "_local_gitlab_minio_root_password_generated"
@@ -265,7 +266,7 @@
       vars:
         dto_label_name: "gitlab-redis-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
-        dto_vault_get_field: password
+        dto_vault_get_field: "{{ gitlab_redis_secret_key_password }}"
         dto_vault_get_res_fact_name: "{{ _local_gitlab_redis_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_redis_vault_exists_key }}"
       tags: [redis]
@@ -279,14 +280,22 @@
       when: not lookup('vars', _local_gitlab_redis_vault_exists_key)
       tags: [redis]
 
+    - name: "[gitlab-redis-secrets] Prepare redis_args value"
+      set_fact:
+        "{{ _local_gitlab_redis_args_key }}": "--save 1 1 --notify-keyspace-events KEA --requirepass {{ lookup('vars', _local_gitlab_redis_password_key) }}"
+      when: not lookup('vars', _local_gitlab_redis_vault_exists_key)
+      tags: [redis]
+
     - name: "[gitlab-redis-secrets] Store Redis credentials in Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
       vars:
         dto_label_name: "gitlab-redis-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
-        dto_vault_put_data:
-          password: "{{ lookup('vars', _local_gitlab_redis_password_key) }}"
-          redis_args: "--save 1 1 --notify-keyspace-events KEA --requirepass {{ lookup('vars', _local_gitlab_redis_password_key) }}"
+        dto_vault_put_data: >-
+          {{ {
+               gitlab_redis_secret_key_password: lookup('vars', _local_gitlab_redis_password_key),
+               gitlab_redis_secret_key_redis_args: lookup('vars', _local_gitlab_redis_args_key)
+             } }}
       when: not lookup('vars', _local_gitlab_redis_vault_exists_key)
       tags: [redis]
 
