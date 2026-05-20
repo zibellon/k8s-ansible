@@ -27,6 +27,17 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_zitadel_postgresql_vault_key: "_local_zitadel_postgresql_vault"
+    _local_zitadel_postgresql_vault_exists_key: "_local_zitadel_postgresql_vault_exists"
+    _local_zitadel_postgresql_password_generated_key: "_local_zitadel_postgresql_password_generated"
+    _local_zitadel_postgresql_put_data_key: "_local_zitadel_postgresql_put_data"
+    _local_zitadel_masterkey_vault_key: "_local_zitadel_masterkey_vault"
+    _local_zitadel_masterkey_vault_exists_key: "_local_zitadel_masterkey_vault_exists"
+    _local_zitadel_masterkey_generated_key: "_local_zitadel_masterkey_generated"
+    _local_zitadel_helm_chart_source_key: "_local_zitadel_helm_chart_source"
+
   tasks:
     - name: "[zitadel-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -135,23 +146,24 @@
         dto_label_name: "zitadel-postgresql-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_postgresql_creds.vault_path }}"
         dto_vault_get_field: "{{ zitadel_postgresql_secret_key_password }}"
-        dto_vault_get_res_fact_name: "zitadel_postgresql_vault"
+        dto_vault_get_res_fact_name: "{{ _local_zitadel_postgresql_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_zitadel_postgresql_vault_exists_key }}"
       tags: [postgresql]
 
     - name: "[zitadel-postgresql-secrets] Generate PostgreSQL password"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
         dto_label_name: "zitadel-postgresql-secrets"
-        dto_generate_fact_name: "_zitadel_postgresql_password_generated"
-      when: not zitadel_postgresql_vault_exists
+        dto_generate_fact_name: "{{ _local_zitadel_postgresql_password_generated_key }}"
+      when: not lookup('vars', _local_zitadel_postgresql_vault_exists_key)
       tags: [postgresql]
 
     - name: "[zitadel-postgresql-secrets] Prepare PostgreSQL Vault put data"
       set_fact:
-        _zitadel_postgresql_put_data:
+        "{{ _local_zitadel_postgresql_put_data_key }}":
           "{{ zitadel_postgresql_secret_key_username }}": "{{ zitadel_postgresql_username }}"
-          "{{ zitadel_postgresql_secret_key_password }}": "{{ _zitadel_postgresql_password_generated }}"
-      when: not zitadel_postgresql_vault_exists
+          "{{ zitadel_postgresql_secret_key_password }}": "{{ lookup('vars', _local_zitadel_postgresql_password_generated_key) }}"
+      when: not lookup('vars', _local_zitadel_postgresql_vault_exists_key)
       tags: [postgresql]
 
     - name: "[zitadel-postgresql-secrets] Store PostgreSQL credentials in Vault"
@@ -159,8 +171,8 @@
       vars:
         dto_label_name: "zitadel-postgresql-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_postgresql_creds.vault_path }}"
-        dto_vault_put_data: "{{ _zitadel_postgresql_put_data }}"
-      when: not zitadel_postgresql_vault_exists
+        dto_vault_put_data: "{{ lookup('vars', _local_zitadel_postgresql_put_data_key) }}"
+      when: not lookup('vars', _local_zitadel_postgresql_vault_exists_key)
       tags: [postgresql]
 
     - name: "[zitadel-postgresql-secrets] Trigger ESO sync"
@@ -248,15 +260,16 @@
         dto_label_name: "zitadel-masterkey-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_masterkey.vault_path }}"
         dto_vault_get_field: masterkey
-        dto_vault_get_res_fact_name: "zitadel_masterkey_vault"
+        dto_vault_get_res_fact_name: "{{ _local_zitadel_masterkey_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_zitadel_masterkey_vault_exists_key }}"
       tags: [install]
 
     - name: "[zitadel-masterkey-secrets] Generate masterkey"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
         dto_label_name: "zitadel-masterkey-secrets"
-        dto_generate_fact_name: "_zitadel_masterkey_generated"
-      when: not zitadel_masterkey_vault_exists
+        dto_generate_fact_name: "{{ _local_zitadel_masterkey_generated_key }}"
+      when: not lookup('vars', _local_zitadel_masterkey_vault_exists_key)
       tags: [install]
 
     - name: "[zitadel-masterkey-secrets] Store masterkey in Vault"
@@ -265,8 +278,8 @@
         dto_label_name: "zitadel-masterkey-secrets"
         dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_masterkey.vault_path }}"
         dto_vault_put_data:
-          masterkey: "{{ _zitadel_masterkey_generated }}"
-      when: not zitadel_masterkey_vault_exists
+          masterkey: "{{ lookup('vars', _local_zitadel_masterkey_generated_key) }}"
+      when: not lookup('vars', _local_zitadel_masterkey_vault_exists_key)
       tags: [install]
 
     - name: "[zitadel-masterkey-secrets] Trigger ESO sync"
@@ -306,7 +319,7 @@
         dto_helm_chart_version: "{{ zitadel_helm_chart_version }}"
         dto_helm_repo_name: "{{ zitadel_helm_repo_name }}"
         dto_helm_chart_name: "{{ zitadel_helm_chart_name }}"
-        dto_helm_chart_source_res_fact_name: "zitadel_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_zitadel_helm_chart_source_key }}"
       tags: [install]
 
     - name: "[zitadel-install] Install via Helm (async)"
@@ -314,7 +327,7 @@
       vars:
         dto_label_name: "zitadel-install"
         dto_helm_command: >
-          helm upgrade --install zitadel {{ zitadel_helm_chart_source }}
+          helm upgrade --install zitadel {{ lookup('vars', _local_zitadel_helm_chart_source_key) }}
           --namespace {{ zitadel_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/zitadel/install/values-override.yaml
