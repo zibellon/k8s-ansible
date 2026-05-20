@@ -244,20 +244,19 @@ all:
     # Пример:
     vault_policies_extra:
       - name: my-custom-policy
-        paths:
-          - path: secret/data/my-app/*
-            capabilities: [read, list]
-          - path: secret/metadata/my-app/*
-            capabilities: [read, list]
+        rules: |
+          path "secret/data/my-app/*" { capabilities = ["read", "list"] }
+          path "secret/metadata/my-app/*" { capabilities = ["read", "list"] }
 
     # Дополнительные роли Vault (не связанные с ESO интеграциями)
     # Пример:
     vault_roles_extra:
       - name: my-app-role
-        namespace: my-app
-        sa_name: my-app-sa
+        bound_service_account_namespaces: my-app
+        bound_service_account_names: my-app-sa
         policies:
           - my-custom-policy
+        ttl: "{{ vault_roles_default_ttl }}"
 
     # Дополнительные ExternalSecrets для Traefik
     # Поле body содержит всё тело spec начиная с target: (рендерится через toYaml as-is).
