@@ -14,6 +14,8 @@ General rules for callers:
 
 ## 1. `playbook-app/tasks/` (31 tasks)
 
+The four vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
+
 ### 1.1 `tasks-pre-check.yaml`
 
 - **Purpose.** Entry guard for every install playbook. Resolves `master_manager_fact` and asserts cluster is reachable.
@@ -154,10 +156,10 @@ General rules for callers:
 
 ### 1.12 `tasks-vault-get.yaml`
 
-- **Purpose.** Read one KV v2 field from Vault into an Ansible fact (plus an `_exists` boolean).
-- **Input.** `dto_label_name`, `dto_vault_get_path` (full KV path), `dto_vault_get_field` (field name), `dto_vault_get_res_fact_name` (output fact name).
-- **Validates (assert).** `dto_label_name`, `dto_vault_get_path`, `dto_vault_get_field`, `dto_vault_get_res_fact_name` all defined + non-empty.
-- **Output.** `<fact>` + `<fact>_exists`. Missing fields set `_exists: false` without failing the play.
+- **Purpose.** Read one KV v2 field from Vault into an Ansible fact (plus a caller-named `_exists` boolean fact).
+- **Input.** `dto_label_name`, `dto_vault_get_path` (full KV path), `dto_vault_get_field` (field name), `dto_vault_get_res_fact_name` (output fact name for the field value), `dto_vault_get_res_exists_fact_name` (output fact name for the exists bool).
+- **Validates (assert).** `dto_label_name`, `dto_vault_get_path`, `dto_vault_get_field`, `dto_vault_get_res_fact_name`, `dto_vault_get_res_exists_fact_name` all defined + non-empty.
+- **Output.** Fact named by `dto_vault_get_res_fact_name` (field value) + fact named by `dto_vault_get_res_exists_fact_name` (bool). Missing fields set the exists fact `false` without failing the play.
 - **Callers.** `-configure` playbooks (resolve current credentials before rotating), `-rotate` playbooks.
 - **Idempotent.** Read-only.
 
@@ -208,12 +210,12 @@ General rules for callers:
 
 ### 1.17 `tasks-k8s-secret-get.yaml`
 
-- **Purpose.** Read a single `.data` field from a K8s Secret into a named fact. Never fails on missing secret or field — callers branch on `<fact>_exists`.
-- **Input.** `dto_label_name`, `dto_secret_namespace`, `dto_secret_name`, `dto_secret_field`, `dto_secret_res_fact_name` (all required).
-- **Validates (assert).** All 5 dto params defined + non-empty. **Reference implementation** — this is the canonical example for the assert pattern.
+- **Purpose.** Read a single `.data` field from a K8s Secret into a named fact. Never fails on missing secret or field — callers branch on the caller-named exists fact.
+- **Input.** `dto_label_name`, `dto_secret_namespace`, `dto_secret_name`, `dto_secret_field`, `dto_secret_res_fact_name`, `dto_secret_res_exists_fact_name` (all required).
+- **Validates (assert).** All 6 dto params defined + non-empty. **Reference implementation** — this is the canonical example for the assert pattern.
 - **Output (runtime facts, set on all hosts).**
   - `{{ dto_secret_res_fact_name }}` — decoded string value (`''` if missing).
-  - `{{ dto_secret_res_fact_name }}_exists` — bool (true only if field is non-empty).
+  - `{{ dto_secret_res_exists_fact_name }}` — bool (true only if field is non-empty).
 - **Callers.** `argocd-configure.yaml`, `gitlab-configure.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `vault-install.yaml`.
 - **Idempotent.** Read-only; safe to call repeatedly.
 
@@ -502,7 +504,7 @@ General rules for callers:
     dto_target_namespace: "{{ <c>_namespace }}"
   tags: [always]
 
-- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-vault-config-verify.yaml"
+- include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
   vars:
     dto_label_name: "<c>-install-init"
   tags: [always]
