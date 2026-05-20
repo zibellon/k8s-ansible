@@ -28,6 +28,18 @@
   become: true
   gather_facts: false
 
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_runner_minio_root_username_key: "_local_runner_minio_root_username"
+    _local_runner_minio_root_username_exists_key: "_local_runner_minio_root_username_exists"
+    _local_runner_minio_root_password_key: "_local_runner_minio_root_password"
+    _local_runner_minio_root_password_exists_key: "_local_runner_minio_root_password_exists"
+    _local_runner_cache_access_key_vault_key: "_local_runner_cache_access_key_vault"
+    _local_runner_cache_access_key_vault_exists_key: "_local_runner_cache_access_key_vault_exists"
+    _local_gitlab_runner_token_vault_key: "_local_gitlab_runner_token_vault"
+    _local_gitlab_runner_token_vault_exists_key: "_local_gitlab_runner_token_vault_exists"
+    _local_gitlab_runner_helm_chart_source_key: "_local_gitlab_runner_helm_chart_source"
+
   tasks:
     - name: "[gitlab-runner-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
@@ -119,7 +131,7 @@
         kubectl get pods -n {{ gitlab_namespace }}
         -l app.kubernetes.io/name=gitlab-minio
         -o jsonpath='{.items[0].metadata.name}'
-      register: runner_minio_pod_name
+      register: _local_runner_minio_pod_name
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -131,7 +143,8 @@
         dto_secret_namespace: "{{ gitlab_namespace }}"
         dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
         dto_secret_field: "username"
-        dto_secret_res_fact_name: "runner_minio_root_username"
+        dto_secret_res_fact_name: "{{ _local_runner_minio_root_username_key }}"
+        dto_secret_res_exists_fact_name: "{{ _local_runner_minio_root_username_exists_key }}"
       tags: [install]
 
     - name: "[gitlab-runner-minio] Get MinIO root password from secret"
@@ -141,14 +154,15 @@
         dto_secret_namespace: "{{ gitlab_namespace }}"
         dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
         dto_secret_field: "password"
-        dto_secret_res_fact_name: "runner_minio_root_password"
+        dto_secret_res_fact_name: "{{ _local_runner_minio_root_password_key }}"
+        dto_secret_res_exists_fact_name: "{{ _local_runner_minio_root_password_exists_key }}"
       tags: [install]
 
     - name: "[gitlab-runner-minio] Assert MinIO root credentials are present"
       assert:
         that:
-          - runner_minio_root_username_exists
-          - runner_minio_root_password_exists
+          - lookup('vars', _local_runner_minio_root_username_exists_key)
+          - lookup('vars', _local_runner_minio_root_password_exists_key)
         fail_msg: "MinIO root credentials not found in secret {{ gitlab_secret_minio_root_creds.body.target.name }} (namespace {{ gitlab_namespace }})"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -156,17 +170,17 @@
 
     - name: "[gitlab-runner-minio] Configure mc alias"
       command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
+        kubectl exec -n {{ gitlab_namespace }} {{ _local_runner_minio_pod_name.stdout }} --
         mc alias set myminio http://localhost:9000
-        '{{ runner_minio_root_username }}'
-        '{{ runner_minio_root_password }}'
+        '{{ lookup('vars', _local_runner_minio_root_username_key) }}'
+        '{{ lookup('vars', _local_runner_minio_root_password_key) }}'
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
     - name: "[gitlab-runner-minio] Create runner-cache bucket"
       command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
+        kubectl exec -n {{ gitlab_namespace }} {{ _local_runner_minio_pod_name.stdout }} --
         mc mb myminio/runner-cache --ignore-existing
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
@@ -178,16 +192,17 @@
         dto_label_name: "gitlab-runner-minio"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_minio_cache_creds.vault_path }}"
         dto_vault_get_field: access_key
-        dto_vault_get_res_fact_name: "runner_cache_access_key_vault"
+        dto_vault_get_res_fact_name: "{{ _local_runner_cache_access_key_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_runner_cache_access_key_vault_exists_key }}"
       tags: [install]
 
     - name: "[gitlab-runner-minio] Create access key for runner-cache"
       command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ runner_minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ runner_minio_root_username }}
+        kubectl exec -n {{ gitlab_namespace }} {{ _local_runner_minio_pod_name.stdout }} --
+        mc admin accesskey create myminio {{ lookup('vars', _local_runner_minio_root_username_key) }}
         --name 'runner-cache-key' --json
-      register: runner_cache_accesskey_result
-      when: not runner_cache_access_key_vault_exists
+      register: _local_runner_cache_accesskey_result
+      when: not lookup('vars', _local_runner_cache_access_key_vault_exists_key)
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -198,10 +213,10 @@
         dto_label_name: "gitlab-runner-minio"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_minio_cache_creds.vault_path }}"
         dto_vault_put_data:
-          access_key: "{{ (runner_cache_accesskey_result.stdout | from_json).accessKey }}"
-          secret_key: "{{ (runner_cache_accesskey_result.stdout | from_json).secretKey }}"
+          access_key: "{{ (_local_runner_cache_accesskey_result.stdout | from_json).accessKey }}"
+          secret_key: "{{ (_local_runner_cache_accesskey_result.stdout | from_json).secretKey }}"
           bucket_name: runner-cache
-      when: not runner_cache_access_key_vault_exists
+      when: not lookup('vars', _local_runner_cache_access_key_vault_exists_key)
       tags: [install]
 
     - name: "[gitlab-runner-minio] Trigger ESO sync"
@@ -229,7 +244,8 @@
         dto_label_name: "gitlab-runner-token"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_auth_token.vault_path }}"
         dto_vault_get_field: token
-        dto_vault_get_res_fact_name: "gitlab_runner_token_vault"
+        dto_vault_get_res_fact_name: "{{ _local_gitlab_runner_token_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_runner_token_vault_exists_key }}"
       tags: [install]
 
     - name: "[gitlab-runner-token] Fail if runner token not found in Vault"
@@ -239,7 +255,7 @@
           {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_auth_token.vault_path }}.
           Create a runner in GitLab UI (Admin → CI/CD → Runners) and store the token manually:
           vault kv put {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_auth_token.vault_path }} token=<value>
-      when: not gitlab_runner_token_vault_exists
+      when: not lookup('vars', _local_gitlab_runner_token_vault_exists_key)
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -285,7 +301,7 @@
         dto_helm_chart_version: "{{ gitlab_runner_helm_chart_version }}"
         dto_helm_repo_name: "{{ gitlab_runner_helm_repo_name }}"
         dto_helm_chart_name: "{{ gitlab_runner_helm_chart_name }}"
-        dto_helm_chart_source_res_fact_name: "gitlab_runner_helm_chart_source"
+        dto_helm_chart_source_res_fact_name: "{{ _local_gitlab_runner_helm_chart_source_key }}"
       tags: [install]
 
     - name: "[gitlab-runner-install] Install via Helm (async)"
@@ -293,7 +309,7 @@
       vars:
         dto_label_name: "gitlab-runner-install"
         dto_helm_command: >
-          helm upgrade --install gitlab-runner {{ gitlab_runner_helm_chart_source }}
+          helm upgrade --install gitlab-runner {{ lookup('vars', _local_gitlab_runner_helm_chart_source_key) }}
           --namespace {{ gitlab_runner_namespace }}
           --create-namespace
           --values {{ remote_charts_dir }}/gitlab-runner/install/values-override.yaml
