@@ -25,6 +25,7 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | `_helm_repo_name` | Helm repo alias for `helm repo add` (HTTP only; ignored for OCI) | `cilium_helm_repo_name: "cilium"` |
 | `_helm_chart_name` | Chart name within HTTP repo (HTTP only; ignored for OCI) | `cilium_helm_chart_name: "cilium"` |
 | `_image` | Full image URI:tag (handwritten charts only — chart's `image:` field receives the literal). AirGap interception via containerd `_default` mirror, не per-component override | `vault_image: "docker.io/hashicorp/vault:1.21.2"` |
+| `_secret_key_<field>` | Vault secret field name — единое определение, переиспользуемое в ключе `dto_vault_put_data`, `dto_vault_get_field`, ESO `remoteRef.property`, ключе consumer-чарта. См. [`secrets-and-eso.md`](secrets-and-eso.md) §2.5. | `gitlab_redis_secret_key_password: "password"` |
 | `_replica_count` | Replica count on Deployments | `int` |
 | `_tolerations`, `_node_selector`, `_affinity` | Scheduling | `list` / `dict` / `dict` |
 | `_resources` | CPU/memory requests & limits | `dict` |

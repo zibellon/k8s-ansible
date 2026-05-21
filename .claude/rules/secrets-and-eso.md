@@ -170,6 +170,19 @@ Extension: `eso_vault_integration_<c>_secrets_extra`.
 
 Inline merge at usage sites: `<c>_pre_helm_values.eso.secrets: "{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"` — no runtime fact, expression resolved by Ansible Jinja at render time.
 
+### 2.5 Secret field-name variables (`<c>_<secret>_secret_key_<field>`)
+
+Every Vault secret written by a playbook via `tasks-vault-put` has its **field names** parametrized as inventory variables `<c>_<secret>_secret_key_<field>` in `hosts-vars/<c>.yaml` (default = the literal field name). The variable is the single source of truth for that field name and is used everywhere it appears:
+
+- `dto_vault_put_data` dict **keys** (Vault write);
+- `dto_vault_get_field` (Vault read-back);
+- `body.data[].remoteRef.property` in ESO `data[]`-secrets;
+- the consumer chart `secretKeyRef.key` / helm-value, for `dataFrom.extract`-secrets where the K8s Secret key equals the Vault field name (e.g. `gitlab_redis_helm_values.credentialsSecretKey`, `mon_system_grafana_helm_values.adminSecret.usernameKey`).
+
+**`dto_vault_put_data` must be a single Jinja dict expression.** Ansible does not template the keys of a nested YAML dict — a `dto_vault_put_data:` block with `"{{ var }}": ...` entries writes the literal `{{ var }}` string as the Vault field name. Build it as one `{{ { var1: val1, var2: val2 } }}` expression so the keys are evaluated (reference: the `Prepare PostgreSQL Vault put data` task in `gitlab-install.yaml`).
+
+**Out of this convention** — names fixed by upstream charts stay literal: ESO `body.data[].secretKey`, the `{% raw %}{{ .field }}{% endraw %}` references inside `body.target.template`, and K8s secret keys hard-coded by upstream charts. The `<c>_<secret>_secret_key_<field>` variable still exists for those, with its default pinned to the required literal, so the put/get sides stay consistent.
+
 ---
 
 ## 3. Verify Tasks — Contracts
