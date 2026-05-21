@@ -71,7 +71,7 @@
       vars:
         dto_label_name: "gitlab-root-password"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_get_field: password
+        dto_vault_get_field: "{{ gitlab_root_secret_key_password }}"
         dto_vault_get_res_fact_name: "{{ _local_gitlab_root_pw_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_root_pw_vault_exists_key }}"
       tags: [always]
@@ -166,9 +166,11 @@
       vars:
         dto_label_name: "gitlab-root-password"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_put_data:
-          username: root
-          password: "{{ lookup('vars', _local_active_root_password_key) }}"
+        dto_vault_put_data: >-
+          {{ {
+               gitlab_root_secret_key_username: 'root',
+               gitlab_root_secret_key_password: lookup('vars', _local_active_root_password_key)
+             } }}
       when: lookup('vars', _local_root_password_source_key) == "k8s_secret"
       tags: [always]
 
@@ -191,7 +193,7 @@
       vars:
         dto_label_name: "gitlab-root-pat"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_get_field: username
+        dto_vault_get_field: "{{ gitlab_root_secret_key_username }}"
         dto_vault_get_res_fact_name: "{{ _local_gitlab_root_username_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_root_username_vault_exists_key }}"
       tags: [always]
@@ -201,7 +203,7 @@
       vars:
         dto_label_name: "gitlab-root-pat"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_get_field: password
+        dto_vault_get_field: "{{ gitlab_root_secret_key_password }}"
         dto_vault_get_res_fact_name: "{{ _local_gitlab_root_password_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_root_password_vault_exists_key }}"
       tags: [always]
@@ -211,7 +213,7 @@
       vars:
         dto_label_name: "gitlab-root-pat"
         dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_get_field: token
+        dto_vault_get_field: "{{ gitlab_root_secret_key_token }}"
         dto_vault_get_res_fact_name: "{{ _local_gitlab_root_pat_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_root_pat_vault_exists_key }}"
       tags: [always]
@@ -256,10 +258,12 @@
       vars:
         dto_label_name: "gitlab-root-pat"
         dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_put_data:
-          username: "{{ lookup('vars', _local_gitlab_root_username_vault_key) | default('root') }}"
-          password: "{{ lookup('vars', _local_gitlab_root_password_vault_key) | default(lookup('vars', _local_active_root_password_key)) }}"
-          token: "{{ _local_new_pat_result.stdout | trim }}"
+        dto_vault_put_data: >-
+          {{ {
+               gitlab_root_secret_key_username: lookup('vars', _local_gitlab_root_username_vault_key) | default('root'),
+               gitlab_root_secret_key_password: lookup('vars', _local_gitlab_root_password_vault_key) | default(lookup('vars', _local_active_root_password_key)),
+               gitlab_root_secret_key_token: _local_new_pat_result.stdout | trim
+             } }}
       when:
         - lookup('vars', _local_pat_needs_rotation_key) | bool
         - _local_new_pat_result.stdout is defined
