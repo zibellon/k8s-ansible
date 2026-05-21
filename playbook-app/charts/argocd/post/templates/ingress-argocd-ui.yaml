@@ -1,8 +1,9 @@
 # =============================================================================
-# ARGOCD UI INGRESS - HTTPS
+# INGRESSROUTE FOR ARGOCD UI (Traefik)
+#   issuerEnabled true  → Certificate + HTTPS IngressRoute (websecure, TLS)
+#   issuerEnabled false → HTTP IngressRoute (web, без TLS)
 # =============================================================================
-
-{{- if .Values.ingress.httpsEnable }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,16 +15,13 @@ spec:
   dnsNames:
     - "{{ .Values.ingress.uiDomain }}"
   issuerRef:
-    name: {{ .Values.ingress.clusterIssuer }}
-    kind: ClusterIssuer
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
-# =============================================================================
-# INGRESSROUTE FOR ARGOCD UI — HTTPS (Traefik)
-# =============================================================================
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: argocd-ui-https
+  name: argocd-ui
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
@@ -46,4 +44,30 @@ spec:
           port: 80
   tls:
     secretName: {{ .Values.ingress.uiSecretName }}
+{{- else }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd-ui
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    - {{ .Values.traefik.entryPoints.web }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.ingress.uiDomain }}`)
+      priority: 10
+      {{- if .Values.ingress.vpnOnlyEnabled }}
+      middlewares:
+        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
+      {{- end }}
+      services:
+        - name: argocd-server
+          port: 80
 {{- end }}

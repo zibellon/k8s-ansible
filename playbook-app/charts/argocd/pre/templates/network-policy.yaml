@@ -255,34 +255,69 @@ spec:
           port: {{ .Values.apiserver.port }}
 
 # =============================================================================
-# ACME SOLVER (cert-manager HTTP-01 challenge)
+# ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
 # =============================================================================
-
+{{- if .Values.issuerEnabled }}
+{{- $spec := .Values.issuer.spec | default dict }}
+{{- if hasKey $spec "acme" }}
+{{- range $i, $solver := ($spec.acme.solvers | default list) }}
+{{- if hasKey $solver "http01" }}
+{{- $ing := $solver.http01.ingress | default dict }}
+{{- $solverLabels := dig "podTemplate" "metadata" "labels" (dict "acme.cert-manager.io/http01-solver" "true") $ing }}
 ---
-# Allow ACME solver pod ingress from traefik
+# http01 solver #{{ $i }} — ingress к solver-pod от traefik
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: "allow-acme-solver"
-  namespace: {{ .Values.namespace }}
+  name: "allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.namespace }}
 spec:
   podSelector:
     matchLabels:
-      {{- .Values.acmeSolverLabels | toYaml | nindent 6 }}
+      {{- toYaml $solverLabels | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+              kubernetes.io/metadata.name: {{ $.Values.traefik.namespace }}
           podSelector:
             matchLabels:
               app.kubernetes.io/name: traefik
-              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+              app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
       ports:
         - protocol: TCP
-          port: {{ .Values.acmeSolver.port }}
+          port: {{ $.Values.acmeSolver.port }}
+---
+# http01 solver #{{ $i }} — egress traefik → solver-pod (в namespace traefik)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ $.Values.namespace }}-allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $solverLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 
 # =============================================================================
 # EXTERNAL - NS (Traefik -> ArgoCD)
@@ -314,17 +349,6 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.argocd.serverPort }} # actual pod port
-    # ACME solver in argocd
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.namespace }}
-          podSelector:
-            matchLabels:
-              {{- .Values.acmeSolverLabels | toYaml | nindent 14 }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.acmeSolver.port }}
 
 ---
 # Allow gitlab-runner job pods egress to argocd-server (cross-namespace, owned by argocd chart)

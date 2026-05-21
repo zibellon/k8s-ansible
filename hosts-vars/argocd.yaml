@@ -14,10 +14,28 @@ all:
     argocd_rpc_domain: "argocd-rpc-k8s-v2.drawapp.ru"
     argocd_rpc_https_secret_name: "cert-argocd-rpc"
     argocd_vpn_only_enabled: false
-    argocd_cluster_issuer_name: "acme-prod"
     argocd_ingress_class_name: "traefik-lb"
-    argocd_ingress_http_enable: false
-    argocd_ingress_https_enable: true
+    # cert-manager Issuer (per-component, namespaced).
+    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
+    # false → HTTP-ingress без TLS (например за Cloudflare).
+    argocd_cert_manager_issuer_enabled: true
+    argocd_cert_manager_issuer:
+      name: "argocd-acme"
+      spec:
+        acme:
+          server: "https://acme-v02.api.letsencrypt.org/directory"
+          email: "some-email-123@gmail.com"
+          privateKeySecretRef:
+            name: "argocd-acme-account-key"
+          solvers:
+            - http01:
+                ingress:
+                  ingressClassName: "traefik-lb"
+                  ingressTemplate:
+                    metadata:
+                      annotations:
+                        "kubernetes.io/ingress.class": "traefik-lb"
+                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
     # ------
     argocd_admin_username: "admin"
     argocd_admin_secret_key_username: "username"
@@ -41,7 +59,6 @@ all:
     argocd_pre_kustomize_patches: []
     # Pre-phase values (ESO + NetworkPolicies chart)
     # eso_vault_integration_argocd_secrets — inline merge base + extra (задаётся ниже в eso_vault_integration_argocd_secrets)
-    # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
     argocd_pre_helm_values:
       namespace: "{{ argocd_namespace }}"
       traefik:
@@ -66,7 +83,8 @@ all:
         secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      issuer: "{{ argocd_cert_manager_issuer }}"
+      issuerEnabled: "{{ argocd_cert_manager_issuer_enabled }}"
       extraObjects: "{{ argocd_pre_extra_objects }}"
     # ---
     # ---
@@ -117,17 +135,16 @@ all:
     # Post-phase values (Ingress + ServiceMonitor chart)
     argocd_post_helm_values:
       namespace: "{{ argocd_namespace }}"
+      issuer: "{{ argocd_cert_manager_issuer }}"
+      issuerEnabled: "{{ argocd_cert_manager_issuer_enabled }}"
       ingress:
         uiDomain: "{{ argocd_ui_domain }}"
         rpcDomain: "{{ argocd_rpc_domain }}"
         ingressClass: "{{ argocd_ingress_class_name }}"
-        clusterIssuer: "{{ argocd_cluster_issuer_name }}"
         uiSecretName: "{{ argocd_ui_https_secret_name }}"
         rpcSecretName: "{{ argocd_rpc_https_secret_name }}"
         vpnOnlyEnabled: "{{ argocd_vpn_only_enabled }}"
         vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
-        httpEnable: "{{ argocd_ingress_http_enable }}"
-        httpsEnable: "{{ argocd_ingress_https_enable }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
