@@ -1,7 +1,7 @@
 # =============================================================================
 # Configure GitLab root credentials
 # Steps:
-#   1. Resolve root password: check Vault → check k8s secret → validate → save to Vault
+#   1. Resolve root password: check Vault → check k8s secret → validate → save to Vault → delete k8s initial secret
 #   2. Resolve root PAT: check Vault → validate → create new if invalid → save to Vault
 #
 # Usage:
@@ -177,6 +177,16 @@
     - name: "[gitlab-root-password] Print password resolution result"
       debug:
         msg: "Root password resolved from source: {{ lookup('vars', _local_root_password_source_key) }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-root-password] Delete k8s initial root password secret"
+      command: >
+        kubectl delete secret gitlab-gitlab-initial-root-password
+        --namespace {{ gitlab_namespace }} --ignore-not-found=true
+      register: _local_gitlab_initial_secret_delete
+      changed_when: "'deleted' in _local_gitlab_initial_secret_delete.stdout"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

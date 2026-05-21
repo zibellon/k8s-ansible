@@ -1,7 +1,7 @@
 # =============================================================================
 # Configure ArgoCD admin credentials
 # Steps:
-#   1. Resolve admin password: check Vault → check k8s secret → validate → save to Vault
+#   1. Resolve admin password: check Vault → check k8s secret → validate → save to Vault → delete k8s initial secret
 #
 # Usage:
 #   ansible-playbook argocd-configure.yaml
@@ -223,6 +223,16 @@
     - name: "[argocd-admin-password] Print password resolution result"
       debug:
         msg: "Admin password resolved from source: {{ lookup('vars', _local_admin_password_source_key) }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argocd-admin-password] Delete k8s initial admin secret"
+      command: >
+        kubectl delete secret argocd-initial-admin-secret
+        --namespace {{ argocd_namespace }} --ignore-not-found=true
+      register: _local_argocd_initial_secret_delete
+      changed_when: "'deleted' in _local_argocd_initial_secret_delete.stdout"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
