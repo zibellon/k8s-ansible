@@ -123,10 +123,33 @@ all:
           - name: DrbdOptions/Resource/on-no-quorum
             value: "suspend-io"
 
+          # Авто-восстановление после failover: бывший Primary, потерявший quorum и
+          # замороженный (on-no-quorum: suspend-io), при возврате узнаёт что устарел —
+          # сам демотируется в Secondary и ресинкается. DRBD default: disconnect.
+          - name: DrbdOptions/Resource/on-suspended-primary-outdated
+            value: "force-secondary"
+
+          # Нет доступа к данным ни локально, ни через peer — заморозить I/O, а не
+          # отдавать I/O-error приложению (философия как у on-no-quorum). DRBD default: io-error.
+          - name: DrbdOptions/Resource/on-no-data-accessible
+            value: "suspend-io"
+
           # Авто-создание diskless tiebreaker для replica=2 RD (нужно для majority quorum математически).
           # Piraeus default'ом задано `True`; фиксируем явно.
           - name: DrbdOptions/auto-add-quorum-tiebreaker
             value: "True"
+
+          # --- Auto-diskful (memo, закомментировано — функция под вопросом) ---
+          # Оставлено напоминанием: при необходимости раскомментировать парой.
+          # auto-diskful (value — минуты): diskless-узел, державший ресурс Primary
+          #   дольше N минут, автоматически получает локальную реплику (toggle-disk
+          #   + ресинк) — активно используемый том хранится локально, без round-trip.
+          # auto-diskful-allow-cleanup: после конвертации убирает лишнюю (старую)
+          #   реплику, возвращая число реплик к place-count. Без auto-diskful инертно.
+          # - name: DrbdOptions/auto-diskful
+          #   value: "60"
+          # - name: DrbdOptions/auto-diskful-allow-cleanup
+          #   value: "True"
 
       # === Encryption + TLS creation method (не используем) ===
       # linstorPassphrase: ""
@@ -187,9 +210,9 @@ all:
         dashboard:
           enabled: false
 
-      # === storageClasses — 9 SC (3 tier × 3 modes) ===
+      # === storageClasses — 6 SC (3 tier × 2 modes) ===
       storageClasses:
-        # === tier: lnstr-major-manager (only managers) ===
+        # === tier: lnstr-manager (only managers) ===
         - name: "lnstr-manager-local"
           allowVolumeExpansion: true
           reclaimPolicy: "Retain"
@@ -237,7 +260,7 @@ all:
             property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
             csi.storage.k8s.io/fstype: "ext4"
 
-        # === tier: lnstr-major-worker (only workers) ===
+        # === tier: lnstr-worker (only workers) ===
         - name: "lnstr-worker-local"
           allowVolumeExpansion: true
           reclaimPolicy: "Retain"
