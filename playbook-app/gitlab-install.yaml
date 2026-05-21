@@ -545,11 +545,11 @@
         kubectl exec -n {{ gitlab_namespace }} {{ _local_minio_pod_name.stdout }} --
         mc mb myminio/{{ item }} --ignore-existing
       loop:
-        - registry
-        - gitlab-artifacts
-        - gitlab-uploads
-        - gitlab-packages
-        - gitlab-backups
+        - "{{ gitlab_minio_registry_bucket }}"
+        - "{{ gitlab_minio_artifacts_bucket }}"
+        - "{{ gitlab_minio_uploads_bucket }}"
+        - "{{ gitlab_minio_packages_bucket }}"
+        - "{{ gitlab_minio_backups_bucket }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [minio]
@@ -585,7 +585,7 @@
           {{ {
                gitlab_minio_registry_secret_key_access_key: (_local_registry_accesskey_result.stdout | from_json).accessKey,
                gitlab_minio_registry_secret_key_secret_key: (_local_registry_accesskey_result.stdout | from_json).secretKey,
-               gitlab_minio_registry_secret_key_bucket_name: 'registry'
+               gitlab_minio_registry_secret_key_bucket_name: gitlab_minio_registry_bucket
              } }}
       when: not lookup('vars', _local_gitlab_registry_access_key_vault_exists_key)
       tags: [minio]
