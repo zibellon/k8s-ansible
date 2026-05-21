@@ -13,22 +13,31 @@ all:
     cert_manager_install_helm_timeout: "5m"
     cert_manager_post_helm_timeout: "2m"
     cert_manager_rollout_timeout: "180s"
-    # Cluster issuers
+    # Cluster issuers — массив raw ClusterIssuer (каждый элемент: name + spec)
     cert_manager_cluster_issuers:
       - name: "acme-prod"
-        email: "some-email-123@gmail.com"
-        server: "https://acme-v02.api.letsencrypt.org/directory"
-        privateKeySecretName: "cluster-issuer-acme-prod-account-key"
-        solvers:
-          - ingressClass: "traefik-lb"
-            ingressAnnotations:
-              "kubernetes.io/ingress.class": "traefik-lb"
-              "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-            podLabels:
-              app.kubernetes.io/name: acme-solver
-              app.kubernetes.io/instance: traefik-lb
-              app.kubernetes.io/component: acme-http01-solver
-              app.kubernetes.io/managed-by: cert-manager
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "cluster-issuer-acme-prod-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
     # ---
     # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
