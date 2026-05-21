@@ -181,7 +181,7 @@
     - name: "[gitlab-runner-minio] Create runner-cache bucket"
       command: >
         kubectl exec -n {{ gitlab_namespace }} {{ _local_runner_minio_pod_name.stdout }} --
-        mc mb myminio/runner-cache --ignore-existing
+        mc mb myminio/{{ gitlab_runner_minio_cache_bucket }} --ignore-existing
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
@@ -216,7 +216,7 @@
           {{ {
                gitlab_runner_minio_cache_secret_key_access_key: (_local_runner_cache_accesskey_result.stdout | from_json).accessKey,
                gitlab_runner_minio_cache_secret_key_secret_key: (_local_runner_cache_accesskey_result.stdout | from_json).secretKey,
-               gitlab_runner_minio_cache_secret_key_bucket_name: 'runner-cache'
+               gitlab_runner_minio_cache_secret_key_bucket_name: gitlab_runner_minio_cache_bucket
              } }}
       when: not lookup('vars', _local_runner_cache_access_key_vault_exists_key)
       tags: [install]
