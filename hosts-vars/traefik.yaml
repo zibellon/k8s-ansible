@@ -21,10 +21,28 @@ all:
     traefik_dashboard_vpn_only_enabled: false
     traefik_dashboard_https_secret_name: "cert-traefik-dashboard"
     traefik_dashboard_service_name: "traefik-dashboard"
-    traefik_dashboard_ingress_http_enable: false
-    traefik_dashboard_ingress_https_enable: true
-    traefik_dashboard_cluster_issuer_name: "acme-prod"
     traefik_dashboard_ingress_class_name: "traefik-lb"
+    # cert-manager Issuer (per-component, namespaced).
+    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
+    # false → HTTP-ingress без TLS (например за Cloudflare).
+    traefik_cert_manager_issuer_enabled: true
+    traefik_cert_manager_issuer:
+      name: "traefik-acme"
+      spec:
+        acme:
+          server: "https://acme-v02.api.letsencrypt.org/directory"
+          email: "some-email-123@gmail.com"
+          privateKeySecretRef:
+            name: "traefik-acme-account-key"
+          solvers:
+            - http01:
+                ingress:
+                  ingressClassName: "traefik-lb"
+                  ingressTemplate:
+                    metadata:
+                      annotations:
+                        "kubernetes.io/ingress.class": "traefik-lb"
+                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
     # Used in cilium-install.yaml post values
     traefik_web_port: 80 # NOT CHANGE
     traefik_websecure_port: 443 # NOT CHANGE
@@ -68,7 +86,6 @@ all:
     traefik_pre_kustomize_patches: []
     # Pre-phase values (NetworkPolicies + ESO chart)
     # Примечание: eso.secrets — runtime-факт от tasks-eso-merge.yaml (tags: [always])
-    # acmeSolverLabels — runtime-факт от tasks-resolve-acme-solver.yaml (tags: [always])
     traefik_pre_helm_values:
       namespace: "{{ traefik_namespace }}"
       instanceName: "traefik-{{ traefik_namespace }}"
@@ -83,7 +100,8 @@ all:
         secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      issuer: "{{ traefik_cert_manager_issuer }}"
+      issuerEnabled: "{{ traefik_cert_manager_issuer_enabled }}"
       extraObjects: "{{ traefik_pre_extra_objects }}"
     # ---
     # ---
@@ -235,6 +253,8 @@ all:
     # Post-phase values (Middlewares + Dashboard Ingress chart)
     traefik_post_helm_values:
       namespace: "{{ traefik_namespace }}"
+      issuer: "{{ traefik_cert_manager_issuer }}"
+      issuerEnabled: "{{ traefik_cert_manager_issuer_enabled }}"
       ingressClass: "{{ traefik_dashboard_ingress_class_name }}"
       traefik:
         entryPoints:
@@ -247,10 +267,7 @@ all:
         serviceName: "{{ traefik_dashboard_service_name }}"
         domain: "{{ traefik_dashboard_domain }}"
         secretName: "{{ traefik_dashboard_https_secret_name }}"
-        clusterIssuer: "{{ traefik_dashboard_cluster_issuer_name }}"
         vpnOnlyEnabled: "{{ traefik_dashboard_vpn_only_enabled }}"
-        httpEnable: "{{ traefik_dashboard_ingress_http_enable }}"
-        httpsEnable: "{{ traefik_dashboard_ingress_https_enable }}"
       extraObjects: "{{ traefik_post_extra_objects }}"
     # ---------
     # ESO integration: Vault → K8s Secrets

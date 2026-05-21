@@ -111,40 +111,68 @@ spec:
           port: {{ .Values.external.httpsPort }}
         - protocol: TCP
           port: {{ .Values.apiserver.port }}
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.namespace }}
-          podSelector:
-            matchLabels:
-              {{- toYaml .Values.acmeSolverLabels | nindent 14 }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.acmeSolver.port }} # ACME solver listens on 8089
 
 # =============================================================================
-# ACME SOLVER PODS (created by cert-manager for HTTP-01 challenges)
+# ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
 # =============================================================================
-
+{{- if .Values.issuerEnabled }}
+{{- $spec := .Values.issuer.spec | default dict }}
+{{- if hasKey $spec "acme" }}
+{{- range $i, $solver := ($spec.acme.solvers | default list) }}
+{{- if hasKey $solver "http01" }}
+{{- $ing := $solver.http01.ingress | default dict }}
+{{- $solverLabels := dig "podTemplate" "metadata" "labels" (dict "acme.cert-manager.io/http01-solver" "true") $ing }}
 ---
-# Allow ACME solver pod ingress from traefik
+# http01 solver #{{ $i }} — ingress к solver-pod от traefik
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-acme-solver
-  namespace: {{ .Values.namespace }}
+  name: "allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.namespace }}
 spec:
   podSelector:
     matchLabels:
-      {{- toYaml .Values.acmeSolverLabels | nindent 6 }}
+      {{- toYaml $solverLabels | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: traefik
-              app.kubernetes.io/instance: {{ .Values.instanceName }}
+              app.kubernetes.io/instance: {{ $.Values.instanceName }}
       ports:
         - protocol: TCP
-          port: {{ .Values.acmeSolver.port }}
+          port: {{ $.Values.acmeSolver.port }}
+---
+# http01 solver #{{ $i }} — egress traefik → solver-pod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ $.Values.namespace }}-allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+      app.kubernetes.io/instance: {{ $.Values.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $solverLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

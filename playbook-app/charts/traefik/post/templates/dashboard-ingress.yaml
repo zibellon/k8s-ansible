@@ -1,8 +1,9 @@
 # =============================================================================
-# TRAEFIK DASHBOARD INGRESS - HTTPS
+# TRAEFIK DASHBOARD INGRESS
+#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
+#   issuerEnabled false → HTTP Ingress (web, без TLS)
 # =============================================================================
-
-{{- if .Values.dashboard.httpsEnable }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,14 +15,13 @@ spec:
   dnsNames:
     - "{{ .Values.dashboard.domain }}"
   issuerRef:
-    name: {{ .Values.dashboard.clusterIssuer }}
-    kind: ClusterIssuer
-
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ingress-traefik-dashboard-https
+  name: ingress-traefik-dashboard
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
@@ -36,6 +36,32 @@ spec:
     - hosts:
         - {{ .Values.dashboard.domain }}
       secretName: {{ .Values.dashboard.secretName }}
+  rules:
+    - host: {{ .Values.dashboard.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.dashboard.serviceName }}
+                port:
+                  number: 8080
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-traefik-dashboard
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
+    {{- if .Values.dashboard.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
   rules:
     - host: {{ .Values.dashboard.domain }}
       http:
