@@ -1,8 +1,10 @@
 # =============================================================================
-# INGRESS FOR GRAFANA — HTTPS (Traefik)
+# INGRESS FOR GRAFANA (Traefik)
+#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
+#   issuerEnabled false → HTTP Ingress (web, без TLS)
 # =============================================================================
-
-{{- if and .Values.grafana.enabled .Values.grafana.ingress.httpsEnable }}
+{{- if .Values.grafana.enabled }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,13 +16,13 @@ spec:
   dnsNames:
     - {{ .Values.grafana.ingress.domain }}
   issuerRef:
-    name: {{ .Values.clusterIssuer }}
-    kind: ClusterIssuer
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ui-https
+  name: ui
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
@@ -46,4 +48,31 @@ spec:
                 name: grafana
                 port:
                   number: {{ .Values.grafana.port }}
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ui
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
+    {{- if .Values.grafana.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  rules:
+    - host: {{ .Values.grafana.ingress.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: {{ .Values.grafana.port }}
+{{- end }}
 {{- end }}

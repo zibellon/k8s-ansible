@@ -1,8 +1,10 @@
 # =============================================================================
-# INGRESS FOR PROMETHEUS UI — HTTPS (Traefik)
+# INGRESS FOR PROMETHEUS UI (Traefik)
+#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
+#   issuerEnabled false → HTTP Ingress (web, без TLS)
 # =============================================================================
-
-{{- if and (and .Values.prometheus_operator.enabled .Values.prometheus.enabled) .Values.prometheus.ingress.httpsEnable }}
+{{- if and .Values.prometheus_operator.enabled .Values.prometheus.enabled }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,14 +16,13 @@ spec:
   dnsNames:
     - {{ .Values.prometheus.ingress.domain }}
   issuerRef:
-    name: {{ .Values.clusterIssuer }}
-    kind: ClusterIssuer
-
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: prometheus-https
+  name: prometheus
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
@@ -47,4 +48,31 @@ spec:
                 name: prometheus-instance
                 port:
                   number: {{ .Values.prometheus.port }}
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
+    {{- if .Values.prometheus.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  rules:
+    - host: {{ .Values.prometheus.ingress.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus-instance
+                port:
+                  number: {{ .Values.prometheus.port }}
+{{- end }}
 {{- end }}

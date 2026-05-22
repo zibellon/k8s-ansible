@@ -1,8 +1,10 @@
 # =============================================================================
-# INGRESS FOR ALERTMANAGER UI — HTTPS (Traefik)
+# INGRESS FOR ALERTMANAGER UI (Traefik)
+#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
+#   issuerEnabled false → HTTP Ingress (web, без TLS)
 # =============================================================================
-
-{{- if and (and .Values.prometheus_operator.enabled .Values.alertmanager.enabled) .Values.alertmanager.ingress.httpsEnable }}
+{{- if and .Values.prometheus_operator.enabled .Values.alertmanager.enabled }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,14 +16,13 @@ spec:
   dnsNames:
     - {{ .Values.alertmanager.ingress.domain }}
   issuerRef:
-    name: {{ .Values.clusterIssuer }}
-    kind: ClusterIssuer
-
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: alertmanager-https
+  name: alertmanager
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
@@ -47,4 +48,31 @@ spec:
                 name: alertmanager-instance
                 port:
                   number: {{ .Values.alertmanager.port }}
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: alertmanager
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
+    {{- if .Values.alertmanager.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressClass }}
+  rules:
+    - host: {{ .Values.alertmanager.ingress.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: alertmanager-instance
+                port:
+                  number: {{ .Values.alertmanager.port }}
+{{- end }}
 {{- end }}

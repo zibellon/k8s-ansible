@@ -22,7 +22,35 @@ all:
 
     # Common ingress (unified for grafana / prometheus / alertmanager UIs).
     mon_system_ingress_class_name: "traefik-lb"
-    mon_system_cluster_issuer_name: "acme-prod"
+    # cert-manager Issuer (per-component, namespaced) — один на mon-system
+    # (3 UI: grafana/prometheus/alertmanager).
+    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
+    # false → HTTP-ingress без TLS (например за Cloudflare).
+    mon_system_cert_manager_issuer_enabled: true
+    mon_system_cert_manager_issuer:
+      name: "mon-system-acme"
+      spec:
+        acme:
+          server: "https://acme-v02.api.letsencrypt.org/directory"
+          email: "some-email-123@gmail.com"
+          privateKeySecretRef:
+            name: "mon-system-acme-account-key"
+          solvers:
+            - http01:
+                ingress:
+                  ingressClassName: "traefik-lb"
+                  ingressTemplate:
+                    metadata:
+                      annotations:
+                        "kubernetes.io/ingress.class": "traefik-lb"
+                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                  podTemplate:
+                    metadata:
+                      labels:
+                        app.kubernetes.io/name: acme-solver
+                        app.kubernetes.io/instance: traefik-lb
+                        app.kubernetes.io/component: acme-http01-solver
+                        app.kubernetes.io/managed-by: cert-manager
 
     # Helm phase timeouts (one per --tags phase).
     mon_system_crds_helm_timeout: "5m"
@@ -100,8 +128,6 @@ all:
     mon_system_prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
     mon_system_prometheus_https_secret_name: "cert-prometheus"
     mon_system_prometheus_vpn_only_enabled: false
-    mon_system_prometheus_ingress_http_enable: false
-    mon_system_prometheus_ingress_https_enable: true
     mon_system_prometheus_port: 9090
     mon_system_prometheus_reloader_port: 8080
 
@@ -186,8 +212,6 @@ all:
     mon_system_alertmanager_external_url: "https://alertmanager-k8s-v2.drawapp.ru"
     mon_system_alertmanager_https_secret_name: "cert-alertmanager"
     mon_system_alertmanager_vpn_only_enabled: false
-    mon_system_alertmanager_ingress_http_enable: false
-    mon_system_alertmanager_ingress_https_enable: true
     mon_system_alertmanager_port: 9093
     mon_system_alertmanager_mesh_tcp_port: 9094
     mon_system_alertmanager_mesh_udp_port: 9094
@@ -655,8 +679,6 @@ all:
     mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
     mon_system_grafana_external_url: "https://grafana-k8s-v2.drawapp.ru"
     mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
-    mon_system_grafana_ingress_http_enable: false
-    mon_system_grafana_ingress_https_enable: true
     mon_system_grafana_vpn_only_enabled: false
     mon_system_grafana_admin_username: "admin"
     mon_system_grafana_admin_secret_key_username: "username"
@@ -667,7 +689,6 @@ all:
     # ============================================================================
     # ---------
     # Pre-phase Helm values (NetworkPolicies + ESO chart)
-    # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
     # eso_vault_integration_mon_system_secrets — inline merge base + extra (задаётся ниже в eso_vault_integration_mon_system_secrets)
     mon_system_pre_helm_values:
       namespace: "{{ mon_system_namespace }}"
@@ -693,7 +714,8 @@ all:
       traefik:
         namespace: "{{ traefik_namespace }}"
         instanceName: "traefik-{{ traefik_namespace }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      issuer: "{{ mon_system_cert_manager_issuer }}"
+      issuerEnabled: "{{ mon_system_cert_manager_issuer_enabled }}"
       eso:
         vaultServerUrl: "{{ vault_internal_url }}"
         saName: "{{ eso_vault_integration_mon_system.sa_name }}"
@@ -971,7 +993,8 @@ all:
     mon_system_post_helm_values:
       namespace: "{{ mon_system_namespace }}"
       ingressClass: "{{ mon_system_ingress_class_name }}"
-      clusterIssuer: "{{ mon_system_cluster_issuer_name }}"
+      issuer: "{{ mon_system_cert_manager_issuer }}"
+      issuerEnabled: "{{ mon_system_cert_manager_issuer_enabled }}"
       vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
@@ -986,8 +1009,6 @@ all:
         ingress:
           domain: "{{ mon_system_grafana_domain }}"
           secretName: "{{ mon_system_grafana_https_secret_name }}"
-          httpEnable: "{{ mon_system_grafana_ingress_http_enable }}"
-          httpsEnable: "{{ mon_system_grafana_ingress_https_enable }}"
           vpnOnlyEnabled: "{{ mon_system_grafana_vpn_only_enabled }}"
       prometheus:
         enabled: "{{ mon_system_prometheus_enabled }}"
@@ -995,8 +1016,6 @@ all:
         ingress:
           domain: "{{ mon_system_prometheus_domain }}"
           secretName: "{{ mon_system_prometheus_https_secret_name }}"
-          httpEnable: "{{ mon_system_prometheus_ingress_http_enable }}"
-          httpsEnable: "{{ mon_system_prometheus_ingress_https_enable }}"
           vpnOnlyEnabled: "{{ mon_system_prometheus_vpn_only_enabled }}"
       alertmanager:
         enabled: "{{ mon_system_alertmanager_enabled }}"
@@ -1004,8 +1023,6 @@ all:
         ingress:
           domain: "{{ mon_system_alertmanager_domain }}"
           secretName: "{{ mon_system_alertmanager_https_secret_name }}"
-          httpEnable: "{{ mon_system_alertmanager_ingress_http_enable }}"
-          httpsEnable: "{{ mon_system_alertmanager_ingress_https_enable }}"
           vpnOnlyEnabled: "{{ mon_system_alertmanager_vpn_only_enabled }}"
       loki:
         enabled: "{{ mon_system_loki_enabled }}"
