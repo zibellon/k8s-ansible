@@ -35,10 +35,35 @@ all:
     vault_ui_domain: "vault-k8s-v2.drawapp.ru"
     vault_ui_https_secret_name: "cert-vault-ui"
     vault_ui_vpn_only_enabled: false
-    vault_ui_ingress_http_enable: false
-    vault_ui_ingress_https_enable: true
-    vault_ui_cluster_issuer_name: "acme-prod"
     vault_ui_ingress_class_name: "traefik-lb"
+    # cert-manager Issuer (per-component, namespaced).
+    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
+    # false → HTTP-ingress без TLS (например за Cloudflare).
+    vault_cert_manager_issuer_enabled: true
+    vault_cert_manager_issuer:
+      name: "vault-acme"
+      spec:
+        acme:
+          server: "https://acme-v02.api.letsencrypt.org/directory"
+          email: "some-email-123@gmail.com"
+          privateKeySecretRef:
+            name: "vault-acme-account-key"
+          solvers:
+            - http01:
+                ingress:
+                  ingressClassName: "traefik-lb"
+                  ingressTemplate:
+                    metadata:
+                      annotations:
+                        "kubernetes.io/ingress.class": "traefik-lb"
+                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                  podTemplate:
+                    metadata:
+                      labels:
+                        app.kubernetes.io/name: acme-solver
+                        app.kubernetes.io/instance: traefik-lb
+                        app.kubernetes.io/component: acme-http01-solver
+                        app.kubernetes.io/managed-by: cert-manager
     # Vault unseal (bank-vaults operator stores keys in K8s Secret)
     # secretShares / secretThreshold map directly to unsealConfig.secretShares / secretThreshold in Vault CR
     # bank-vaults defaults: 5 / 3 — always set explicitly to avoid surprises
@@ -62,7 +87,6 @@ all:
     # Pre-phase kustomize patches (operator-side customization, default empty)
     vault_pre_kustomize_patches: []
     # Pre-phase values (NetworkPolicies chart)
-    # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
     vault_pre_helm_values:
       namespace: "{{ vault_namespace }}"
       traefik:
@@ -70,7 +94,8 @@ all:
         instanceName: "traefik-{{ traefik_namespace }}"
       externalSecrets:
         namespace: "{{ external_secrets_namespace }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      issuer: "{{ vault_cert_manager_issuer }}"
+      issuerEnabled: "{{ vault_cert_manager_issuer_enabled }}"
       extraObjects: "{{ vault_pre_extra_objects }}"
     # ---
     # ---
@@ -81,15 +106,14 @@ all:
     # Post-phase values (Ingress chart)
     vault_post_helm_values:
       namespace: "{{ vault_namespace }}"
+      issuer: "{{ vault_cert_manager_issuer }}"
+      issuerEnabled: "{{ vault_cert_manager_issuer_enabled }}"
       ingress:
         ingressClass: "{{ vault_ui_ingress_class_name }}"
         domain: "{{ vault_ui_domain }}"
-        clusterIssuer: "{{ vault_ui_cluster_issuer_name }}"
         secretName: "{{ vault_ui_https_secret_name }}"
         vpnOnlyEnabled: "{{ vault_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-        httpEnable: "{{ vault_ui_ingress_http_enable }}"
-        httpsEnable: "{{ vault_ui_ingress_https_enable }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:

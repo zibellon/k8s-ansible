@@ -1,8 +1,9 @@
 # =============================================================================
-# VAULT INGRESS - HTTPS
+# VAULT UI INGRESS
+#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
+#   issuerEnabled false → HTTP Ingress (web, без TLS)
 # =============================================================================
-
-{{- if .Values.ingress.httpsEnable }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,21 +15,20 @@ spec:
   dnsNames:
     - {{ .Values.ingress.domain | quote }}
   issuerRef:
-    name: {{ .Values.ingress.clusterIssuer }}
-    kind: ClusterIssuer
-
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ui-https
+  name: vault-ui
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: {{ .Values.ingress.ingressClass | quote }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- if .Values.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.ingress.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.ingressClass }}
@@ -36,6 +36,32 @@ spec:
     - hosts:
         - {{ .Values.ingress.domain }}
       secretName: {{ .Values.ingress.secretName }}
+  rules:
+    - host: {{ .Values.ingress.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vault
+                port:
+                  number: 8200
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault-ui
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.ingressClass | quote }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- if .Values.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.ingress.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.ingressClass }}
   rules:
     - host: {{ .Values.ingress.domain }}
       http:
