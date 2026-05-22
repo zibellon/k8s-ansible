@@ -22,34 +22,48 @@ all:
     traefik_dashboard_https_secret_name: "cert-traefik-dashboard"
     traefik_dashboard_service_name: "traefik-dashboard"
     traefik_dashboard_ingress_class_name: "traefik-lb"
-    # cert-manager Issuer (per-component, namespaced).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    traefik_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     traefik_cert_manager_issuer:
-      name: "traefik-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "traefik-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "traefik-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "traefik-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. traefik — 1 домен (dashboard).
+    traefik_ingress_config:
+      domain: "{{ traefik_dashboard_domain }}"
+      tlsSecretName: "{{ traefik_dashboard_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ traefik_dashboard_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ traefik_dashboard_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
     # Used in cilium-install.yaml post values
     traefik_web_port: 80 # NOT CHANGE
     traefik_websecure_port: 443 # NOT CHANGE
@@ -108,7 +122,6 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ traefik_cert_manager_issuer }}"
-      issuerEnabled: "{{ traefik_cert_manager_issuer_enabled }}"
       extraObjects: "{{ traefik_pre_extra_objects }}"
     # ---
     # ---
@@ -261,20 +274,15 @@ all:
     traefik_post_helm_values:
       namespace: "{{ traefik_namespace }}"
       issuer: "{{ traefik_cert_manager_issuer }}"
-      issuerEnabled: "{{ traefik_cert_manager_issuer_enabled }}"
-      ingressClass: "{{ traefik_dashboard_ingress_class_name }}"
+      ingressConfig: "{{ traefik_ingress_config }}"
       traefik:
         entryPoints:
           web: "{{ traefik_web_entrypoint }}"
           websecure: "{{ traefik_websecure_entrypoint }}"
       middlewares: "{{ traefik_middlewares }}"
       vpnMiddlewares: "{{ vpn_traefik_middlewares }}"
-      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       dashboard:
         serviceName: "{{ traefik_dashboard_service_name }}"
-        domain: "{{ traefik_dashboard_domain }}"
-        secretName: "{{ traefik_dashboard_https_secret_name }}"
-        vpnOnlyEnabled: "{{ traefik_dashboard_vpn_only_enabled }}"
       extraObjects: "{{ traefik_post_extra_objects }}"
     # ---------
     # ESO integration: Vault → K8s Secrets
