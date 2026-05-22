@@ -19,34 +19,48 @@ all:
     teleport_tls_secret_name: "cert-teleport"
     teleport_ingress_class_name: "traefik-lb"
     teleport_vpn_only_enabled: false
-    # cert-manager Issuer (per-component, namespaced).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    teleport_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     teleport_cert_manager_issuer:
-      name: "teleport-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "teleport-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "teleport-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "teleport-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. teleport — 1 домен (web UI).
+    teleport_ingress_config:
+      domain: "{{ teleport_domain }}"
+      tlsSecretName: "{{ teleport_tls_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ teleport_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ teleport_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      certificate:
+        enabled: true
 
     # Cluster identity (clusterName = FQDN, immutable после первого деплоя!)
     teleport_cluster_name: "{{ teleport_domain }}"
@@ -98,7 +112,6 @@ all:
         vpnOnlyEnabled: "{{ teleport_vpn_only_enabled }}"
         vpnIps: "{{ vpn_ips }}"
       issuer: "{{ teleport_cert_manager_issuer }}"
-      issuerEnabled: "{{ teleport_cert_manager_issuer_enabled }}"
       extraObjects: "{{ teleport_pre_extra_objects }}"
     # ---
     # ---
@@ -162,13 +175,7 @@ all:
     teleport_post_helm_values:
       namespace: "{{ teleport_namespace }}"
       issuer: "{{ teleport_cert_manager_issuer }}"
-      issuerEnabled: "{{ teleport_cert_manager_issuer_enabled }}"
-      ingress:
-        ingressClass: "{{ teleport_ingress_class_name }}"
-        domain: "{{ teleport_domain }}"
-        tlsSecretName: "{{ teleport_tls_secret_name }}"
-        vpnOnlyEnabled: "{{ teleport_vpn_only_enabled }}"
-        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      ingressConfig: "{{ teleport_ingress_config }}"
       webServicePort: "{{ teleport_web_service_port }}"
       sshPort: "{{ teleport_ssh_port }}"
       reverseTunnelPort: "{{ teleport_reverse_tunnel_port }}"

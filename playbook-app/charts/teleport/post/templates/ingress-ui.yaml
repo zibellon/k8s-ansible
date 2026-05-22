@@ -1,22 +1,9 @@
 # =============================================================================
-# TELEPORT WEB UI INGRESS (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS IngressRoute (websecure, TLS)
-#   issuerEnabled false → HTTP IngressRoute (web, без TLS)
+# INGRESSROUTE FOR TELEPORT WEB UI (Traefik)
+#   ingress.enabled    → рендерить IngressRoute
+#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.ingress.tlsSecretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.ingress.tlsSecretName }}
-  dnsNames:
-    - {{ .Values.ingress.domain | quote }}
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.ingressConfig.ingress.enabled }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -24,45 +11,20 @@ metadata:
   name: teleport-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+    kubernetes.io/ingress.class: "{{ .Values.ingressConfig.ingress.ingressClass }}"
 spec:
   entryPoints:
+    {{- if .Values.ingressConfig.ingress.tlsEnabled }}
     - {{ .Values.traefik.entryPoints.websecure }}
-  routes:
-    - match: Host(`{{ .Values.ingress.domain }}`) && PathPrefix(`/`)
-      kind: Rule
-      {{- if .Values.ingress.vpnOnlyEnabled }}
-      middlewares:
-        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
-        - name: {{ .name }}
-          namespace: {{ .namespace }}
-        {{- end }}
-      {{- end }}
-      services:
-        - name: teleport
-          port: {{ .Values.webServicePort }}
-          scheme: https
-          serversTransport: teleport-insecure
-  tls:
-    secretName: {{ .Values.ingress.tlsSecretName }}
-{{- else }}
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: teleport-ui
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
-spec:
-  entryPoints:
+    {{- else }}
     - {{ .Values.traefik.entryPoints.web }}
+    {{- end }}
   routes:
-    - match: Host(`{{ .Values.ingress.domain }}`) && PathPrefix(`/`)
+    - match: Host(`{{ .Values.ingressConfig.domain }}`) && PathPrefix(`/`)
       kind: Rule
-      {{- if .Values.ingress.vpnOnlyEnabled }}
+      {{- if .Values.ingressConfig.ingress.vpnOnlyEnabled }}
       middlewares:
-        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
+        {{- range .Values.ingressConfig.ingress.vpnIngressRouteMiddlewares }}
         - name: {{ .name }}
           namespace: {{ .namespace }}
         {{- end }}
@@ -72,4 +34,8 @@ spec:
           port: {{ .Values.webServicePort }}
           scheme: https
           serversTransport: teleport-insecure
+  {{- if and .Values.ingressConfig.ingress.tlsEnabled .Values.ingressConfig.tlsSecretName }}
+  tls:
+    secretName: {{ .Values.ingressConfig.tlsSecretName }}
+  {{- end }}
 {{- end }}
