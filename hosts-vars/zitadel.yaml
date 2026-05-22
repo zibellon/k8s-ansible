@@ -23,11 +23,36 @@ all:
     # ---------
     zitadel_domain: ""
     zitadel_tls_secret_name: "cert-zitadel"
-    zitadel_cluster_issuer_name: "acme-prod"
     zitadel_ingress_class_name: "traefik-lb"
-    zitadel_ingress_http_enable: false
-    zitadel_ingress_https_enable: true
     zitadel_vpn_only_enabled: false
+    # cert-manager Issuer (per-component, namespaced).
+    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
+    # false → HTTP-ingress без TLS (например за Cloudflare).
+    zitadel_cert_manager_issuer_enabled: true
+    zitadel_cert_manager_issuer:
+      name: "zitadel-acme"
+      spec:
+        acme:
+          server: "https://acme-v02.api.letsencrypt.org/directory"
+          email: "some-email-123@gmail.com"
+          privateKeySecretRef:
+            name: "zitadel-acme-account-key"
+          solvers:
+            - http01:
+                ingress:
+                  ingressClassName: "traefik-lb"
+                  ingressTemplate:
+                    metadata:
+                      annotations:
+                        "kubernetes.io/ingress.class": "traefik-lb"
+                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                  podTemplate:
+                    metadata:
+                      labels:
+                        app.kubernetes.io/name: acme-solver
+                        app.kubernetes.io/instance: traefik-lb
+                        app.kubernetes.io/component: acme-http01-solver
+                        app.kubernetes.io/managed-by: cert-manager
     zitadel_postgresql_storage_class: "lnstr-major-multi-sync"
     zitadel_postgresql_storage_size: "10Gi"
     # ---
@@ -45,7 +70,6 @@ all:
     zitadel_pre_kustomize_patches: []
     # Pre-phase values (ESO Resources + NetworkPolicies chart)
     # eso_vault_integration_zitadel_secrets — inline merge base + extra (задаётся ниже в eso_vault_integration_zitadel_secrets)
-    # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
     zitadel_pre_helm_values:
       namespace: "{{ zitadel_namespace }}"
       externalSecrets:
@@ -64,7 +88,8 @@ all:
         secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      issuer: "{{ zitadel_cert_manager_issuer }}"
+      issuerEnabled: "{{ zitadel_cert_manager_issuer_enabled }}"
       extraObjects: "{{ zitadel_pre_extra_objects }}"
     # ---
     # ---
@@ -157,6 +182,8 @@ all:
     # не определены в hosts-vars/ — берутся из hosts-vars-override/zitadel.yaml
     zitadel_post_helm_values:
       namespace: "{{ zitadel_namespace }}"
+      issuer: "{{ zitadel_cert_manager_issuer }}"
+      issuerEnabled: "{{ zitadel_cert_manager_issuer_enabled }}"
       resources: "{{ zitadel_resources }}"
       nodeSelector: "{{ zitadel_node_selector }}"
       tolerations: "{{ zitadel_tolerations }}"
@@ -164,12 +191,9 @@ all:
       ingress:
         ingressClass: "{{ zitadel_ingress_class_name }}"
         domain: "{{ zitadel_domain }}"
-        clusterIssuer: "{{ zitadel_cluster_issuer_name }}"
         tlsSecretName: "{{ zitadel_tls_secret_name }}"
         vpnOnlyEnabled: "{{ zitadel_vpn_only_enabled }}"
         vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
-        httpEnable: "{{ zitadel_ingress_http_enable }}"
-        httpsEnable: "{{ zitadel_ingress_https_enable }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
