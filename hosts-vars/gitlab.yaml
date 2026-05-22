@@ -41,13 +41,37 @@ all:
     gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
     gitlab_minio_api_https_secret_name: "cert-gitlab-minio-api"
     # ---
-    gitlab_cluster_issuer_name: "acme-prod"
     gitlab_ingress_class_name: "traefik-lb"
-    gitlab_ingress_http_enable: false
-    gitlab_ingress_https_enable: true
-    gitlab_minio_ingress_http_enable: false
-    gitlab_minio_ingress_https_enable: true
     gitlab_vpn_only_enabled: false
+    # cert-manager Issuer (per-component, namespaced) — один на весь gitlab
+    # (все 5 доменов: UI/registry/pages/minio-api/minio-console).
+    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
+    # false → HTTP-ingress без TLS (например за Cloudflare).
+    gitlab_cert_manager_issuer_enabled: true
+    gitlab_cert_manager_issuer:
+      name: "gitlab-acme"
+      spec:
+        acme:
+          server: "https://acme-v02.api.letsencrypt.org/directory"
+          email: "some-email-123@gmail.com"
+          privateKeySecretRef:
+            name: "gitlab-acme-account-key"
+          solvers:
+            - http01:
+                ingress:
+                  ingressClassName: "traefik-lb"
+                  ingressTemplate:
+                    metadata:
+                      annotations:
+                        "kubernetes.io/ingress.class": "traefik-lb"
+                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                  podTemplate:
+                    metadata:
+                      labels:
+                        app.kubernetes.io/name: acme-solver
+                        app.kubernetes.io/instance: traefik-lb
+                        app.kubernetes.io/component: acme-http01-solver
+                        app.kubernetes.io/managed-by: cert-manager
 
     # GitLab PostgreSQL
     gitlab_postgresql_image: "docker.io/postgres:16-alpine"
@@ -99,7 +123,6 @@ all:
     gitlab_pre_kustomize_patches: []
     # Pre-phase values (ESO Resources + NetworkPolicies chart)
     # eso_vault_integration_gitlab_secrets — inline merge base + extra (задаётся ниже в eso_vault_integration_gitlab_secrets)
-    # acme_pod_labels_result_fact — runtime-факт от tasks-resolve-acme-solver.yaml [always]
     gitlab_pre_helm_values:
       namespace: "{{ gitlab_namespace }}"
       externalSecrets:
@@ -130,7 +153,8 @@ all:
         s3Endpoint: "{{ gitlab_minio_s3_endpoint }}"
         s3Region: "{{ gitlab_minio_s3_region }}"
         s3PathStyle: "{{ gitlab_minio_s3_path_style }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      issuer: "{{ gitlab_cert_manager_issuer }}"
+      issuerEnabled: "{{ gitlab_cert_manager_issuer_enabled }}"
       extraObjects: "{{ gitlab_pre_extra_objects }}"
     # ---
     # ---
@@ -425,20 +449,19 @@ all:
     # Post-phase values (Ingress chart)
     gitlab_post_helm_values:
       namespace: "{{ gitlab_namespace }}"
+      issuer: "{{ gitlab_cert_manager_issuer }}"
+      issuerEnabled: "{{ gitlab_cert_manager_issuer_enabled }}"
       sshPortExternal: "{{ gitlab_ssh_port_external }}"
       gitlab:
         ingressClass: "{{ gitlab_ingress_class_name }}"
         domain: "{{ gitlab_ui_domain }}"
         registryDomain: "{{ gitlab_registry_domain }}"
         pagesDomain: "{{ gitlab_pages_domain }}"
-        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
         uiSecretName: "{{ gitlab_ui_https_secret_name }}"
         registrySecretName: "{{ gitlab_registry_https_secret_name }}"
         pagesSecretName: "{{ gitlab_pages_https_secret_name }}"
         vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-        httpEnable: "{{ gitlab_ingress_http_enable }}"
-        httpsEnable: "{{ gitlab_ingress_https_enable }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
@@ -448,13 +471,10 @@ all:
         ingressClass: "{{ gitlab_ingress_class_name }}"
         consoleDomain: "{{ gitlab_minio_console_domain }}"
         apiDomain: "{{ gitlab_minio_api_domain }}"
-        clusterIssuer: "{{ gitlab_cluster_issuer_name }}"
         consoleSecretName: "{{ gitlab_minio_console_https_secret_name }}"
         apiSecretName: "{{ gitlab_minio_api_https_secret_name }}"
         vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-        httpEnable: "{{ gitlab_minio_ingress_http_enable }}"
-        httpsEnable: "{{ gitlab_minio_ingress_https_enable }}"
       haproxy:
         namespace: "{{ haproxy_namespace }}"
         ingressClass: "{{ haproxy_ingress_class }}"

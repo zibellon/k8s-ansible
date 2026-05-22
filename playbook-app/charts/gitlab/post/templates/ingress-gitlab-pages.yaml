@@ -1,8 +1,9 @@
 # =============================================================================
-# INGRESS FOR GITLAB PAGES — HTTPS (Traefik)
+# INGRESS FOR GITLAB PAGES (Traefik)
+#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
+#   issuerEnabled false → HTTP Ingress (web, без TLS)
 # =============================================================================
-
-{{- if .Values.gitlab.httpsEnable }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,14 +15,13 @@ spec:
   dnsNames:
     - {{ .Values.gitlab.pagesDomain }}
   issuerRef:
-    name: {{ .Values.gitlab.clusterIssuer }}
-    kind: ClusterIssuer
-
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: gitlab-pages-https
+  name: gitlab-pages
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
@@ -36,6 +36,32 @@ spec:
     - hosts:
         - {{ .Values.gitlab.pagesDomain }}
       secretName: {{ .Values.gitlab.pagesSecretName }}
+  rules:
+    - host: {{ .Values.gitlab.pagesDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitlab-gitlab-pages
+                port:
+                  number: 8090
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gitlab-pages
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
+    {{- if .Values.gitlab.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.gitlab.ingressClass }}
   rules:
     - host: {{ .Values.gitlab.pagesDomain }}
       http:
