@@ -18,34 +18,48 @@ all:
     longhorn_ui_vpn_only_enabled: false
     longhorn_ui_https_secret_name: "cert-longhorn-ui"
     longhorn_ui_ingress_class_name: "traefik-lb"
-    # cert-manager Issuer (per-component, namespaced).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    longhorn_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     longhorn_cert_manager_issuer:
-      name: "longhorn-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "longhorn-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "longhorn-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "longhorn-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. longhorn — 1 домен (UI).
+    longhorn_ingress_config:
+      domain: "{{ longhorn_ui_domain }}"
+      tlsSecretName: "{{ longhorn_ui_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ longhorn_ui_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ longhorn_ui_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
     longhorn_storage_classes: []
 
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
@@ -69,7 +83,6 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ longhorn_cert_manager_issuer }}"
-      issuerEnabled: "{{ longhorn_cert_manager_issuer_enabled }}"
       extraObjects: "{{ longhorn_pre_extra_objects }}"
     # Pre-phase kustomize patches (operator-side customization, default empty)
     longhorn_pre_kustomize_patches: []
@@ -79,13 +92,7 @@ all:
     longhorn_post_helm_values:
       namespace: "{{ longhorn_namespace }}"
       issuer: "{{ longhorn_cert_manager_issuer }}"
-      issuerEnabled: "{{ longhorn_cert_manager_issuer_enabled }}"
-      ingress:
-        ingressClass: "{{ longhorn_ui_ingress_class_name }}"
-        domain: "{{ longhorn_ui_domain }}"
-        secretName: "{{ longhorn_ui_https_secret_name }}"
-        vpnOnlyEnabled: "{{ longhorn_ui_vpn_only_enabled }}"
-        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      ingressConfig: "{{ longhorn_ingress_config }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
