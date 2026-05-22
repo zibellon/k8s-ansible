@@ -15,34 +15,59 @@ all:
     argocd_rpc_https_secret_name: "cert-argocd-rpc"
     argocd_vpn_only_enabled: false
     argocd_ingress_class_name: "traefik-lb"
-    # cert-manager Issuer (per-component, namespaced).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    argocd_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     argocd_cert_manager_issuer:
-      name: "argocd-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "argocd-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "argocd-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "argocd-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. argocd — 2 домена (ui + rpc), по объекту на каждый.
+    argocd_ui_ingress_config:
+      domain: "{{ argocd_ui_domain }}"
+      tlsSecretName: "{{ argocd_ui_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ argocd_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ argocd_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      certificate:
+        enabled: true
+    argocd_rpc_ingress_config:
+      domain: "{{ argocd_rpc_domain }}"
+      tlsSecretName: "{{ argocd_rpc_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ argocd_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ argocd_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      certificate:
+        enabled: true
     # ------
     argocd_admin_username: "admin"
     argocd_admin_secret_key_username: "username"
@@ -91,7 +116,6 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ argocd_cert_manager_issuer }}"
-      issuerEnabled: "{{ argocd_cert_manager_issuer_enabled }}"
       extraObjects: "{{ argocd_pre_extra_objects }}"
     # ---
     # ---
@@ -143,15 +167,8 @@ all:
     argocd_post_helm_values:
       namespace: "{{ argocd_namespace }}"
       issuer: "{{ argocd_cert_manager_issuer }}"
-      issuerEnabled: "{{ argocd_cert_manager_issuer_enabled }}"
-      ingress:
-        uiDomain: "{{ argocd_ui_domain }}"
-        rpcDomain: "{{ argocd_rpc_domain }}"
-        ingressClass: "{{ argocd_ingress_class_name }}"
-        uiSecretName: "{{ argocd_ui_https_secret_name }}"
-        rpcSecretName: "{{ argocd_rpc_https_secret_name }}"
-        vpnOnlyEnabled: "{{ argocd_vpn_only_enabled }}"
-        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      uiIngressConfig: "{{ argocd_ui_ingress_config }}"
+      rpcIngressConfig: "{{ argocd_rpc_ingress_config }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:

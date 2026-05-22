@@ -1,22 +1,9 @@
 # =============================================================================
 # INGRESSROUTE FOR ARGOCD UI (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS IngressRoute (websecure, TLS)
-#   issuerEnabled false → HTTP IngressRoute (web, без TLS)
+#   ingress.enabled    → рендерить IngressRoute
+#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.ingress.uiSecretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.ingress.uiSecretName }}
-  dnsNames:
-    - "{{ .Values.ingress.uiDomain }}"
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.uiIngressConfig.ingress.enabled }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -24,45 +11,21 @@ metadata:
   name: argocd-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+    kubernetes.io/ingress.class: "{{ .Values.uiIngressConfig.ingress.ingressClass }}"
 spec:
   entryPoints:
+    {{- if .Values.uiIngressConfig.ingress.tlsEnabled }}
     - {{ .Values.traefik.entryPoints.websecure }}
-  routes:
-    - kind: Rule
-      match: Host(`{{ .Values.ingress.uiDomain }}`)
-      priority: 10
-      {{- if .Values.ingress.vpnOnlyEnabled }}
-      middlewares:
-        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
-        - name: {{ .name }}
-          namespace: {{ .namespace }}
-        {{- end }}
-      {{- end }}
-      services:
-        - name: argocd-server
-          port: 80
-  tls:
-    secretName: {{ .Values.ingress.uiSecretName }}
-{{- else }}
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: argocd-ui
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
-spec:
-  entryPoints:
+    {{- else }}
     - {{ .Values.traefik.entryPoints.web }}
+    {{- end }}
   routes:
     - kind: Rule
-      match: Host(`{{ .Values.ingress.uiDomain }}`)
+      match: Host(`{{ .Values.uiIngressConfig.domain }}`)
       priority: 10
-      {{- if .Values.ingress.vpnOnlyEnabled }}
+      {{- if .Values.uiIngressConfig.ingress.vpnOnlyEnabled }}
       middlewares:
-        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
+        {{- range .Values.uiIngressConfig.ingress.vpnIngressRouteMiddlewares }}
         - name: {{ .name }}
           namespace: {{ .namespace }}
         {{- end }}
@@ -70,4 +33,8 @@ spec:
       services:
         - name: argocd-server
           port: 80
+  {{- if and .Values.uiIngressConfig.ingress.tlsEnabled .Values.uiIngressConfig.tlsSecretName }}
+  tls:
+    secretName: {{ .Values.uiIngressConfig.tlsSecretName }}
+  {{- end }}
 {{- end }}

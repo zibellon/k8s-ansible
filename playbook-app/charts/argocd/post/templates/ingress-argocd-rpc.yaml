@@ -1,22 +1,10 @@
 # =============================================================================
 # INGRESSROUTE FOR ARGOCD RPC / gRPC (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS IngressRoute (websecure, TLS)
-#   issuerEnabled false → HTTP IngressRoute (web, без TLS)
+#   ingress.enabled    → рендерить IngressRoute
+#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
+# Matches gRPC requests by Content-Type header. Higher priority than UI route.
 # =============================================================================
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.ingress.rpcSecretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.ingress.rpcSecretName }}
-  dnsNames:
-    - "{{ .Values.ingress.rpcDomain }}"
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.rpcIngressConfig.ingress.enabled }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -24,46 +12,21 @@ metadata:
   name: argocd-rpc
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
+    kubernetes.io/ingress.class: "{{ .Values.rpcIngressConfig.ingress.ingressClass }}"
 spec:
   entryPoints:
+    {{- if .Values.rpcIngressConfig.ingress.tlsEnabled }}
     - {{ .Values.traefik.entryPoints.websecure }}
-  routes:
-    - kind: Rule
-      match: Host(`{{ .Values.ingress.rpcDomain }}`) && Header(`Content-Type`, `application/grpc`)
-      priority: 11
-      {{- if .Values.ingress.vpnOnlyEnabled }}
-      middlewares:
-        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
-        - name: {{ .name }}
-          namespace: {{ .namespace }}
-        {{- end }}
-      {{- end }}
-      services:
-        - name: argocd-server
-          port: 80
-          scheme: h2c
-  tls:
-    secretName: {{ .Values.ingress.rpcSecretName }}
-{{- else }}
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: argocd-rpc
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingress.ingressClass }}"
-spec:
-  entryPoints:
+    {{- else }}
     - {{ .Values.traefik.entryPoints.web }}
+    {{- end }}
   routes:
     - kind: Rule
-      match: Host(`{{ .Values.ingress.rpcDomain }}`) && Header(`Content-Type`, `application/grpc`)
+      match: Host(`{{ .Values.rpcIngressConfig.domain }}`) && Header(`Content-Type`, `application/grpc`)
       priority: 11
-      {{- if .Values.ingress.vpnOnlyEnabled }}
+      {{- if .Values.rpcIngressConfig.ingress.vpnOnlyEnabled }}
       middlewares:
-        {{- range .Values.ingress.vpnIngressRouteMiddlewares }}
+        {{- range .Values.rpcIngressConfig.ingress.vpnIngressRouteMiddlewares }}
         - name: {{ .name }}
           namespace: {{ .namespace }}
         {{- end }}
@@ -72,4 +35,8 @@ spec:
         - name: argocd-server
           port: 80
           scheme: h2c
+  {{- if and .Values.rpcIngressConfig.ingress.tlsEnabled .Values.rpcIngressConfig.tlsSecretName }}
+  tls:
+    secretName: {{ .Values.rpcIngressConfig.tlsSecretName }}
+  {{- end }}
 {{- end }}
