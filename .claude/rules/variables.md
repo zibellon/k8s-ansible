@@ -42,9 +42,9 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 |---|---|
 | `_domain`, `_ui_domain`, `_rpc_domain` | FQDN for ingress |
 | `_https_secret_name` | `tls.secretName` on the Ingress / IngressRoute |
-| `_cluster_issuer_name` | cert-manager `ClusterIssuer` name |
+| `_cert_manager_issuer` | Raw `{name, spec}` namespaced cert-manager `Issuer` for the component |
+| `_cert_manager_issuer_enabled` | If true → `Issuer` + `Certificate` + HTTPS ingress; if false → plain HTTP ingress |
 | `_ingress_class_name` | Traefik ingress class (usually `traefik-lb`) |
-| `_http_enable`, `_https_enable` | Toggle plain-HTTP ingress |
 | `_vpn_only_enabled` | If true, attach Traefik `vpn-only` middleware |
 
 ### 1.3 ServiceMonitor suffixes
@@ -279,9 +279,9 @@ Per-file source of truth in parentheses.
 
 | Variable | Purpose |
 |---|---|
-| `cert_manager_cluster_issuers` | List of `ClusterIssuer` definitions. Each includes `name`, `server`, `email`, `privateKeySecretName`, `solvers[]`. Single source of truth for HTTP-01 / DNS-01 issuers. |
+| `cert_manager_cluster_issuers` | List of raw `{name, spec}` `ClusterIssuer` definitions — `spec` rendered verbatim. Cluster-wide; remains available as operator infrastructure. |
 
-Downstream components resolve their issuer via `tasks-resolve-acme-solver.yaml`, producing the `_acme_*` output facts listed in §1.2.
+Standard ingress components do not consume `cert_manager_cluster_issuers` — each defines its own namespaced `Issuer` via `<c>_cert_manager_issuer` (see [`networking.md`](networking.md) §4).
 
 ### 2.9 Teleport configure (`hosts-vars/teleport-configure.yaml`)
 
@@ -323,7 +323,6 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `is_node_joined` | `tasks-set-is-node-joined.yaml` | Skip re-join logic |
 | `joined_node_ips` | `tasks-set-is-node-joined.yaml` | Cilium host-firewall `nodeIpsList`, certSANs |
 | `joined_node_hostnames` | same | Logging / validation |
-| `acme_cluster_issuer_result_fact`, `acme_solver_result_fact`, `acme_pod_labels_result_fact` (global, not per-component) | `tasks-resolve-acme-solver.yaml` | NetworkPolicy templates in `<c>/pre/` (typically `acme_pod_labels_result_fact`) |
 
 ### 2.12 Ansible runtime settings (`hosts-vars/ansible.yaml`)
 

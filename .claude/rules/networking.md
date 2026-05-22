@@ -88,42 +88,35 @@ spec:
 
 ---
 
-## 4. ACME HTTP-01 solver label resolution
+## 4. ACME HTTP-01 solver — per-component Issuer
 
-Traefik HTTP-01 challenges create solver pods that must be matched by `NetworkPolicy` in the `pre` phase (allow challenge traffic ingress). The solver's pod labels are defined on the `ClusterIssuer` (cert-manager), not globally — so downstream components can't hardcode them.
+Traefik HTTP-01 challenges create solver pods that must be admitted by `NetworkPolicy` in the `pre` phase (allow challenge traffic ingress). Each ingress component owns a namespaced cert-manager `Issuer` and derives the solver allow-rules from it — there is no global cluster-wide resolution step.
 
-### 4.1 The resolver task
+### 4.1 Per-component Issuer
 
-`tasks-resolve-acme-solver.yaml` (see [`reusable-tasks.md`](reusable-tasks.md) §1.9):
+Each ingress component `<c>` defines `<c>_cert_manager_issuer` in `hosts-vars/<c>.yaml` — a raw `{name, spec}` object whose `spec` is the verbatim cert-manager `Issuer` spec (ACME `server`, `email`, `privateKeySecretRef`, `solvers[]`). The companion toggle `<c>_cert_manager_issuer_enabled`:
 
-1. Reads the `cert_manager_cluster_issuers` list from inventory.
-2. Finds the entry by name (`{{ dto_cluster_issuer_name }}`).
-3. Picks the solver matching `{{ dto_ingress_class_name }}`.
-4. Exports three fixed global facts (only one ClusterIssuer/solver is resolved per playbook run, so global fact names cause no conflicts):
-   - `acme_cluster_issuer_result_fact` — full ClusterIssuer dict
-   - `acme_solver_result_fact` — full solver dict
-   - `acme_pod_labels_result_fact` — `podLabels` to match in `NetworkPolicy`
+- `true` → the `pre/` chart renders the `Issuer` + solver-NetworkPolicies; the `post/` chart renders `Certificate` + HTTPS ingress.
+- `false` → no `Issuer`, no `Certificate`, no solver-NetworkPolicies; the `post/` chart renders a plain HTTP ingress (e.g. when TLS is terminated upstream by Cloudflare).
 
-### 4.2 Usage in install playbooks
+The object is passed verbatim into `<c>_pre_helm_values` and `<c>_post_helm_values` as `issuer` + `issuerEnabled`.
 
-In the `pre` phase, include the resolver with `tags: [always]` so facts are available for every phase run:
+### 4.2 issuer.yaml + solver-loop in pre/
 
-```yaml
-- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-resolve-acme-solver.yaml"
-  vars:
-    dto_label_name: "<c>-install-init"
-    dto_cluster_issuer_name: "{{ <c>_cluster_issuer_name }}"
-    dto_ingress_class_name: "{{ <c>_ingress_class_name }}"
-  tags: [always]
-```
+Each component's `pre/` chart contains:
 
-Then the `pre/` chart's `NetworkPolicy` template uses `{{ acme_pod_labels_result_fact | to_json }}` as the allow-selector for incoming HTTP-01 challenge traffic.
+- `templates/issuer.yaml` — renders the namespaced `Issuer` under `{{- if .Values.issuerEnabled }}`, `spec` dumped via `toYaml`. The template is byte-identical across all components.
+- the `NetworkPolicy` template — a solver-loop: iterates `.Values.issuer.spec.acme.solvers[]` and, for each `http01` solver, emits a pair of NetworkPolicies — (1) ingress in the component namespace (traefik → solver pod, port `acmeSolver.port`); (2) egress in the traefik namespace (traefik → solver pod). The pod selector uses the solver's `http01.ingress.podTemplate.metadata.labels` (falling back to `acme.cert-manager.io/http01-solver: "true"`). The whole block is gated by `issuerEnabled` + presence of `spec.acme`.
 
-### 4.3 Why this indirection matters
+### 4.3 Certificate + ingress in post/
 
-`cert-manager` config (list of issuers + solvers) is **the single source of truth**. Downstream components derive labels from it instead of hardcoding. When you change a solver's pod labels (upgrade, reconfigure), every consumer picks it up on next install run — no coordinated multi-file edits.
+The `post/` chart renders one merged ingress file per domain: under `issuerEnabled` it emits a `Certificate` (`issuerRef.kind: Issuer`, `name: {{ .Values.issuer.name }}`) plus the HTTPS ingress; otherwise a plain HTTP ingress.
 
-**Anti-pattern:** hard-coding solver pod labels in a component's `NetworkPolicy`. Always resolve via `tasks-resolve-acme-solver.yaml` (see [`playbook-conventions.md`](playbook-conventions.md) §17.2).
+### 4.4 Global ClusterIssuers
+
+`cert_manager_cluster_issuers` (`hosts-vars/cert-manager.yaml`) still defines cluster-wide raw `ClusterIssuer` resources — they remain available as operator infrastructure, but the standard ingress components no longer consume them.
+
+**Anti-pattern:** hard-coding solver pod labels in a component's `NetworkPolicy`. Always derive them from the component's own `<c>_cert_manager_issuer` solver definition (see [`playbook-conventions.md`](playbook-conventions.md) §17.2).
 
 ---
 
@@ -147,7 +140,7 @@ From `hosts-vars/k8s-base.yaml` (see [`variables.md`](variables.md) §2.1):
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | New node join times out at "TLS handshake" | Cilium host firewall policy doesn't include the new node's IPs | Run `cilium-install.yaml --tags post` with updated inventory first (§2) |
-| `NetworkPolicy` blocks ACME HTTP-01 challenge | Hardcoded solver pod labels; cert-manager config changed | Use `tasks-resolve-acme-solver.yaml` instead of hardcoding (§4) |
+| `NetworkPolicy` blocks ACME HTTP-01 challenge | Solver pod labels in `<c>_cert_manager_issuer` don't match the rendered solver pod | Align `http01.ingress.podTemplate.metadata.labels` in `<c>_cert_manager_issuer` with the actual solver pod labels (§4) |
 | Ingress works inside VPN but not outside (expected) or outside but not inside (not expected) | Middleware attachment inverted, or `vpn_ips` misconfigured | Check `hosts-vars/vpn-rules.yaml` and `<c>_vpn_only_enabled` flag |
 | Cilium agent pods fail with "kube-proxy conflict" | Someone re-enabled kube-proxy addon | Re-run `kubeadm init` after flipping `proxy.disabled` to `false`? — NO, remove kube-proxy DaemonSet instead. See `CLAUDE.md` §0 |
 | `kubectl` to apiserver fails with TLS verification error | certSANs missing a manager's IP/DNS | `apiserver-sans-update.yaml` (see [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §2) |

@@ -38,12 +38,12 @@ Template fields:
 - **Namespace.** `cert-manager`.
 - **Releases.** `cert-manager-pre`, `cert-manager`, `cert-manager-post`.
 - **External Helm repo.** `https://charts.jetstack.io` → chart `jetstack/cert-manager`, version `{{ cert_manager_helm_chart_version }}` (default `v1.20.2`; `v` префикс хранится в значении переменной — единая нормализация). HTTP↔OCI switchable via `cert_manager_helm_is_oci`.
-- **Required vars.** `cert_manager_namespace`, `cert_manager_helm_chart_version`, plus per-sub-component (`cert_manager_`, `cert_manager_cainjector_`, `cert_manager_webhook_`) tolerations/nodeSelector/affinity/resources. Global `cert_manager_cluster_issuers` (list of `ClusterIssuer` specs, including `solvers[]` with `ingressClass` + `podLabels`). Kustomize patches (default `[]`): `cert_manager_pre_kustomize_patches`, `cert_manager_post_kustomize_patches`.
+- **Required vars.** `cert_manager_namespace`, `cert_manager_helm_chart_version`, plus per-sub-component (`cert_manager_`, `cert_manager_cainjector_`, `cert_manager_webhook_`) tolerations/nodeSelector/affinity/resources. Global `cert_manager_cluster_issuers` (list of raw `{name, spec}` — `spec` is the verbatim `ClusterIssuer` spec). Kustomize patches (default `[]`): `cert_manager_pre_kustomize_patches`, `cert_manager_post_kustomize_patches`.
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium (CNI). Traefik (if using HTTP-01).
 - **Non-install playbooks.** None.
-- **Notes.** `cert_manager_cluster_issuers` is the single source of truth — downstream components derive ACME solver pod labels via `tasks-resolve-acme-solver.yaml` (never hard-code).
+- **Notes.** `cert_manager_cluster_issuers` provides cluster-wide raw `ClusterIssuer` resources as operator infrastructure — standard ingress components no longer consume it; each defines its own namespaced `Issuer` via `<c>_cert_manager_issuer` (see [`networking.md`](networking.md) §4).
 
 ## 3. `external-secrets`
 
@@ -131,7 +131,7 @@ Template fields:
 - **Namespace.** `argocd` (default; configurable via `argocd_namespace` — namespace handled by `helm template --namespace` при render'е chart templates, см. [`playbook-conventions.md`](playbook-conventions.md) §21).
 - **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`, `argocd-gitops`.
 - **External Helm repo.** No — local chart with kustomize render of pristine upstream `install.yaml` on master_manager_fact before helm install (see [`playbook-conventions.md`](playbook-conventions.md) §21).
-- **Required vars.** `argocd_namespace`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_ingress_class_name` (`traefik-lb`), `argocd_cluster_issuer_name`. Kustomize patches (default `[]`): `argocd_pre_kustomize_patches`, `argocd_install_kustomize_patches` (strategic merge patches на argocd-cm и argocd-cmd-params-cm с пользовательскими customization'ами), `argocd_post_kustomize_patches`, `argocd_gitops_kustomize_patches`.
+- **Required vars.** `argocd_namespace`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_ingress_class_name` (`traefik-lb`), `argocd_cert_manager_issuer` + `argocd_cert_manager_issuer_enabled`. Kustomize patches (default `[]`): `argocd_pre_kustomize_patches`, `argocd_install_kustomize_patches` (strategic merge patches на argocd-cm и argocd-cmd-params-cm с пользовательскими customization'ами), `argocd_post_kustomize_patches`, `argocd_gitops_kustomize_patches`.
 - **ESO integration.** Yes (via `eso_vault_integration_argocd` in `hosts-vars/argocd.yaml`; admin password + git-ops repo credentials). The same `_secrets` list carries both types: plain admin-password entries and git-ops repo entries (which set `body.target.template.metadata.labels: argocd.argoproj.io/secret-type: repo-creds` or `repository` to let ArgoCD recognise them as repository credentials).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.

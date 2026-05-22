@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (31 tasks)
+## 1. `playbook-app/tasks/` (30 tasks)
 
 The four vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
@@ -126,15 +126,6 @@ The four vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Output.** None.
 - **Callers.** 10 ESO-integrated install/configure playbook'ов (8 install + 2 configure). NOT called from `tests/helm-validate.yaml` (test driver рендерит upstream charts — нет component scope).
 - **Idempotent.** Read-only.
-
-### 1.9 `tasks-resolve-acme-solver.yaml`
-
-- **Purpose.** Look up a `ClusterIssuer` by name in `cert_manager_cluster_issuers`, find the solver matching a given `ingressClass`, export its `podLabels` and the full ClusterIssuer/solver dicts to fixed-name global facts. Downstream NetworkPolicies use these labels to admit the cert-manager solver pod.
-- **Input.** `dto_label_name`, `dto_cluster_issuer_name`, `dto_ingress_class_name`.
-- **Validates (assert).** All 3 params defined + non-empty (assert block at top of file).
-- **Output (runtime facts, fixed names — global, not per-component).** `acme_cluster_issuer_result_fact` (full ClusterIssuer dict), `acme_solver_result_fact` (full solver dict), `acme_pod_labels_result_fact` (`podLabels` dict). Only one ClusterIssuer/solver is resolved per playbook run, so global fact names cause no conflicts.
-- **Callers.** Install playbooks of components with HTTPS ingress that triggers ACME HTTP-01 — typically at `tags: [always]`.
-- **Idempotent.** Pure lookup.
 
 ### 1.10 `tasks-k8s-list-helm.yaml`
 
@@ -516,18 +507,6 @@ The four vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
     dto_eso_integration_object: "{{ eso_vault_integration_<c> }}"
     dto_namespace: "{{ <c>_namespace }}"
   tags: [always]
-
-# If ingress uses ACME:
-- include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-resolve-acme-solver.yaml"
-  vars:
-    dto_label_name: "<c>-install-init"
-    dto_cluster_issuer_name: "{{ <c>_cluster_issuer_name }}"
-    dto_ingress_class_name: "{{ <c>_ingress_class_name }}"
-  tags: [always]
-# Output facts (global, used in downstream tasks/charts):
-#   - acme_cluster_issuer_result_fact (full ClusterIssuer dict)
-#   - acme_solver_result_fact (full solver dict)
-#   - acme_pod_labels_result_fact (podLabels — typically referenced in NP charts)
 ```
 
 ### 3.2 Standard phase skeleton

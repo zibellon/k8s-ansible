@@ -118,8 +118,8 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 ## 13. ACME / cert-manager Integration
 
-13.1 Components that use an ingress with HTTP-01 challenge MUST include `tasks-resolve-acme-solver.yaml` (tag `always`) to derive the global fact `acme_pod_labels_result_fact` (set by the task; one ClusterIssuer/solver per playbook run, so the global fact name causes no conflicts).
-13.2 `NetworkPolicy` rules allowing the cert-manager solver MUST reference `acme_pod_labels_result_fact`. Do not hard-code solver pod labels.
+13.1 Components with an HTTPS ingress MUST define a per-component namespaced `Issuer` in inventory: `<c>_cert_manager_issuer` (raw `{name, spec}`) + `<c>_cert_manager_issuer_enabled` (toggle). Both are passed into `<c>_pre_helm_values` and `<c>_post_helm_values` as `issuer` + `issuerEnabled`.
+13.2 The `pre/` chart MUST render `templates/issuer.yaml` (the canonical `Issuer` template, byte-identical across components) and a solver-loop in its `NetworkPolicy` template that iterates `.Values.issuer.spec.acme.solvers[]`. Do not hard-code solver pod labels — derive them from each solver's `http01.ingress.podTemplate.metadata.labels`. See [`networking.md`](networking.md) §4.
 
 ## 14. Rollout Verification
 
@@ -143,7 +143,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 ## 17. Anti-patterns (do not commit)
 
 17.1 Inline `kubectl apply -f <url-or-heredoc>` — always wrap resources in a Helm chart so `--tags`, `--atomic`, and release history work.
-17.2 Hard-coded pod labels for ACME solver `NetworkPolicy` — always resolve from `cert_manager_cluster_issuers`.
+17.2 Hard-coded pod labels for ACME solver `NetworkPolicy` — always derive them from the component's `<c>_cert_manager_issuer` solver definition (see §13, [`networking.md`](networking.md) §4).
 17.3 Bypassing `tasks-eso-verify.yaml` by hard-coding a secrets list inline in `values-override.yaml` без вызова verify — теряет uniqueness validation и policy path coverage check. Всегда используй inline merge `<c>_secrets + (extra | default([]))` в `<c>_pre_helm_values.eso.secrets` + вызов verify task'ов.
 17.3a Hard-coding a literal `kv_engine_path` string inside `body.dataFrom.extract.key` instead of using `{{ eso_vault_integration_<c>.kv_engine_path }}` — prevents override without editing every item.
 17.4 `gather_facts: true` in `playbook-app/` plays.
