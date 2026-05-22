@@ -1,23 +1,11 @@
 # =============================================================================
 # INGRESS FOR GRAFANA (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
-#   issuerEnabled false → HTTP Ingress (web, без TLS)
+#   grafana.enabled    → workload-enable gate (composite, внешний)
+#   ingress.enabled    → рендерить Ingress
+#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
 {{- if .Values.grafana.enabled }}
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.grafana.ingress.secretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.grafana.ingress.secretName }}
-  dnsNames:
-    - {{ .Values.grafana.ingress.domain }}
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.grafanaIngressConfig.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -25,46 +13,26 @@ metadata:
   name: ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.websecure }}"
+    kubernetes.io/ingress.class: {{ .Values.grafanaIngressConfig.ingress.ingressClass | quote }}
+    {{- if .Values.grafanaIngressConfig.ingress.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.grafana.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.grafanaIngressConfig.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.grafanaIngressConfig.ingress.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingressClass }}
+  ingressClassName: {{ .Values.grafanaIngressConfig.ingress.ingressClass }}
+  {{- if and .Values.grafanaIngressConfig.ingress.tlsEnabled .Values.grafanaIngressConfig.tlsSecretName }}
   tls:
     - hosts:
-        - {{ .Values.grafana.ingress.domain }}
-      secretName: {{ .Values.grafana.ingress.secretName }}
+        - {{ .Values.grafanaIngressConfig.domain }}
+      secretName: {{ .Values.grafanaIngressConfig.tlsSecretName }}
+  {{- end }}
   rules:
-    - host: {{ .Values.grafana.ingress.domain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: grafana
-                port:
-                  number: {{ .Values.grafana.port }}
-{{- else }}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ui
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
-    {{- if .Values.grafana.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.ingressClass }}
-  rules:
-    - host: {{ .Values.grafana.ingress.domain }}
+    - host: {{ .Values.grafanaIngressConfig.domain }}
       http:
         paths:
           - path: /

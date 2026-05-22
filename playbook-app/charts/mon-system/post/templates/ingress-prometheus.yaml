@@ -1,23 +1,11 @@
 # =============================================================================
 # INGRESS FOR PROMETHEUS UI (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
-#   issuerEnabled false → HTTP Ingress (web, без TLS)
+#   prometheus_operator.enabled + prometheus.enabled → workload-enable gate (composite, внешний)
+#   ingress.enabled    → рендерить Ingress
+#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
 {{- if and .Values.prometheus_operator.enabled .Values.prometheus.enabled }}
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.prometheus.ingress.secretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.prometheus.ingress.secretName }}
-  dnsNames:
-    - {{ .Values.prometheus.ingress.domain }}
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.prometheusIngressConfig.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -25,46 +13,26 @@ metadata:
   name: prometheus
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.websecure }}"
+    kubernetes.io/ingress.class: {{ .Values.prometheusIngressConfig.ingress.ingressClass | quote }}
+    {{- if .Values.prometheusIngressConfig.ingress.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.prometheus.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.prometheusIngressConfig.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.prometheusIngressConfig.ingress.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingressClass }}
+  ingressClassName: {{ .Values.prometheusIngressConfig.ingress.ingressClass }}
+  {{- if and .Values.prometheusIngressConfig.ingress.tlsEnabled .Values.prometheusIngressConfig.tlsSecretName }}
   tls:
     - hosts:
-        - {{ .Values.prometheus.ingress.domain }}
-      secretName: {{ .Values.prometheus.ingress.secretName }}
+        - {{ .Values.prometheusIngressConfig.domain }}
+      secretName: {{ .Values.prometheusIngressConfig.tlsSecretName }}
+  {{- end }}
   rules:
-    - host: {{ .Values.prometheus.ingress.domain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: prometheus-instance
-                port:
-                  number: {{ .Values.prometheus.port }}
-{{- else }}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: prometheus
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
-    {{- if .Values.prometheus.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.ingressClass }}
-  rules:
-    - host: {{ .Values.prometheus.ingress.domain }}
+    - host: {{ .Values.prometheusIngressConfig.domain }}
       http:
         paths:
           - path: /

@@ -1,23 +1,11 @@
 # =============================================================================
 # INGRESS FOR ALERTMANAGER UI (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
-#   issuerEnabled false → HTTP Ingress (web, без TLS)
+#   prometheus_operator.enabled + alertmanager.enabled → workload-enable gate (composite, внешний)
+#   ingress.enabled    → рендерить Ingress
+#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
 {{- if and .Values.prometheus_operator.enabled .Values.alertmanager.enabled }}
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.alertmanager.ingress.secretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.alertmanager.ingress.secretName }}
-  dnsNames:
-    - {{ .Values.alertmanager.ingress.domain }}
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.alertmanagerIngressConfig.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -25,46 +13,26 @@ metadata:
   name: alertmanager
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.websecure }}"
+    kubernetes.io/ingress.class: {{ .Values.alertmanagerIngressConfig.ingress.ingressClass | quote }}
+    {{- if .Values.alertmanagerIngressConfig.ingress.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.alertmanager.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.alertmanagerIngressConfig.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.alertmanagerIngressConfig.ingress.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingressClass }}
+  ingressClassName: {{ .Values.alertmanagerIngressConfig.ingress.ingressClass }}
+  {{- if and .Values.alertmanagerIngressConfig.ingress.tlsEnabled .Values.alertmanagerIngressConfig.tlsSecretName }}
   tls:
     - hosts:
-        - {{ .Values.alertmanager.ingress.domain }}
-      secretName: {{ .Values.alertmanager.ingress.secretName }}
+        - {{ .Values.alertmanagerIngressConfig.domain }}
+      secretName: {{ .Values.alertmanagerIngressConfig.tlsSecretName }}
+  {{- end }}
   rules:
-    - host: {{ .Values.alertmanager.ingress.domain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: alertmanager-instance
-                port:
-                  number: {{ .Values.alertmanager.port }}
-{{- else }}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: alertmanager
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
-    {{- if .Values.alertmanager.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.ingressClass }}
-  rules:
-    - host: {{ .Values.alertmanager.ingress.domain }}
+    - host: {{ .Values.alertmanagerIngressConfig.domain }}
       http:
         paths:
           - path: /

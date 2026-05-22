@@ -22,35 +22,71 @@ all:
 
     # Common ingress (unified for grafana / prometheus / alertmanager UIs).
     mon_system_ingress_class_name: "traefik-lb"
-    # cert-manager Issuer (per-component, namespaced) — один на mon-system
-    # (3 UI: grafana/prometheus/alertmanager).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    mon_system_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # Один на mon-system (3 UI: grafana/prometheus/alertmanager).
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     mon_system_cert_manager_issuer:
-      name: "mon-system-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "mon-system-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "mon-system-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "mon-system-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. mon-system — 3 домена.
+    mon_system_grafana_ingress_config:
+      domain: "{{ mon_system_grafana_domain }}"
+      tlsSecretName: "{{ mon_system_grafana_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ mon_system_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ mon_system_grafana_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
+    mon_system_prometheus_ingress_config:
+      domain: "{{ mon_system_prometheus_domain }}"
+      tlsSecretName: "{{ mon_system_prometheus_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ mon_system_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ mon_system_prometheus_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
+    mon_system_alertmanager_ingress_config:
+      domain: "{{ mon_system_alertmanager_domain }}"
+      tlsSecretName: "{{ mon_system_alertmanager_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ mon_system_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ mon_system_alertmanager_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
 
     # Helm phase timeouts (one per --tags phase).
     mon_system_crds_helm_timeout: "5m"
@@ -715,7 +751,6 @@ all:
         namespace: "{{ traefik_namespace }}"
         instanceName: "traefik-{{ traefik_namespace }}"
       issuer: "{{ mon_system_cert_manager_issuer }}"
-      issuerEnabled: "{{ mon_system_cert_manager_issuer_enabled }}"
       eso:
         vaultServerUrl: "{{ vault_internal_url }}"
         saName: "{{ eso_vault_integration_mon_system.sa_name }}"
@@ -992,10 +1027,10 @@ all:
     # Post-phase Helm values (Ingresses + Certificates + ServiceMonitors + system-*)
     mon_system_post_helm_values:
       namespace: "{{ mon_system_namespace }}"
-      ingressClass: "{{ mon_system_ingress_class_name }}"
       issuer: "{{ mon_system_cert_manager_issuer }}"
-      issuerEnabled: "{{ mon_system_cert_manager_issuer_enabled }}"
-      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      grafanaIngressConfig: "{{ mon_system_grafana_ingress_config }}"
+      prometheusIngressConfig: "{{ mon_system_prometheus_ingress_config }}"
+      alertmanagerIngressConfig: "{{ mon_system_alertmanager_ingress_config }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
@@ -1006,24 +1041,12 @@ all:
       grafana:
         enabled: "{{ mon_system_grafana_enabled }}"
         port: "{{ mon_system_grafana_port }}"
-        ingress:
-          domain: "{{ mon_system_grafana_domain }}"
-          secretName: "{{ mon_system_grafana_https_secret_name }}"
-          vpnOnlyEnabled: "{{ mon_system_grafana_vpn_only_enabled }}"
       prometheus:
         enabled: "{{ mon_system_prometheus_enabled }}"
         port: "{{ mon_system_prometheus_port }}"
-        ingress:
-          domain: "{{ mon_system_prometheus_domain }}"
-          secretName: "{{ mon_system_prometheus_https_secret_name }}"
-          vpnOnlyEnabled: "{{ mon_system_prometheus_vpn_only_enabled }}"
       alertmanager:
         enabled: "{{ mon_system_alertmanager_enabled }}"
         port: "{{ mon_system_alertmanager_port }}"
-        ingress:
-          domain: "{{ mon_system_alertmanager_domain }}"
-          secretName: "{{ mon_system_alertmanager_https_secret_name }}"
-          vpnOnlyEnabled: "{{ mon_system_alertmanager_vpn_only_enabled }}"
       loki:
         enabled: "{{ mon_system_loki_enabled }}"
         serviceMonitor:
