@@ -11,10 +11,35 @@ all:
     cilium_hubble_ui_domain: "cilium-hubble-ui-k8s-v2.drawapp.ru" # Hubble UI domain
     cilium_hubble_ui_vpn_only_enabled: false
     cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui"
-    cilium_hubble_ui_ingress_http_enable: false
-    cilium_hubble_ui_ingress_https_enable: true
-    cilium_hubble_ui_cluster_issuer_name: "acme-prod"
     cilium_hubble_ui_ingress_class_name: "traefik-lb"
+    # cert-manager Issuer (per-component, namespaced).
+    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
+    # false → HTTP-ingress без TLS (например за Cloudflare).
+    cilium_cert_manager_issuer_enabled: true
+    cilium_cert_manager_issuer:
+      name: "cilium-acme"
+      spec:
+        acme:
+          server: "https://acme-v02.api.letsencrypt.org/directory"
+          email: "some-email-123@gmail.com"
+          privateKeySecretRef:
+            name: "cilium-acme-account-key"
+          solvers:
+            - http01:
+                ingress:
+                  ingressClassName: "traefik-lb"
+                  ingressTemplate:
+                    metadata:
+                      annotations:
+                        "kubernetes.io/ingress.class": "traefik-lb"
+                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                  podTemplate:
+                    metadata:
+                      labels:
+                        app.kubernetes.io/name: acme-solver
+                        app.kubernetes.io/instance: traefik-lb
+                        app.kubernetes.io/component: acme-http01-solver
+                        app.kubernetes.io/managed-by: cert-manager
     # Helm timeouts
     cilium_pre_helm_timeout: "2m"
     cilium_install_helm_timeout: "5m"
@@ -28,13 +53,13 @@ all:
     # Pre-phase kustomize patches (operator-side customization, default empty)
     cilium_pre_kustomize_patches: []
     # Pre-phase values (NetworkPolicies chart)
-    # acme_pod_labels_result_fact - create in playbook runtime
     cilium_pre_helm_values:
       namespace: "{{ cilium_namespace }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         instanceName: "traefik-{{ traefik_namespace }}"
-      acmeSolverLabels: "{{ acme_pod_labels_result_fact }}"
+      issuer: "{{ cilium_cert_manager_issuer }}"
+      issuerEnabled: "{{ cilium_cert_manager_issuer_enabled }}"
       extraObjects: "{{ cilium_pre_extra_objects }}"
     # ---
     # ---
@@ -164,16 +189,15 @@ all:
     # Post-phase values (CiliumClusterwideNetworkPolicy + Hubble UI ingress)
     cilium_post_helm_values:
       namespace: "{{ cilium_namespace }}"
+      issuer: "{{ cilium_cert_manager_issuer }}"
+      issuerEnabled: "{{ cilium_cert_manager_issuer_enabled }}"
       nodeIpsList: "{{ cilium_post_node_ips_list }}"
       hubbleUi:
         domain: "{{ cilium_hubble_ui_domain }}"
-        clusterIssuer: "{{ cilium_hubble_ui_cluster_issuer_name }}"
         ingressClass: "{{ cilium_hubble_ui_ingress_class_name }}"
         secretName: "{{ cilium_hubble_ui_https_secret_name }}"
         vpnOnlyEnabled: "{{ cilium_hubble_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-        httpEnable: "{{ cilium_hubble_ui_ingress_http_enable }}"
-        httpsEnable: "{{ cilium_hubble_ui_ingress_https_enable }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:

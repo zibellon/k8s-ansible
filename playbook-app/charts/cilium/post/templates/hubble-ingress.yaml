@@ -1,8 +1,9 @@
 # =============================================================================
-# HUBBLE UI INGRESS - HTTPS
+# HUBBLE UI INGRESS
+#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
+#   issuerEnabled false → HTTP Ingress (web, без TLS)
 # =============================================================================
-
-{{- if .Values.hubbleUi.httpsEnable }}
+{{- if .Values.issuerEnabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -14,21 +15,20 @@ spec:
   dnsNames:
     - "{{ .Values.hubbleUi.domain }}"
   issuerRef:
-    name: {{ .Values.hubbleUi.clusterIssuer }}
-    kind: ClusterIssuer
-
+    name: {{ .Values.issuer.name }}
+    kind: Issuer
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: hubble-ui-https
+  name: hubble-ui
   namespace: {{ .Values.namespace }}
   annotations:
     kubernetes.io/ingress.class: "{{ .Values.hubbleUi.ingressClass }}"
     traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.websecure }}"
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- if .Values.hubbleUi.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.vpnIngressMiddlewares }}"
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.hubbleUi.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
   ingressClassName: {{ .Values.hubbleUi.ingressClass }}
@@ -36,6 +36,32 @@ spec:
     - hosts:
         - {{ .Values.hubbleUi.domain }}
       secretName: {{ .Values.hubbleUi.secretName }}
+  rules:
+    - host: {{ .Values.hubbleUi.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hubble-ui
+                port:
+                  number: 80
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hubble-ui
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.hubbleUi.ingressClass }}"
+    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
+    {{- if .Values.hubbleUi.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.hubbleUi.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.hubbleUi.ingressClass }}
   rules:
     - host: {{ .Values.hubbleUi.domain }}
       http:
