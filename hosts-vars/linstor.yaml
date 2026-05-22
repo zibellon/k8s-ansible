@@ -74,8 +74,60 @@ all:
           enabled: true
         csiNode:
           enabled: true
+        # === High Availability Controller (DaemonSet) ===
+        # Образ piraeus-ha-controller:v1.3.2 (подставляет оператор). Ускоряет
+        # failover stateful-подов при отказе узла: на каждом узле мониторит DRBD
+        # и эвакуирует поды с узла, потерявшего доступ к данным.
+        # Конфигурируется полями LinstorCluster.spec.highAvailabilityController:
+        #   enabled      — разворачивать ли DaemonSet
+        #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
+        #
+        # ВАЖНО — per-workload, НЕ настраивается здесь (memo):
+        #   аннотация drbd.linbit.com/ignore-fail-over на Pod исключает этот Pod
+        #   из управления HA-controller'ом. Ставится на потребительский Pod:
+        #     kubectl annotate pod <name> drbd.linbit.com/ignore-fail-over=""
         highAvailabilityController:
           enabled: true
+          podTemplate:
+            spec:
+              # --- Размещение пода (по умолчанию не задано) ---
+              # tolerations здесь ЗАМЕНЯЕТ список целиком; cluster-wide
+              # linstorCluster.tolerations: [{operator: Exists}] (выше) уже
+              # распространяется на этот под — обычно переопределять не нужно.
+              # nodeSelector: {}
+              # tolerations: []
+              # affinity: {}
+              # priorityClassName: system-cluster-critical  # база оператора уже = это
+              containers:
+                - name: ha-controller
+                  # resources контейнера — по умолчанию не заданы. Шаблон:
+                  # resources:
+                  #   requests:
+                  #     cpu: "..."
+                  #     memory: "..."
+                  #   limits:
+                  #     memory: "..."
+                  # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1] —
+                  # /agent и --v=1 ниже продублированы намеренно.
+                  args:
+                    - /agent
+                    # --v: уровень логирования. База оператора: 1 — сохраняем.
+                    - --v=1
+                    # --fail-over-timeout: пауза перед эвакуацией подов с "мёртвого"
+                    # узла. 6m — осознанный backstop: Kubernetes сам эвакуирует поды
+                    # с unreachable-узла ~через 5 мин (tolerationSeconds=300), а
+                    # HA-controller добивает на 6-й минуте. Upstream-дефолт: 5s.
+                    - --fail-over-timeout=6m
+                    # --request-timeout: таймаут запроса к API K8s. Дефолт: "0" (без).
+                    - --request-timeout=10s
+                    # --- Прочие флаги (upstream-дефолты; для смены — раскомментировать) ---
+                    # - --grace-period-seconds=10    # grace-period при force-delete пода (сек)
+                    # - --drbd-status-interval=5s    # период опроса статуса DRBD на узле
+                    # - --reconcile-interval=5s      # макс. интервал цикла reconcile
+                    # - --resync-interval=5m0s       # период пересинхронизации внутр. кэша
+                    # - --operations-timeout=1m0s    # таймаут отдельной операции
+                    # - --disable-node-taints=false  # true → не ставить taint'ы на узел
+                    # --node-name оператор задаёт из env NODE_NAME — здесь не указывать.
         affinityController:
           enabled: true
         nfsServer:
