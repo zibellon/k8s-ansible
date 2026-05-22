@@ -128,8 +128,51 @@ all:
                     # - --operations-timeout=1m0s    # таймаут отдельной операции
                     # - --disable-node-taints=false  # true → не ставить taint'ы на узел
                     # --node-name оператор задаёт из env NODE_NAME — здесь не указывать.
+        # === Affinity Controller (Deployment) ===
+        # Образ linstor-affinity-controller:v1.4.1 (подставляет оператор). Держит
+        # nodeAffinity у PersistentVolume в синхроне с реальным размещением реплик
+        # в LINSTOR (нужно при миграции томов и на эфемерных узлах).
+        # Конфигурируется полями LinstorCluster.spec.affinityController:
+        #   enabled      — разворачивать ли Deployment
+        #   replicas     — кол-во подов (между ними leader-election)
+        #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
+        #
+        # ВАЖНО — per-workload, НЕ настраивается здесь (memo):
+        #   аннотация piraeus.io/skip-affinity-controller на PV запрещает контроллеру
+        #   трогать (пересоздавать) этот PV. Ставится на потребительский PV:
+        #     kubectl annotate pv <name> piraeus.io/skip-affinity-controller=true
+        #
+        # Поведенческие флаги (НЕ меняем — memo). Оператор задаёт v / leader-election /
+        # property-namespace через env-переменные контейнера linstor-affinity-controller:
+        #   --v                   лог-уровень. Дефолт 1 (env VERBOSE)
+        #   --leader-election     leader-election между репликами. Дефолт true (env LEADER_ELECTION)
+        #   --property-namespace  LINSTOR property namespace для node-меток.
+        #                         Оператор: Aux/topology (env PROPERTY_NAMESPACE)
+        #   --reconcile-rate      как часто сверять affinity PV vs LINSTOR. Дефолт 15s
+        #                         (оператором НЕ задаётся — дефолт бинаря)
+        #   --resync-rate         период пересинхронизации кэша K8s-ресурсов. Дефолт 15m
+        #                         (оператором НЕ задаётся — дефолт бинаря)
         affinityController:
           enabled: true
+          # replicas — кол-во подов. Явно фиксируем upstream-дефолт (1) для защиты
+          # от изменения дефолта upstream.
+          replicas: 1
+          # podTemplate — переопределение Pod-template. По умолчанию не нужно;
+          # раскомментировать и заполнить при необходимости:
+          #   podTemplate:
+          #     spec:
+          #       nodeSelector: {}
+          #       tolerations: []     # ЗАМЕНЯЕТ список; cluster-wide tolerations см. выше
+          #       affinity: {}
+          #       priorityClassName: system-cluster-critical  # база оператора уже = это
+          #       containers:
+          #         - name: linstor-affinity-controller
+          #           resources:
+          #             requests:
+          #               cpu: "..."
+          #               memory: "..."
+          #             limits:
+          #               memory: "..."
         nfsServer:
           enabled: true
         # === Active cluster-wide DRBD properties (controller-level) ===
