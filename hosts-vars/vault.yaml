@@ -36,34 +36,48 @@ all:
     vault_ui_https_secret_name: "cert-vault-ui"
     vault_ui_vpn_only_enabled: false
     vault_ui_ingress_class_name: "traefik-lb"
-    # cert-manager Issuer (per-component, namespaced).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    vault_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     vault_cert_manager_issuer:
-      name: "vault-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "vault-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "vault-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "vault-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. vault — 1 домен (vault UI).
+    vault_ingress_config:
+      domain: "{{ vault_ui_domain }}"
+      tlsSecretName: "{{ vault_ui_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ vault_ui_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ vault_ui_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
     # Vault unseal (bank-vaults operator stores keys in K8s Secret)
     # secretShares / secretThreshold map directly to unsealConfig.secretShares / secretThreshold in Vault CR
     # bank-vaults defaults: 5 / 3 — always set explicitly to avoid surprises
@@ -95,7 +109,6 @@ all:
       externalSecrets:
         namespace: "{{ external_secrets_namespace }}"
       issuer: "{{ vault_cert_manager_issuer }}"
-      issuerEnabled: "{{ vault_cert_manager_issuer_enabled }}"
       extraObjects: "{{ vault_pre_extra_objects }}"
     # ---
     # ---
@@ -107,13 +120,7 @@ all:
     vault_post_helm_values:
       namespace: "{{ vault_namespace }}"
       issuer: "{{ vault_cert_manager_issuer }}"
-      issuerEnabled: "{{ vault_cert_manager_issuer_enabled }}"
-      ingress:
-        ingressClass: "{{ vault_ui_ingress_class_name }}"
-        domain: "{{ vault_ui_domain }}"
-        secretName: "{{ vault_ui_https_secret_name }}"
-        vpnOnlyEnabled: "{{ vault_ui_vpn_only_enabled }}"
-        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      ingressConfig: "{{ vault_ingress_config }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
