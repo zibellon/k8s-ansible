@@ -25,34 +25,47 @@ all:
     zitadel_tls_secret_name: "cert-zitadel"
     zitadel_ingress_class_name: "traefik-lb"
     zitadel_vpn_only_enabled: false
-    # cert-manager Issuer (per-component, namespaced).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    zitadel_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     zitadel_cert_manager_issuer:
-      name: "zitadel-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "zitadel-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "zitadel-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "zitadel-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. zitadel — 1 домен (2 IngressRoute: ui + grpc).
+    zitadel_ingress_config:
+      domain: "{{ zitadel_domain }}"
+      tlsSecretName: "{{ zitadel_tls_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ zitadel_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ zitadel_vpn_only_enabled }}"
+      certificate:
+        enabled: true
     zitadel_postgresql_storage_class: "lnstr-major-multi-sync"
     zitadel_postgresql_storage_size: "10Gi"
     # ---
@@ -89,7 +102,6 @@ all:
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ zitadel_cert_manager_issuer }}"
-      issuerEnabled: "{{ zitadel_cert_manager_issuer_enabled }}"
       extraObjects: "{{ zitadel_pre_extra_objects }}"
     # ---
     # ---
@@ -183,17 +195,12 @@ all:
     zitadel_post_helm_values:
       namespace: "{{ zitadel_namespace }}"
       issuer: "{{ zitadel_cert_manager_issuer }}"
-      issuerEnabled: "{{ zitadel_cert_manager_issuer_enabled }}"
       resources: "{{ zitadel_resources }}"
       nodeSelector: "{{ zitadel_node_selector }}"
       tolerations: "{{ zitadel_tolerations }}"
       affinity: "{{ zitadel_affinity }}"
-      ingress:
-        ingressClass: "{{ zitadel_ingress_class_name }}"
-        domain: "{{ zitadel_domain }}"
-        tlsSecretName: "{{ zitadel_tls_secret_name }}"
-        vpnOnlyEnabled: "{{ zitadel_vpn_only_enabled }}"
-        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      ingressConfig: "{{ zitadel_ingress_config }}"
+      vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
