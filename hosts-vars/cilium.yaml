@@ -12,34 +12,48 @@ all:
     cilium_hubble_ui_vpn_only_enabled: false
     cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui"
     cilium_hubble_ui_ingress_class_name: "traefik-lb"
-    # cert-manager Issuer (per-component, namespaced).
-    # issuer_enabled: true → Issuer + Certificate + HTTPS-ingress c TLS;
-    # false → HTTP-ingress без TLS (например за Cloudflare).
-    cilium_cert_manager_issuer_enabled: true
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     cilium_cert_manager_issuer:
-      name: "cilium-acme"
-      spec:
-        acme:
-          server: "https://acme-v02.api.letsencrypt.org/directory"
-          email: "some-email-123@gmail.com"
-          privateKeySecretRef:
-            name: "cilium-acme-account-key"
-          solvers:
-            - http01:
-                ingress:
-                  ingressClassName: "traefik-lb"
-                  ingressTemplate:
-                    metadata:
-                      annotations:
-                        "kubernetes.io/ingress.class": "traefik-lb"
-                        "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                  podTemplate:
-                    metadata:
-                      labels:
-                        app.kubernetes.io/name: acme-solver
-                        app.kubernetes.io/instance: traefik-lb
-                        app.kubernetes.io/component: acme-http01-solver
-                        app.kubernetes.io/managed-by: cert-manager
+      enabled: true
+      body:
+        name: "cilium-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "cilium-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. cilium — 1 домен (Hubble UI).
+    cilium_ingress_config:
+      domain: "{{ cilium_hubble_ui_domain }}"
+      tlsSecretName: "{{ cilium_hubble_ui_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ cilium_hubble_ui_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ cilium_hubble_ui_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
     # Helm timeouts
     cilium_pre_helm_timeout: "2m"
     cilium_install_helm_timeout: "5m"
@@ -59,7 +73,6 @@ all:
         namespace: "{{ traefik_namespace }}"
         instanceName: "traefik-{{ traefik_namespace }}"
       issuer: "{{ cilium_cert_manager_issuer }}"
-      issuerEnabled: "{{ cilium_cert_manager_issuer_enabled }}"
       extraObjects: "{{ cilium_pre_extra_objects }}"
     # ---
     # ---
@@ -190,14 +203,8 @@ all:
     cilium_post_helm_values:
       namespace: "{{ cilium_namespace }}"
       issuer: "{{ cilium_cert_manager_issuer }}"
-      issuerEnabled: "{{ cilium_cert_manager_issuer_enabled }}"
+      ingressConfig: "{{ cilium_ingress_config }}"
       nodeIpsList: "{{ cilium_post_node_ips_list }}"
-      hubbleUi:
-        domain: "{{ cilium_hubble_ui_domain }}"
-        ingressClass: "{{ cilium_hubble_ui_ingress_class_name }}"
-        secretName: "{{ cilium_hubble_ui_https_secret_name }}"
-        vpnOnlyEnabled: "{{ cilium_hubble_ui_vpn_only_enabled }}"
-        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
