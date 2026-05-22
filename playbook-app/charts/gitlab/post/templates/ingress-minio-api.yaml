@@ -1,22 +1,9 @@
 # =============================================================================
 # INGRESS FOR MINIO API (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
-#   issuerEnabled false → HTTP Ingress (web, без TLS)
+#   ingress.enabled    → рендерить Ingress
+#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.minio.apiSecretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.minio.apiSecretName }}
-  dnsNames:
-    - {{ .Values.minio.apiDomain }}
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.minioApiIngressConfig.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -24,46 +11,26 @@ metadata:
   name: minio-api
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.websecure }}"
+    kubernetes.io/ingress.class: {{ .Values.minioApiIngressConfig.ingress.ingressClass | quote }}
+    {{- if .Values.minioApiIngressConfig.ingress.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.minio.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.minio.vpnIngressMiddlewares }}"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.minioApiIngressConfig.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.minioApiIngressConfig.ingress.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.minio.ingressClass }}
+  ingressClassName: {{ .Values.minioApiIngressConfig.ingress.ingressClass }}
+  {{- if and .Values.minioApiIngressConfig.ingress.tlsEnabled .Values.minioApiIngressConfig.tlsSecretName }}
   tls:
     - hosts:
-        - {{ .Values.minio.apiDomain }}
-      secretName: {{ .Values.minio.apiSecretName }}
+        - {{ .Values.minioApiIngressConfig.domain }}
+      secretName: {{ .Values.minioApiIngressConfig.tlsSecretName }}
+  {{- end }}
   rules:
-    - host: {{ .Values.minio.apiDomain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gitlab-minio
-                port:
-                  number: 9000
-{{- else }}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: minio-api
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.minio.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
-    {{- if .Values.minio.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.minio.vpnIngressMiddlewares }}"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.minio.ingressClass }}
-  rules:
-    - host: {{ .Values.minio.apiDomain }}
+    - host: {{ .Values.minioApiIngressConfig.domain }}
       http:
         paths:
           - path: /

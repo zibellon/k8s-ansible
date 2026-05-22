@@ -1,22 +1,9 @@
 # =============================================================================
 # INGRESS FOR GITLAB UI (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
-#   issuerEnabled false → HTTP Ingress (web, без TLS)
+#   ingress.enabled    → рендерить Ingress
+#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.gitlab.uiSecretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.gitlab.uiSecretName }}
-  dnsNames:
-    - {{ .Values.gitlab.domain }}
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.uiIngressConfig.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -24,46 +11,26 @@ metadata:
   name: gitlab-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.websecure }}"
+    kubernetes.io/ingress.class: {{ .Values.uiIngressConfig.ingress.ingressClass | quote }}
+    {{- if .Values.uiIngressConfig.ingress.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.gitlab.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.gitlab.vpnIngressMiddlewares }}"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.uiIngressConfig.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.uiIngressConfig.ingress.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.gitlab.ingressClass }}
+  ingressClassName: {{ .Values.uiIngressConfig.ingress.ingressClass }}
+  {{- if and .Values.uiIngressConfig.ingress.tlsEnabled .Values.uiIngressConfig.tlsSecretName }}
   tls:
     - hosts:
-        - {{ .Values.gitlab.domain }}
-      secretName: {{ .Values.gitlab.uiSecretName }}
+        - {{ .Values.uiIngressConfig.domain }}
+      secretName: {{ .Values.uiIngressConfig.tlsSecretName }}
+  {{- end }}
   rules:
-    - host: {{ .Values.gitlab.domain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gitlab-webservice-default
-                port:
-                  number: 8181
-{{- else }}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: gitlab-ui
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
-    {{- if .Values.gitlab.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.gitlab.vpnIngressMiddlewares }}"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.gitlab.ingressClass }}
-  rules:
-    - host: {{ .Values.gitlab.domain }}
+    - host: {{ .Values.uiIngressConfig.domain }}
       http:
         paths:
           - path: /

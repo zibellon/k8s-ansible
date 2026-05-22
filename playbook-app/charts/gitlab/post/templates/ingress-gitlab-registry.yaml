@@ -1,22 +1,9 @@
 # =============================================================================
 # INGRESS FOR GITLAB REGISTRY (Traefik)
-#   issuerEnabled true  → Certificate + HTTPS Ingress (websecure, TLS)
-#   issuerEnabled false → HTTP Ingress (web, без TLS)
+#   ingress.enabled    → рендерить Ingress
+#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.issuerEnabled }}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ .Values.gitlab.registrySecretName }}
-  namespace: {{ .Values.namespace }}
-spec:
-  secretName: {{ .Values.gitlab.registrySecretName }}
-  dnsNames:
-    - {{ .Values.gitlab.registryDomain }}
-  issuerRef:
-    name: {{ .Values.issuer.name }}
-    kind: Issuer
+{{- if .Values.registryIngressConfig.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -24,46 +11,26 @@ metadata:
   name: gitlab-registry
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.websecure }}"
+    kubernetes.io/ingress.class: {{ .Values.registryIngressConfig.ingress.ingressClass | quote }}
+    {{- if .Values.registryIngressConfig.ingress.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.gitlab.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.gitlab.vpnIngressMiddlewares }}"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.registryIngressConfig.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.registryIngressConfig.ingress.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.gitlab.ingressClass }}
+  ingressClassName: {{ .Values.registryIngressConfig.ingress.ingressClass }}
+  {{- if and .Values.registryIngressConfig.ingress.tlsEnabled .Values.registryIngressConfig.tlsSecretName }}
   tls:
     - hosts:
-        - {{ .Values.gitlab.registryDomain }}
-      secretName: {{ .Values.gitlab.registrySecretName }}
+        - {{ .Values.registryIngressConfig.domain }}
+      secretName: {{ .Values.registryIngressConfig.tlsSecretName }}
+  {{- end }}
   rules:
-    - host: {{ .Values.gitlab.registryDomain }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gitlab-registry
-                port:
-                  number: 5000
-{{- else }}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: gitlab-registry
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kubernetes.io/ingress.class: "{{ .Values.gitlab.ingressClass }}"
-    traefik.ingress.kubernetes.io/router.entrypoints: "{{ .Values.traefik.entryPoints.web }}"
-    {{- if .Values.gitlab.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.gitlab.vpnIngressMiddlewares }}"
-    {{- end }}
-spec:
-  ingressClassName: {{ .Values.gitlab.ingressClass }}
-  rules:
-    - host: {{ .Values.gitlab.registryDomain }}
+    - host: {{ .Values.registryIngressConfig.domain }}
       http:
         paths:
           - path: /
