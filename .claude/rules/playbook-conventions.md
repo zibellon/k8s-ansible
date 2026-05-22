@@ -118,8 +118,9 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 ## 13. ACME / cert-manager Integration
 
-13.1 Components with an HTTPS ingress MUST define a per-component namespaced `Issuer` in inventory: `<c>_cert_manager_issuer` (raw `{name, spec}`) + `<c>_cert_manager_issuer_enabled` (toggle). Both are passed into `<c>_pre_helm_values` and `<c>_post_helm_values` as `issuer` + `issuerEnabled`.
-13.2 The `pre/` chart MUST render `templates/issuer.yaml` (the canonical `Issuer` template, byte-identical across components) and a solver-loop in its `NetworkPolicy` template that iterates `.Values.issuer.spec.acme.solvers[]`. Do not hard-code solver pod labels — derive them from each solver's `http01.ingress.podTemplate.metadata.labels`. See [`networking.md`](networking.md) §4.
+13.1 Components with an HTTPS ingress MUST define a per-component namespaced `Issuer` in inventory as a single object `<c>_cert_manager_issuer` — `{enabled, body: {name, spec}}` where `enabled` is the toggle and `body` is the raw `Issuer` `{name, spec}`. It is passed into `<c>_pre_helm_values` and `<c>_post_helm_values` as a single `issuer` key.
+13.2 The `pre/` chart MUST render `templates/issuer.yaml` (the canonical `Issuer` template, byte-identical across components, gated by `.Values.issuer.enabled`) and a solver-loop in its `NetworkPolicy` template that iterates `.Values.issuer.body.spec.acme.solvers[]`. Do not hard-code solver pod labels — derive them from each solver's `http01.ingress.podTemplate.metadata.labels`. See [`networking.md`](networking.md) §4.
+13.3 Each domain MUST have an inventory `ingress_config` object — `<c>_ingress_config` (single-domain) or `<c>_<unit>_ingress_config` (multi-domain) — with independent toggles: `ingress.enabled` (render the Ingress/IngressRoute), `ingress.tlsEnabled` (`websecure`+TLS vs `web`), `certificate.enabled` (render the `Certificate`). The `post/` chart renders the `Certificate` in a dedicated `templates/certificate.yaml` gated by `issuer.enabled` AND `certificate.enabled` (issuer off → `Certificate` silently skipped); the Ingress/IngressRoute is rendered in its own per-domain template gated by `ingress.enabled`. See [`networking.md`](networking.md) §4.3 and [`variables.md`](variables.md) §1.2.
 
 ## 14. Rollout Verification
 

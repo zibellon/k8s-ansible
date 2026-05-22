@@ -42,8 +42,8 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 |---|---|
 | `_domain`, `_ui_domain`, `_rpc_domain` | FQDN for ingress |
 | `_https_secret_name` | `tls.secretName` on the Ingress / IngressRoute |
-| `_cert_manager_issuer` | Raw `{name, spec}` namespaced cert-manager `Issuer` for the component |
-| `_cert_manager_issuer_enabled` | If true → `Issuer` + `Certificate` + HTTPS ingress; if false → plain HTTP ingress |
+| `_cert_manager_issuer` | Per-component namespaced cert-manager `Issuer` — object `{enabled, body: {name, spec}}`. `enabled` toggles the `Issuer` + solver-NetworkPolicies (`pre`) and gates `Certificate` availability (`post`); `body.spec` is the verbatim `Issuer` spec |
+| `_ingress_config` | Per-domain ingress object — `{domain, tlsSecretName, ingress: {enabled, ingressClass, tlsEnabled, vpnOnlyEnabled, vpn*Middlewares}, certificate: {enabled}}` with independent `ingress.enabled` / `ingress.tlsEnabled` / `certificate.enabled` toggles. Single-domain: `<c>_ingress_config`; multi-domain: `<c>_<unit>_ingress_config` |
 | `_ingress_class_name` | Traefik ingress class (usually `traefik-lb`) |
 | `_vpn_only_enabled` | If true, attach Traefik `vpn-only` middleware |
 

@@ -94,23 +94,28 @@ Traefik HTTP-01 challenges create solver pods that must be admitted by `NetworkP
 
 ### 4.1 Per-component Issuer
 
-Each ingress component `<c>` defines `<c>_cert_manager_issuer` in `hosts-vars/<c>.yaml` — a raw `{name, spec}` object whose `spec` is the verbatim cert-manager `Issuer` spec (ACME `server`, `email`, `privateKeySecretRef`, `solvers[]`). The companion toggle `<c>_cert_manager_issuer_enabled`:
+Each ingress component `<c>` defines `<c>_cert_manager_issuer` in `hosts-vars/<c>.yaml` — a single object `{enabled, body}`:
 
-- `true` → the `pre/` chart renders the `Issuer` + solver-NetworkPolicies; the `post/` chart renders `Certificate` + HTTPS ingress.
-- `false` → no `Issuer`, no `Certificate`, no solver-NetworkPolicies; the `post/` chart renders a plain HTTP ingress (e.g. when TLS is terminated upstream by Cloudflare).
+- `enabled` (`true`/`false`) — the toggle. `true` → the `pre/` chart renders the `Issuer` + solver-NetworkPolicies, and the `Certificate` becomes available in `post/`. `false` → no `Issuer`, no solver-NetworkPolicies, no `Certificate` (e.g. when TLS is terminated upstream by Cloudflare).
+- `body` — `{name, spec}` where `spec` is the verbatim cert-manager `Issuer` spec (ACME `server`, `email`, `privateKeySecretRef`, `solvers[]`).
 
-The object is passed verbatim into `<c>_pre_helm_values` and `<c>_post_helm_values` as `issuer` + `issuerEnabled`.
+The object is passed verbatim into `<c>_pre_helm_values` and `<c>_post_helm_values` as a single `issuer` key.
 
 ### 4.2 issuer.yaml + solver-loop in pre/
 
 Each component's `pre/` chart contains:
 
-- `templates/issuer.yaml` — renders the namespaced `Issuer` under `{{- if .Values.issuerEnabled }}`, `spec` dumped via `toYaml`. The template is byte-identical across all components.
-- the `NetworkPolicy` template — a solver-loop: iterates `.Values.issuer.spec.acme.solvers[]` and, for each `http01` solver, emits a pair of NetworkPolicies — (1) ingress in the component namespace (traefik → solver pod, port `acmeSolver.port`); (2) egress in the traefik namespace (traefik → solver pod). The pod selector uses the solver's `http01.ingress.podTemplate.metadata.labels` (falling back to `acme.cert-manager.io/http01-solver: "true"`). The whole block is gated by `issuerEnabled` + presence of `spec.acme`.
+- `templates/issuer.yaml` — renders the namespaced `Issuer` under `{{- if .Values.issuer.enabled }}`, `body.spec` dumped via `toYaml`. The template is byte-identical across all components.
+- the `NetworkPolicy` template — a solver-loop: iterates `.Values.issuer.body.spec.acme.solvers[]` and, for each `http01` solver, emits a pair of NetworkPolicies — (1) ingress in the component namespace (traefik → solver pod, port `acmeSolver.port`); (2) egress in the traefik namespace (traefik → solver pod). The pod selector uses the solver's `http01.ingress.podTemplate.metadata.labels` (falling back to `acme.cert-manager.io/http01-solver: "true"`). The whole block is gated by `issuer.enabled` + presence of `body.spec.acme`.
 
 ### 4.3 Certificate + ingress in post/
 
-The `post/` chart renders one merged ingress file per domain: under `issuerEnabled` it emits a `Certificate` (`issuerRef.kind: Issuer`, `name: {{ .Values.issuer.name }}`) plus the HTTPS ingress; otherwise a plain HTTP ingress.
+The `post/` chart drives each domain through an `ingress_config` object — `<c>_ingress_config` (single-domain) or `<c>_<unit>_ingress_config` (multi-domain) — with independent toggles (see [`variables.md`](variables.md) §1.2):
+
+- `Certificate` — rendered in a dedicated `templates/certificate.yaml`, gated by `issuer.enabled` AND `<unit>.certificate.enabled`. If the issuer is disabled the `Certificate` is silently skipped (no error).
+- `Ingress` / `IngressRoute` — rendered in its own per-domain template, gated by `<unit>.ingress.enabled`. `<unit>.ingress.tlsEnabled` selects the `websecure` (TLS) vs `web` (plain HTTP) entrypoint and whether the `tls` block is emitted.
+
+The toggles are independent: e.g. `ingress.enabled: true` + `ingress.tlsEnabled: false` + `certificate.enabled: false` yields a plain HTTP ingress with no `Certificate` — useful when TLS is terminated upstream.
 
 ### 4.4 Global ClusterIssuers
 
