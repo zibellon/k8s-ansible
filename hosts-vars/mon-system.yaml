@@ -1,9 +1,5 @@
 all:
   vars:
-    # ----------------------------------------------------------------------------
-    # General: namespace + per-component enable flags + common ingress + helm timeouts
-    # ----------------------------------------------------------------------------
-
     mon_system_namespace: "mon-system"
 
     # Per-component enable flags. Composite gate: prometheus/alertmanager skipped if
@@ -52,6 +48,22 @@ all:
                           app.kubernetes.io/instance: traefik-lb
                           app.kubernetes.io/component: acme-http01-solver
                           app.kubernetes.io/managed-by: cert-manager
+
+    mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
+    mon_system_grafana_external_url: "https://grafana-k8s-v2.drawapp.ru"
+    mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
+    mon_system_grafana_vpn_only_enabled: false
+
+    mon_system_prometheus_domain: "prom-k8s-v2.drawapp.ru"
+    mon_system_prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
+    mon_system_prometheus_https_secret_name: "cert-prometheus"
+    mon_system_prometheus_vpn_only_enabled: false
+
+    mon_system_alertmanager_domain: "alertmanager-k8s-v2.drawapp.ru"
+    mon_system_alertmanager_external_url: "https://alertmanager-k8s-v2.drawapp.ru"
+    mon_system_alertmanager_https_secret_name: "cert-alertmanager"
+    mon_system_alertmanager_vpn_only_enabled: false
+
     # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
     # 1 domain === 1 ingress_config. mon-system — 3 домена.
     mon_system_grafana_ingress_config:
@@ -88,20 +100,27 @@ all:
       certificate:
         enabled: true
 
-    # Helm phase timeouts (one per --tags phase).
-    mon_system_crds_helm_timeout: "5m"
-    mon_system_pre_helm_timeout: "3m"
-    mon_system_prometheus_operator_helm_timeout: "3m"
-    mon_system_prometheus_helm_timeout: "5m"
-    mon_system_alertmanager_helm_timeout: "5m"
-    mon_system_node_exporter_helm_timeout: "3m"
-    mon_system_ksm_helm_timeout: "3m"
-    mon_system_loki_helm_timeout: "5m"
-    mon_system_vector_helm_timeout: "5m"
-    mon_system_grafana_postgresql_helm_timeout: "3m"
-    mon_system_grafana_helm_timeout: "3m"
-    mon_system_post_helm_timeout: "3m"
+    mon_system_prometheus_port: 9090
+    mon_system_prometheus_reloader_port: 8080
+    mon_system_alertmanager_port: 9093
+    mon_system_alertmanager_mesh_tcp_port: 9094
+    mon_system_alertmanager_mesh_udp_port: 9094
+    mon_system_node_exporter_port: 9100
+    mon_system_ksm_port: 8080
+    mon_system_loki_port: 3100
+    mon_system_grafana_postgresql_port: 5432
+    mon_system_grafana_port: 3000
 
+    mon_system_grafana_admin_username: "admin"
+    mon_system_grafana_admin_secret_key_username: "username"
+    mon_system_grafana_admin_secret_key_password: "password"
+
+    mon_system_grafana_postgresql_username: "grafana"
+    mon_system_grafana_postgresql_database_name: "grafana"
+    mon_system_grafana_postgresql_secret_key_username: "username"
+    mon_system_grafana_postgresql_secret_key_password: "password"
+
+    # === SECTION 2: ESO ===
     # ============================================================================
     # ESO integration — mon-system namespace (Grafana is the only consumer)
     # ============================================================================
@@ -146,6 +165,59 @@ all:
 
     eso_vault_integration_mon_system_secrets_extra: []
 
+    # === SECTION 3 ===
+    # --- PHASE: crds ---
+    mon_system_crds_helm_timeout: "5m"
+
+    # --- PHASE: pre ---
+    mon_system_pre_helm_timeout: "3m"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_pre_extra_objects: []
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    mon_system_pre_kustomize_patches: []
+    # ---------
+    # Pre-phase Helm values (NetworkPolicies + ESO chart)
+    # eso_vault_integration_mon_system_secrets — inline merge base + extra (задаётся ниже в eso_vault_integration_mon_system_secrets)
+    mon_system_pre_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      prometheus_operator:
+        enabled: "{{ mon_system_prometheus_operator_enabled }}"
+      prometheus:
+        enabled: "{{ mon_system_prometheus_enabled }}"
+        port: "{{ mon_system_prometheus_port }}"
+      alertmanager:
+        enabled: "{{ mon_system_alertmanager_enabled }}"
+        port: "{{ mon_system_alertmanager_port }}"
+      grafana:
+        enabled: "{{ mon_system_grafana_enabled }}"
+        port: "{{ mon_system_grafana_port }}"
+      loki:
+        enabled: "{{ mon_system_loki_enabled }}"
+      vector:
+        enabled: "{{ mon_system_vector_enabled }}"
+      nodeExporter:
+        enabled: "{{ mon_system_node_exporter_enabled }}"
+      ksm:
+        enabled: "{{ mon_system_ksm_enabled }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      issuer: "{{ mon_system_cert_manager_issuer }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_mon_system.sa_name }}"
+        roleName: "{{ eso_vault_integration_mon_system.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_mon_system.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_mon_system.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_mon_system_secrets + (eso_vault_integration_mon_system_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      extraObjects: "{{ mon_system_pre_extra_objects }}"
+
+    # --- PHASE: prometheus-operator ---
+    mon_system_prometheus_operator_helm_timeout: "3m"
     # ----------------------------------------------------------------------------
     # Prometheus-Operator stack: operator + Prometheus instance + Alertmanager
     # ----------------------------------------------------------------------------
@@ -156,18 +228,42 @@ all:
     #   3. prometheus image   — mon_system_prometheus_spec.image / .version (выше)
     #   4. alertmanager image — mon_system_alertmanager_spec.image / .version (выше)
     mon_system_prometheus_operator_rollout_timeout: "300s"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_prometheus_operator_extra_objects: []
+    # kustomize patches применяются tasks-helm-template-kustomize-build.yaml перед helm install.
+    # Pristine templates/prometheus-operator.yaml не модифицируется — все customizations здесь.
+    mon_system_prometheus_operator_kustomize_patches:
+      # Customization Deployment: resources, tolerations, nodeSelector.
+      - target:
+          kind: Deployment
+          name: prometheus-operator
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: prometheus-operator
+          spec:
+            template:
+              spec:
+                tolerations: []
+                nodeSelector:
+                  kubernetes.io/os: linux
+                containers:
+                  - name: prometheus-operator
+                    resources:
+                      limits:
+                        cpu: 200m
+                        memory: 200Mi
+                      requests:
+                        cpu: 100m
+                        memory: 100Mi
+    # Helm values для KUSTOMIZE_WRAPPER prometheus-operator phase — содержит только extraObjects wiring
+    mon_system_prometheus_operator_helm_values:
+      extraObjects: "{{ mon_system_prometheus_operator_extra_objects }}"
 
-    # ---------
-    # Prometheus instance — Ingress + ports
+    # --- PHASE: prometheus ---
+    mon_system_prometheus_helm_timeout: "5m"
     mon_system_prometheus_rollout_timeout: "300s"
-    mon_system_prometheus_domain: "prom-k8s-v2.drawapp.ru"
-    mon_system_prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
-    mon_system_prometheus_https_secret_name: "cert-prometheus"
-    mon_system_prometheus_vpn_only_enabled: false
-    mon_system_prometheus_port: 9090
-    mon_system_prometheus_reloader_port: 8080
-
-    # ---------
     # Prometheus CR spec — passed verbatim to monitoring.coreos.com/v1 Prometheus
     mon_system_prometheus_spec:
       podMetadata:
@@ -240,19 +336,22 @@ all:
           - namespace: mon-system
             name: alertmanager-instance
             port: http-web
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_prometheus_extra_objects: []
+    # Prometheus-phase kustomize patches (operator-side customization, default empty)
+    mon_system_prometheus_kustomize_patches: []
+    # Prometheus CR Helm values (Prometheus instance + RBAC + Service)
+    mon_system_prometheus_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      prometheusSpec: "{{ mon_system_prometheus_spec }}"
+      prometheus:
+        port: "{{ mon_system_prometheus_port }}"
+        reloaderPort: "{{ mon_system_prometheus_reloader_port }}"
+      extraObjects: "{{ mon_system_prometheus_extra_objects }}"
 
-    # ---------
-    # Alertmanager instance — Ingress + ports + mesh
+    # --- PHASE: alertmanager ---
+    mon_system_alertmanager_helm_timeout: "5m"
     mon_system_alertmanager_rollout_timeout: "300s"
-    mon_system_alertmanager_domain: "alertmanager-k8s-v2.drawapp.ru"
-    mon_system_alertmanager_external_url: "https://alertmanager-k8s-v2.drawapp.ru"
-    mon_system_alertmanager_https_secret_name: "cert-alertmanager"
-    mon_system_alertmanager_vpn_only_enabled: false
-    mon_system_alertmanager_port: 9093
-    mon_system_alertmanager_mesh_tcp_port: 9094
-    mon_system_alertmanager_mesh_udp_port: 9094
-
-    # ---------
     # Alertmanager CR spec — passed verbatim to monitoring.coreos.com/v1 Alertmanager
     mon_system_alertmanager_spec:
       podMetadata:
@@ -305,8 +404,6 @@ all:
         limits:
           cpu: 200m
           memory: 256Mi
-
-    # ---------
     # AlertmanagerConfig root spec (referenced via spec.alertmanagerConfiguration.name)
     mon_system_alertmanager_root_config_spec:
       route:
@@ -319,187 +416,170 @@ all:
         repeatInterval: 4h
       receivers:
         - name: "null"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_alertmanager_extra_objects: []
+    # Alertmanager-phase kustomize patches (operator-side customization, default empty)
+    mon_system_alertmanager_kustomize_patches: []
+    # Alertmanager CR Helm values (Alertmanager instance + root AlertmanagerConfig + Service)
+    mon_system_alertmanager_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      alertmanagerSpec: "{{ mon_system_alertmanager_spec }}"
+      alertmanagerRootConfigSpec: "{{ mon_system_alertmanager_root_config_spec }}"
+      alertmanager:
+        port: "{{ mon_system_alertmanager_port }}"
+        meshTcpPort: "{{ mon_system_alertmanager_mesh_tcp_port }}"
+        meshUdpPort: "{{ mon_system_alertmanager_mesh_udp_port }}"
+      extraObjects: "{{ mon_system_alertmanager_extra_objects }}"
 
-    # ---------
-    # Headless Services in kube-system for system-component scraping
-    # (kube-controller-manager, kube-etcd, kube-scheduler, coredns)
-    mon_system_prometheus_system_services:
-      - name: kube-controller-manager
-        namespace: kube-system
-        labels:
-          app.kubernetes.io/name: kube-controller-manager
-        clusterIP: None
-        podSelector:
-          component: kube-controller-manager
-        ports:
-          - name: https-metrics
-            port: 10257
-            targetPort: 10257
-            protocol: TCP
-
-      - name: kube-etcd
-        namespace: kube-system
-        labels:
-          app.kubernetes.io/name: kube-etcd
-        clusterIP: None
-        podSelector:
-          component: etcd
-        ports:
-          - name: http-metrics
-            port: 2381
-            targetPort: 2381
-            protocol: TCP
-
-      - name: kube-scheduler
-        namespace: kube-system
-        labels:
-          app.kubernetes.io/name: kube-scheduler
-        clusterIP: None
-        podSelector:
-          component: kube-scheduler
-        ports:
-          - name: https-metrics
-            port: 10259
-            targetPort: 10259
-            protocol: TCP
-
-      - name: coredns
-        namespace: kube-system
-        labels:
-          app.kubernetes.io/name: coredns
-        clusterIP: None
-        podSelector:
-          k8s-app: kube-dns
-        ports:
-          - name: http-metrics
-            port: 9153
-            targetPort: 9153
-            protocol: TCP
-
-    # ---------
-    # ServiceMonitors for system components (apiserver, kubelet, etcd,
-    # controller-manager, scheduler, coredns) — created in mon-system namespace
-    mon_system_prometheus_system_service_monitors:
-      - name: kube-apiserver
-        namespace: "{{ mon_system_namespace }}"
-        jobLabel: kube-apiserver
-        namespaceSelector:
-          matchNames: [default]
-        selector:
-          matchLabels:
-            component: apiserver
-            provider: kubernetes
-        endpoints:
-          - port: https
-            scheme: https
-            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-            tlsConfig:
-              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              serverName: kubernetes
-              insecureSkipVerify: false
-
-      - name: kube-controller-manager
-        namespace: "{{ mon_system_namespace }}"
-        jobLabel: kube-controller-manager
-        namespaceSelector:
-          matchNames: [kube-system]
-        selector:
-          matchLabels:
-            app.kubernetes.io/name: kube-controller-manager
-        endpoints:
-          - port: https-metrics
-            scheme: https
-            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-            tlsConfig:
-              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              insecureSkipVerify: true
-
-      - name: kube-etcd
-        namespace: "{{ mon_system_namespace }}"
-        jobLabel: kube-etcd
-        namespaceSelector:
-          matchNames: [kube-system]
-        selector:
-          matchLabels:
-            app.kubernetes.io/name: kube-etcd
-        endpoints:
-          - port: http-metrics
-            scheme: http
-
-      - name: kube-scheduler
-        namespace: "{{ mon_system_namespace }}"
-        jobLabel: kube-scheduler
-        namespaceSelector:
-          matchNames: [kube-system]
-        selector:
-          matchLabels:
-            app.kubernetes.io/name: kube-scheduler
-        endpoints:
-          - port: https-metrics
-            scheme: https
-            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-            tlsConfig:
-              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              insecureSkipVerify: true
-
-      - name: coredns
-        namespace: "{{ mon_system_namespace }}"
-        jobLabel: coredns
-        namespaceSelector:
-          matchNames: [kube-system]
-        selector:
-          matchLabels:
-            app.kubernetes.io/name: coredns
-        endpoints:
-          - port: http-metrics
-            scheme: http
-
-      - name: kubelet
-        namespace: "{{ mon_system_namespace }}"
-        jobLabel: k8s-app
-        namespaceSelector:
-          matchNames: [kube-system]
-        selector:
-          matchLabels:
-            app.kubernetes.io/name: kubelet
-            k8s-app: kubelet
-        endpoints:
-          - port: https-metrics
-            scheme: https
-            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-            honorLabels: true
-            tlsConfig:
-              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              insecureSkipVerify: true
-          - port: https-metrics
-            scheme: https
-            path: /metrics/cadvisor
-            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-            honorLabels: true
-            tlsConfig:
-              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              insecureSkipVerify: true
-
-    # ----------------------------------------------------------------------------
-    # node-exporter — DaemonSet + Service (host-level metrics)
-    # ----------------------------------------------------------------------------
-    mon_system_node_exporter_image: "quay.io/prometheus/node-exporter:v1.11.1"
+    # --- PHASE: node-exporter ---
+    mon_system_node_exporter_helm_timeout: "3m"
     mon_system_node_exporter_rollout_timeout: "120s"
-    mon_system_node_exporter_port: 9100
+    mon_system_node_exporter_image: "quay.io/prometheus/node-exporter:v1.11.1"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_node_exporter_extra_objects: []
+    # Node-exporter-phase kustomize patches (operator-side customization, default empty)
+    mon_system_node_exporter_kustomize_patches: []
+    # node-exporter Helm values (DaemonSet + Service)
+    mon_system_node_exporter_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      nodeExporter:
+        image: "{{ mon_system_node_exporter_image }}"
+        port: "{{ mon_system_node_exporter_port }}"
+        args:
+          - --path.procfs=/host/proc
+          - --path.sysfs=/host/sys
+          - --path.rootfs=/host/root
+          - --path.udev.data=/host/root/run/udev/data
+          - '--web.listen-address=0.0.0.0:9100'
+          - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)'
+          - '--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$'
+      tolerations:
+        - operator: "Exists"
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+      extraObjects: "{{ mon_system_node_exporter_extra_objects }}"
 
-    # ----------------------------------------------------------------------------
-    # kube-state-metrics — Deployment + RBAC + Service (Kubernetes object metrics)
-    # ----------------------------------------------------------------------------
-    mon_system_ksm_image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0"
+    # --- PHASE: ksm ---
+    mon_system_ksm_helm_timeout: "3m"
     mon_system_ksm_rollout_timeout: "60s"
-    mon_system_ksm_port: 8080
+    mon_system_ksm_image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_ksm_extra_objects: []
+    # Ksm-phase kustomize patches (operator-side customization, default empty)
+    mon_system_ksm_kustomize_patches: []
+    # kube-state-metrics Helm values (Deployment + RBAC + Service)
+    mon_system_ksm_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      ksm:
+        image: "{{ mon_system_ksm_image }}"
+        port: "{{ mon_system_ksm_port }}"
+        args:
+          - --port=8080
+          - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      extraObjects: "{{ mon_system_ksm_extra_objects }}"
 
-    # ----------------------------------------------------------------------------
-    # Vector — DaemonSet + RBAC + ConfigMap (log shipper, no Service by design)
-    # ----------------------------------------------------------------------------
-    mon_system_vector_image: "docker.io/timberio/vector:0.50.0-debian"
+    # --- PHASE: loki ---
+    mon_system_loki_helm_timeout: "5m"
+    mon_system_loki_rollout_timeout: "120s"
+    mon_system_loki_image: "docker.io/grafana/loki:3.5.0"
+    # Full loki-config.yaml as block scalar — override entire variable in
+    # hosts-vars-override/mon-system.yaml to change any parameter.
+    # Single Jinja substitution: {{ mon_system_loki_port }} keeps http_listen_port
+    # in sync with the port used by Deployment containerPort and Service port.
+    mon_system_loki_config_yaml: |
+      auth_enabled: false
+
+      server:
+        http_listen_port: {{ mon_system_loki_port }}
+
+      common:
+        instance_addr: 127.0.0.1
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+
+      schema_config:
+        configs:
+          - from: 2025-05-15
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      compactor:
+        working_directory: /loki/retention
+        delete_request_store: filesystem
+        compaction_interval: 10m
+        retention_enabled: true
+        retention_delete_delay: 2h
+        retention_delete_worker_count: 100
+
+      limits_config:
+        retention_period: 744h
+        max_line_size: 512KB
+        ingestion_rate_mb: 30
+        ingestion_burst_size_mb: 60
+
+      analytics:
+        reporting_enabled: false
+
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    mon_system_loki_extra_objects: []
+    # Loki-phase kustomize patches (operator-side customization, default empty)
+    mon_system_loki_kustomize_patches: []
+    # Loki Helm values (Deployment + PVC + ConfigMap + Service)
+    mon_system_loki_helm_values:
+      namespace: "{{ mon_system_namespace }}"
+      loki:
+        image: "{{ mon_system_loki_image }}"
+        port: "{{ mon_system_loki_port }}"
+      pvc:
+        accessMode: "ReadWriteOnce"
+        storageClassName: "lnstr-major-multi-sync"
+        storageSize: "4Gi"
+        subpath: "some-data"
+      config_yaml: "{{ mon_system_loki_config_yaml }}"
+      tolerations: []
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "256Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+      extraObjects: "{{ mon_system_loki_extra_objects }}"
+
+    # --- PHASE: vector ---
+    mon_system_vector_helm_timeout: "5m"
     mon_system_vector_rollout_timeout: "180s"
-    # ---------
+    mon_system_vector_image: "docker.io/timberio/vector:0.50.0-debian"
     # Full vector-config.yaml as block scalar — override entire variable in
     # hosts-vars-override/mon-system.yaml to change any parameter.
     # Endpoint Loki resolved by Ansible: loki.{{ mon_system_namespace }}.svc.cluster.local:{{ mon_system_loki_port }}
@@ -637,302 +717,10 @@ all:
           encoding:
             codec: text
 
-    # ----------------------------------------------------------------------------
-    # Loki — single-binary Deployment + PVC + ConfigMap + Service (log store)
-    # ----------------------------------------------------------------------------
-    mon_system_loki_image: "docker.io/grafana/loki:3.5.0"
-    mon_system_loki_rollout_timeout: "120s"
-    mon_system_loki_port: 3100
-    # ---------
-    # Full loki-config.yaml as block scalar — override entire variable in
-    # hosts-vars-override/mon-system.yaml to change any parameter.
-    # Single Jinja substitution: {{ mon_system_loki_port }} keeps http_listen_port
-    # in sync with the port used by Deployment containerPort and Service port.
-    mon_system_loki_config_yaml: |
-      auth_enabled: false
-
-      server:
-        http_listen_port: {{ mon_system_loki_port }}
-
-      common:
-        instance_addr: 127.0.0.1
-        path_prefix: /loki
-        storage:
-          filesystem:
-            chunks_directory: /loki/chunks
-            rules_directory: /loki/rules
-        replication_factor: 1
-        ring:
-          kvstore:
-            store: inmemory
-
-      schema_config:
-        configs:
-          - from: 2025-05-15
-            store: tsdb
-            object_store: filesystem
-            schema: v13
-            index:
-              prefix: index_
-              period: 24h
-
-      compactor:
-        working_directory: /loki/retention
-        delete_request_store: filesystem
-        compaction_interval: 10m
-        retention_enabled: true
-        retention_delete_delay: 2h
-        retention_delete_worker_count: 100
-
-      limits_config:
-        retention_period: 744h
-        max_line_size: 512KB
-        ingestion_rate_mb: 30
-        ingestion_burst_size_mb: 60
-
-      analytics:
-        reporting_enabled: false
-
-    # ----------------------------------------------------------------------------
-    # PostgreSQL backing Grafana state (handwritten chart, ESO-managed credentials)
-    # ----------------------------------------------------------------------------
-    mon_system_grafana_postgresql_image: "docker.io/postgres:16-alpine"
-    mon_system_grafana_postgresql_rollout_timeout: "120s"
-    mon_system_grafana_postgresql_port: 5432
-    mon_system_grafana_postgresql_storage_class: "lnstr-major-multi-sync"
-    mon_system_grafana_postgresql_storage_size: "10Gi"
-    mon_system_grafana_postgresql_username: "grafana"
-    mon_system_grafana_postgresql_database_name: "grafana"
-    mon_system_grafana_postgresql_secret_key_username: "username"
-    mon_system_grafana_postgresql_secret_key_password: "password"
-
-    # ----------------------------------------------------------------------------
-    # Grafana — Deployment + PVC + Service (with Vault/ESO admin password lifecycle)
-    # ----------------------------------------------------------------------------
-    mon_system_grafana_image: "docker.io/grafana/grafana:12.4.2"
-    mon_system_grafana_rollout_timeout: "120s"
-    mon_system_grafana_port: 3000
-    mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
-    mon_system_grafana_external_url: "https://grafana-k8s-v2.drawapp.ru"
-    mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
-    mon_system_grafana_vpn_only_enabled: false
-    mon_system_grafana_admin_username: "admin"
-    mon_system_grafana_admin_secret_key_username: "username"
-    mon_system_grafana_admin_secret_key_password: "password"
-
-    # ============================================================================
-    # Helm values dicts — one per Helm release (10 + post = 11 phases)
-    # ============================================================================
-    # ---------
-    # Pre-phase Helm values (NetworkPolicies + ESO chart)
-    # eso_vault_integration_mon_system_secrets — inline merge base + extra (задаётся ниже в eso_vault_integration_mon_system_secrets)
-    mon_system_pre_helm_values:
-      namespace: "{{ mon_system_namespace }}"
-      prometheus_operator:
-        enabled: "{{ mon_system_prometheus_operator_enabled }}"
-      prometheus:
-        enabled: "{{ mon_system_prometheus_enabled }}"
-        port: "{{ mon_system_prometheus_port }}"
-      alertmanager:
-        enabled: "{{ mon_system_alertmanager_enabled }}"
-        port: "{{ mon_system_alertmanager_port }}"
-      grafana:
-        enabled: "{{ mon_system_grafana_enabled }}"
-        port: "{{ mon_system_grafana_port }}"
-      loki:
-        enabled: "{{ mon_system_loki_enabled }}"
-      vector:
-        enabled: "{{ mon_system_vector_enabled }}"
-      nodeExporter:
-        enabled: "{{ mon_system_node_exporter_enabled }}"
-      ksm:
-        enabled: "{{ mon_system_ksm_enabled }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        instanceName: "traefik-{{ traefik_namespace }}"
-      issuer: "{{ mon_system_cert_manager_issuer }}"
-      eso:
-        vaultServerUrl: "{{ vault_internal_url }}"
-        saName: "{{ eso_vault_integration_mon_system.sa_name }}"
-        roleName: "{{ eso_vault_integration_mon_system.role_name }}"
-        secretStoreName: "{{ eso_vault_integration_mon_system.secret_store_name }}"
-        kvEnginePath: "{{ eso_vault_integration_mon_system.kv_engine_path }}"
-        secrets: "{{ eso_vault_integration_mon_system_secrets + (eso_vault_integration_mon_system_secrets_extra | default([])) }}"
-      esoResourcesConfig:
-        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
-        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
-        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
-      extraObjects: "{{ mon_system_pre_extra_objects }}"
-
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_pre_extra_objects: []
-
-    # Pre-phase kustomize patches (operator-side customization, default empty)
-    mon_system_pre_kustomize_patches: []
-
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_prometheus_operator_extra_objects: []
-
-    # Helm values для KUSTOMIZE_WRAPPER prometheus-operator phase — содержит только extraObjects wiring
-    mon_system_prometheus_operator_helm_values:
-      extraObjects: "{{ mon_system_prometheus_operator_extra_objects }}"
-
-    # kustomize patches применяются tasks-helm-template-kustomize-build.yaml перед helm install.
-    # Pristine templates/prometheus-operator.yaml не модифицируется — все customizations здесь.
-    mon_system_prometheus_operator_kustomize_patches:
-      # Customization Deployment: resources, tolerations, nodeSelector.
-      - target:
-          kind: Deployment
-          name: prometheus-operator
-        patch: |-
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: prometheus-operator
-          spec:
-            template:
-              spec:
-                tolerations: []
-                nodeSelector:
-                  kubernetes.io/os: linux
-                containers:
-                  - name: prometheus-operator
-                    resources:
-                      limits:
-                        cpu: 200m
-                        memory: 200Mi
-                      requests:
-                        cpu: 100m
-                        memory: 100Mi
-
-    # ---------
-    # Prometheus CR Helm values (Prometheus instance + RBAC + Service)
-    mon_system_prometheus_helm_values:
-      namespace: "{{ mon_system_namespace }}"
-      prometheusSpec: "{{ mon_system_prometheus_spec }}"
-      prometheus:
-        port: "{{ mon_system_prometheus_port }}"
-        reloaderPort: "{{ mon_system_prometheus_reloader_port }}"
-      extraObjects: "{{ mon_system_prometheus_extra_objects }}"
-
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_prometheus_extra_objects: []
-
-    # Prometheus-phase kustomize patches (operator-side customization, default empty)
-    mon_system_prometheus_kustomize_patches: []
-
-    # ---------
-    # Alertmanager CR Helm values (Alertmanager instance + root AlertmanagerConfig + Service)
-    mon_system_alertmanager_helm_values:
-      namespace: "{{ mon_system_namespace }}"
-      alertmanagerSpec: "{{ mon_system_alertmanager_spec }}"
-      alertmanagerRootConfigSpec: "{{ mon_system_alertmanager_root_config_spec }}"
-      alertmanager:
-        port: "{{ mon_system_alertmanager_port }}"
-        meshTcpPort: "{{ mon_system_alertmanager_mesh_tcp_port }}"
-        meshUdpPort: "{{ mon_system_alertmanager_mesh_udp_port }}"
-      extraObjects: "{{ mon_system_alertmanager_extra_objects }}"
-
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_alertmanager_extra_objects: []
-
-    # Alertmanager-phase kustomize patches (operator-side customization, default empty)
-    mon_system_alertmanager_kustomize_patches: []
-
-    # ---------
-    # node-exporter Helm values (DaemonSet + Service)
-    mon_system_node_exporter_helm_values:
-      namespace: "{{ mon_system_namespace }}"
-      nodeExporter:
-        image: "{{ mon_system_node_exporter_image }}"
-        port: "{{ mon_system_node_exporter_port }}"
-        args:
-          - --path.procfs=/host/proc
-          - --path.sysfs=/host/sys
-          - --path.rootfs=/host/root
-          - --path.udev.data=/host/root/run/udev/data
-          - '--web.listen-address=0.0.0.0:9100'
-          - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)'
-          - '--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$'
-      tolerations:
-        - operator: "Exists"
-      nodeSelector:
-        kubernetes.io/os: linux
-      resources:
-        requests:
-          cpu: 50m
-          memory: 32Mi
-        limits:
-          cpu: 200m
-          memory: 128Mi
-      extraObjects: "{{ mon_system_node_exporter_extra_objects }}"
-
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_node_exporter_extra_objects: []
-
-    # Node-exporter-phase kustomize patches (operator-side customization, default empty)
-    mon_system_node_exporter_kustomize_patches: []
-
-    # ---------
-    # kube-state-metrics Helm values (Deployment + RBAC + Service)
-    mon_system_ksm_helm_values:
-      namespace: "{{ mon_system_namespace }}"
-      ksm:
-        image: "{{ mon_system_ksm_image }}"
-        port: "{{ mon_system_ksm_port }}"
-        args:
-          - --port=8080
-          - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
-      tolerations: []
-      nodeSelector:
-        kubernetes.io/os: linux
-      resources:
-        requests:
-          cpu: 50m
-          memory: 64Mi
-        limits:
-          cpu: 200m
-          memory: 256Mi
-      extraObjects: "{{ mon_system_ksm_extra_objects }}"
-
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_ksm_extra_objects: []
-
-    # Ksm-phase kustomize patches (operator-side customization, default empty)
-    mon_system_ksm_kustomize_patches: []
-
-    # ---------
-    # Loki Helm values (Deployment + PVC + ConfigMap + Service)
-    mon_system_loki_helm_values:
-      namespace: "{{ mon_system_namespace }}"
-      loki:
-        image: "{{ mon_system_loki_image }}"
-        port: "{{ mon_system_loki_port }}"
-      pvc:
-        accessMode: "ReadWriteOnce"
-        storageClassName: "lnstr-major-multi-sync"
-        storageSize: "4Gi"
-        subpath: "some-data"
-      config_yaml: "{{ mon_system_loki_config_yaml }}"
-      tolerations: []
-      nodeSelector:
-        node-role.kubernetes.io/worker: ""
-      resources:
-        requests:
-          cpu: "100m"
-          memory: "256Mi"
-        limits:
-          cpu: "1"
-          memory: "1Gi"
-      extraObjects: "{{ mon_system_loki_extra_objects }}"
-
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_loki_extra_objects: []
-
-    # Loki-phase kustomize patches (operator-side customization, default empty)
-    mon_system_loki_kustomize_patches: []
-
-    # ---------
+    mon_system_vector_extra_objects: []
+    # Vector-phase kustomize patches (operator-side customization, default empty)
+    mon_system_vector_kustomize_patches: []
     # Vector Helm values (DaemonSet + RBAC + ConfigMap; no Service by design)
     mon_system_vector_helm_values:
       namespace: "{{ mon_system_namespace }}"
@@ -952,13 +740,16 @@ all:
           memory: "1Gi"
       extraObjects: "{{ mon_system_vector_extra_objects }}"
 
+    # --- PHASE: grafana-postgresql ---
+    mon_system_grafana_postgresql_helm_timeout: "3m"
+    mon_system_grafana_postgresql_rollout_timeout: "120s"
+    mon_system_grafana_postgresql_image: "docker.io/postgres:16-alpine"
+    mon_system_grafana_postgresql_storage_class: "lnstr-major-multi-sync"
+    mon_system_grafana_postgresql_storage_size: "10Gi"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_vector_extra_objects: []
-
-    # Vector-phase kustomize patches (operator-side customization, default empty)
-    mon_system_vector_kustomize_patches: []
-
-    # ---------
+    mon_system_grafana_postgresql_extra_objects: []
+    # grafana-postgresql phase kustomize patches (operator-side customization, default empty)
+    mon_system_grafana_postgresql_kustomize_patches: []
     # PostgreSQL (backing Grafana) Helm values
     mon_system_grafana_postgresql_helm_values:
       namespace: "{{ mon_system_namespace }}"
@@ -979,13 +770,14 @@ all:
       resources: {}
       extraObjects: "{{ mon_system_grafana_postgresql_extra_objects }}"
 
+    # --- PHASE: grafana ---
+    mon_system_grafana_helm_timeout: "3m"
+    mon_system_grafana_rollout_timeout: "120s"
+    mon_system_grafana_image: "docker.io/grafana/grafana:12.4.2"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_grafana_postgresql_extra_objects: []
-
-    # grafana-postgresql phase kustomize patches (operator-side customization, default empty)
-    mon_system_grafana_postgresql_kustomize_patches: []
-
-    # ---------
+    mon_system_grafana_extra_objects: []
+    # Grafana-phase kustomize patches (operator-side customization, default empty)
+    mon_system_grafana_kustomize_patches: []
     # Grafana Helm values (Deployment + PVC + Service)
     # adminSecret.name — K8s Secret created by ESO (mon-system/pre/), populated
     # from Vault path /mon-system/grafana/admin/creds with keys username + password
@@ -1017,13 +809,170 @@ all:
       resources: {}
       extraObjects: "{{ mon_system_grafana_extra_objects }}"
 
+    # --- PHASE: post ---
+    mon_system_post_helm_timeout: "3m"
+    # Headless Services in kube-system for system-component scraping
+    # (kube-controller-manager, kube-etcd, kube-scheduler, coredns)
+    mon_system_prometheus_system_services:
+      - name: kube-controller-manager
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-controller-manager
+        clusterIP: None
+        podSelector:
+          component: kube-controller-manager
+        ports:
+          - name: https-metrics
+            port: 10257
+            targetPort: 10257
+            protocol: TCP
+
+      - name: kube-etcd
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-etcd
+        clusterIP: None
+        podSelector:
+          component: etcd
+        ports:
+          - name: http-metrics
+            port: 2381
+            targetPort: 2381
+            protocol: TCP
+
+      - name: kube-scheduler
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: kube-scheduler
+        clusterIP: None
+        podSelector:
+          component: kube-scheduler
+        ports:
+          - name: https-metrics
+            port: 10259
+            targetPort: 10259
+            protocol: TCP
+
+      - name: coredns
+        namespace: kube-system
+        labels:
+          app.kubernetes.io/name: coredns
+        clusterIP: None
+        podSelector:
+          k8s-app: kube-dns
+        ports:
+          - name: http-metrics
+            port: 9153
+            targetPort: 9153
+            protocol: TCP
+
+    # ServiceMonitors for system components (apiserver, kubelet, etcd,
+    # controller-manager, scheduler, coredns) — created in mon-system namespace
+    mon_system_prometheus_system_service_monitors:
+      - name: kube-apiserver
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-apiserver
+        namespaceSelector:
+          matchNames: [default]
+        selector:
+          matchLabels:
+            component: apiserver
+            provider: kubernetes
+        endpoints:
+          - port: https
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              serverName: kubernetes
+              insecureSkipVerify: false
+
+      - name: kube-controller-manager
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-controller-manager
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-controller-manager
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
+      - name: kube-etcd
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-etcd
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-etcd
+        endpoints:
+          - port: http-metrics
+            scheme: http
+
+      - name: kube-scheduler
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: kube-scheduler
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-scheduler
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
+      - name: coredns
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: coredns
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: coredns
+        endpoints:
+          - port: http-metrics
+            scheme: http
+
+      - name: kubelet
+        namespace: "{{ mon_system_namespace }}"
+        jobLabel: k8s-app
+        namespaceSelector:
+          matchNames: [kube-system]
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kubelet
+            k8s-app: kubelet
+        endpoints:
+          - port: https-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            honorLabels: true
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+          - port: https-metrics
+            scheme: https
+            path: /metrics/cadvisor
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            honorLabels: true
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecureSkipVerify: true
+
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_grafana_extra_objects: []
-
-    # Grafana-phase kustomize patches (operator-side customization, default empty)
-    mon_system_grafana_kustomize_patches: []
-
-    # ---------
+    mon_system_post_extra_objects: []
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    mon_system_post_kustomize_patches: []
     # Post-phase Helm values (Ingresses + Certificates + ServiceMonitors + system-*)
     mon_system_post_helm_values:
       namespace: "{{ mon_system_namespace }}"
@@ -1071,9 +1020,3 @@ all:
       systemServices: "{{ mon_system_prometheus_system_services }}"
       systemServiceMonitors: "{{ mon_system_prometheus_system_service_monitors }}"
       extraObjects: "{{ mon_system_post_extra_objects }}"
-
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    mon_system_post_extra_objects: []
-
-    # Post-phase kustomize patches (operator-side customization, default empty)
-    mon_system_post_kustomize_patches: []
