@@ -1,18 +1,6 @@
 all:
   vars:
     longhorn_namespace: "longhorn-system" # DO NOT CHANGE
-    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
-    longhorn_helm_is_oci: false
-    longhorn_helm_url: "https://charts.longhorn.io"
-    longhorn_helm_repo_name: "longhorn"
-    longhorn_helm_chart_name: "longhorn"
-    longhorn_helm_chart_version: "1.11.1"
-    # Helm timeouts
-    longhorn_pre_helm_timeout: "5m"
-    longhorn_install_helm_timeout: "10m"
-    longhorn_post_helm_timeout: "2m"
-    longhorn_rollout_timeout: "600s"
-    # ---
     longhorn_ui_domain: "longhorn-ui-k8s-v2.drawapp.ru"
     longhorn_external_url: "https://longhorn-ui-k8s-v2.drawapp.ru"
     longhorn_ui_vpn_only_enabled: false
@@ -60,11 +48,31 @@ all:
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
         enabled: true
-    longhorn_storage_classes: []
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_longhorn_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # Для longhorn base пуст: S3-backup credentials определяются в
+    # hosts-vars-override/ через eso_vault_integration_longhorn_secrets_extra.
+    # ---------
+    eso_vault_integration_longhorn:
+      sa_name: "eso-main"
+      role_name: "longhorn.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
 
+    eso_vault_integration_longhorn_secrets: []  # S3-backup secrets определяются в hosts-vars-override/ (eso_vault_integration_longhorn_secrets_extra)
+    eso_vault_integration_longhorn_secrets_extra: []
+    # ---
+    # --- PHASE: pre ---
+    # Helm timeouts
+    longhorn_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     longhorn_pre_extra_objects: []
-
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    longhorn_pre_kustomize_patches: []
     # Pre-phase values (NetworkPolicies + ESO chart)
     longhorn_pre_helm_values:
       namespace: "{{ longhorn_namespace }}"
@@ -84,24 +92,16 @@ all:
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ longhorn_cert_manager_issuer }}"
       extraObjects: "{{ longhorn_pre_extra_objects }}"
-    # Pre-phase kustomize patches (operator-side customization, default empty)
-    longhorn_pre_kustomize_patches: []
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    longhorn_post_extra_objects: []
-    # Post-phase values (StorageClasses + Ingress chart)
-    longhorn_post_helm_values:
-      namespace: "{{ longhorn_namespace }}"
-      issuer: "{{ longhorn_cert_manager_issuer }}"
-      ingressConfig: "{{ longhorn_ingress_config }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        entryPoints:
-          web: "{{ traefik_web_entrypoint }}"
-          websecure: "{{ traefik_websecure_entrypoint }}"
-      storageClasses: "{{ longhorn_storage_classes }}"
-      extraObjects: "{{ longhorn_post_extra_objects }}"
-    # Post-phase kustomize patches (operator-side customization, default empty)
-    longhorn_post_kustomize_patches: []
+    # ---
+    # --- PHASE: install ---
+    longhorn_install_helm_timeout: "10m"
+    longhorn_rollout_timeout: "600s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    longhorn_helm_is_oci: false
+    longhorn_helm_url: "https://charts.longhorn.io"
+    longhorn_helm_repo_name: "longhorn"
+    longhorn_helm_chart_name: "longhorn"
+    longhorn_helm_chart_version: "1.11.1"
     # Helm chart values
     longhorn_helm_values:
       defaultSettings:
@@ -151,20 +151,23 @@ all:
           enabled: true
           interval: "30s"
           scrapeTimeout: "10s"
-    # ---------
-    # ESO integration: Vault → K8s Secrets
-    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
-    # eso_vault_integration_longhorn_secrets — массив ссылок на named-переменные
-    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
-    # как для base-ссылок, так и для _extra dict'ов).
-    # Для longhorn base пуст: S3-backup credentials определяются в
-    # hosts-vars-override/ через eso_vault_integration_longhorn_secrets_extra.
-    # ---------
-    eso_vault_integration_longhorn:
-      sa_name: "eso-main"
-      role_name: "longhorn.eso-main"
-      secret_store_name: "eso-main.vault"
-      kv_engine_path: "eso-secret"
-
-    eso_vault_integration_longhorn_secrets: []  # S3-backup secrets определяются в hosts-vars-override/ (eso_vault_integration_longhorn_secrets_extra)
-    eso_vault_integration_longhorn_secrets_extra: []
+    # ---
+    # --- PHASE: post ---
+    longhorn_post_helm_timeout: "2m"
+    longhorn_storage_classes: []
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    longhorn_post_extra_objects: []
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    longhorn_post_kustomize_patches: []
+    # Post-phase values (StorageClasses + Ingress chart)
+    longhorn_post_helm_values:
+      namespace: "{{ longhorn_namespace }}"
+      issuer: "{{ longhorn_cert_manager_issuer }}"
+      ingressConfig: "{{ longhorn_ingress_config }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      storageClasses: "{{ longhorn_storage_classes }}"
+      extraObjects: "{{ longhorn_post_extra_objects }}"

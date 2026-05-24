@@ -1,19 +1,101 @@
 all:
   vars:
     haproxy_namespace: "haproxy-lb"
+    haproxy_daemonset_name: "haproxy-lb"
+    haproxy_ingress_class: "haproxy-lb"
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_haproxy_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # Для haproxy base пуст: пользовательские TLS-секреты и прочее — через
+    # eso_vault_integration_haproxy_secrets_extra в hosts-vars-override/.
+    # ---------
+    eso_vault_integration_haproxy:
+      sa_name: "eso-main"
+      role_name: "haproxy.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_haproxy_secrets: []
+    eso_vault_integration_haproxy_secrets_extra: []
+    # ---
+    # --- PHASE: pre ---
+    # Helm timeouts
+    haproxy_pre_helm_timeout: "5m"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    haproxy_pre_extra_objects: []
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    haproxy_pre_kustomize_patches: []
+    # Pre-phase values (NetworkPolicies + ESO chart)
+    # Примечание: eso.secrets и esoResourcesConfig используют runtime-факты,
+    # которые вычисляются tasks-eso-merge.yaml (tags: [always]) до выполнения pre-фазы.
+    haproxy_pre_helm_values:
+      namespace: "{{ haproxy_namespace }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_haproxy.sa_name }}"
+        roleName: "{{ eso_vault_integration_haproxy.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_haproxy.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_haproxy.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_haproxy_secrets + (eso_vault_integration_haproxy_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      extraObjects: "{{ haproxy_pre_extra_objects }}"
+    # ---
+    # --- PHASE: install ---
+    haproxy_install_helm_timeout: "5m"
+    haproxy_rollout_timeout: "300s"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     haproxy_helm_is_oci: false
     haproxy_helm_url: "https://haproxytech.github.io/helm-charts"
     haproxy_helm_repo_name: "haproxytech"
     haproxy_helm_chart_name: "kubernetes-ingress"
     haproxy_helm_chart_version: "1.49.0"
-    haproxy_daemonset_name: "haproxy-lb"
-    haproxy_ingress_class: "haproxy-lb"
-    # Helm timeouts
-    haproxy_pre_helm_timeout: "5m"
-    haproxy_install_helm_timeout: "5m"
+    # Helm chart values
+    haproxy_helm_values:
+      fullnameOverride: "{{ haproxy_daemonset_name }}"
+      controller:
+        kind: DaemonSet
+        tolerations:
+          - operator: "Exists"
+        nodeSelector: {}
+        resources: {}
+        ingressClassResource:
+          name: "{{ haproxy_ingress_class }}"
+        ingressClass: "{{ haproxy_ingress_class }}"
+        defaultTLSSecret:
+          enabled: false
+        logging:
+          level: info
+          traffic:
+            address: stdout
+            format: raw
+            facility: daemon
+        service:
+          enabled: true
+          type: ClusterIP
+          enablePorts:
+            http: false
+            https: false
+            quic: false
+            stat: true
+        serviceMonitor:
+          enabled: true
+          extraLabels: {}
+          endpoints:
+            - port: stat
+              path: /metrics
+              scheme: http
+              interval: "30s"
+      serviceAccount:
+        create: true
+    # ---
+    # --- PHASE: post ---
     haproxy_post_helm_timeout: "2m"
-    haproxy_rollout_timeout: "300s"
     # Global CRD spec: config + logTargets
     haproxy_global_config:
       config:
@@ -55,31 +137,6 @@ all:
       tcp_smart_connect: enabled
       tcp_smart_accept: enabled
       tcplog: true
-    # ---
-    # ---
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    haproxy_pre_extra_objects: []
-    # Pre-phase kustomize patches (operator-side customization, default empty)
-    haproxy_pre_kustomize_patches: []
-    # Pre-phase values (NetworkPolicies + ESO chart)
-    # Примечание: eso.secrets и esoResourcesConfig используют runtime-факты,
-    # которые вычисляются tasks-eso-merge.yaml (tags: [always]) до выполнения pre-фазы.
-    haproxy_pre_helm_values:
-      namespace: "{{ haproxy_namespace }}"
-      eso:
-        vaultServerUrl: "{{ vault_internal_url }}"
-        saName: "{{ eso_vault_integration_haproxy.sa_name }}"
-        roleName: "{{ eso_vault_integration_haproxy.role_name }}"
-        secretStoreName: "{{ eso_vault_integration_haproxy.secret_store_name }}"
-        kvEnginePath: "{{ eso_vault_integration_haproxy.kv_engine_path }}"
-        secrets: "{{ eso_vault_integration_haproxy_secrets + (eso_vault_integration_haproxy_secrets_extra | default([])) }}"
-      esoResourcesConfig:
-        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
-        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
-        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
-      extraObjects: "{{ haproxy_pre_extra_objects }}"
-    # ---
-    # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     haproxy_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -91,60 +148,3 @@ all:
       global: "{{ haproxy_global_config }}"
       defaults: "{{ haproxy_defaults_config }}"
       extraObjects: "{{ haproxy_post_extra_objects }}"
-    # ---
-    # ---
-    # Helm chart values
-    haproxy_helm_values:
-      fullnameOverride: "{{ haproxy_daemonset_name }}"
-      controller:
-        kind: DaemonSet
-        tolerations:
-          - operator: "Exists"
-        nodeSelector: {}
-        resources: {}
-        ingressClassResource:
-          name: "{{ haproxy_ingress_class }}"
-        ingressClass: "{{ haproxy_ingress_class }}"
-        defaultTLSSecret:
-          enabled: false
-        logging:
-          level: info
-          traffic:
-            address: stdout
-            format: raw
-            facility: daemon
-        service:
-          enabled: true
-          type: ClusterIP
-          enablePorts:
-            http: false
-            https: false
-            quic: false
-            stat: true
-        serviceMonitor:
-          enabled: true
-          extraLabels: {}
-          endpoints:
-            - port: stat
-              path: /metrics
-              scheme: http
-              interval: "30s"
-      serviceAccount:
-        create: true
-    # ---------
-    # ESO integration: Vault → K8s Secrets
-    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
-    # eso_vault_integration_haproxy_secrets — массив ссылок на named-переменные
-    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
-    # как для base-ссылок, так и для _extra dict'ов).
-    # Для haproxy base пуст: пользовательские TLS-секреты и прочее — через
-    # eso_vault_integration_haproxy_secrets_extra в hosts-vars-override/.
-    # ---------
-    eso_vault_integration_haproxy:
-      sa_name: "eso-main"
-      role_name: "haproxy.eso-main"
-      secret_store_name: "eso-main.vault"
-      kv_engine_path: "eso-secret"
-
-    eso_vault_integration_haproxy_secrets: []
-    eso_vault_integration_haproxy_secrets_extra: []

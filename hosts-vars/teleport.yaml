@@ -1,24 +1,28 @@
 all:
   vars:
     teleport_namespace: "teleport"
-    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
-    teleport_helm_is_oci: false
-    teleport_helm_url: "https://charts.releases.teleport.dev"
-    teleport_helm_repo_name: "teleport"
-    teleport_helm_chart_name: "teleport-cluster"
-    teleport_helm_chart_version: "18.7.2"
-    # Timeouts
-    teleport_pre_helm_timeout: "5m"
-    teleport_install_helm_timeout: "10m"
-    teleport_post_helm_timeout: "5m"
-    teleport_configure_helm_timeout: "5m"
-    teleport_rollout_timeout: "300s"
+    # Cluster identity (clusterName = FQDN, immutable після першого деплоя!)
+    teleport_cluster_name: "{{ teleport_domain }}"
+    teleport_kube_cluster_name: "drawapp-k8s-v2" # Название кластера внутри Teleport. Любое произвольное название
     # Networking / Ingress
     teleport_domain: "teleport-k8s-v2.drawapp.ru"
     teleport_external_url: "https://teleport-k8s-v2.drawapp.ru"
     teleport_tls_secret_name: "cert-teleport"
     teleport_ingress_class_name: "traefik-lb"
     teleport_vpn_only_enabled: false
+    teleport_web_port: 3080
+    teleport_web_listen_addr: "0.0.0.0:{{ teleport_web_port }}"
+    # Used in teleport-ssh-agent-install.yaml
+    teleport_web_public_addr: "{{ teleport_cluster_name }}:443"
+    # SSH / tunnel ports (HAProxy TCP NodePort)
+    teleport_ssh_port: 3023
+    teleport_ssh_listen_addr: "0.0.0.0:{{ teleport_ssh_port }}"
+    teleport_reverse_tunnel_port: 3024 # Другой телепорт или агент подключается к ЭТОМУ teleport. Другой - под NAT, и этот не может до него достучаться
+    teleport_reverse_tunnel_listen_addr: "0.0.0.0:{{ teleport_reverse_tunnel_port }}"
+    teleport_internal_connect_port: 3025 # Auth-server общается с Proxy-server
+    teleport_kube_listen_port: 3026
+    teleport_kube_listen_addr: "0.0.0.0:{{ teleport_kube_listen_port }}"
+    teleport_kube_public_addr: "{{ teleport_cluster_name }}:{{ teleport_kube_listen_port }}"
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
     # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
     # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
@@ -61,36 +65,10 @@ all:
         vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
       certificate:
         enabled: true
-
-    # Cluster identity (clusterName = FQDN, immutable после первого деплоя!)
-    teleport_cluster_name: "{{ teleport_domain }}"
-    teleport_kube_cluster_name: "drawapp-k8s-v2" # Название кластера внутри Teleport. Любое произвольное название
-
-    teleport_web_port: 3080
-    teleport_web_service_port: 443
-    teleport_web_listen_addr: "0.0.0.0:{{ teleport_web_port }}"
-    # Used in teleport-ssh-agent-install.yaml
-    teleport_web_public_addr: "{{ teleport_cluster_name }}:443"
-
-    # SSH / tunnel ports (HAProxy TCP NodePort)
-    teleport_ssh_port: 3023
-    teleport_ssh_listen_addr: "0.0.0.0:{{ teleport_ssh_port }}"
-
-    teleport_reverse_tunnel_port: 3024 # Другой телепорт или агент подключается к ЭТОМУ teleport. Другой - под NAT, и этот не может до него достучаться
-    teleport_reverse_tunnel_listen_addr: "0.0.0.0:{{ teleport_reverse_tunnel_port }}"
-
-    teleport_internal_connect_port: 3025 # Auth-server общается с Proxy-server
-
-    teleport_kube_listen_port: 3026
-    teleport_kube_listen_addr: "0.0.0.0:{{ teleport_kube_listen_port }}"
-    teleport_kube_public_addr: "{{ teleport_cluster_name }}:{{ teleport_kube_listen_port }}"
-
-    # SQLite data directory (Longhorn PVC)
-    teleport_data_storage_class: "lnstr-major-local"
-    teleport_data_storage_size: "10Gi"
-
     # ---
-    # ---
+    # --- PHASE: pre ---
+    # Timeouts
+    teleport_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     teleport_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
@@ -114,8 +92,18 @@ all:
       issuer: "{{ teleport_cert_manager_issuer }}"
       extraObjects: "{{ teleport_pre_extra_objects }}"
     # ---
-    # ---
-    # Helm chart values
+    # --- PHASE: install ---
+    teleport_install_helm_timeout: "10m"
+    teleport_rollout_timeout: "300s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    teleport_helm_is_oci: false
+    teleport_helm_url: "https://charts.releases.teleport.dev"
+    teleport_helm_repo_name: "teleport"
+    teleport_helm_chart_name: "teleport-cluster"
+    teleport_helm_chart_version: "18.7.2"
+    # SQLite data directory (Longhorn PVC)
+    teleport_data_storage_class: "lnstr-major-local"
+    teleport_data_storage_size: "10Gi"
     # ВАЖНО: tag для teleport-distroless / teleport-operator НЕ задаётся —
     # teleport-cluster chart автоматически подставляет appVersion (= teleport_helm_chart_version)
     # через helper {{ include "teleport-cluster.version" . }}.
@@ -166,7 +154,9 @@ all:
       ingress:
         enabled: false
     # ---
-    # ---
+    # --- PHASE: post ---
+    teleport_post_helm_timeout: "5m"
+    teleport_web_service_port: 443
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     teleport_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -190,7 +180,8 @@ all:
         ingressClass: "{{ haproxy_ingress_class }}"
       extraObjects: "{{ teleport_post_extra_objects }}"
     # ---
-    # ---
+    # --- PHASE: configure ---
+    teleport_configure_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     teleport_configure_extra_objects: []
     # Configure-phase kustomize patches (operator-side customization, default empty)

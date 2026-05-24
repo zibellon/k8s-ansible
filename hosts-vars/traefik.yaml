@@ -1,22 +1,13 @@
 all:
   vars:
-    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     traefik_namespace: "traefik-lb"
-    traefik_helm_is_oci: false
-    traefik_helm_url: "https://traefik.github.io/charts"
-    traefik_helm_repo_name: "traefik"
-    traefik_helm_chart_name: "traefik"
-    traefik_helm_chart_version: "39.0.5"
-    # Helm timeouts
-    traefik_pre_helm_timeout: "5m"
-    traefik_install_helm_timeout: "5m"
-    traefik_post_helm_timeout: "5m"
-    traefik_rollout_timeout: "300s"
-    # ---
     traefik_daemonset_name: "traefik-lb"
     traefik_ingress_class: "traefik-lb"
     traefik_web_entrypoint: "web" # WARNING: DO NOT CHANGE - hardcoded in helm chart
     traefik_websecure_entrypoint: "websecure" # WARNING: DO NOT CHANGE - hardcoded in helm chart
+    # Used in cilium-install.yaml post values
+    traefik_web_port: 80 # NOT CHANGE
+    traefik_websecure_port: 443 # NOT CHANGE
     traefik_dashboard_domain: "traefik-dashboard-k8s-v2.drawapp.ru"
     traefik_dashboard_vpn_only_enabled: false
     traefik_dashboard_https_secret_name: "cert-traefik-dashboard"
@@ -64,43 +55,37 @@ all:
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
         enabled: true
-    # Used in cilium-install.yaml post values
-    traefik_web_port: 80 # NOT CHANGE
-    traefik_websecure_port: 443 # NOT CHANGE
-    # Middlewares
-    traefik_middlewares:
-      - name: http-to-https
-        spec:
-          redirectRegex:
-            regex: "^http://(.+)"
-            replacement: "https://${1}"
-            permanent: true
-      - name: http-www-to-https
-        spec:
-          redirectRegex:
-            regex: "^http://www.(.+)"
-            replacement: "https://${1}"
-            permanent: true
-      - name: http-www-to-http
-        spec:
-          redirectRegex:
-            regex: "^http://www.(.+)"
-            replacement: "http://${1}"
-            permanent: true
-      - name: https-www-to-https
-        spec:
-          redirectRegex:
-            regex: "^https://www.(.+)"
-            replacement: "https://${1}"
-            permanent: true
-      - name: all-to-https
-        spec:
-          redirectRegex:
-            regex: "(^https://www.|^http://www.|^http://)(.+)"
-            replacement: "https://${2}"
-            permanent: true
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_traefik_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # Для traefik base пуст: TLS / basic-auth и прочие секреты — через
+    # eso_vault_integration_traefik_secrets_extra в hosts-vars-override/.
+    # ---------
+    eso_vault_integration_traefik:
+      sa_name: "eso-main" # Название ServiceAccount в namespace traefik-lb
+      role_name: "traefik.eso-main" # {namespace}.{sa_name} Название Role в traefik-lb
+      secret_store_name: "eso-main.vault" # {sa_name}.{PROVIDER} Название SecretStore в namespace traefik-lb
+      kv_engine_path: "eso-secret" # Название KV Engine в Vault
+
+    eso_vault_integration_traefik_secrets: []
+    # Пример элемента с полем body (плоский default — target.name + dataFrom.extract.key):
+    # eso_vault_integration_traefik_secrets_extra:
+    #   - external_secret_name: "eso-traefik-my-secret"
+    #     vault_path: "/traefik/my-secret"
+    #     body:
+    #       target:
+    #         name: "eso-traefik-my-secret"
+    #       dataFrom:
+    #         - extract:
+    #             key: "{{ eso_vault_integration_traefik.kv_engine_path }}/data/traefik/my-secret"
+    eso_vault_integration_traefik_secrets_extra: []
     # ---
-    # ---
+    # --- PHASE: pre ---
+    # Helm timeouts
+    traefik_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     traefik_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
@@ -124,7 +109,15 @@ all:
       issuer: "{{ traefik_cert_manager_issuer }}"
       extraObjects: "{{ traefik_pre_extra_objects }}"
     # ---
-    # ---
+    # --- PHASE: install ---
+    traefik_install_helm_timeout: "5m"
+    traefik_rollout_timeout: "300s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    traefik_helm_is_oci: false
+    traefik_helm_url: "https://traefik.github.io/charts"
+    traefik_helm_repo_name: "traefik"
+    traefik_helm_chart_name: "traefik"
+    traefik_helm_chart_version: "39.0.5"
     # Helm chart values
     traefik_helm_values:
       fullnameOverride: "{{ traefik_daemonset_name }}"
@@ -265,7 +258,40 @@ all:
                 port: 8080
                 targetPort: 8080
     # ---
-    # ---
+    # --- PHASE: post ---
+    traefik_post_helm_timeout: "5m"
+    # Middlewares
+    traefik_middlewares:
+      - name: http-to-https
+        spec:
+          redirectRegex:
+            regex: "^http://(.+)"
+            replacement: "https://${1}"
+            permanent: true
+      - name: http-www-to-https
+        spec:
+          redirectRegex:
+            regex: "^http://www.(.+)"
+            replacement: "https://${1}"
+            permanent: true
+      - name: http-www-to-http
+        spec:
+          redirectRegex:
+            regex: "^http://www.(.+)"
+            replacement: "http://${1}"
+            permanent: true
+      - name: https-www-to-https
+        spec:
+          redirectRegex:
+            regex: "^https://www.(.+)"
+            replacement: "https://${1}"
+            permanent: true
+      - name: all-to-https
+        spec:
+          redirectRegex:
+            regex: "(^https://www.|^http://www.|^http://)(.+)"
+            replacement: "https://${2}"
+            permanent: true
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     traefik_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -284,30 +310,3 @@ all:
       dashboard:
         serviceName: "{{ traefik_dashboard_service_name }}"
       extraObjects: "{{ traefik_post_extra_objects }}"
-    # ---------
-    # ESO integration: Vault → K8s Secrets
-    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
-    # eso_vault_integration_traefik_secrets — массив ссылок на named-переменные
-    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
-    # как для base-ссылок, так и для _extra dict'ов).
-    # Для traefik base пуст: TLS / basic-auth и прочие секреты — через
-    # eso_vault_integration_traefik_secrets_extra в hosts-vars-override/.
-    # ---------
-    eso_vault_integration_traefik:
-      sa_name: "eso-main" # Название ServiceAccount в namespace traefik-lb
-      role_name: "traefik.eso-main" # {namespace}.{sa_name} Название Role в traefik-lb
-      secret_store_name: "eso-main.vault" # {sa_name}.{PROVIDER} Название SecretStore в namespace traefik-lb
-      kv_engine_path: "eso-secret" # Название KV Engine в Vault
-
-    eso_vault_integration_traefik_secrets: []
-    # Пример элемента с полем body (плоский default — target.name + dataFrom.extract.key):
-    # eso_vault_integration_traefik_secrets_extra:
-    #   - external_secret_name: "eso-traefik-my-secret"
-    #     vault_path: "/traefik/my-secret"
-    #     body:
-    #       target:
-    #         name: "eso-traefik-my-secret"
-    #       dataFrom:
-    #         - extract:
-    #             key: "{{ eso_vault_integration_traefik.kv_engine_path }}/data/traefik/my-secret"
-    eso_vault_integration_traefik_secrets_extra: []
