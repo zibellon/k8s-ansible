@@ -1,43 +1,8 @@
 all:
   vars:
     cert_manager_namespace: "cert-manager"
-    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
-    cert_manager_helm_is_oci: false
-    cert_manager_helm_url: "https://charts.jetstack.io"
-    cert_manager_helm_repo_name: "jetstack"
-    cert_manager_helm_chart_name: "cert-manager"
-    cert_manager_helm_chart_version: "v1.20.2"
-    # ------
     # Helm timeouts
     cert_manager_pre_helm_timeout: "2m"
-    cert_manager_install_helm_timeout: "5m"
-    cert_manager_post_helm_timeout: "2m"
-    cert_manager_rollout_timeout: "180s"
-    # Cluster issuers — массив raw ClusterIssuer (каждый элемент: name + spec)
-    cert_manager_cluster_issuers:
-      - name: "acme-prod"
-        spec:
-          acme:
-            server: "https://acme-v02.api.letsencrypt.org/directory"
-            email: "some-email-123@gmail.com"
-            privateKeySecretRef:
-              name: "cluster-issuer-acme-prod-account-key"
-            solvers:
-              - http01:
-                  ingress:
-                    ingressClassName: "traefik-lb"
-                    ingressTemplate:
-                      metadata:
-                        annotations:
-                          "kubernetes.io/ingress.class": "traefik-lb"
-                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                    podTemplate:
-                      metadata:
-                        labels:
-                          app.kubernetes.io/name: acme-solver
-                          app.kubernetes.io/instance: traefik-lb
-                          app.kubernetes.io/component: acme-http01-solver
-                          app.kubernetes.io/managed-by: cert-manager
     # ---
     # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
@@ -48,8 +13,15 @@ all:
     cert_manager_pre_helm_values:
       namespace: "{{ cert_manager_namespace }}"
       extraObjects: "{{ cert_manager_pre_extra_objects }}"
-    # ---
-    # ---
+    # ------
+    cert_manager_install_helm_timeout: "5m"
+    cert_manager_rollout_timeout: "180s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    cert_manager_helm_is_oci: false
+    cert_manager_helm_url: "https://charts.jetstack.io"
+    cert_manager_helm_repo_name: "jetstack"
+    cert_manager_helm_chart_name: "cert-manager"
+    cert_manager_helm_chart_version: "v1.20.2"
     # Helm chart values
     cert_manager_helm_values:
       crds:
@@ -86,6 +58,34 @@ all:
         nodeSelector: {}
         affinity: {}
         resources: {}
+    # ---
+    # ---
+    cert_manager_post_helm_timeout: "2m"
+    # Cluster issuers — массив raw ClusterIssuer (каждый элемент: name + spec)
+    cert_manager_cluster_issuers:
+      - name: "acme-prod"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "cluster-issuer-acme-prod-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
     # ---
     # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
