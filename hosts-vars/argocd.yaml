@@ -1,12 +1,5 @@
 all:
   vars:
-    # Helm timeouts
-    argocd_pre_helm_timeout: "5m"
-    argocd_install_helm_timeout: "5m"
-    argocd_rollout_timeout: "180s"
-    argocd_post_helm_timeout: "5m"
-    argocd_gitops_helm_timeout: "3m"
-    # ---------
     argocd_namespace: "argocd" # Configurable: namespace handled by helm template --namespace при render'е chart templates
     argocd_ui_domain: "argocd-ui-k8s-v2.drawapp.ru"
     argocd_external_url: "https://argocd-ui-k8s-v2.drawapp.ru"
@@ -68,7 +61,6 @@ all:
         vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
       certificate:
         enabled: true
-    # ------
     argocd_admin_username: "admin"
     argocd_admin_secret_key_username: "username"
     argocd_admin_secret_key_password: "password"
@@ -79,12 +71,42 @@ all:
     argocd_applicationset_controller_metrics_port: 8080
     argocd_dex_server_metrics_port: 5558
     argocd_notifications_controller_metrics_port: 9001
-    # ------
-    # ArgoCD git-ops setup
-    # ------
-    # Each entry creates one AppProject + one or more Applications in ArgoCD
-    # Пример и переопределение — в hosts-vars-override/argocd.yaml
-    argocd_git_ops_apps: []
+    # === SECTION 2: ESO ===
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_argocd_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/ (типично — git-ops repo credentials
+    # с argocd.argoproj.io/secret-type labels).
+    # ---------
+    eso_vault_integration_argocd:
+      sa_name: "eso-main"
+      role_name: "argocd.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    # never rendered (is_need_eso: false) — body присутствует для консистентности схемы.
+    # Используется только playbook'ом argocd-configure.yaml для чтения/записи в Vault.
+    argocd_secret_admin_creds:
+      external_secret_name: "eso-argocd-admin-creds"
+      vault_path: "/argocd/admin/creds"
+      is_need_eso: false
+      body:
+        target:
+          name: "eso-argocd-admin-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/admin/creds"
+
+    eso_vault_integration_argocd_secrets:
+      - "{{ argocd_secret_admin_creds }}"
+
+    eso_vault_integration_argocd_secrets_extra: []
+    # === SECTION 3 ===
+    # --- PHASE: pre ---
+    argocd_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
@@ -117,8 +139,9 @@ all:
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ argocd_cert_manager_issuer }}"
       extraObjects: "{{ argocd_pre_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: install ---
+    argocd_install_helm_timeout: "5m"
+    argocd_rollout_timeout: "180s"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_install_extra_objects: []
     # Install-phase kustomize patches (operator-side customization for ArgoCD pristine upstream install.yaml)
@@ -157,8 +180,8 @@ all:
     # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
     argocd_install_helm_values:
       extraObjects: "{{ argocd_install_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: post ---
+    argocd_post_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -180,8 +203,14 @@ all:
         scrapeTimeout: "15s"
         labels: {}
       extraObjects: "{{ argocd_post_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: gitops ---
+    argocd_gitops_helm_timeout: "3m"
+    # ------
+    # ArgoCD git-ops setup
+    # ------
+    # Each entry creates one AppProject + one or more Applications in ArgoCD
+    # Пример и переопределение — в hosts-vars-override/argocd.yaml
+    argocd_git_ops_apps: []
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_gitops_extra_objects: []
     # GitOps-phase kustomize patches (operator-side customization, default empty)
@@ -191,35 +220,3 @@ all:
       namespace: "{{ argocd_namespace }}"
       gitOpsApps: "{{ argocd_git_ops_apps }}"
       extraObjects: "{{ argocd_gitops_extra_objects }}"
-    # ---------
-    # ESO integration: Vault → K8s Secrets
-    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
-    # eso_vault_integration_argocd_secrets — массив ссылок на named-переменные
-    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
-    # как для base-ссылок, так и для _extra dict'ов).
-    # _extra — расширение оператора через hosts-vars-override/ (типично — git-ops repo credentials
-    # с argocd.argoproj.io/secret-type labels).
-    # ---------
-    eso_vault_integration_argocd:
-      sa_name: "eso-main"
-      role_name: "argocd.eso-main"
-      secret_store_name: "eso-main.vault"
-      kv_engine_path: "eso-secret"
-
-    # never rendered (is_need_eso: false) — body присутствует для консистентности схемы.
-    # Используется только playbook'ом argocd-configure.yaml для чтения/записи в Vault.
-    argocd_secret_admin_creds:
-      external_secret_name: "eso-argocd-admin-creds"
-      vault_path: "/argocd/admin/creds"
-      is_need_eso: false
-      body:
-        target:
-          name: "eso-argocd-admin-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/admin/creds"
-
-    eso_vault_integration_argocd_secrets:
-      - "{{ argocd_secret_admin_creds }}"
-
-    eso_vault_integration_argocd_secrets_extra: []

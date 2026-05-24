@@ -6,13 +6,10 @@ all:
     # Cluster:  oci://ghcr.io/piraeusdatastore/helm-charts/linstor-cluster
     # =============================================================================
 
-    # === Shared ===
     linstor_namespace: "piraeus-datastore"
     linstor_rollout_timeout: "300s"
-
-    # ---
-    # ---
-    # === Pre chart (NetworkPolicy + namespace) ===
+    # === SECTION 3 ===
+    # --- PHASE: pre ---
     linstor_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     linstor_pre_extra_objects: []
@@ -29,14 +26,12 @@ all:
       kubelet:
         port: 10250
       extraObjects: "{{ linstor_pre_extra_objects }}"
-    # ---
-    # ---
-    # === Install operator chart (external OCI: piraeus-operator) ===
+    # --- PHASE: install-operator ---
+    piraeus_operator_helm_timeout: "15m"
+    piraeus_operator_rollout_timeout: "900s"
     piraeus_operator_helm_is_oci: true
     piraeus_operator_helm_url: "oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus"
     piraeus_operator_helm_chart_version: "2.10.6"
-    piraeus_operator_helm_timeout: "15m"
-    piraeus_operator_rollout_timeout: "900s"
 
     piraeus_operator_helm_values:
       installCRDs: true
@@ -55,12 +50,12 @@ all:
       # operator:
       #   resources: {}
 
-    # === Install cluster chart (external OCI: linstor-cluster) ===
+    # --- PHASE: install-cluster ---
+    linstor_cluster_helm_timeout: "15m"
+    linstor_cluster_rollout_timeout: "900s"
     linstor_cluster_helm_is_oci: true
     linstor_cluster_helm_url: "oci://ghcr.io/piraeusdatastore/helm-charts/linstor-cluster"
     linstor_cluster_helm_chart_version: "1.1.1"
-    linstor_cluster_helm_timeout: "15m"
-    linstor_cluster_rollout_timeout: "900s"
 
     linstor_cluster_helm_values:
       # === linstorCluster — главный CR ===
@@ -381,12 +376,8 @@ all:
       volumeSnapshotClasses: []
       volumeGroupSnapshotClasses: []
 
-    # ---------
-    # Post phase — ServiceMonitor + PodMonitor для linstor-controller, linstor-satellite, linstor-affinity-controller.
-    # Operator override: переопределяет linstor_post_helm_values целиком в hosts-vars-override/linstor.yaml.
-    # ---------
+    # --- PHASE: post ---
     linstor_post_helm_timeout: "3m"
-
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     linstor_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -413,7 +404,7 @@ all:
           labels: {}
       extraObjects: "{{ linstor_post_extra_objects }}"
 
-    # === Companion playbook (piraeus-restart.yaml) — целевые workloads ===
+    # === COMPANION PLAYBOOK: linstor-restart.yaml ===
     linstor_restart_resources:
       - deployment/piraeus-operator-controller-manager
       - deployment/linstor-controller
