@@ -15,23 +15,9 @@ all:
     # refresh_interval - опциональное переопределение интервала (иначе используется eso_resources_config.external_secret_refresh_interval)
     # ---------
     vault_namespace: "vault"
-    # Vault server image (полный URI:tag — handwritten chart pattern).
-    # Используется в vault_spec.image (попадает в Vault CR → читается bank-vaults operator).
-    # Для AirGap оператор переопределяет в hosts-vars-override/vault.yaml.
-    vault_image: "docker.io/hashicorp/vault:1.21.2"
-    # Helm repository (OCI) - адрес chart bank-vaults/vault-operator (переопределить в hosts-vars-override/ для airgap)
-    vault_operator_helm_is_oci: true
-    vault_operator_helm_url: "oci://ghcr.io/bank-vaults/helm-charts/vault-operator"
-    vault_operator_helm_chart_version: "1.23.4"
-    # ---------
-    # Helm timeouts
-    vault_pre_helm_timeout: "2m"
-    vault_operator_helm_timeout: "5m"
-    vault_cr_helm_timeout: "5m"
-    vault_post_helm_timeout: "2m"
-    vault_rollout_timeout: "300s"
 
     vault_internal_url: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
+
     vault_ui_domain: "vault-k8s-v2.drawapp.ru"
     vault_ui_https_secret_name: "cert-vault-ui"
     vault_ui_vpn_only_enabled: false
@@ -78,24 +64,30 @@ all:
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
         enabled: true
-    # Vault unseal (bank-vaults operator stores keys in K8s Secret)
-    # secretShares / secretThreshold map directly to unsealConfig.secretShares / secretThreshold in Vault CR
-    # bank-vaults defaults: 5 / 3 — always set explicitly to avoid surprises
-    vault_key_shares: 3
-    vault_key_threshold: 2
+
     vault_creds_host_path: "/etc/kubernetes/vault-unseal.json"
     # Temp-file with new unseal keys + root token, written during vault-rotate.yaml
     # between `vault operator rekey` and K8s Secret replace. Enables resume on crash.
     # Format: same JSON as vault_creds_host_path. Deleted at end of successful rotate.
     vault_rekey_temp_file_path: "/etc/kubernetes/vault-rekey-in-progress.json"
-    # K8s Secret created by bank-vaults unsealer
-    vault_unsealer_secret_name: "vault-unseal-keys"
-    # Vault Kubernetes Auth
-    vault_kubernetes_host: "https://kubernetes.default.svc:443"
-    vault_roles_default_ttl: "1h"
 
-    # ---
-    # ---
+    # Prometheus metrics port (Vault API)
+    vault_prometheus_port: 8200 # NOT CHANGE
+    # Prometheus ServiceMonitor
+    vault_service_monitor_enabled: true
+    vault_service_monitor_interval: "30s"
+    vault_service_monitor_scrape_timeout: "10s"
+    vault_service_monitor_additional_labels: {}
+
+    vault_rollout_timeout: "300s"
+
+    # === SECTION 2: ESO ===
+    # Vault is the ESO SOURCE (not a consumer). No eso_vault_integration_vault.
+    # Section 2 omitted.
+
+    # === SECTION 3 ===
+    # --- PHASE: pre ---
+    vault_pre_helm_timeout: "2m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     vault_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
@@ -110,25 +102,13 @@ all:
         namespace: "{{ external_secrets_namespace }}"
       issuer: "{{ vault_cert_manager_issuer }}"
       extraObjects: "{{ vault_pre_extra_objects }}"
-    # ---
-    # ---
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    vault_post_extra_objects: []
-    # Post-phase kustomize patches (operator-side customization, default empty)
-    vault_post_kustomize_patches: []
-    # Post-phase values (Ingress chart)
-    vault_post_helm_values:
-      namespace: "{{ vault_namespace }}"
-      issuer: "{{ vault_cert_manager_issuer }}"
-      ingressConfig: "{{ vault_ingress_config }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        entryPoints:
-          web: "{{ traefik_web_entrypoint }}"
-          websecure: "{{ traefik_websecure_entrypoint }}"
-      extraObjects: "{{ vault_post_extra_objects }}"
-    # ---
-    # ---
+
+    # --- PHASE: operator ---
+    vault_operator_helm_timeout: "5m"
+    # Helm repository (OCI) - адрес chart bank-vaults/vault-operator (переопределить в hosts-vars-override/ для airgap)
+    vault_operator_helm_is_oci: true
+    vault_operator_helm_url: "oci://ghcr.io/bank-vaults/helm-charts/vault-operator"
+    vault_operator_helm_chart_version: "1.23.4"
     # Operator Helm values (bank-vaults operator chart)
     vault_operator_helm_values:
       tolerations: []
@@ -136,19 +116,27 @@ all:
       affinity: {}
       resources: {}
 
-    # Prometheus metrics port (Vault API)
-    vault_prometheus_port: 8200 # NOT CHANGE
-    # Prometheus ServiceMonitor
-    vault_service_monitor_enabled: true
-    vault_service_monitor_interval: "30s"
-    vault_service_monitor_scrape_timeout: "10s"
-    vault_service_monitor_additional_labels: {}
+    # --- PHASE: cr ---
+    vault_cr_helm_timeout: "5m"
+    # Vault server image (полный URI:tag — handwritten chart pattern).
+    # Используется в vault_spec.image (попадает в Vault CR → читается bank-vaults operator).
+    # Для AirGap оператор переопределяет в hosts-vars-override/vault.yaml.
+    vault_image: "docker.io/hashicorp/vault:1.21.2"
+    # Vault unseal (bank-vaults operator stores keys in K8s Secret)
+    # secretShares / secretThreshold map directly to unsealConfig.secretShares / secretThreshold in Vault CR
+    # bank-vaults defaults: 5 / 3 — always set explicitly to avoid surprises
+    vault_key_shares: 3
+    vault_key_threshold: 2
+    # K8s Secret created by bank-vaults unsealer
+    vault_unsealer_secret_name: "vault-unseal-keys"
+    # Vault Kubernetes Auth
+    vault_kubernetes_host: "https://kubernetes.default.svc:443"
+    vault_roles_default_ttl: "1h"
 
     # ---------
     # VAULT POLICIES
     # bank-vaults externalConfig format: name + rules (HCL)
     # ---------
-    vault_policies_extra: []
     vault_policies:
       # ---------
       # ESO: Traefik
@@ -218,11 +206,12 @@ all:
           path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
           path "auth/*" { capabilities = ["create", "read", "update", "delete", "list"] }
 
+    vault_policies_extra: []
+
     # ---------
     # VAULT ROLES
     # bank-vaults externalConfig format: bound_service_account_names/namespaces + policies + ttl
     # ---------
-    vault_roles_extra: []
     vault_roles:
       # ---------
       # ESO: Traefik
@@ -305,6 +294,8 @@ all:
         policies:
           - vault-admin
         ttl: "{{ vault_roles_default_ttl }}"
+
+    vault_roles_extra: []
 
     # ---------
     # VAULT SPEC
@@ -396,3 +387,21 @@ all:
       namespace: "{{ vault_namespace }}"
       vaultSpec: "{{ vault_spec }}"
       extraObjects: "{{ vault_cr_extra_objects }}"
+
+    # --- PHASE: post ---
+    vault_post_helm_timeout: "2m"
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    vault_post_extra_objects: []
+    # Post-phase kustomize patches (operator-side customization, default empty)
+    vault_post_kustomize_patches: []
+    # Post-phase values (Ingress chart)
+    vault_post_helm_values:
+      namespace: "{{ vault_namespace }}"
+      issuer: "{{ vault_cert_manager_issuer }}"
+      ingressConfig: "{{ vault_ingress_config }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      extraObjects: "{{ vault_post_extra_objects }}"
