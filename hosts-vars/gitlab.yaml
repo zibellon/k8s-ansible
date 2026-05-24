@@ -1,29 +1,6 @@
 all:
   vars:
     gitlab_namespace: "gitlab"
-    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
-    gitlab_helm_is_oci: false
-    gitlab_helm_url: "https://charts.gitlab.io"
-    gitlab_helm_repo_name: "gitlab"
-    gitlab_helm_chart_name: "gitlab"
-    gitlab_helm_chart_version: "8.11.8"  # GitLab 17.11
-    # Helm timeouts
-    gitlab_pre_helm_timeout: "5m"
-
-    gitlab_postgresql_helm_timeout: "5m"
-    gitlab_postgresql_rollout_timeout: "300s"
-
-    gitlab_redis_helm_timeout: "5m"
-    gitlab_redis_rollout_timeout: "300s"
-
-    gitlab_minio_helm_timeout: "5m"
-    gitlab_minio_rollout_timeout: "300s"
-
-    gitlab_install_helm_timeout: "30m"
-    gitlab_rollout_timeout: "900s"
-
-    gitlab_post_helm_timeout: "5m"
-
     # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
     # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
     gitlab_ssh_port_external: 3714
@@ -40,7 +17,6 @@ all:
     gitlab_minio_console_https_secret_name: "cert-gitlab-minio-console"
     gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
     gitlab_minio_api_https_secret_name: "cert-gitlab-minio-api"
-    # ---
     gitlab_ingress_class_name: "traefik-lb"
     gitlab_vpn_only_enabled: false
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
@@ -130,38 +106,20 @@ all:
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
         enabled: true
-
-    # GitLab PostgreSQL
-    gitlab_postgresql_image: "docker.io/postgres:16-alpine"
-    gitlab_postgresql_storage_class: "lnstr-major-multi-sync"
-    gitlab_postgresql_storage_size: "4Gi"
     gitlab_postgresql_username: "gitlab"
     gitlab_postgresql_database_name: "gitlabhq_production"
     gitlab_postgresql_secret_key_username: "username"
     gitlab_postgresql_secret_key_password: "password"
-
-    # GitLab Redis
-    gitlab_redis_image: "docker.io/redis/redis-stack-server:latest"
-    gitlab_redis_storage_class: "lnstr-major-local"
-    gitlab_redis_storage_size: "1Gi"
     gitlab_redis_secret_key_password: "password"
     gitlab_redis_secret_key_redis_args: "redis_args"
-
-    # GitLab MinIO
-    gitlab_minio_image: "docker.io/minio/minio:latest"
     gitlab_minio_root_user: "admin"
-    gitlab_minio_storage_class: "lnstr-major-local"
-    gitlab_minio_storage_size: "2Gi"
     gitlab_minio_root_secret_key_username: "username"
     gitlab_minio_root_secret_key_password: "password"
-    # MinIO bucket names
     gitlab_minio_registry_bucket: "registry"
     gitlab_minio_artifacts_bucket: "gitlab-artifacts"
     gitlab_minio_uploads_bucket: "gitlab-uploads"
     gitlab_minio_packages_bucket: "gitlab-packages"
     gitlab_minio_backups_bucket: "gitlab-backups"
-
-    # GitLab MinIO S3 connection settings (used by ESO template for gitlab_minio_connection secret)
     gitlab_minio_s3_endpoint: "http://gitlab-minio:9000"
     gitlab_minio_s3_region: "us-east-1"
     gitlab_minio_s3_path_style: true
@@ -169,12 +127,147 @@ all:
     gitlab_minio_registry_secret_key_secret_key: "secret_key"
     gitlab_minio_registry_secret_key_bucket_name: "bucket_name"
 
-    # GitLab Gitaly storage
-    gitlab_gitaly_storage_size: "4Gi"
-    gitlab_gitaly_storage_class: "lnstr-major-local"
+    # === SECTION 2: ESO ===
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_gitlab_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/.
+    # ---------
+    eso_vault_integration_gitlab:
+      sa_name: "eso-main"
+      role_name: "gitlab.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
 
-    # ---
-    # ---
+    gitlab_secret_postgresql_creds:
+      external_secret_name: "eso-gitlab-postgresql-creds"
+      vault_path: "/gitlab/postgresql/creds"
+      body:
+        target:
+          name: "eso-gitlab-postgresql-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/postgresql/creds"
+
+    gitlab_secret_redis_creds:
+      external_secret_name: "eso-gitlab-redis-creds"
+      vault_path: "/gitlab/redis/creds"
+      body:
+        target:
+          name: "eso-gitlab-redis-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/redis/creds"
+
+    gitlab_secret_minio_root_creds:
+      external_secret_name: "eso-gitlab-minio-root-creds"
+      vault_path: "/gitlab/minio/root"
+      body:
+        target:
+          name: "eso-gitlab-minio-root-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/root"
+
+    gitlab_secret_minio_registry_creds:
+      external_secret_name: "eso-gitlab-minio-registry-creds"
+      vault_path: "/gitlab/minio/registry"
+      body:
+        target:
+          name: "eso-gitlab-minio-registry-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
+
+    # SPECIAL: registry_connection_config uses ESO template to generate registry storage config
+    gitlab_secret_registry_connection_config:
+      external_secret_name: "eso-gitlab-registry-connection-config"
+      vault_path: "/gitlab/minio/registry"
+      body:
+        target:
+          name: "eso-gitlab-registry-connection-config"
+          template:
+            engineVersion: v2
+            data:
+              config: |
+                s3:
+                  bucket: {{ gitlab_minio_registry_bucket }}
+                  accesskey: {% raw %}{{ .access_key }}{% endraw +%}
+                  secretkey: {% raw %}{{ .secret_key }}{% endraw +%}
+                  regionendpoint: {{ gitlab_minio_s3_endpoint }}
+                  region: {{ gitlab_minio_s3_region }}
+                  v4auth: true
+        data:
+          - secretKey: access_key
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
+              property: "{{ gitlab_minio_registry_secret_key_access_key }}"
+          - secretKey: secret_key
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
+              property: "{{ gitlab_minio_registry_secret_key_secret_key }}"
+
+    # SPECIAL: backup_s3_connection_config uses ESO template to generate s3_connection YAML
+    gitlab_secret_backup_s3_connection_config:
+      external_secret_name: "eso-gitlab-backup-s3-connection-config"
+      vault_path: "/gitlab/minio/registry"
+      body:
+        target:
+          name: "eso-gitlab-backup-s3-connection-config"
+          template:
+            engineVersion: v2
+            data:
+              connection: |
+                provider: AWS
+                region: {{ gitlab_minio_s3_region }}
+                endpoint: {{ gitlab_minio_s3_endpoint }}
+                path_style: {{ gitlab_minio_s3_path_style | lower }}
+                aws_access_key_id: {% raw %}{{ .access_key }}{% endraw +%}
+                aws_secret_access_key: {% raw %}{{ .secret_key }}{% endraw +%}
+        data:
+          - secretKey: access_key
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
+              property: "{{ gitlab_minio_registry_secret_key_access_key }}"
+          - secretKey: secret_key
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
+              property: "{{ gitlab_minio_registry_secret_key_secret_key }}"
+
+    gitlab_root_secret_key_username: "username"
+    gitlab_root_secret_key_password: "password"
+    gitlab_root_secret_key_token: "token"
+    # PINNED — GitLab root user фиксирован, менять нельзя
+    gitlab_root_username: "root"
+    # never rendered (is_need_eso: false) — body присутствует для консистентности схемы
+    gitlab_secret_root_creds:
+      external_secret_name: "eso-gitlab-root-creds"
+      vault_path: "/gitlab/root/creds"
+      is_need_eso: false
+      body:
+        target:
+          name: "eso-gitlab-root-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/root/creds"
+
+    eso_vault_integration_gitlab_secrets:
+      - "{{ gitlab_secret_postgresql_creds }}"
+      - "{{ gitlab_secret_redis_creds }}"
+      - "{{ gitlab_secret_minio_root_creds }}"
+      - "{{ gitlab_secret_minio_registry_creds }}"
+      - "{{ gitlab_secret_registry_connection_config }}"
+      - "{{ gitlab_secret_backup_s3_connection_config }}"
+      - "{{ gitlab_secret_root_creds }}"
+
+    eso_vault_integration_gitlab_secrets_extra: []
+
+    # === SECTION 3 ===
+    # --- PHASE: pre ---
+    gitlab_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
@@ -213,8 +306,12 @@ all:
         s3PathStyle: "{{ gitlab_minio_s3_path_style }}"
       issuer: "{{ gitlab_cert_manager_issuer }}"
       extraObjects: "{{ gitlab_pre_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: postgresql ---
+    gitlab_postgresql_helm_timeout: "5m"
+    gitlab_postgresql_rollout_timeout: "300s"
+    gitlab_postgresql_image: "docker.io/postgres:16-alpine"
+    gitlab_postgresql_storage_class: "lnstr-major-multi-sync"
+    gitlab_postgresql_storage_size: "4Gi"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_postgresql_extra_objects: []
     # Postgresql-phase kustomize patches (operator-side customization, default empty)
@@ -232,8 +329,12 @@ all:
         usernameKey: "{{ gitlab_postgresql_secret_key_username }}"
         passwordKey: "{{ gitlab_postgresql_secret_key_password }}"
       extraObjects: "{{ gitlab_postgresql_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: redis ---
+    gitlab_redis_helm_timeout: "5m"
+    gitlab_redis_rollout_timeout: "300s"
+    gitlab_redis_image: "docker.io/redis/redis-stack-server:latest"
+    gitlab_redis_storage_class: "lnstr-major-local"
+    gitlab_redis_storage_size: "1Gi"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_redis_extra_objects: []
     # Redis-phase kustomize patches (operator-side customization, default empty)
@@ -248,8 +349,12 @@ all:
       storageClass: "{{ gitlab_redis_storage_class }}"
       storageSize: "{{ gitlab_redis_storage_size }}"
       extraObjects: "{{ gitlab_redis_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: minio ---
+    gitlab_minio_helm_timeout: "5m"
+    gitlab_minio_rollout_timeout: "300s"
+    gitlab_minio_image: "docker.io/minio/minio:latest"
+    gitlab_minio_storage_class: "lnstr-major-local"
+    gitlab_minio_storage_size: "2Gi"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_minio_extra_objects: []
     # Minio-phase kustomize patches (operator-side customization, default empty)
@@ -265,8 +370,17 @@ all:
       rootSecretUsernameKey: "{{ gitlab_minio_root_secret_key_username }}"
       rootSecretPasswordKey: "{{ gitlab_minio_root_secret_key_password }}"
       extraObjects: "{{ gitlab_minio_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: install ---
+    gitlab_install_helm_timeout: "30m"
+    gitlab_rollout_timeout: "900s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    gitlab_helm_is_oci: false
+    gitlab_helm_url: "https://charts.gitlab.io"
+    gitlab_helm_repo_name: "gitlab"
+    gitlab_helm_chart_name: "gitlab"
+    gitlab_helm_chart_version: "8.11.8"  # GitLab 17.11
+    gitlab_gitaly_storage_size: "4Gi"
+    gitlab_gitaly_storage_class: "lnstr-major-local"
     # Helm chart values
     gitlab_helm_values:
       global:
@@ -497,8 +611,8 @@ all:
         install: false
       upgradeCheck:
         enabled: true
-    # ---
-    # ---
+    # --- PHASE: post ---
+    gitlab_post_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -522,140 +636,3 @@ all:
         namespace: "{{ haproxy_namespace }}"
         ingressClass: "{{ haproxy_ingress_class }}"
       extraObjects: "{{ gitlab_post_extra_objects }}"
-
-    # ---------
-    # ESO integration: Vault → K8s Secrets
-    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
-    # eso_vault_integration_gitlab_secrets — массив ссылок на named-переменные
-    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
-    # как для base-ссылок, так и для _extra dict'ов).
-    # _extra — расширение оператора через hosts-vars-override/.
-    # ---------
-    eso_vault_integration_gitlab:
-      sa_name: "eso-main"
-      role_name: "gitlab.eso-main"
-      secret_store_name: "eso-main.vault"
-      kv_engine_path: "eso-secret"
-
-    gitlab_secret_postgresql_creds:
-      external_secret_name: "eso-gitlab-postgresql-creds"
-      vault_path: "/gitlab/postgresql/creds"
-      body:
-        target:
-          name: "eso-gitlab-postgresql-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/postgresql/creds"
-
-    gitlab_secret_redis_creds:
-      external_secret_name: "eso-gitlab-redis-creds"
-      vault_path: "/gitlab/redis/creds"
-      body:
-        target:
-          name: "eso-gitlab-redis-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/redis/creds"
-
-    gitlab_secret_minio_root_creds:
-      external_secret_name: "eso-gitlab-minio-root-creds"
-      vault_path: "/gitlab/minio/root"
-      body:
-        target:
-          name: "eso-gitlab-minio-root-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/root"
-
-    gitlab_secret_minio_registry_creds:
-      external_secret_name: "eso-gitlab-minio-registry-creds"
-      vault_path: "/gitlab/minio/registry"
-      body:
-        target:
-          name: "eso-gitlab-minio-registry-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-
-    # SPECIAL: registry_connection_config uses ESO template to generate registry storage config
-    gitlab_secret_registry_connection_config:
-      external_secret_name: "eso-gitlab-registry-connection-config"
-      vault_path: "/gitlab/minio/registry"
-      body:
-        target:
-          name: "eso-gitlab-registry-connection-config"
-          template:
-            engineVersion: v2
-            data:
-              config: |
-                s3:
-                  bucket: {{ gitlab_minio_registry_bucket }}
-                  accesskey: {% raw %}{{ .access_key }}{% endraw +%}
-                  secretkey: {% raw %}{{ .secret_key }}{% endraw +%}
-                  regionendpoint: {{ gitlab_minio_s3_endpoint }}
-                  region: {{ gitlab_minio_s3_region }}
-                  v4auth: true
-        data:
-          - secretKey: access_key
-            remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_access_key }}"
-          - secretKey: secret_key
-            remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_secret_key }}"
-
-    # SPECIAL: backup_s3_connection_config uses ESO template to generate s3_connection YAML
-    gitlab_secret_backup_s3_connection_config:
-      external_secret_name: "eso-gitlab-backup-s3-connection-config"
-      vault_path: "/gitlab/minio/registry"
-      body:
-        target:
-          name: "eso-gitlab-backup-s3-connection-config"
-          template:
-            engineVersion: v2
-            data:
-              connection: |
-                provider: AWS
-                region: {{ gitlab_minio_s3_region }}
-                endpoint: {{ gitlab_minio_s3_endpoint }}
-                path_style: {{ gitlab_minio_s3_path_style | lower }}
-                aws_access_key_id: {% raw %}{{ .access_key }}{% endraw +%}
-                aws_secret_access_key: {% raw %}{{ .secret_key }}{% endraw +%}
-        data:
-          - secretKey: access_key
-            remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_access_key }}"
-          - secretKey: secret_key
-            remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_secret_key }}"
-
-    gitlab_root_secret_key_username: "username"
-    gitlab_root_secret_key_password: "password"
-    gitlab_root_secret_key_token: "token"
-    # PINNED — GitLab root user фиксирован, менять нельзя
-    gitlab_root_username: "root"
-    # never rendered (is_need_eso: false) — body присутствует для консистентности схемы
-    gitlab_secret_root_creds:
-      external_secret_name: "eso-gitlab-root-creds"
-      vault_path: "/gitlab/root/creds"
-      is_need_eso: false
-      body:
-        target:
-          name: "eso-gitlab-root-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/root/creds"
-
-    eso_vault_integration_gitlab_secrets:
-      - "{{ gitlab_secret_postgresql_creds }}"
-      - "{{ gitlab_secret_redis_creds }}"
-      - "{{ gitlab_secret_minio_root_creds }}"
-      - "{{ gitlab_secret_minio_registry_creds }}"
-      - "{{ gitlab_secret_registry_connection_config }}"
-      - "{{ gitlab_secret_backup_s3_connection_config }}"
-      - "{{ gitlab_secret_root_creds }}"
-
-    eso_vault_integration_gitlab_secrets_extra: []
