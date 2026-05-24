@@ -114,11 +114,22 @@ all:
                     # HA-controller добивает на 6-й минуте. Upstream-дефолт: 5s.
                     - --fail-over-timeout=6m
                     # --- Прочие флаги (upstream-дефолты; для смены — раскомментировать) ---
+                    # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из
+                    # genericclioptions.ConfigFlags (--request-timeout, --namespace,
+                    # --server, --kubeconfig, --context, --token, --certificate-authority).
+                    # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через
+                    # cfgflags.ToRESTConfig(), внутри — clientcmd DeferredLoadingClientConfig,
+                    # in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен
+                    # bare-дефолту. Любой ConfigFlags-override (например --request-timeout
+                    # выставляет overrides.Timeout) → детект отключается → клиент уходит
+                    # на http://localhost:8080 → DaemonSet не Ready.
+                    # Все перечисленные ниже флаги — кастомные (cmd.Flags), override
+                    # не трогают, добавлять безопасно.
                     # - --grace-period-seconds=10    # grace-period при force-delete пода (сек)
                     # - --drbd-status-interval=5s    # период опроса статуса DRBD на узле
-                    # - --reconcile-interval=5s      # макс. интервал цикла reconcile
-                    # - --resync-interval=5m0s       # период пересинхронизации внутр. кэша
-                    # - --operations-timeout=1m0s    # таймаут отдельной операции
+                    # - --reconcile-interval=10s     # макс. интервал цикла reconcile
+                    # - --resync-interval=15m        # период пересинхронизации внутр. кэша
+                    # - --operations-timeout=30s     # таймаут отдельной операции
                     # - --disable-node-taints=false  # true → не ставить taint'ы на узел
                     # --node-name оператор задаёт из env NODE_NAME — здесь не указывать.
         # === Affinity Controller (Deployment) ===
