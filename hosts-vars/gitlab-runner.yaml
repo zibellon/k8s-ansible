@@ -1,31 +1,74 @@
 all:
   vars:
-    # GitLab Runner internal images (helper + DinD executor + DinD service).
-    # Используются в gitlab_runner_config TOML (runners.kubernetes.image,
-    # runners.kubernetes.services, helper_image).
-    # Для AirGap оператор переопределяет в hosts-vars-override/gitlab-runner.yaml.
-    gitlab_runner_helper_image: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-alpine-v17.11.4"
-    gitlab_runner_dind_image: "docker.io/docker:29.3.0"
-    gitlab_runner_dind_dind_image: "docker.io/docker:29.3.0-dind"
     gitlab_runner_namespace: "gitlab-runner"
-    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
-    gitlab_runner_helm_is_oci: false
-    gitlab_runner_helm_url: "https://charts.gitlab.io"
-    gitlab_runner_helm_repo_name: "gitlab"
-    gitlab_runner_helm_chart_name: "gitlab-runner"
-    gitlab_runner_helm_chart_version: "0.78.0" # gitlab-runner 17.11
-    # Helm timeouts
-    gitlab_runner_pre_helm_timeout: "5m"
-    gitlab_runner_install_helm_timeout: "5m"
-    gitlab_runner_rollout_timeout: "180s"
-    # Internal GitLab URL (webservice via cluster DNS, bypasses external ingress)
-    gitlab_runner_gitlab_url: "http://gitlab-webservice-default.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:8181"
     gitlab_runner_label_name: "gitlab-runner"
     gitlab_runner_label_component: "runner"
     gitlab_runner_job_label_name: "gitlab-runner-job"
     gitlab_runner_job_label_component: "job"
-    # ---
-    # ---
+    # === SECTION 2: ESO ===
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_gitlab_runner_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/.
+    # ---------
+    eso_vault_integration_gitlab_runner:
+      sa_name: "eso-main"
+      role_name: "gitlab-runner.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    # SPECIAL: runner_token maps Vault key 'token' → k8s key 'runner-token'.
+    # runner-registration-token must be present as empty string for chart compatibility.
+    gitlab_runner_auth_token_secret_key_token: "token"
+    gitlab_runner_secret_auth_token:
+      external_secret_name: "eso-gitlab-runner-auth-token"
+      vault_path: "/gitlab-runner/token"
+      body:
+        target:
+          name: "eso-gitlab-runner-auth-token"
+          template:
+            engineVersion: v2
+            data:
+              runner-registration-token: ""
+              runner-token: "{% raw %}{{ .token }}{% endraw %}"
+        data:
+          - secretKey: token
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/token"
+              property: "{{ gitlab_runner_auth_token_secret_key_token }}"
+
+    # SPECIAL: minio_runner_cache remaps access_key/secret_key → accesskey/secretkey
+    # as expected by the official gitlab-runner chart runners.cache.secretName.
+    gitlab_runner_minio_cache_secret_key_access_key: "access_key"
+    gitlab_runner_minio_cache_secret_key_secret_key: "secret_key"
+    gitlab_runner_minio_cache_secret_key_bucket_name: "bucket_name"
+    gitlab_runner_secret_minio_cache_creds:
+      external_secret_name: "eso-gitlab-runner-minio-cache-creds"
+      vault_path: "/gitlab-runner/minio/cache"
+      body:
+        target:
+          name: "eso-gitlab-runner-minio-cache-creds"
+        data:
+          - secretKey: accesskey
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
+              property: "{{ gitlab_runner_minio_cache_secret_key_access_key }}"
+          - secretKey: secretkey
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
+              property: "{{ gitlab_runner_minio_cache_secret_key_secret_key }}"
+
+    eso_vault_integration_gitlab_runner_secrets:
+      - "{{ gitlab_runner_secret_auth_token }}"
+      - "{{ gitlab_runner_secret_minio_cache_creds }}"
+
+    eso_vault_integration_gitlab_runner_secrets_extra: []
+    # === SECTION 3 ===
+    # --- PHASE: pre ---
+    gitlab_runner_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_runner_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
@@ -57,8 +100,25 @@ all:
         name: "{{ gitlab_runner_job_label_name }}"
         component: "{{ gitlab_runner_job_label_component }}"
       extraObjects: "{{ gitlab_runner_pre_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: install ---
+    gitlab_runner_install_helm_timeout: "5m"
+    gitlab_runner_rollout_timeout: "180s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    gitlab_runner_helm_is_oci: false
+    gitlab_runner_helm_url: "https://charts.gitlab.io"
+    gitlab_runner_helm_repo_name: "gitlab"
+    gitlab_runner_helm_chart_name: "gitlab-runner"
+    gitlab_runner_helm_chart_version: "0.78.0" # gitlab-runner 17.11
+    # Internal GitLab URL (webservice via cluster DNS, bypasses external ingress)
+    gitlab_runner_gitlab_url: "http://gitlab-webservice-default.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:8181"
+    # GitLab Runner internal images (helper + DinD executor + DinD service).
+    # Используются в gitlab_runner_config TOML (runners.kubernetes.image,
+    # runners.kubernetes.services, helper_image).
+    # Для AirGap оператор переопределяет в hosts-vars-override/gitlab-runner.yaml.
+    gitlab_runner_helper_image: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-alpine-v17.11.4"
+    gitlab_runner_dind_image: "docker.io/docker:29.3.0"
+    gitlab_runner_dind_dind_image: "docker.io/docker:29.3.0-dind"
+    gitlab_runner_minio_cache_bucket: "runner-cache"
     gitlab_runner_config: |
       [[runners]]
         executor = "kubernetes"
@@ -149,64 +209,3 @@ all:
           enabled: true
           interval: "30s"
           scrapeTimeout: "15s"
-    # ---------
-    # ESO integration: Vault → K8s Secrets
-    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
-    # eso_vault_integration_gitlab_runner_secrets — массив ссылок на named-переменные
-    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
-    # как для base-ссылок, так и для _extra dict'ов).
-    # _extra — расширение оператора через hosts-vars-override/.
-    # ---------
-    eso_vault_integration_gitlab_runner:
-      sa_name: "eso-main"
-      role_name: "gitlab-runner.eso-main"
-      secret_store_name: "eso-main.vault"
-      kv_engine_path: "eso-secret"
-
-    # SPECIAL: runner_token maps Vault key 'token' → k8s key 'runner-token'.
-    # runner-registration-token must be present as empty string for chart compatibility.
-    gitlab_runner_auth_token_secret_key_token: "token"
-    gitlab_runner_secret_auth_token:
-      external_secret_name: "eso-gitlab-runner-auth-token"
-      vault_path: "/gitlab-runner/token"
-      body:
-        target:
-          name: "eso-gitlab-runner-auth-token"
-          template:
-            engineVersion: v2
-            data:
-              runner-registration-token: ""
-              runner-token: "{% raw %}{{ .token }}{% endraw %}"
-        data:
-          - secretKey: token
-            remoteRef:
-              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/token"
-              property: "{{ gitlab_runner_auth_token_secret_key_token }}"
-
-    # SPECIAL: minio_runner_cache remaps access_key/secret_key → accesskey/secretkey
-    # as expected by the official gitlab-runner chart runners.cache.secretName.
-    gitlab_runner_minio_cache_secret_key_access_key: "access_key"
-    gitlab_runner_minio_cache_secret_key_secret_key: "secret_key"
-    gitlab_runner_minio_cache_secret_key_bucket_name: "bucket_name"
-    gitlab_runner_minio_cache_bucket: "runner-cache"
-    gitlab_runner_secret_minio_cache_creds:
-      external_secret_name: "eso-gitlab-runner-minio-cache-creds"
-      vault_path: "/gitlab-runner/minio/cache"
-      body:
-        target:
-          name: "eso-gitlab-runner-minio-cache-creds"
-        data:
-          - secretKey: accesskey
-            remoteRef:
-              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
-              property: "{{ gitlab_runner_minio_cache_secret_key_access_key }}"
-          - secretKey: secretkey
-            remoteRef:
-              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
-              property: "{{ gitlab_runner_minio_cache_secret_key_secret_key }}"
-
-    eso_vault_integration_gitlab_runner_secrets:
-      - "{{ gitlab_runner_secret_auth_token }}"
-      - "{{ gitlab_runner_secret_minio_cache_creds }}"
-
-    eso_vault_integration_gitlab_runner_secrets_extra: []

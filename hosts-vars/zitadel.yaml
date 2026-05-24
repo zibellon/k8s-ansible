@@ -1,26 +1,6 @@
 all:
   vars:
-    # PostgreSQL image (handwritten chart — full URI:tag).
-    # Используется в zitadel_postgresql_helm_values.image
-    # (handwritten chart playbook-app/charts/zitadel/postgresql/).
-    # Для AirGap оператор переопределяет в hosts-vars-override/zitadel.yaml.
-    zitadel_postgresql_image: "docker.io/postgres:16-alpine"
-    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     zitadel_namespace: "zitadel"
-    zitadel_helm_is_oci: false
-    zitadel_helm_url: "https://charts.zitadel.com"
-    zitadel_helm_repo_name: "zitadel"
-    zitadel_helm_chart_name: "zitadel"
-    zitadel_helm_chart_version: "9.30.0"
-    # ---
-    # Timeouts
-    zitadel_pre_helm_timeout: "5m"
-    zitadel_postgresql_helm_timeout: "5m"
-    zitadel_postgresql_rollout_timeout: "300s"
-    zitadel_install_helm_timeout: "10m"
-    zitadel_install_rollout_timeout: "300s"
-    zitadel_post_helm_timeout: "5m"
-    # ---------
     zitadel_domain: "zitadel-k8s-v2.drawapp.ru"
     zitadel_tls_secret_name: "cert-zitadel"
     zitadel_ingress_class_name: "traefik-lb"
@@ -67,17 +47,55 @@ all:
         vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
       certificate:
         enabled: true
-    zitadel_postgresql_storage_class: "lnstr-major-multi-sync"
-    zitadel_postgresql_storage_size: "10Gi"
-    # ---
     zitadel_postgresql_username: "zitadel"
     zitadel_postgresql_database_name: "zitadel"
     zitadel_postgresql_secret_key_username: "username"
     zitadel_postgresql_secret_key_password: "password"
     # PINNED to "masterkey": zitadel chart 9.x хардкодит имя ключа секрета — НЕ переопределять
     zitadel_masterkey_secret_key: "masterkey"
-    # ---
-    # ---
+    # === SECTION 2: ESO ===
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
+    # eso_vault_integration_zitadel_secrets — массив ссылок на named-переменные
+    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
+    # как для base-ссылок, так и для _extra dict'ов).
+    # _extra — расширение оператора через hosts-vars-override/.
+    # ---------
+    eso_vault_integration_zitadel:
+      sa_name: "eso-main"
+      role_name: "zitadel.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    zitadel_secret_postgresql_creds:
+      external_secret_name: "eso-zitadel-postgresql-creds"
+      vault_path: "/zitadel/postgresql/creds"
+      body:
+        target:
+          name: "eso-zitadel-postgresql-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/postgresql/creds"
+
+    zitadel_secret_masterkey:
+      external_secret_name: "eso-zitadel-masterkey"
+      vault_path: "/zitadel/masterkey"
+      body:
+        target:
+          name: "eso-zitadel-masterkey"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/masterkey"
+
+    eso_vault_integration_zitadel_secrets:
+      - "{{ zitadel_secret_postgresql_creds }}"
+      - "{{ zitadel_secret_masterkey }}"
+
+    eso_vault_integration_zitadel_secrets_extra: []
+    # === SECTION 3 ===
+    # --- PHASE: pre ---
+    zitadel_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     zitadel_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
@@ -104,8 +122,16 @@ all:
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ zitadel_cert_manager_issuer }}"
       extraObjects: "{{ zitadel_pre_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: postgresql ---
+    zitadel_postgresql_helm_timeout: "5m"
+    zitadel_postgresql_rollout_timeout: "300s"
+    # PostgreSQL image (handwritten chart — full URI:tag).
+    # Используется в zitadel_postgresql_helm_values.image
+    # (handwritten chart playbook-app/charts/zitadel/postgresql/).
+    # Для AirGap оператор переопределяет в hosts-vars-override/zitadel.yaml.
+    zitadel_postgresql_image: "docker.io/postgres:16-alpine"
+    zitadel_postgresql_storage_class: "lnstr-major-multi-sync"
+    zitadel_postgresql_storage_size: "10Gi"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     zitadel_postgresql_extra_objects: []
     # Postgresql-phase kustomize patches (operator-side customization, default empty)
@@ -123,8 +149,15 @@ all:
         usernameKey: "{{ zitadel_postgresql_secret_key_username }}"
         passwordKey: "{{ zitadel_postgresql_secret_key_password }}"
       extraObjects: "{{ zitadel_postgresql_extra_objects }}"
-    # ---
-    # ---
+    # --- PHASE: install ---
+    zitadel_install_helm_timeout: "10m"
+    zitadel_install_rollout_timeout: "300s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    zitadel_helm_is_oci: false
+    zitadel_helm_url: "https://charts.zitadel.com"
+    zitadel_helm_repo_name: "zitadel"
+    zitadel_helm_chart_name: "zitadel"
+    zitadel_helm_chart_version: "9.30.0"
     # Helm chart values
     zitadel_helm_values:
       replicaCount: 1
@@ -184,8 +217,8 @@ all:
         # --masterkeyFile убран: chart 9.x сам пробрасывает --masterkeyFromEnv из secret
         additionalArgs:
           - "--init-projections=true"
-    # ---
-    # ---
+    # --- PHASE: post ---
+    zitadel_post_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     zitadel_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -207,42 +240,3 @@ all:
           web: "{{ traefik_web_entrypoint }}"
           websecure: "{{ traefik_websecure_entrypoint }}"
       extraObjects: "{{ zitadel_post_extra_objects }}"
-    # ---------
-    # ESO integration: Vault → K8s Secrets
-    # Базовые секреты (нужны для запуска) — отдельные named-переменные с полным dict-объектом.
-    # eso_vault_integration_zitadel_secrets — массив ссылок на named-переменные
-    # (chart eso-external-secret.yaml рендерит .Values.eso.secrets единообразно
-    # как для base-ссылок, так и для _extra dict'ов).
-    # _extra — расширение оператора через hosts-vars-override/.
-    # ---------
-    eso_vault_integration_zitadel:
-      sa_name: "eso-main"
-      role_name: "zitadel.eso-main"
-      secret_store_name: "eso-main.vault"
-      kv_engine_path: "eso-secret"
-
-    zitadel_secret_postgresql_creds:
-      external_secret_name: "eso-zitadel-postgresql-creds"
-      vault_path: "/zitadel/postgresql/creds"
-      body:
-        target:
-          name: "eso-zitadel-postgresql-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/postgresql/creds"
-
-    zitadel_secret_masterkey:
-      external_secret_name: "eso-zitadel-masterkey"
-      vault_path: "/zitadel/masterkey"
-      body:
-        target:
-          name: "eso-zitadel-masterkey"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/masterkey"
-
-    eso_vault_integration_zitadel_secrets:
-      - "{{ zitadel_secret_postgresql_creds }}"
-      - "{{ zitadel_secret_masterkey }}"
-
-    eso_vault_integration_zitadel_secrets_extra: []
