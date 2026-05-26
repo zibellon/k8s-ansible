@@ -1,0 +1,103 @@
+# =============================================================================
+# SERVICEMONITORS FOR SEAWEEDFS (Prometheus Operator)
+#   4 компонента: master / volume / filer / s3
+#   Каждый gated по .Values.serviceMonitor.<component>.enabled.
+#   Порт: named port "metrics" из upstream SeaweedFS Service templates.
+#   Selector: app.kubernetes.io/name + app.kubernetes.io/component.
+# =============================================================================
+{{- if .Values.serviceMonitor.master.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: seaweedfs-master
+  namespace: {{ .Values.namespace }}
+  {{- with .Values.serviceMonitor.master.additionalLabels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.master.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.master.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.seaweedfs.name }}
+      app.kubernetes.io/component: master
+{{- end }}
+{{- if .Values.serviceMonitor.volume.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: seaweedfs-volume
+  namespace: {{ .Values.namespace }}
+  {{- with .Values.serviceMonitor.volume.additionalLabels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.volume.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.volume.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.seaweedfs.name }}
+      app.kubernetes.io/component: volume
+{{- end }}
+{{- if .Values.serviceMonitor.filer.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: seaweedfs-filer
+  namespace: {{ .Values.namespace }}
+  {{- with .Values.serviceMonitor.filer.additionalLabels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.filer.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.filer.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.seaweedfs.name }}
+      app.kubernetes.io/component: filer
+{{- end }}
+{{- if .Values.serviceMonitor.s3.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: seaweedfs-s3
+  namespace: {{ .Values.namespace }}
+  {{- with .Values.serviceMonitor.s3.additionalLabels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.s3.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.s3.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.seaweedfs.name }}
+      app.kubernetes.io/component: s3
+{{- end }}
