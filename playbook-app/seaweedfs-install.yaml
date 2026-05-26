@@ -1,0 +1,467 @@
+# =============================================================================
+# Install SeaweedFS (Central S3 Storage, multi-phase)
+# Steps:
+#   1. seaweedfs/pre: NetworkPolicies + ESO resources (ServiceAccount, SecretStore, ExternalSecrets)
+#   2. seaweedfs/postgresql: Filer PostgreSQL backend
+#   3. seaweedfs/install: Main upstream chart (seaweedfs/seaweedfs 4.28.0)
+#   4. seaweedfs/post: Certificate + IngressRoute + ServiceMonitor
+#
+# Usage (tags):
+#   ansible-playbook seaweedfs-install.yaml              # full install
+#   ansible-playbook seaweedfs-install.yaml --tags pre   # only pre (ESO resources)
+#   ansible-playbook seaweedfs-install.yaml --tags postgresql
+#   ansible-playbook seaweedfs-install.yaml --tags install
+#   ansible-playbook seaweedfs-install.yaml --tags post  # only post (Ingress + SM)
+#
+# Prerequisites:
+#   - Vault must be installed and unsealed
+#   - Vault policies and roles must be synced (... playbook-app/vault-install.yaml --tags vault-cr)
+#   - External Secrets Operator must be installed
+#   - Linstor must be installed (storage)
+#   - Traefik must be installed (ingress)
+# =============================================================================
+
+---
+- name: Install SeaweedFS (Central S3 Storage)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_seaweedfs_postgresql_vault_key: "_local_seaweedfs_postgresql_vault"
+    _local_seaweedfs_postgresql_vault_exists_key: "_local_seaweedfs_postgresql_vault_exists"
+    _local_seaweedfs_postgresql_password_generated_key: "_local_seaweedfs_postgresql_password_generated"
+    _local_seaweedfs_postgresql_put_data_key: "_local_seaweedfs_postgresql_put_data"
+    _local_seaweedfs_admin_vault_key: "_local_seaweedfs_admin_vault"
+    _local_seaweedfs_admin_vault_exists_key: "_local_seaweedfs_admin_vault_exists"
+    _local_seaweedfs_admin_access_key_generated_key: "_local_seaweedfs_admin_access_key_generated"
+    _local_seaweedfs_admin_secret_key_generated_key: "_local_seaweedfs_admin_secret_key_generated"
+    _local_seaweedfs_admin_put_data_key: "_local_seaweedfs_admin_put_data"
+    _local_seaweedfs_helm_chart_source_key: "_local_seaweedfs_helm_chart_source"
+
+  tasks:
+    - name: "[seaweedfs-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "seaweedfs-pre-check"
+      tags: [always]
+
+    - name: "[seaweedfs-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "seaweedfs-pre-check"
+        dto_target_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Merge ESO integrations and resolve SeaweedFS config
+    # =========================================================================
+
+    - name: "[seaweedfs-install-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-init"
+      tags: [always]
+
+    - name: "[seaweedfs-install-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_seaweedfs_secrets + (eso_vault_integration_seaweedfs_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_seaweedfs }}"
+        dto_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: INSTALL PRE (ESO Resources, NetworkPolicies)
+    # =========================================================================
+
+    - name: "[seaweedfs-pre] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "seaweedfs-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/seaweedfs/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/pre"
+      tags: [pre]
+
+    - name: "[seaweedfs-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "seaweedfs-pre"
+        dto_dir: "{{ remote_charts_dir }}/seaweedfs/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ seaweedfs_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[seaweedfs-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "seaweedfs-pre"
+        dto_release_name: "seaweedfs-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/seaweedfs/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/seaweedfs/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/seaweedfs/pre-k"
+        dto_patches_list: "{{ seaweedfs_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ seaweedfs_namespace }}"
+      tags: [pre]
+
+    - name: "[seaweedfs-pre] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "seaweedfs-pre"
+        dto_helm_command: >
+          helm upgrade --install seaweedfs-pre {{ remote_charts_dir }}/seaweedfs/pre-k
+          --namespace {{ seaweedfs_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ seaweedfs_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: POSTGRESQL SECRETS + INSTALL
+    # =========================================================================
+
+    # ---------
+    # ---postgresql-creds
+    # ---------
+
+    - name: "[seaweedfs-postgresql-secrets] Get PostgreSQL credentials from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_postgresql_creds.vault_path }}"
+        dto_vault_get_field: "{{ seaweedfs_postgresql_secret_key_password }}"
+        dto_vault_get_res_fact_name: "{{ _local_seaweedfs_postgresql_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_seaweedfs_postgresql_vault_exists_key }}"
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql-secrets] Generate PostgreSQL password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql-secrets"
+        dto_generate_fact_name: "{{ _local_seaweedfs_postgresql_password_generated_key }}"
+      when: not lookup('vars', _local_seaweedfs_postgresql_vault_exists_key)
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql-secrets] Prepare PostgreSQL Vault put data"
+      set_fact:
+        "{{ _local_seaweedfs_postgresql_put_data_key }}": >-
+          {{ {
+               seaweedfs_postgresql_secret_key_username: seaweedfs_postgresql_username,
+               seaweedfs_postgresql_secret_key_password: lookup('vars', _local_seaweedfs_postgresql_password_generated_key)
+             } }}
+      when: not lookup('vars', _local_seaweedfs_postgresql_vault_exists_key)
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql-secrets] Store PostgreSQL credentials in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_postgresql_creds.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_seaweedfs_postgresql_put_data_key) }}"
+      when: not lookup('vars', _local_seaweedfs_postgresql_vault_exists_key)
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql-secrets"
+        dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql-secrets] Wait for secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql-secrets"
+        dto_wait_secret_name: "{{ seaweedfs_secret_postgresql_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
+      tags: [postgresql]
+
+    # ---------
+    # ---postgresql-install
+    # ---------
+
+    - name: "[seaweedfs-postgresql] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql"
+        dto_chart_name: "postgresql"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/seaweedfs/postgresql/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/postgresql"
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql"
+        dto_dir: "{{ remote_charts_dir }}/seaweedfs/postgresql"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ seaweedfs_postgresql_helm_values | to_nice_yaml }}"
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql"
+        dto_release_name: "seaweedfs-postgresql"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/postgresql"
+        dto_values_file_path: "{{ remote_charts_dir }}/seaweedfs/postgresql/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/seaweedfs/postgresql-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/seaweedfs/postgresql-k"
+        dto_patches_list: "{{ seaweedfs_postgresql_kustomize_patches }}"
+        dto_target_namespace: "{{ seaweedfs_namespace }}"
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql"
+        dto_helm_command: >
+          helm upgrade --install seaweedfs-postgresql {{ remote_charts_dir }}/seaweedfs/postgresql-k
+          --namespace {{ seaweedfs_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ seaweedfs_postgresql_helm_timeout }}
+      tags: [postgresql]
+
+    - name: "[seaweedfs-postgresql] Wait for rollout to be ready"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "seaweedfs-postgresql"
+        dto_rollout_namespace: "{{ seaweedfs_namespace }}"
+        dto_rollout_timeout: "{{ seaweedfs_postgresql_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/seaweedfs-postgresql
+      tags: [postgresql]
+
+    # =========================================================================
+    # STEP 3: ADMIN S3 CREDS + SEAWEEDFS INSTALL
+    # =========================================================================
+
+    # ----- SeaweedFS Admin S3 IAM creds (access_key + secret_key, immutable after first install) -----
+    - name: "[seaweedfs-admin-secrets] Get admin access_key from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "seaweedfs-admin-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_creds.vault_path }}"
+        dto_vault_get_field: "{{ seaweedfs_admin_secret_key_access_key }}"
+        dto_vault_get_res_fact_name: "{{ _local_seaweedfs_admin_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_seaweedfs_admin_vault_exists_key }}"
+      tags: [install]
+
+    - name: "[seaweedfs-admin-secrets] Generate admin access_key (20 chars, uppercase + digits)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "seaweedfs-admin-secrets"
+        dto_generate_fact_name: "{{ _local_seaweedfs_admin_access_key_generated_key }}"
+        dto_generate_length: 20
+        dto_generate_chars: "ascii_uppercase,digits"
+      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[seaweedfs-admin-secrets] Generate admin secret_key (40 chars, letters + digits)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "seaweedfs-admin-secrets"
+        dto_generate_fact_name: "{{ _local_seaweedfs_admin_secret_key_generated_key }}"
+        dto_generate_length: 40
+        dto_generate_chars: "ascii_letters,digits"
+      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[seaweedfs-admin-secrets] Prepare admin S3 creds Vault put data"
+      set_fact:
+        "{{ _local_seaweedfs_admin_put_data_key }}": >-
+          {{ {
+               seaweedfs_admin_secret_key_access_key: lookup('vars', _local_seaweedfs_admin_access_key_generated_key),
+               seaweedfs_admin_secret_key_secret_key: lookup('vars', _local_seaweedfs_admin_secret_key_generated_key)
+             } }}
+      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[seaweedfs-admin-secrets] Store admin S3 creds in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "seaweedfs-admin-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_creds.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_seaweedfs_admin_put_data_key) }}"
+      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[seaweedfs-admin-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-admin-secrets"
+        dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
+      tags: [install]
+
+    - name: "[seaweedfs-admin-secrets] Wait for secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "seaweedfs-admin-secrets"
+        dto_wait_secret_name: "{{ seaweedfs_secret_admin_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
+      tags: [install]
+
+    # ---------
+    # ---install
+    # ---------
+
+    - name: "[seaweedfs-install] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install"
+        dto_dir: "{{ remote_charts_dir }}/seaweedfs/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ seaweedfs_helm_values | to_nice_yaml }}"
+      tags: [install]
+
+    - name: "[seaweedfs-install] Add Helm repository"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install"
+        dto_helm_is_oci: "{{ seaweedfs_helm_is_oci }}"
+        dto_helm_url: "{{ seaweedfs_helm_url }}"
+        dto_helm_chart_version: "{{ seaweedfs_helm_chart_version }}"
+        dto_helm_repo_name: "{{ seaweedfs_helm_repo_name }}"
+        dto_helm_chart_name: "{{ seaweedfs_helm_chart_name }}"
+        dto_helm_chart_source_res_fact_name: "{{ _local_seaweedfs_helm_chart_source_key }}"
+      tags: [install]
+
+    - name: "[seaweedfs-install] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install"
+        dto_helm_command: >
+          helm upgrade --install seaweedfs {{ lookup('vars', _local_seaweedfs_helm_chart_source_key) }}
+          --namespace {{ seaweedfs_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/seaweedfs/install/values-override.yaml
+          --version {{ seaweedfs_helm_chart_version }}
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ seaweedfs_install_helm_timeout }}
+      tags: [install]
+
+    - name: "[seaweedfs-install] Wait for rollout to be ready"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install"
+        dto_rollout_namespace: "{{ seaweedfs_namespace }}"
+        dto_rollout_timeout: "{{ seaweedfs_install_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - statefulset.apps/seaweedfs-master
+          - statefulset.apps/seaweedfs-volume
+          - statefulset.apps/seaweedfs-filer
+          - deployment.apps/seaweedfs-s3
+      tags: [install]
+
+    # =========================================================================
+    # STEP 4: POST CHART (Certificate + IngressRoute + ServiceMonitor)
+    # =========================================================================
+
+    - name: "[seaweedfs-post] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "seaweedfs-post"
+        dto_chart_name: "post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/seaweedfs/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/post"
+      tags: [post]
+
+    - name: "[seaweedfs-post] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "seaweedfs-post"
+        dto_dir: "{{ remote_charts_dir }}/seaweedfs/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ seaweedfs_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[seaweedfs-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "seaweedfs-post"
+        dto_release_name: "seaweedfs-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/seaweedfs/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/seaweedfs/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/seaweedfs/post-k"
+        dto_patches_list: "{{ seaweedfs_post_kustomize_patches }}"
+        dto_target_namespace: "{{ seaweedfs_namespace }}"
+      tags: [post]
+
+    - name: "[seaweedfs-post] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "seaweedfs-post"
+        dto_helm_command: >
+          helm upgrade --install seaweedfs-post {{ remote_charts_dir }}/seaweedfs/post-k
+          --namespace {{ seaweedfs_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ seaweedfs_post_helm_timeout }}
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[seaweedfs-verify] Verify Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_label_name: "seaweedfs-verify"
+        dto_helm_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
+
+    - name: "[seaweedfs-verify] Show pods in {{ seaweedfs_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "seaweedfs-verify"
+        dto_pods_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
+
+    - name: "[seaweedfs-verify] Show NetworkPolicies in {{ seaweedfs_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "seaweedfs-verify"
+        dto_np_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
+
+    - name: "[seaweedfs-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "SEAWEEDFS INSTALLATION COMPLETE"
+          - "=============================================="
+          - "S3 endpoint: https://{{ seaweedfs_s3_domain }}"
+          - "Admin UI:    https://{{ seaweedfs_admin_ui_domain }} (VPN-only)"
+          - ""
+          - "Credentials stored in Vault:"
+          - "  PostgreSQL:   {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_postgresql_creds.vault_path }}"
+          - "  S3 admin IAM: {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_creds.vault_path }}"
+          - ""
+          - "IMPORTANT: Admin S3 creds are generated on first install."
+          - "  Back them up from Vault immediately."
+          - "  To rotate, manually edit/delete the Vault path and re-run --tags install."
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[seaweedfs-verify] Installation complete"
+      debug:
+        msg: "seaweedfs-pre + seaweedfs-postgresql + seaweedfs + seaweedfs-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
