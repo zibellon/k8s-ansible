@@ -69,6 +69,7 @@ ansible-playbook ... --limit w1,w2,w3
 
 ```bash
 for c in cilium cert-manager external-secrets vault traefik metrics-server longhorn \
+         seaweedfs \
          mon-system \
          argocd gitlab gitlab-runner zitadel teleport haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/$c-install.yaml
