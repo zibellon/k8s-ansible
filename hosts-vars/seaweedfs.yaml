@@ -214,11 +214,9 @@ all:
         data:
           type: "persistentVolumeClaim"
           size: "1Gi"
-          storageClass: "lnstr-major-multi-sync"
-        # Логи на hostPath (не критичные данные)
-        logs:
-          type: "hostPath"
-          hostPathPrefix: /storage
+          storageClass: "lnstr-major-local"
+        # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
+        logs: {}
         # defaultReplication "001" — 1 replica в другом rack'е (для 3 мастеров с anti-affinity)
         defaultReplication: "001"
 
@@ -234,17 +232,15 @@ all:
             maxVolumes: 0
         # Логи на hostPath
         logs: {}
-        # nodeSelector — только worker'ы (отсутствие taint control-plane)
+        # nodeSelector — только worker'ы (project convention из hosts-vars/hosts.yaml node_labels)
         nodeSelector: |
-          node-role.kubernetes.io/control-plane: "false"
+          node-role.kubernetes.io/worker: ""
 
       filer:
         enabled: true
         replicas: 1
-        # Логи на hostPath
-        logs:
-          type: "hostPath"
-          hostPathPrefix: /storage
+        # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
+        logs: {}
         # PostgreSQL backend через env vars — отключаем leveldb, включаем postgres
         extraEnvironmentVars:
           WEED_LEVELDB2_ENABLED: "false"
