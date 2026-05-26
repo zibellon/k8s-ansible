@@ -231,3 +231,10 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 **`mon_system_prometheus_operator_kustomize_patches_extra`** удалён (SUB-0b). Оператор-side override заменяет base целиком.
 
 **Extension point для всех компонентов**: `<c>_<phase>_kustomize_patches: []` (default пустой список = zero diff на первом deploy). NO `_extra` companion — оператор заменяет base целиком через `hosts-vars-override/`.
+
+------
+
+## SeaweedFS — отложенные задачи
+
+- **Backup to remote S3** — после появления реальных production-данных активировать backup из SeaweedFS в external S3 (Wasabi / Backblaze B2). Mechanism: Deployment с `filer.remote.sync` daemon (continuous async one-way replication) → remote bucket с versioning enabled. Опционально дополнительно — `weed backup` CronJob (snapshot-style раз в сутки). Creds для remote S3 хранятся в Vault path `eso-secret/seaweedfs/backup/remote-s3-creds` (operator делает через одноразовый `tasks-vault-put`). Cost estimate: ~$60/мес Wasabi за 10 TB зеркала. На тестовом контуре пока не нужно — нет реальных данных для защиты.
+- **Per-project IAM bootstrap automation** — текущая итерация SeaweedFS plan (F1-F4) реализовала только базовый install. Per-project IAM creation (создание project user, N buckets, quotas, K8s Secret через ESO) пока — manual operator workflow через `kubectl -n seaweedfs exec deploy/seaweedfs-s3 -- weed shell` → `s3.configure ...`. Будущая mini-task F5: reusable `tasks-seaweedfs-project-create.yaml` (input: project_name + buckets_list + quotas) → автоматизирует full flow.

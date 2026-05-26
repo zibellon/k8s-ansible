@@ -120,7 +120,7 @@ k8s-ansible/
 │   └── tasks/
 ├── playbook-app/              ← cluster-scoped, declarative
 │   ├── tasks/
-│   └── charts/                ← 17 local Helm-chart dirs, one per component
+│   └── charts/                ← 18 local Helm-chart dirs, one per component
 ├── tests/                     ← Docker-based test runner (Dockerfile + scripts)
 ├── hosts-vars/                ← base defaults (in git)
 ├── hosts-vars-override/       ← secrets + real inventory (gitignored)
@@ -135,9 +135,9 @@ k8s-ansible/
 |---|---|---|
 | `playbook-system/` | 27 playbooks (node prep, bootstrap, operational, rolling updates, diagnostics) | [`bootstrap-and-ha.md`](.claude/rules/bootstrap-and-ha.md) |
 | `playbook-system/tasks/` | 21 reusable task includes (guards, cluster-facts, kubeadm, HAProxy, kubelet, package install, network diagnostics, file sync) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §2 |
-| `playbook-app/` | 33 playbooks (17 install + 16 specials: configure, restart, rotate, sync, DR) | [`components.md`](.claude/rules/components.md) |
+| `playbook-app/` | 34 playbooks (18 install + 16 specials: configure, restart, rotate, sync, DR) | [`components.md`](.claude/rules/components.md) |
 | `playbook-app/tasks/` | 33 reusable task includes (pre-check, copy-chart, helm, wait, Vault/ESO, k8s-list, cluster-info) | [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1 |
-| `playbook-app/charts/` | 17 local Helm-chart directories, one per component (mon-system has 11 phase subdirs; linstor has 4 phase subdirs: pre/, install-operator/, install-cluster/, post/; others have `pre/`, `install/`, `post/`) | [`components.md`](.claude/rules/components.md) per-component |
+| `playbook-app/charts/` | 18 local Helm-chart directories, one per component (mon-system has 11 phase subdirs; linstor has 4 phase subdirs: pre/, install-operator/, install-cluster/, post/; others have `pre/`, `install/`, `post/`) | [`components.md`](.claude/rules/components.md) per-component |
 | `hosts-vars/` | 22 files — inventory skeleton, global settings, per-component vars, cross-cutting (vault, vpn-rules, teleport-configure) | [`variables.md`](.claude/rules/variables.md) |
 | `hosts-vars-override/` | Mirror structure with real environment values. `ansible_password`, real IPs, Vault unseal keys, real domains — **gitignored** | — |
 
