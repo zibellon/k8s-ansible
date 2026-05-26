@@ -238,6 +238,20 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 
 ---
 
+## 17.5. `seaweedfs`
+
+- **Chart path.** `charts/seaweedfs/{pre,postgresql,post}/` — три LOCAL_CUSTOM chart'а (pre + postgresql + post). Install phase — **upstream chart напрямую** (не локальный chart subdir).
+- **Install playbook.** `seaweedfs-install.yaml`.
+- **Namespace.** `seaweedfs`.
+- **Releases.** `seaweedfs-pre`, `seaweedfs-postgresql`, `seaweedfs` (upstream chart), `seaweedfs-post`.
+- **External Helm repo.** `https://seaweedfs.github.io/seaweedfs/helm` → chart `seaweedfs/seaweedfs`, version `seaweedfs_helm_chart_version` (default `4.28.0`). HTTP↔OCI switchable via `seaweedfs_helm_is_oci`.
+- **Required vars.** `seaweedfs_namespace`, `seaweedfs_s3_domain`, `seaweedfs_admin_ui_domain`, `seaweedfs_helm_chart_version`, `seaweedfs_postgresql_*` (image, storage class, size, creds field names), `seaweedfs_admin_secret_key_*` (access_key + secret_key field names), `seaweedfs_helm_values` (большой dict — master/volume/filer/s3 enabled + replicas + antiAffinity + nodeSelector + storage + filer postgres connection via secretExtraEnvironmentVars + s3 existingConfigSecret pattern), `seaweedfs_*_helm_values` для каждой фазы, `seaweedfs_cert_manager_issuer` (object `{enabled, body}`), `seaweedfs_s3_ingress_config` + `seaweedfs_admin_ui_ingress_config`, `seaweedfs_service_monitor` (per-component dict 4 components × 4 params). Kustomize patches (default `[]`): `seaweedfs_pre_kustomize_patches`, `seaweedfs_postgresql_kustomize_patches`, `seaweedfs_post_kustomize_patches`.
+- **ESO integration.** Yes (via `eso_vault_integration_seaweedfs` в `hosts-vars/seaweedfs.yaml`) — PostgreSQL creds + admin S3 IAM creds (access_key + secret_key через `body.target.template` с JSON config для `s3.existingConfigSecret`).
+- **ServiceMonitor.** Yes — 4 SM (master/volume/filer/s3), каждый gated per-component через `seaweedfs_service_monitor.<c>.enabled`. Endpoint port — named `metrics` из upstream Service templates.
+- **Dependencies.** Cilium (CNI), cert-manager (для TLS Ingress), external-secrets (для ESO), vault (для bootstrap admin/postgres creds), linstor (для PVC через `lnstr-major-multi-sync` postgres + `lnstr-worker-local` volume server data), traefik (для IngressRoute в post phase).
+- **Non-install playbooks.** None в текущей итерации. Per-project IAM bootstrap (создание project IAM user + buckets + quotas) — operator выполняет вручную через `kubectl -n seaweedfs exec -it <s3-gw-pod> -- weed shell` → `s3.configure ...` (см. plan §F5 для future automation через `tasks-seaweedfs-project-create.yaml`).
+- **Notes.** Master HA через 3 replicas с default `podAntiAffinity` по `kubernetes.io/hostname` (распределяется по 3 узлам кластера). Volume server'ы — только на worker'ах через `nodeSelector` block scalar. Filer metadata в локальном PostgreSQL chart (`seaweedfs-postgresql`, single replica, PVC из `lnstr-major-multi-sync`). S3 admin creds materialised через ESO как K8s Secret с одним ключом `seaweedfs_s3_config` содержащим JSON identity config (потребляется через `s3.existingConfigSecret` upstream chart 4.28.0).
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -256,6 +270,7 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 | `teleport` | teleport | no |
 | `kube-system` | metrics-server (exceptional) | upstream |
 | `piraeus-datastore` | linstor (Piraeus operator + LinstorCluster + satellites + CSI + HA controller + affinity controller + NFS server) | **yes** — upstream Piraeus convention |
+| `seaweedfs` | seaweedfs (central S3 storage: master, volume, filer, s3 gateway + filer's PostgreSQL backend) | no |
 | `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
 
 ## 19. Cross-cutting Dependency Order
@@ -268,7 +283,7 @@ L1  cert-manager   external-secrets
 L2  longhorn       linstor       metrics-server
 L3  vault
 L4  traefik        haproxy
-L5  mon-system
+L5  mon-system     seaweedfs
 L6  zitadel
 L7  argocd    gitlab    teleport
 L8  gitlab-runner
@@ -278,11 +293,11 @@ L8  gitlab-runner
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L7 as part of `argocd-install.yaml` — no separate playbook.
 
-## 20. ESO-integrated Components (8)
+## 20. ESO-integrated Components (9)
 
 Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-verify.yaml`:
 
-`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`
+`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`
 
 Each integration object + `_secrets` list + `_secrets_extra` list lives in the corresponding `hosts-vars/<c>.yaml`.
 
