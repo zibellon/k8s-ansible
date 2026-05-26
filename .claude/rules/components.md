@@ -252,6 +252,51 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 - **Non-install playbooks.** None в текущей итерации. Per-project IAM bootstrap (создание project IAM user + buckets + quotas) — operator выполняет вручную через `kubectl -n seaweedfs exec -it <s3-gw-pod> -- weed shell` → `s3.configure ...` (см. plan §F5 для future automation через `tasks-seaweedfs-project-create.yaml`).
 - **Notes.** Master HA через 3 replicas с default `podAntiAffinity` по `kubernetes.io/hostname` (распределяется по 3 узлам кластера). Volume server'ы — только на worker'ах через `nodeSelector` block scalar. Filer metadata в локальном PostgreSQL chart (`seaweedfs-postgresql`, single replica, PVC из `lnstr-major-multi-sync`). S3 admin creds materialised через ESO как K8s Secret с одним ключом `seaweedfs_s3_config` содержащим JSON identity config (потребляется через `s3.existingConfigSecret` upstream chart 4.28.0).
 
+### Erasure Coding Migration Playbook (operational reference)
+
+SeaweedFS allows hot data tier на replication, cold data tier на erasure coding (EC) — без full rebuild кластера. EC profile'ы имеют минимальное требование к числу volume server'ов, поэтому правильная стратегия — **начинать с replication, добавлять EC по мере роста кластера**.
+
+**RS profile comparison:**
+
+| RS profile | Min volume servers | Storage overhead | Tolerance (server failures) |
+|---|---|---|---|
+| `replication=2` (Phase 1) | 2 | 2.0× | 1 |
+| `RS-3-2` | 5 | 1.67× | 2 |
+| `RS-6-3` (Phase 2) | 9 | 1.5× | 3 |
+| `RS-10-4` (Phase 3) | 14 | 1.4× | 4 |
+| `RS-14-4` | 18 | 1.29× | 4 |
+
+`RS-d-p` notation: `d` data shards + `p` parity shards. Толерантность к падению `p` volume server'ов.
+
+**Phase 1 — старт (2-5 worker'ов, ~100 GB):**
+- Default replication=2 для всех volume'ов через `defaultReplication: "001"` в `seaweedfs_helm_values.master.defaultReplication`.
+- Толерантность к 1 падению. Overhead ×2.
+- EC tier не нужен — кластер слишком мал.
+
+**Phase 2 — рост (~9 worker'ов, ~1 TB):**
+- Replication=2 для hot / write-heavy volume'ов.
+- **RS-6-3** для cold tier (read-mostly, age > N days). Overhead 50% вместо 100%. Толерантность к 3 падениям.
+- Конвертация warm volumes в EC через `weed shell`:
+  ```
+  $ kubectl -n seaweedfs exec -it deploy/seaweedfs-s3 -- weed shell
+  > volume.ec.encode -collection=<bucket> -fullPercent=95 -quietFor=24h
+  ```
+  Конвертирует все volumes (заполненные >95% и не модифицированные >24h) в EC шарды.
+
+**Phase 3 — production (~14+ worker'ов, ~10 TB):**
+- Wider EC profile'ы — `RS-10-4` (overhead 40%, толерантность 4), `RS-14-4` (overhead 29%).
+- Полноценный tiering: hot = replication, warm = `RS-6-3`, cold/archive = `RS-10-4` или wider.
+- Custom EC profile задаётся через `weed shell` (parameters command-specific).
+
+**Ключевые свойства SeaweedFS под elastic growth:**
+- EC encoding **не требует rebuild** кластера. Берёшь warm read-only volume, конвертируешь в EC, продолжаешь работать.
+- **Добавление volume server'а — drop-in.** Поднимаешь pod на новой worker-ноде → регистрируется в master'е → начинает получать трафик. Без rebalancing-окна, без downtime.
+- **Удаление volume server'а** — через `weed shell volume.fix.replication` + `volume.balance -force` для миграции данных перед удалением.
+
+**Что НЕ делать:**
+- Не выбирать узкий EC profile (`RS-3-2`) на 5 worker'ах с расчётом «потом мигрирую». Лишний re-encoding cycle при росте.
+- Phase 1 = чистый replication до 9+ worker'ов. EC появляется естественно с ростом.
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
