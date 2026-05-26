@@ -345,6 +345,35 @@ spec:
           port: {{ .Values.apiserver.port }}
 
 # =============================================================================
+# SEAWEEDFS POSTGRESQL POLICIES (filer metadata backend)
+# =============================================================================
+
+---
+# SeaweedFS PostgreSQL: ingress from filer (metadata store connection)
+# Postgres egress covered by baseline allow-dns-egress; no other outgoing
+# connections needed for single-replica filer-backend Postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: seaweedfs-postgresql
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs-postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    # From filer pods (PostgreSQL connection for metadata store)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: filer
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+
+# =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
 # =============================================================================
 {{- if .Values.issuer.enabled }}
