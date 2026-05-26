@@ -13,7 +13,7 @@ all:
 
     # VPN-only middleware: S3 endpoint открыт наружу, admin UI только из VPN
     seaweedfs_s3_vpn_only_enabled: false
-    seaweedfs_admin_ui_vpn_only_enabled: true
+    seaweedfs_admin_ui_vpn_only_enabled: false
 
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
     # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
@@ -173,7 +173,19 @@ all:
     # Для AirGap оператор переопределяет в hosts-vars-override/seaweedfs.yaml.
     seaweedfs_postgresql_image: "docker.io/postgres:16-alpine"
     seaweedfs_postgresql_storage_class: "lnstr-major-multi-sync"
-    seaweedfs_postgresql_storage_size: "5Gi"
+    seaweedfs_postgresql_storage_size: "2Gi"
+    # Filer metadata schema (apply via kubectl exec после postgres rollout, ДО filer start).
+    # Bootstrap SQL — официальная docs sources/seaweedfs/weed/filer/postgres/README.txt.
+    # CREATE TABLE IF NOT EXISTS — idempotent (no-op на existing table).
+    # Single-line SQL (psql -c принимает single-line; multi-line через -f /tmp/file.sql).
+    seaweedfs_postgresql_filemeta_schema_sql: >-
+      CREATE TABLE IF NOT EXISTS filemeta (
+        dirhash BIGINT,
+        name VARCHAR(65535),
+        directory VARCHAR(65535),
+        meta bytea,
+        PRIMARY KEY (dirhash, name)
+      );
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     seaweedfs_postgresql_extra_objects: []
     # Postgresql-phase kustomize patches (operator-side customization, default empty)
@@ -209,7 +221,7 @@ all:
     seaweedfs_helm_values:
       master:
         enabled: true
-        replicas: 3
+        replicas: 1
         # PVC для Raft state (1Gi достаточно для метаданных мастера)
         data:
           type: "persistentVolumeClaim"
@@ -218,7 +230,7 @@ all:
         # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
         logs: {}
         # defaultReplication "001" — 1 replica в другом rack'е (для 3 мастеров с anti-affinity)
-        defaultReplication: "001"
+        defaultReplication: "000"
 
       volume:
         enabled: true
@@ -227,7 +239,7 @@ all:
         dataDirs:
           - name: data1
             type: "persistentVolumeClaim"
-            size: "20Gi"
+            size: "4Gi"
             storageClass: "lnstr-worker-local"
             maxVolumes: 0
         # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
