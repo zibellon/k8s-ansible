@@ -229,6 +229,14 @@ all:
           storageClass: "lnstr-major-local"
         # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
         logs: {}
+        # Размер одного volume file в MB. По достижению — volume автоматически
+        # seal'ится в read-only, дальнейшие writes идут в новый volume.
+        # Cealed volumes становятся eligible для EC encoding через weed shell.
+        # Маленькие volumes (1 GB) — низкий metadata overhead на master'е,
+        # быстрая fill → быстрая EC eligibility, быстрый rebalance при failover.
+        # Большие volumes (30 GB — weed binary default) — меньше metadata,
+        # дольше до EC encoding. SeaweedFS chart 4.28.0 default = 1000 (1 GB).
+        volumeSizeLimitMB: 1000
         # defaultReplication "001" — 1 replica в другом rack'е (для 3 мастеров с anti-affinity)
         defaultReplication: "000"
 
