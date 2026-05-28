@@ -258,68 +258,83 @@
     # STEP 3: ADMIN S3 CREDS + SEAWEEDFS INSTALL
     # =========================================================================
 
-    # ----- SeaweedFS Admin S3 IAM creds (access_key + secret_key, immutable after first install) -----
-    - name: "[seaweedfs-admin-secrets] Get admin access_key from Vault"
+    # ----- Bootstrap admin S3 identity: combined JSON in Vault -> ESO -> K8s Secret -----
+    # Generate admin creds (only if Vault path empty), build single-identity JSON (admin only),
+    # write to Vault path /seaweedfs/s3-config/all field=config. ESO syncs to K8s Secret.
+    # Users + per-identity fan-out — separate concern of seaweedfs-sync.yaml.
+    - name: "[seaweedfs-admin-bootstrap] Get current S3 identities config from Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
       vars:
-        dto_label_name: "seaweedfs-admin-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_creds.vault_path }}"
-        dto_vault_get_field: "{{ seaweedfs_admin_secret_key_access_key }}"
+        dto_label_name: "seaweedfs-admin-bootstrap"
+        dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
+        dto_vault_get_field: "config"
         dto_vault_get_res_fact_name: "{{ _local_seaweedfs_admin_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_seaweedfs_admin_vault_exists_key }}"
       tags: [install]
 
-    - name: "[seaweedfs-admin-secrets] Generate admin access_key (20 chars, uppercase + digits)"
+    - name: "[seaweedfs-admin-bootstrap] Generate admin access_key (20 chars, uppercase + digits)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
-        dto_label_name: "seaweedfs-admin-secrets"
+        dto_label_name: "seaweedfs-admin-bootstrap"
         dto_generate_fact_name: "{{ _local_seaweedfs_admin_access_key_generated_key }}"
         dto_generate_length: 20
         dto_generate_chars: "ascii_uppercase,digits"
       when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
       tags: [install]
 
-    - name: "[seaweedfs-admin-secrets] Generate admin secret_key (40 chars, letters + digits)"
+    - name: "[seaweedfs-admin-bootstrap] Generate admin secret_key (40 chars, letters + digits)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
       vars:
-        dto_label_name: "seaweedfs-admin-secrets"
+        dto_label_name: "seaweedfs-admin-bootstrap"
         dto_generate_fact_name: "{{ _local_seaweedfs_admin_secret_key_generated_key }}"
         dto_generate_length: 40
         dto_generate_chars: "ascii_letters,digits"
       when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
       tags: [install]
 
-    - name: "[seaweedfs-admin-secrets] Prepare admin S3 creds Vault put data"
+    - name: "[seaweedfs-admin-bootstrap] Build initial S3 identities JSON (admin only)"
       set_fact:
         "{{ _local_seaweedfs_admin_put_data_key }}": >-
           {{ {
-               seaweedfs_admin_secret_key_access_key: lookup('vars', _local_seaweedfs_admin_access_key_generated_key),
-               seaweedfs_admin_secret_key_secret_key: lookup('vars', _local_seaweedfs_admin_secret_key_generated_key)
+               'config': ({
+                 'identities': [
+                   {
+                     'name': 'admin',
+                     'credentials': [
+                       {
+                         'accessKey': lookup('vars', _local_seaweedfs_admin_access_key_generated_key),
+                         'secretKey': lookup('vars', _local_seaweedfs_admin_secret_key_generated_key)
+                       }
+                     ],
+                     'actions': ['Admin']
+                   }
+                 ]
+               } | to_json)
              } }}
       when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
       tags: [install]
 
-    - name: "[seaweedfs-admin-secrets] Store admin S3 creds in Vault"
+    - name: "[seaweedfs-admin-bootstrap] Store initial S3 identities JSON in Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
       vars:
-        dto_label_name: "seaweedfs-admin-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_creds.vault_path }}"
+        dto_label_name: "seaweedfs-admin-bootstrap"
+        dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
         dto_vault_put_data: "{{ lookup('vars', _local_seaweedfs_admin_put_data_key) }}"
       when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
       tags: [install]
 
-    - name: "[seaweedfs-admin-secrets] Trigger ESO sync"
+    - name: "[seaweedfs-admin-bootstrap] Trigger ESO sync"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
       vars:
-        dto_label_name: "seaweedfs-admin-secrets"
+        dto_label_name: "seaweedfs-admin-bootstrap"
         dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
       tags: [install]
 
-    - name: "[seaweedfs-admin-secrets] Wait for secret"
+    - name: "[seaweedfs-admin-bootstrap] Wait for S3 identities Secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
-        dto_label_name: "seaweedfs-admin-secrets"
-        dto_wait_secret_name: "{{ seaweedfs_secret_admin_creds.body.target.name }}"
+        dto_label_name: "seaweedfs-admin-bootstrap"
+        dto_wait_secret_name: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
         dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
       tags: [install]
 
@@ -462,11 +477,11 @@
           - ""
           - "Credentials stored in Vault:"
           - "  PostgreSQL:   {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_postgresql_creds.vault_path }}"
-          - "  S3 admin IAM: {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_creds.vault_path }}"
+          - "  S3 identities: {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }} (combined JSON)"
           - ""
-          - "IMPORTANT: Admin S3 creds are generated on first install."
-          - "  Back them up from Vault immediately."
-          - "  To rotate, manually edit/delete the Vault path and re-run --tags install."
+          - "IMPORTANT: Admin identity is bootstrapped on first install."
+          - "  Back it up from Vault immediately."
+          - "  Users + bucket policies — manage via seaweedfs-sync.yaml."
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
