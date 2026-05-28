@@ -1,0 +1,206 @@
+all:
+  vars:
+    # =============================================================================
+    # SeaweedFS Sync — declarative source-of-truth для identities, buckets, policies
+    # =============================================================================
+    # Этот файл потребляется:
+    #   - playbook-app/seaweedfs-install.yaml — bootstrap admin identity (читает
+    #     seaweedfs_identities entry где actions=['Admin']).
+    #   - playbook-app/seaweedfs-sync.yaml — три-tag sync (identities/buckets/policies).
+    #
+    # Архитектура (см. .claude/rules/components.md §17.5):
+    #   Layer 1: Identities → Vault path /seaweedfs/s3-config/all (combined JSON)
+    #            → ESO template → K8s Secret seaweedfs-s3-identities → mounted в
+    #            S3 pods через existingConfigSecret.
+    #   Layer 2: Buckets + quotas → filer Postgres metadata (weed shell + CronJob enforce).
+    #   Layer 3: Bucket policies → filer Postgres metadata (entry.Extended["s3-bucket-policy"]
+    #            via aws s3api). Full AWS IAM schema (Effect/Principal/Action/Resource/Condition).
+    #
+    # base arrays — committed (admin + anonymous identities в seaweedfs_identities).
+    # _extra arrays — для hosts-vars-override/, merged at runtime через `+ (var | default([]))`.
+    # =============================================================================
+
+    # ------
+    # SECTION 1: Identities
+    # ------
+    # SeaweedFS S3 IAM identities — admin + per-user named principals + anonymous.
+    # Sync (--tags identities) приводит Vault combined JSON к target state:
+    #   CREATE (in target, not in Vault): generate fresh access_key (20 chars
+    #     uppercase+digits) + secret_key (40 chars letters+digits); store в Vault
+    #     combined JSON; fan-out copy в каждый additional_vault_paths entry.
+    #   UPDATE (in both, actions differ): keep existing keys, refresh actions.
+    #   DELETE (in Vault, not in target): remove from combined JSON +
+    #     tasks-vault-delete per additional_vault_paths entry.
+    #
+    # Schema per identity:
+    #   name:    SeaweedFS identity name. Используется в bucket policies как
+    #            Principal: "arn:aws:iam::*:user/<name>" (wildcard accountID).
+    #            Special name 'anonymous' для public-read (Principal: '*' в bucket
+    #            policy совпадёт с anonymous identity — special name required
+    #            in static JSON; см. buildPrincipalARN auth_credentials.go:1640).
+    #   actions: SeaweedFS-internal actions list.
+    #            - admin:  ["Admin"] → bypass identity check (isAdmin()).
+    #            - users:  [] → "policy-only principals" (auth_credentials.go:1481),
+    #                        доступ ТОЛЬКО через bucket policy Allow (по design,
+    #                        не workaround).
+    #            - anonymous: [] (same).
+    #   additional_vault_paths: optional list [{vault_path, secret_keys?}, ...]
+    #            Sync дублирует generated creds (fan-out для downstream ESO consumers).
+    #            - admin entry: typically [] (admin creds backup через operator manually).
+    #            - anonymous entry: ОБЯЗАТЕЛЬНО [] (нет creds → нечего fan-out).
+    #            - per-user entries: paths куда consumer'ы будут читать через ESO.
+    #            Каждый item:
+    #              vault_path:  string (полный Vault path).
+    #              secret_keys: optional {username, access_key, secret_key} —
+    #                           override field names. Default =
+    #                           seaweedfs_identity_default_creds_keys
+    #                           (из hosts-vars/seaweedfs.yaml).
+    #
+    # Admin safety guard в sync playbook: warning если в target identities нет
+    # ни одной entry с actions=['Admin'] (защита от accidental lockout).
+    # ------
+    seaweedfs_identities:
+      - name: admin
+        actions: ["Admin"]
+        additional_vault_paths: []
+      - name: anonymous
+        actions: []
+        additional_vault_paths: []
+    seaweedfs_identities_extra: []
+    # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
+    # seaweedfs_identities_extra:
+    #   - name: user-X
+    #     actions: []
+    #     additional_vault_paths:
+    #       - vault_path: "/projects/myapp/seaweedfs/user-X"
+    #         # secret_keys опц — default {username, access_key, secret_key}
+    #       - vault_path: "/backups/seaweedfs/user-X"
+    #         secret_keys:
+    #           username: "user"
+    #           access_key: "AWS_ACCESS_KEY_ID"
+    #           secret_key: "AWS_SECRET_ACCESS_KEY"
+
+    # ------
+    # SECTION 2: Buckets + quotas
+    # ------
+    # S3 buckets + per-bucket SeaweedFS-native quotas.
+    # Sync (--tags buckets) применяет diff vs K8s ConfigMap state
+    # 'seaweedfs-sync-buckets-state':
+    #   - kubectl get cm → parse JSON state + compute hash.
+    #   - target = seaweedfs_sync_buckets + (seaweedfs_sync_buckets_extra | default([])).
+    #   - CREATE (in target, not in state): weed shell s3.bucket.create -name=<n>.
+    #   - UPDATE quota (in both, quota changed): weed shell s3.bucket.quota
+    #     -name=<n> -op set -sizeMB=<X> | -op disable | -op remove.
+    #   - DELETE (in state, not in target): weed shell s3.bucket.delete -name=<n>
+    #     (fail с явным сообщением если bucket non-empty).
+    #   - Update ConfigMap (kubectl apply) с new state + hash.
+    #
+    # Quota enforcement: НЕ автоматический в SeaweedFS (command_s3_bucket_quota_check.go:38-103).
+    # K8s CronJob 'seaweedfs-quota-enforce' запускает 'weed shell s3.bucket.quota.enforce
+    # -apply' каждые 5 минут — см. charts/seaweedfs/quota-cron/ (SUB-6b).
+    #
+    # Schema per bucket:
+    #   name:  bucket name (DNS-compatible, lower-case).
+    #   quota: optional {enabled, size}.
+    #     enabled: bool — true → apply size limit, false → disable (keep config).
+    #     size:    human-readable размер (e.g. "100GiB", "5TiB") — sync конвертирует
+    #              в MiB для weed shell.
+    # ------
+    seaweedfs_sync_buckets: []
+    seaweedfs_sync_buckets_extra: []
+    # Пример operator extension:
+    # seaweedfs_sync_buckets_extra:
+    #   - name: bucket-1
+    #     quota:
+    #       enabled: true
+    #       size: "100GiB"
+    #   - name: bucket-2
+    #     # quota опц — без quota = unlimited
+    #   - name: assets-public
+    #     quota:
+    #       enabled: true
+    #       size: "10GiB"
+
+    # ------
+    # SECTION 3: Bucket policies
+    # ------
+    # Per-bucket AWS IAM-style policies. Storage: filer Postgres metadata
+    # (entry.Extended["s3-bucket-policy"] — persistent через pod restart automatically).
+    # Sync (--tags policies) применяет diff vs K8s ConfigMap state
+    # 'seaweedfs-sync-bucket-policies-state':
+    #   - kubectl get cm → parse JSON state + hash compare.
+    #   - target = seaweedfs_sync_bucket_policies +
+    #     (seaweedfs_sync_bucket_policies_extra | default([])).
+    #   - CREATE/UPDATE (in target): aws s3api put-bucket-policy (full replacement,
+    #     AWS-style overwrite behavior).
+    #   - DELETE (in state, not in target): aws s3api delete-bucket-policy.
+    #   - Update ConfigMap.
+    #
+    # CRITICAL — SeaweedFS 4.29 non-AWS deviations:
+    #
+    #   1. Principal — ТОЛЬКО flat string или array, НЕ AWS dict-form
+    #      `{"AWS": "..."}` (policy_engine/types.go:55-77 — UnmarshalJSON
+    #      принимает только string или []string).
+    #         OK:    Principal: "arn:aws:iam::*:user/alice"
+    #         OK:    Principal: ["arn:aws:iam::*:user/alice", "arn:aws:iam::*:user/bob"]
+    #         OK:    Principal: "*"     # anonymous (требует anonymous identity)
+    #         FAIL:  Principal: {AWS: "arn:aws:iam::*:user/alice"}
+    #      Sync playbook валидирует — отклоняет dict-form с явным сообщением.
+    #
+    #   2. Resource — должен ссылаться на ЭТОТ bucket (cross-bucket policy запрещён;
+    #      s3api_bucket_policy_handlers.go:340-366):
+    #         "arn:aws:s3:::<bucket>"    — на сам bucket (s3:ListBucket, s3:GetBucketLocation).
+    #         "arn:aws:s3:::<bucket>/*"  — на objects (s3:GetObject, s3:PutObject, ...).
+    #
+    #   3. Explicit Deny statement блокирует и admin (auth_credentials.go:1487).
+    #      Использовать ТОЛЬКО Allow statements; rely on default-deny для остального.
+    #
+    #   4. Account ID в Principal ARN — wildcard '*' (no per-user account binding).
+    #
+    # Schema per policy entry:
+    #   bucket: bucket name (должен существовать в seaweedfs_sync_buckets/_extra).
+    #   policy: standard AWS IAM policy document {Version, Statement: [...]}.
+    #     Statement[*]: {Sid?, Effect, Principal, Action, Resource, Condition?}.
+    # ------
+    seaweedfs_sync_bucket_policies: []
+    seaweedfs_sync_bucket_policies_extra: []
+    # Пример 1: Private bucket, user-X имеет full access:
+    # seaweedfs_sync_bucket_policies_extra:
+    #   - bucket: bucket-1
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "UserXObjects"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/user-X"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:GetObjectTagging"
+    #             - "s3:PutObjectTagging"
+    #           Resource: ["arn:aws:s3:::bucket-1/*"]
+    #         - Sid: "UserXBucketOps"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/user-X"
+    #           Action:
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource: ["arn:aws:s3:::bucket-1"]
+    #
+    # Пример 2: Public-read bucket (Principal '*' требует anonymous identity
+    # в base seaweedfs_identities):
+    #   - bucket: assets-public
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "PublicReadObjects"
+    #           Effect: "Allow"
+    #           Principal: "*"
+    #           Action: ["s3:GetObject"]
+    #           Resource: ["arn:aws:s3:::assets-public/*"]
+    #         - Sid: "PublicListBucket"
+    #           Effect: "Allow"
+    #           Principal: "*"
+    #           Action: ["s3:ListBucket"]
+    #           Resource: ["arn:aws:s3:::assets-public"]

@@ -416,6 +416,76 @@ all:
             - extract:
                 key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/custom/creds"
 
+    # SeaweedFS sync — дополнительные identities (per-user S3 principals)
+    # actions=[] для policy-only principals — доступ через bucket policies.
+    # additional_vault_paths — fan-out generated creds для downstream ESO consumers.
+    # Пример:
+    seaweedfs_identities_extra:
+      - name: user-X
+        actions: []
+        additional_vault_paths:
+          - vault_path: "/projects/myapp/seaweedfs/user-X"
+            # secret_keys опц — default {username, access_key, secret_key}
+          - vault_path: "/backups/seaweedfs/user-X"
+            secret_keys:
+              username: "user"
+              access_key: "AWS_ACCESS_KEY_ID"
+              secret_key: "AWS_SECRET_ACCESS_KEY"
+
+    # SeaweedFS sync — дополнительные buckets + per-bucket SeaweedFS-native quotas.
+    # quota — optional {enabled, size}.
+    # Пример:
+    seaweedfs_sync_buckets_extra:
+      - name: bucket-1
+        quota:
+          enabled: true
+          size: "100GiB"
+      - name: bucket-2
+        # quota опц — без quota = unlimited
+      - name: assets-public
+        quota:
+          enabled: true
+          size: "10GiB"
+
+    # SeaweedFS sync — дополнительные bucket policies (full AWS IAM schema).
+    # CRITICAL — SeaweedFS 4.29 non-AWS:
+    #   - Principal — flat string или array, НЕ dict {AWS: ...}.
+    #   - Resource — только этот bucket (no cross-bucket policy).
+    #   - Только Allow statements (Deny блокирует и admin).
+    # Пример (private user-X + public-read assets-public):
+    seaweedfs_sync_bucket_policies_extra:
+      - bucket: bucket-1
+        policy:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "UserXObjects"
+              Effect: "Allow"
+              Principal: "arn:aws:iam::*:user/user-X"
+              Action:
+                - "s3:GetObject"
+                - "s3:PutObject"
+                - "s3:DeleteObject"
+              Resource: ["arn:aws:s3:::bucket-1/*"]
+            - Sid: "UserXBucketOps"
+              Effect: "Allow"
+              Principal: "arn:aws:iam::*:user/user-X"
+              Action: ["s3:ListBucket"]
+              Resource: ["arn:aws:s3:::bucket-1"]
+      - bucket: assets-public
+        policy:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "PublicReadObjects"
+              Effect: "Allow"
+              Principal: "*"
+              Action: ["s3:GetObject"]
+              Resource: ["arn:aws:s3:::assets-public/*"]
+            - Sid: "PublicListBucket"
+              Effect: "Allow"
+              Principal: "*"
+              Action: ["s3:ListBucket"]
+              Resource: ["arn:aws:s3:::assets-public"]
+
     # Дополнительные ExternalSecrets для zitadel (custom IdP/SAML connectors creds и др.)
     # Пример:
     eso_vault_integration_zitadel_secrets_extra:
