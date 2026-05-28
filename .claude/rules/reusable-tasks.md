@@ -12,9 +12,9 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (30 tasks)
+## 1. `playbook-app/tasks/` (31 tasks)
 
-The four vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
+The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -162,6 +162,15 @@ The four vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Output.** Vault updated, K8s Secret updated.
 - **Callers.** Rotation flows (Postgres, Redis, MinIO, GitLab root, ArgoCD admin, Vault admin-token).
 - **Idempotent.** Re-running re-puts identical values — safe, just a noop in ESO (force-sync annotation bumps once more).
+
+### 1.13a `tasks-vault-delete.yaml`
+
+- **Purpose.** Hard-delete a Vault KV v2 path entirely (metadata stanza + all versions) via `vault kv metadata delete`. Not a soft tombstone (`vault kv delete`).
+- **Input.** `dto_label_name`, `dto_vault_delete_path` (full KV path incl. mount, e.g. `eso-secret/seaweedfs/old-user`).
+- **Validates (assert).** `dto_label_name` defined + non-empty; `dto_vault_delete_path` defined + non-empty.
+- **Output.** Vault path removed. No facts exported.
+- **Callers.** `seaweedfs-sync.yaml` (planned — `state: absent` cleanup of user identity Vault paths). Generic Vault primitive — usable by any future `<c>-sync.yaml` / `-rotate.yaml`.
+- **Idempotent.** Yes — missing path treated as success. `failed_when` list accepts `rc != 0` only when stderr does NOT contain `'no value found'` or `'not found'` (case insensitive). `changed_when: rc == 0` so missing-path runs report unchanged.
 
 ### 1.14 `tasks-generate-secret.yaml`
 
