@@ -1,0 +1,52 @@
+# =============================================================================
+# Vault Delete — Hard-delete a KV v2 path (metadata + all versions)
+# =============================================================================
+# Removes the entire metadata stanza plus every version of a Vault KV v2 path.
+# Hard-delete (not a soft tombstone via `vault kv delete`).
+#
+# Required vars:
+#   dto_label_name        — task label prefix
+#   dto_vault_delete_path — full KV path incl. mount, e.g. "eso-secret/seaweedfs/old-user"
+#
+# Semantics: idempotent — missing path treated as success. The task accepts
+# rc != 0 if Vault stderr contains 'no value found' or 'not found' (case insensitive).
+#
+# Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert all dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_vault_delete_path is defined
+      - dto_vault_delete_path | length > 0
+    fail_msg: >-
+      tasks-vault-delete: all params required:
+      dto_label_name, dto_vault_delete_path
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Read Vault root token"
+  shell: "jq -r '.\"vault-root\"' {{ vault_creds_host_path }}"
+  register: _vault_delete_token
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Delete Vault path (metadata + all versions)"
+  shell: |
+    kubectl exec -n {{ vault_namespace }} vault-0 -- \
+      env VAULT_TOKEN="{{ _vault_delete_token.stdout }}" \
+      vault kv metadata delete {{ dto_vault_delete_path }}
+  register: _vault_delete_result
+  failed_when:
+    - _vault_delete_result.rc != 0
+    - "'no value found' not in (_vault_delete_result.stderr | lower)"
+    - "'not found' not in (_vault_delete_result.stderr | lower)"
+  changed_when: _vault_delete_result.rc == 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
