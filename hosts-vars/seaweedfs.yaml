@@ -77,9 +77,20 @@ all:
     seaweedfs_postgresql_secret_key_username: "username"
     seaweedfs_postgresql_secret_key_password: "password"
 
-    # S3 admin IAM creds field names (потребляются через ESO-materialised Secret)
-    seaweedfs_admin_secret_key_access_key: "access_key"
-    seaweedfs_admin_secret_key_secret_key: "secret_key"
+    # S3 admin IAM identity (Vault — source of truth, filer-backed persistence)
+    # Default Vault field names — override per-path через root.secret_keys / item.secret_keys
+    seaweedfs_identity_default_creds_keys:
+      username: "username"
+      access_key: "access_key"
+      secret_key: "secret_key"
+
+    # Admin identity — symmetric с per-user schema из seaweedfs-sync.yaml
+    # root.secret_keys опц — default = seaweedfs_identity_default_creds_keys
+    # additional_vault_path_list опц — список {vault_path, secret_keys?} для синхронизации копий
+    seaweedfs_admin_identity:
+      root:
+        vault_path: "/seaweedfs/admin/creds"
+      additional_vault_path_list: []
 
     # === SECTION 2: ESO ===
     # ---------
@@ -107,33 +118,8 @@ all:
           - extract:
               key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/postgresql/creds"
 
-    # Named secret 2: Admin S3 IAM creds (multi-field via ESO template — один Vault path, два поля в K8s Secret)
-    seaweedfs_secret_admin_creds:
-      external_secret_name: "eso-seaweedfs-admin-creds"
-      vault_path: "/seaweedfs/admin/creds"
-      body:
-        target:
-          name: "eso-seaweedfs-admin-creds"
-          template:
-            engineVersion: v2
-            data:
-              # SeaweedFS S3 identity config — потребляется через s3.existingConfigSecret.
-              # Один K8s Secret key с JSON содержимым. Inline-quoted form: {% endraw %} БЕЗ +%
-              # (см. .claude/rules/secrets-and-eso.md §2.4).
-              seaweedfs_s3_config: '{% raw %}{"identities":[{"name":"admin","credentials":[{"accessKey":"{{ .access_key }}","secretKey":"{{ .secret_key }}"}],"actions":["Admin","Read","Write","List","Tagging"]}]}{% endraw %}'
-        data:
-          - secretKey: access_key
-            remoteRef:
-              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/admin/creds"
-              property: access_key
-          - secretKey: secret_key
-            remoteRef:
-              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/admin/creds"
-              property: secret_key
-
     eso_vault_integration_seaweedfs_secrets:
       - "{{ seaweedfs_secret_postgresql_creds }}"
-      - "{{ seaweedfs_secret_admin_creds }}"
 
     eso_vault_integration_seaweedfs_secrets_extra: []
 
@@ -286,11 +272,10 @@ all:
       s3:
         enabled: true
         replicas: 1
-        # IAM auth включён; admin config из ESO-materialised Secret через existingConfigSecret.
-        # Secret eso-seaweedfs-admin-creds содержит ключ seaweedfs_s3_config с JSON config
-        # (template определён в seaweedfs_secret_admin_creds.body.target.template).
+        # IAM auth включён; admin identity создаётся в seaweedfs-install.yaml через
+        # weed shell s3.configure -apply (filer-backed identity persistence в PostgreSQL).
+        # Vault — source of truth для admin creds (path /seaweedfs/admin/creds).
         enableAuth: true
-        existingConfigSecret: "{{ seaweedfs_secret_admin_creds.body.target.name }}"
 
     # --- PHASE: post ---
     seaweedfs_post_helm_timeout: "5m"
