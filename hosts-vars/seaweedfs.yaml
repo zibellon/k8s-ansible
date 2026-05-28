@@ -77,20 +77,13 @@ all:
     seaweedfs_postgresql_secret_key_username: "username"
     seaweedfs_postgresql_secret_key_password: "password"
 
-    # S3 admin IAM identity (Vault — source of truth, filer-backed persistence)
-    # Default Vault field names — override per-path через root.secret_keys / item.secret_keys
+    # Default field names в Vault для identity creds — используется в `additional_vault_paths[]`
+    # per-identity (fan-out generated creds в operator-chosen Vault paths для consumer'ов).
+    # Override per-path через `secret_keys: {username?, access_key?, secret_key?}` per item.
     seaweedfs_identity_default_creds_keys:
       username: "username"
       access_key: "access_key"
       secret_key: "secret_key"
-
-    # Admin identity — symmetric с per-user schema из seaweedfs-sync.yaml
-    # root.secret_keys опц — default = seaweedfs_identity_default_creds_keys
-    # additional_vault_path_list опц — список {vault_path, secret_keys?} для синхронизации копий
-    seaweedfs_admin_identity:
-      root:
-        vault_path: "/seaweedfs/admin/creds"
-      additional_vault_path_list: []
 
     # === SECTION 2: ESO ===
     # ---------
@@ -118,8 +111,33 @@ all:
           - extract:
               key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/postgresql/creds"
 
+    # Named secret 2: S3 identities (ESO template — single Vault field 'config' со строкой JSON,
+    # рендерит K8s Secret с key 'seaweedfs_s3_config' для upstream chart's existingConfigSecret).
+    # JSON содержит full identity list (admin + все users из seaweedfs_identities).
+    # Source-of-truth — Vault path /seaweedfs/s3-config/all;
+    # writes от seaweedfs-install.yaml (bootstrap admin) + seaweedfs-sync.yaml (full sync).
+    seaweedfs_secret_s3_identities:
+      external_secret_name: "eso-seaweedfs-s3-identities"
+      vault_path: "/seaweedfs/s3-config/all"
+      body:
+        target:
+          name: "seaweedfs-s3-identities"
+          template:
+            engineVersion: v2
+            data:
+              # K8s Secret key — upstream chart 4.28.0 ожидает 'seaweedfs_s3_config'
+              # (см. sources/seaweedfs/k8s/charts/seaweedfs/values.yaml line ~958).
+              # Inline-quoted form: {% endraw %} БЕЗ +% (см. .claude/rules/secrets-and-eso.md §2.4).
+              seaweedfs_s3_config: '{% raw %}{{ .config }}{% endraw %}'
+        data:
+          - secretKey: config
+            remoteRef:
+              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/s3-config/all"
+              property: config
+
     eso_vault_integration_seaweedfs_secrets:
       - "{{ seaweedfs_secret_postgresql_creds }}"
+      - "{{ seaweedfs_secret_s3_identities }}"
 
     eso_vault_integration_seaweedfs_secrets_extra: []
 
@@ -271,11 +289,16 @@ all:
 
       s3:
         enabled: true
-        replicas: 1
-        # IAM auth включён; admin identity создаётся в seaweedfs-install.yaml через
-        # weed shell s3.configure -apply (filer-backed identity persistence в PostgreSQL).
-        # Vault — source of truth для admin creds (path /seaweedfs/admin/creds).
+        replicas: 3
+        # HA: 3 replicas + Kubernetes Deployment default RollingUpdate strategy
+        # = zero downtime при rollout restart после identity Secret update.
+        # IAM auth: identities приходят через ESO-materialized Secret seaweedfs-s3-identities
+        # (rendered из named-variable seaweedfs_secret_s3_identities),
+        # mounted upstream chart через existingConfigSecret в /etc/sw/seaweedfs_s3_config.
+        # Vault source of truth — /seaweedfs/s3-config/all (полный JSON identity list);
+        # writes от seaweedfs-install.yaml (bootstrap admin) + seaweedfs-sync.yaml (full sync).
         enableAuth: true
+        existingConfigSecret: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
 
     # --- PHASE: post ---
     seaweedfs_post_helm_timeout: "5m"
