@@ -442,6 +442,61 @@
       tags: [post]
 
     # =========================================================================
+    # STEP 5: QUOTA-CRON CHART (CronJob для quota enforcement каждые 5 минут)
+    # =========================================================================
+    # Critical operational requirement: quota НЕ auto-enforces в SeaweedFS.
+    # Gated через seaweedfs_quota_cron_enabled (default true).
+
+    - name: "[seaweedfs-quota-cron] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "seaweedfs-quota-cron"
+        dto_chart_name: "quota-cron"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/seaweedfs/quota-cron/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/quota-cron"
+      when: seaweedfs_quota_cron_enabled
+      tags: [quota-cron]
+
+    - name: "[seaweedfs-quota-cron] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "seaweedfs-quota-cron"
+        dto_dir: "{{ remote_charts_dir }}/seaweedfs/quota-cron"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ seaweedfs_quota_cron_helm_values | to_nice_yaml }}"
+      when: seaweedfs_quota_cron_enabled
+      tags: [quota-cron]
+
+    - name: "[seaweedfs-quota-cron] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "seaweedfs-quota-cron"
+        dto_release_name: "seaweedfs-quota-cron"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/seaweedfs/quota-cron"
+        dto_values_file_path: "{{ remote_charts_dir }}/seaweedfs/quota-cron/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/seaweedfs/quota-cron-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/seaweedfs/quota-cron-k"
+        dto_patches_list: "{{ seaweedfs_quota_cron_kustomize_patches }}"
+        dto_target_namespace: "{{ seaweedfs_namespace }}"
+      when: seaweedfs_quota_cron_enabled
+      tags: [quota-cron]
+
+    - name: "[seaweedfs-quota-cron] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "seaweedfs-quota-cron"
+        dto_helm_command: >
+          helm upgrade --install seaweedfs-quota-cron {{ remote_charts_dir }}/seaweedfs/quota-cron-k
+          --namespace {{ seaweedfs_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ seaweedfs_quota_cron_helm_timeout }}
+      when: seaweedfs_quota_cron_enabled
+      tags: [quota-cron]
+
+    # =========================================================================
     # VERIFICATION
     # =========================================================================
 
