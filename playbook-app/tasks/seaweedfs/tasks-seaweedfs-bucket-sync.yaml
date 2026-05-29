@@ -1,28 +1,54 @@
 # =============================================================================
-# SeaweedFS Bucket Sync — declarative bucket + quota sync via weed shell
+# SeaweedFS Bucket Sync — declarative buckets + quotas + per-bucket policies
 # =============================================================================
 # Reusable task include. Invoked from playbook with:
 #   - include_tasks: tasks-seaweedfs-bucket-sync.yaml
 #     vars:
 #       dto_label_name: "<caller-prefix>"
 #
-# Convention: dto_label_name passed ONLY at playbook-level invocation.
-# No nested include_tasks (this file uses only command/shell modules).
+# Convention: dto_label_name passed ONLY at playbook-level invocation;
+# nested include_tasks (tasks-k8s-secret-get) inherits dto_label_name
+# via Ansible variable scope.
 #
 # Reads inventory:
-#   - seaweedfs_sync_buckets + _extra (from hosts-vars/seaweedfs-sync.yaml)
-#   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml)
+#   - seaweedfs_sync_buckets + _extra (from hosts-vars/seaweedfs-sync.yaml).
+#     Schema per bucket: {name, quota?, policy?} where policy is AWS IAM document.
+#   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
+#   - seaweedfs_secret_s3_identities.body.target.name (for self-contained admin
+#     creds fetch — needed by aws s3api put/delete-bucket-policy).
 #
-# Logic:
-#   1. Compute target buckets = seaweedfs_sync_buckets + _extra.
-#   2. Read current ConfigMap state seaweedfs-sync-buckets-state.
-#   3. Parse current state JSON (or empty list).
-#   4. Compute diff: to_create / to_update_quota / to_delete by name.
-#   5. Create new buckets via weed shell s3.bucket.create -owner=admin.
-#   6. Apply quotas via weed shell s3.bucket.quota (-op=set with MiB/GiB/TiB
-#      size conversion, or -op=disable when quota.enabled=false).
-#   7. Delete buckets via weed shell s3.bucket.delete (fails non-empty).
-#   8. Apply ConfigMap seaweedfs-sync-buckets-state with new state JSON.
+# Self-contained admin creds fetch: reads K8s Secret (admin creds source)
+# in seaweedfs_namespace, extracts admin AK+SK from combined JSON. Only
+# fetched if any policy operation needed (create/delete/keep with policy).
+# Asserts Secret existence if policy ops needed; fail-fast with hint to run
+# --tags user-sync first.
+#
+# Sync order (6 phases):
+#   1. Compute target = seaweedfs_sync_buckets + (_extra | default([])).
+#   2. Validate Principal format for target buckets with policy (SeaweedFS 4.29
+#      non-AWS limitation — flat string or array, not dict).
+#   3. Read current ConfigMap state (seaweedfs-sync-buckets-state, may not exist).
+#   4. Compute diff:
+#      - to_delete_buckets:    in state, not in target.
+#      - kept_policies_to_del: in state with policy, in target without policy.
+#      - kept_policies_to_app: in target (kept) with policy (always put — idempotent).
+#      - to_create_buckets:    in target, not in state.
+#      - new_policies_to_app:  to_create with policy defined.
+#      - quotas_to_apply:      all target with quota defined.
+#   5. Self-contained admin creds fetch (conditional — only if any policy op).
+#   6. Execute phases A-G:
+#      A. Delete стейл buckets (weed shell s3.bucket.delete).
+#      B. Delete стейл policies у kept buckets (aws s3api delete-bucket-policy).
+#      C. Apply policies у kept buckets (aws s3api put-bucket-policy).
+#      D. Create new buckets (weed shell s3.bucket.create -owner=admin).
+#      E. Apply policies у new buckets (aws s3api put-bucket-policy).
+#      F. Apply quotas всем target buckets с quota (weed shell s3.bucket.quota).
+#      G. Update ConfigMap state с new target snapshot.
+#
+# NOTE про bucket delete: 's3.bucket.delete' в SeaweedFS shell не имеет флага
+# -force, но команда сама делает hard delete — CollectionDelete напрямую через
+# master sweeps все volumes/objects bucket'а. Bucket с объектами удаляется
+# без жалоб. Единственное препятствие — Object Lock с locked objects.
 # =============================================================================
 
 - name: "[{{ dto_label_name }}] Assert dto_label_name provided"
@@ -40,9 +66,16 @@
   set_fact:
     _local_target_buckets_key: "_local_target_buckets"
     _local_current_buckets_state_key: "_local_current_buckets_state"
-    _local_buckets_to_create_key: "_local_buckets_to_create"
-    _local_buckets_to_update_quota_key: "_local_buckets_to_update_quota"
-    _local_buckets_to_delete_key: "_local_buckets_to_delete"
+    _local_to_delete_buckets_key: "_local_to_delete_buckets"
+    _local_kept_policies_to_delete_key: "_local_kept_policies_to_delete"
+    _local_kept_policies_to_apply_key: "_local_kept_policies_to_apply"
+    _local_to_create_buckets_key: "_local_to_create_buckets"
+    _local_new_policies_to_apply_key: "_local_new_policies_to_apply"
+    _local_quotas_to_apply_key: "_local_quotas_to_apply"
+    _local_any_policy_op_key: "_local_any_policy_op"
+    _local_admin_secret_json_key: "_local_admin_secret_json"
+    _local_admin_secret_exists_key: "_local_admin_secret_exists"
+    _local_admin_creds_key: "_local_admin_creds"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -50,6 +83,24 @@
 - name: "[{{ dto_label_name }}] Compute target buckets list"
   set_fact:
     "{{ _local_target_buckets_key }}": "{{ seaweedfs_sync_buckets + (seaweedfs_sync_buckets_extra | default([])) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Validate Principal format (SeaweedFS 4.29 limitation)"
+  assert:
+    that:
+      - item.1.Principal is not mapping
+    fail_msg: >-
+      Bucket policy for '{{ item.0.name }}' has Statement with Principal of unsupported
+      dict form ({{ item.1.Principal }}). SeaweedFS 4.29 (policy_engine/types.go:55-77)
+      supports only flat string or array. Use:
+        Principal "arn:aws:iam::*:user/<name>" (single)
+        Principal ["arn:aws:iam::*:user/u1", "arn:aws:iam::*:user/u2"] (multiple)
+        Principal "*" (anonymous; requires anonymous identity)
+  loop: "{{ (lookup('vars', _local_target_buckets_key) | selectattr('policy', 'defined') | list) | subelements('policy.Statement') }}"
+  loop_control:
+    label: "{{ item.0.name }}: {{ item.1.Sid | default('?') }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -76,62 +127,177 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute diff (to_create / to_update_quota / to_delete)"
+- name: "[{{ dto_label_name }}] Compute diff (delete / kept-policy-del / kept-policy-app / create / new-policy / quotas)"
   set_fact:
-    "{{ _local_buckets_to_create_key }}": >-
+    "{{ _local_to_delete_buckets_key }}": >-
+      {{ lookup('vars', _local_current_buckets_state_key)
+         | rejectattr('name', 'in', lookup('vars', _local_target_buckets_key) | map(attribute='name') | list)
+         | list }}
+    "{{ _local_kept_policies_to_delete_key }}": >-
+      {{ lookup('vars', _local_target_buckets_key)
+         | selectattr('name', 'in', lookup('vars', _local_current_buckets_state_key) | map(attribute='name') | list)
+         | rejectattr('policy', 'defined')
+         | selectattr('name', 'in',
+             (lookup('vars', _local_current_buckets_state_key)
+              | selectattr('policy', 'defined')
+              | map(attribute='name') | list))
+         | list }}
+    "{{ _local_kept_policies_to_apply_key }}": >-
+      {{ lookup('vars', _local_target_buckets_key)
+         | selectattr('name', 'in', lookup('vars', _local_current_buckets_state_key) | map(attribute='name') | list)
+         | selectattr('policy', 'defined')
+         | list }}
+    "{{ _local_to_create_buckets_key }}": >-
       {{ lookup('vars', _local_target_buckets_key)
          | rejectattr('name', 'in', lookup('vars', _local_current_buckets_state_key) | map(attribute='name') | list)
          | list }}
-    "{{ _local_buckets_to_update_quota_key }}": >-
+    "{{ _local_new_policies_to_apply_key }}": >-
       {{ lookup('vars', _local_target_buckets_key)
-         | selectattr('name', 'in', lookup('vars', _local_current_buckets_state_key) | map(attribute='name') | list)
-         | selectattr('quota', 'defined')
+         | rejectattr('name', 'in', lookup('vars', _local_current_buckets_state_key) | map(attribute='name') | list)
+         | selectattr('policy', 'defined')
          | list }}
-    "{{ _local_buckets_to_delete_key }}": >-
-      {{ lookup('vars', _local_current_buckets_state_key)
-         | rejectattr('name', 'in', lookup('vars', _local_target_buckets_key) | map(attribute='name') | list)
+    "{{ _local_quotas_to_apply_key }}": >-
+      {{ lookup('vars', _local_target_buckets_key)
+         | selectattr('quota', 'defined')
          | list }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Create new buckets via weed shell"
+- name: "[{{ dto_label_name }}] Determine if any policy operation needed"
+  set_fact:
+    "{{ _local_any_policy_op_key }}": >-
+      {{ (lookup('vars', _local_kept_policies_to_delete_key) | length > 0)
+         or (lookup('vars', _local_kept_policies_to_apply_key) | length > 0)
+         or (lookup('vars', _local_new_policies_to_apply_key) | length > 0) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Get K8s Secret with admin creds (only if any policy op)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
+  vars:
+    dto_secret_namespace: "{{ seaweedfs_namespace }}"
+    dto_secret_name: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
+    dto_secret_field: "seaweedfs_s3_config"
+    dto_secret_res_fact_name: "{{ _local_admin_secret_json_key }}"
+    dto_secret_res_exists_fact_name: "{{ _local_admin_secret_exists_key }}"
+  when: lookup('vars', _local_any_policy_op_key)
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert admin Secret exists if policy ops needed"
+  assert:
+    that:
+      - lookup('vars', _local_admin_secret_exists_key)
+    fail_msg: >-
+      Bucket policy operations needed, but K8s Secret '{{ seaweedfs_secret_s3_identities.body.target.name }}'
+      (admin creds source) is missing in namespace {{ seaweedfs_namespace }}.
+      Run 'ansible-playbook playbook-app/seaweedfs-install.yaml --tags user-sync' first.
+  when: lookup('vars', _local_any_policy_op_key)
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Extract admin creds from Secret JSON"
+  set_fact:
+    "{{ _local_admin_creds_key }}": >-
+      {{
+        ((lookup('vars', _local_admin_secret_json_key) | from_json).identities
+         | selectattr('name', 'equalto', 'admin') | first).credentials | first
+      }}
+  when: lookup('vars', _local_any_policy_op_key)
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE A: Delete стейл buckets (sweeps их policies автоматически) ---
+- name: "[{{ dto_label_name }}] Phase A — Delete стейл buckets via weed shell"
   shell: |
-    echo "s3.bucket.create -name={{ item.name }} -owner=admin" | \
+    echo "s3.bucket.delete -name={{ item.name }}" | \
       kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
         weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
-  loop: "{{ lookup('vars', _local_buckets_to_create_key) }}"
+  loop: "{{ lookup('vars', _local_to_delete_buckets_key) }}"
   loop_control:
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Apply quotas for created+updated buckets"
+# --- PHASE B: Delete стейл policies у kept buckets ---
+- name: "[{{ dto_label_name }}] Phase B — Delete стейл policies у kept buckets via aws s3api"
+  shell: |
+    kubectl exec -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+      env AWS_ACCESS_KEY_ID='{{ lookup('vars', _local_admin_creds_key).accessKey }}' \
+          AWS_SECRET_ACCESS_KEY='{{ lookup('vars', _local_admin_creds_key).secretKey }}' \
+      aws --endpoint-url http://localhost:8333 s3api delete-bucket-policy \
+        --bucket {{ item.name }}
+  loop: "{{ lookup('vars', _local_kept_policies_to_delete_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE C: Apply policies у kept buckets (full replace, idempotent) ---
+- name: "[{{ dto_label_name }}] Phase C — Apply policies у kept buckets via aws s3api"
+  shell: |
+    kubectl exec -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+      env AWS_ACCESS_KEY_ID='{{ lookup('vars', _local_admin_creds_key).accessKey }}' \
+          AWS_SECRET_ACCESS_KEY='{{ lookup('vars', _local_admin_creds_key).secretKey }}' \
+      aws --endpoint-url http://localhost:8333 s3api put-bucket-policy \
+        --bucket {{ item.name }} \
+        --policy '{{ item.policy | to_json }}'
+  loop: "{{ lookup('vars', _local_kept_policies_to_apply_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE D: Create new buckets ---
+- name: "[{{ dto_label_name }}] Phase D — Create new buckets via weed shell"
+  shell: |
+    echo "s3.bucket.create -name={{ item.name }} -owner=admin" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ lookup('vars', _local_to_create_buckets_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE E: Apply policies у new buckets ---
+- name: "[{{ dto_label_name }}] Phase E — Apply policies у new buckets via aws s3api"
+  shell: |
+    kubectl exec -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+      env AWS_ACCESS_KEY_ID='{{ lookup('vars', _local_admin_creds_key).accessKey }}' \
+          AWS_SECRET_ACCESS_KEY='{{ lookup('vars', _local_admin_creds_key).secretKey }}' \
+      aws --endpoint-url http://localhost:8333 s3api put-bucket-policy \
+        --bucket {{ item.name }} \
+        --policy '{{ item.policy | to_json }}'
+  loop: "{{ lookup('vars', _local_new_policies_to_apply_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE F: Apply quotas для всех target buckets с quota.defined ---
+- name: "[{{ dto_label_name }}] Phase F — Apply quotas via weed shell"
   shell: |
     echo "s3.bucket.quota -name={{ item.name }} -op={{ 'set' if item.quota.enabled else 'disable' }}{% if item.quota.enabled %} -sizeMB={{ (item.quota.size | regex_replace('(MiB|GiB|TiB)$', '') | int) * (1 if item.quota.size.endswith('MiB') else 1024 if item.quota.size.endswith('GiB') else 1024 * 1024) }}{% endif %}" | \
       kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
         weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
-  loop: "{{ (lookup('vars', _local_buckets_to_create_key) + lookup('vars', _local_buckets_to_update_quota_key)) | selectattr('quota', 'defined') | list }}"
+  loop: "{{ lookup('vars', _local_quotas_to_apply_key) }}"
   loop_control:
     label: "{{ item.name }} (quota: {{ item.quota }})"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Delete buckets via weed shell (fails if non-empty)"
-  shell: |
-    echo "s3.bucket.delete -name={{ item.name }}" | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
-  loop: "{{ lookup('vars', _local_buckets_to_delete_key) }}"
-  loop_control:
-    label: "{{ item.name }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Apply ConfigMap with new state"
+# --- PHASE G: Update ConfigMap state с new target snapshot ---
+- name: "[{{ dto_label_name }}] Phase G — Update ConfigMap state с new target snapshot"
   shell: |
     kubectl create configmap seaweedfs-sync-buckets-state \
       -n {{ seaweedfs_namespace }} \
