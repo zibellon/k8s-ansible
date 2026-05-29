@@ -27,10 +27,9 @@ all:
     # Sync (--tags identities) приводит Vault combined JSON к target state:
     #   CREATE (in target, not in Vault): generate fresh access_key (20 chars
     #     uppercase+digits) + secret_key (40 chars letters+digits); store в Vault
-    #     combined JSON; fan-out copy в каждый additional_vault_paths entry.
+    #     combined JSON.
     #   UPDATE (in both, actions differ): keep existing keys, refresh actions.
-    #   DELETE (in Vault, not in target): remove from combined JSON +
-    #     tasks-vault-delete per additional_vault_paths entry.
+    #   DELETE (in Vault, not in target): remove from combined JSON.
     #
     # Schema per identity:
     #   name:    SeaweedFS identity name. Используется в bucket policies как
@@ -44,17 +43,6 @@ all:
     #                        доступ ТОЛЬКО через bucket policy Allow (по design,
     #                        не workaround).
     #            - anonymous: [] (same).
-    #   additional_vault_paths: optional list [{vault_path, secret_keys?}, ...]
-    #            Sync дублирует generated creds (fan-out для downstream ESO consumers).
-    #            - admin entry: typically [] (admin creds backup через operator manually).
-    #            - anonymous entry: ОБЯЗАТЕЛЬНО [] (нет creds → нечего fan-out).
-    #            - per-user entries: paths куда consumer'ы будут читать через ESO.
-    #            Каждый item:
-    #              vault_path:  string (полный Vault path).
-    #              secret_keys: optional {username, access_key, secret_key} —
-    #                           override field names. Default =
-    #                           seaweedfs_identity_default_creds_keys
-    #                           (из hosts-vars/seaweedfs.yaml).
     #
     # Admin safety guard в sync playbook: warning если в target identities нет
     # ни одной entry с actions=['Admin'] (защита от accidental lockout).
@@ -62,23 +50,13 @@ all:
     seaweedfs_identities:
       - name: admin
         actions: ["Admin"]
-        additional_vault_paths: []
       - name: anonymous
         actions: []
-        additional_vault_paths: []
     seaweedfs_identities_extra: []
     # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
     # seaweedfs_identities_extra:
     #   - name: user-X
     #     actions: []
-    #     additional_vault_paths:
-    #       - vault_path: "/projects/myapp/seaweedfs/user-X"
-    #         # secret_keys опц — default {username, access_key, secret_key}
-    #       - vault_path: "/backups/seaweedfs/user-X"
-    #         secret_keys:
-    #           username: "user"
-    #           access_key: "AWS_ACCESS_KEY_ID"
-    #           secret_key: "AWS_SECRET_ACCESS_KEY"
 
     # ------
     # SECTION 2: Buckets + quotas
