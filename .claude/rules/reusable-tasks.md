@@ -169,7 +169,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name`, `dto_vault_delete_path` (full KV path incl. mount, e.g. `eso-secret/seaweedfs/old-user`).
 - **Validates (assert).** `dto_label_name` defined + non-empty; `dto_vault_delete_path` defined + non-empty.
 - **Output.** Vault path removed. No facts exported.
-- **Callers.** `tasks-seaweedfs-user-sync.yaml` (`additional_vault_paths` cleanup for deleted identities). Generic Vault primitive — usable by any future `<c>-sync.yaml` / `-rotate.yaml`.
+- **Callers.** None currently. Generic Vault primitive — usable by any future `<c>-sync.yaml` / `-rotate.yaml`.
 - **Idempotent.** Yes — missing path treated as success. `failed_when` list accepts `rc != 0` only when stderr does NOT contain `'no value found'` or `'not found'` (case insensitive). `changed_when: rc == 0` so missing-path runs report unchanged.
 
 ### 1.14 `tasks-generate-secret.yaml`
@@ -320,7 +320,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 
 ### 1.29 `tasks-seaweedfs-user-sync.yaml`
 
-- **Purpose.** Declarative SeaweedFS S3 identity sync. Diff current Vault combined JSON (`/seaweedfs/s3-config/all` field `config`) vs target (`seaweedfs_identities + _extra`). CREATE new identities (generate 20-char access_key + 40-char secret_key, skip 'anonymous'). UPDATE existing (refresh actions, preserve credentials). DELETE absent. Build new combined identities list, vault-put, fan-out generated creds to `additional_vault_paths` per identity, cleanup additional paths for deleted, tasks-eso-force-sync + tasks-wait-secret. Conditional rollout restart `deployment/seaweedfs-s3` (when identities changed AND deployment exists).
+- **Purpose.** Declarative SeaweedFS S3 identity sync. Diff current Vault combined JSON (`/seaweedfs/s3-config/all` field `config`) vs target (`seaweedfs_identities + _extra`). CREATE new identities (generate 20-char access_key + 40-char secret_key, skip 'anonymous'). UPDATE existing (refresh actions, preserve credentials). DELETE absent. Build new combined identities list, vault-put, tasks-eso-force-sync + tasks-wait-secret. Conditional rollout restart `deployment/seaweedfs-s3` (when identities changed AND deployment exists).
 - **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation; nested includes (tasks-vault-*, tasks-generate-secret, tasks-eso-force-sync, tasks-wait-secret, tasks-wait-rollout) inherit via Ansible variable scope.
 - **Validates (assert).** `dto_label_name` defined + non-empty. Admin safety warning (debug) if target identities содержит нет entry с `actions=['Admin']`.
 - **Output.** Vault combined JSON updated, K8s Secret `seaweedfs-s3-identities` materialized through ESO, optional rollout restart of S3 deployment.
