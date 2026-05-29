@@ -416,46 +416,41 @@ all:
             - extract:
                 key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/custom/creds"
 
-    # SeaweedFS sync — дополнительные buckets + per-bucket SeaweedFS-native quotas.
-    # quota — optional {enabled, size}.
-    # Пример:
+    # SeaweedFS sync — дополнительные buckets + per-bucket quotas + per-bucket policies (full AWS IAM schema).
+    # policy — OPTIONAL, один AWS IAM document на bucket; sync применяет через aws s3api put-bucket-policy.
+    # CRITICAL — SeaweedFS 4.29 non-AWS deviations:
+    #   - Principal — flat string или array, НЕ dict {AWS: ...}.
+    #   - Resource — только этот bucket (no cross-bucket policy).
+    #   - Только Allow statements (Deny блокирует и admin).
+    #   - Account ID — wildcard '*'.
+    # Пример (private bucket-1 для alice, bucket-2 без policy, public-read assets-public):
     seaweedfs_sync_buckets_extra:
       - name: bucket-1
         quota:
           enabled: true
           size: "100GiB"
-      - name: bucket-2
-        # quota опц — без quota = unlimited
-      - name: assets-public
-        quota:
-          enabled: true
-          size: "10GiB"
-
-    # SeaweedFS sync — дополнительные bucket policies (full AWS IAM schema).
-    # CRITICAL — SeaweedFS 4.29 non-AWS:
-    #   - Principal — flat string или array, НЕ dict {AWS: ...}.
-    #   - Resource — только этот bucket (no cross-bucket policy).
-    #   - Только Allow statements (Deny блокирует и admin).
-    # Пример (private user-X + public-read assets-public):
-    seaweedfs_sync_bucket_policies_extra:
-      - bucket: bucket-1
         policy:
           Version: "2012-10-17"
           Statement:
-            - Sid: "UserXObjects"
+            - Sid: "UserAliceObjects"
               Effect: "Allow"
-              Principal: "arn:aws:iam::*:user/user-X"
+              Principal: "arn:aws:iam::*:user/alice"
               Action:
                 - "s3:GetObject"
                 - "s3:PutObject"
                 - "s3:DeleteObject"
               Resource: ["arn:aws:s3:::bucket-1/*"]
-            - Sid: "UserXBucketOps"
+            - Sid: "UserAliceBucketOps"
               Effect: "Allow"
-              Principal: "arn:aws:iam::*:user/user-X"
+              Principal: "arn:aws:iam::*:user/alice"
               Action: ["s3:ListBucket"]
               Resource: ["arn:aws:s3:::bucket-1"]
-      - bucket: assets-public
+      - name: bucket-2
+        # quota опц, policy опц (admin может всегда, остальные — default-deny)
+      - name: assets-public
+        quota:
+          enabled: true
+          size: "10GiB"
         policy:
           Version: "2012-10-17"
           Statement:
@@ -469,6 +464,21 @@ all:
               Principal: "*"
               Action: ["s3:ListBucket"]
               Resource: ["arn:aws:s3:::assets-public"]
+
+    # SeaweedFS sync — дополнительные identities + extra Vault paths для distribute.
+    # extra_vault_paths — OPTIONAL list of full Vault paths (с mount prefix). Sync
+    # (--tags identity-distribute) дополнительно кладёт identity creds (fixed keys:
+    # username, accessKey, secretKey) в каждый указанный путь, поверх mandatory
+    # combined JSON в /seaweedfs/s3-config/all. Anonymous + extra_vault_paths → fail.
+    # Пример (alice раздаётся в gitlab и team-alpha; bob — только combined JSON):
+    seaweedfs_identities_extra:
+      - name: alice
+        actions: []
+        extra_vault_paths:
+          - "eso-secret/gitlab/s3-storage"
+          - "secret/team-alpha/s3-creds"
+      - name: bob
+        actions: []
 
     # Дополнительные ExternalSecrets для zitadel (custom IdP/SAML connectors creds и др.)
     # Пример:
