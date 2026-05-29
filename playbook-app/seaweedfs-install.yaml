@@ -1,17 +1,26 @@
 # =============================================================================
 # Install SeaweedFS (Central S3 Storage, multi-phase)
 # Steps:
-#   1. seaweedfs/pre: NetworkPolicies + ESO resources (ServiceAccount, SecretStore, ExternalSecrets)
-#   2. seaweedfs/postgresql: Filer PostgreSQL backend
-#   3. seaweedfs/install: Main upstream chart (seaweedfs/seaweedfs 4.28.0)
-#   4. seaweedfs/post: Certificate + IngressRoute + ServiceMonitor
+#   1.  seaweedfs/pre: NetworkPolicies + ESO resources (ServiceAccount, SecretStore, ExternalSecrets)
+#   2.  seaweedfs/postgresql: Filer PostgreSQL backend
+#   3a. user-sync: Identity sync (admin + users + anonymous) → Vault combined JSON
+#   3b. identity-distribute: Distribute identity creds (username/accessKey/secretKey)
+#       в дополнительные Vault paths из identity.extra_vault_paths
+#   3c. seaweedfs/install: Main upstream chart (seaweedfs/seaweedfs 4.29.0)
+#   4.  seaweedfs/post: Certificate + IngressRoute + ServiceMonitor
+#   5.  seaweedfs/quota-cron: K8s CronJob для quota enforcement каждые 5 минут
+#   6.  bucket-sync: Declarative buckets + quotas + per-bucket policies sync
 #
 # Usage (tags):
 #   ansible-playbook seaweedfs-install.yaml              # full install
 #   ansible-playbook seaweedfs-install.yaml --tags pre   # only pre (ESO resources)
 #   ansible-playbook seaweedfs-install.yaml --tags postgresql
+#   ansible-playbook seaweedfs-install.yaml --tags user-sync
+#   ansible-playbook seaweedfs-install.yaml --tags identity-distribute
 #   ansible-playbook seaweedfs-install.yaml --tags install
 #   ansible-playbook seaweedfs-install.yaml --tags post  # only post (Ingress + SM)
+#   ansible-playbook seaweedfs-install.yaml --tags quota-cron
+#   ansible-playbook seaweedfs-install.yaml --tags bucket-sync
 #
 # Prerequisites:
 #   - Vault must be installed and unsealed
@@ -250,7 +259,7 @@
       tags: [postgresql]
 
     # =========================================================================
-    # STEP 3: ADMIN S3 CREDS + SEAWEEDFS INSTALL
+    # STEP 3: IDENTITIES SYNC + DISTRIBUTE + SEAWEEDFS INSTALL
     # =========================================================================
 
     # ----- User sync (admin + users + anonymous) via tasks-seaweedfs-user-sync -----
@@ -262,6 +271,17 @@
       vars:
         dto_label_name: "seaweedfs-install-user-sync"
       tags: [user-sync]
+
+    # ----- Identity secret distribution via tasks-seaweedfs-identity-secret-distribute -----
+    # Distribute identity credentials (fixed keys: username, accessKey, secretKey)
+    # в каждый дополнительный Vault path из identity.extra_vault_paths (inventory).
+    # Source-of-truth для creds — Vault combined JSON (записанный user-sync above).
+    # Diff-based via ConfigMap seaweedfs-sync-identity-distributions-state.
+    - name: "[seaweedfs-install-identity-distribute] Distribute identity creds to extra Vault paths"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-identity-secret-distribute.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-identity-distribute"
+      tags: [identity-distribute]
 
     # ---------
     # ---install
@@ -422,22 +442,17 @@
       tags: [quota-cron]
 
     # =========================================================================
-    # STEP 6: BUCKET + POLICY SYNC (after install + post + quota-cron)
+    # STEP 6: BUCKET SYNC (after install + post + quota-cron)
     # =========================================================================
-    # Declarative bucket+quota sync + bucket policy sync. Idempotent — diffs vs
-    # K8s ConfigMap state. Requires S3 pods running + filer ready.
+    # Declarative buckets + quotas + per-bucket policies sync (объединено в один
+    # task — см. tasks-seaweedfs-bucket-sync). Idempotent — diffs vs K8s ConfigMap
+    # state. Requires S3 pods running + filer ready.
 
     - name: "[seaweedfs-install-bucket-sync] Sync buckets + quotas"
       include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-bucket-sync.yaml"
       vars:
         dto_label_name: "seaweedfs-install-bucket-sync"
       tags: [bucket-sync]
-
-    - name: "[seaweedfs-install-bucket-policy-sync] Sync bucket policies"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-bucket-policy-sync.yaml"
-      vars:
-        dto_label_name: "seaweedfs-install-bucket-policy-sync"
-      tags: [bucket-policy-sync]
 
     # =========================================================================
     # VERIFICATION
@@ -479,7 +494,7 @@
           - ""
           - "IMPORTANT: Admin identity is bootstrapped on first install."
           - "  Back it up from Vault immediately."
-          - "  Users + bucket policies — manage via --tags user-sync/bucket-sync/bucket-policy-sync."
+          - "  Users + bucket policies — manage via --tags user-sync/identity-distribute/bucket-sync."
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
