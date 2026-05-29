@@ -33,11 +33,6 @@
     _local_seaweedfs_postgresql_vault_exists_key: "_local_seaweedfs_postgresql_vault_exists"
     _local_seaweedfs_postgresql_password_generated_key: "_local_seaweedfs_postgresql_password_generated"
     _local_seaweedfs_postgresql_put_data_key: "_local_seaweedfs_postgresql_put_data"
-    _local_seaweedfs_admin_vault_key: "_local_seaweedfs_admin_vault"
-    _local_seaweedfs_admin_vault_exists_key: "_local_seaweedfs_admin_vault_exists"
-    _local_seaweedfs_admin_access_key_generated_key: "_local_seaweedfs_admin_access_key_generated"
-    _local_seaweedfs_admin_secret_key_generated_key: "_local_seaweedfs_admin_secret_key_generated"
-    _local_seaweedfs_admin_put_data_key: "_local_seaweedfs_admin_put_data"
     _local_seaweedfs_helm_chart_source_key: "_local_seaweedfs_helm_chart_source"
 
   tasks:
@@ -258,85 +253,15 @@
     # STEP 3: ADMIN S3 CREDS + SEAWEEDFS INSTALL
     # =========================================================================
 
-    # ----- Bootstrap admin S3 identity: combined JSON in Vault -> ESO -> K8s Secret -----
-    # Generate admin creds (only if Vault path empty), build single-identity JSON (admin only),
-    # write to Vault path /seaweedfs/s3-config/all field=config. ESO syncs to K8s Secret.
-    # Users + per-identity fan-out — separate concern of seaweedfs-sync.yaml.
-    - name: "[seaweedfs-admin-bootstrap] Get current S3 identities config from Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+    # ----- User sync (admin + users + anonymous) via tasks-seaweedfs-user-sync -----
+    # Replaces previous admin-only bootstrap. Full identity sync logic — diff vs
+    # Vault combined JSON, generate-if-missing, fan-out additional_vault_paths,
+    # ESO sync, conditional rollout restart (when identities changed AND deployment exists).
+    - name: "[seaweedfs-install-user-sync] Sync identities (admin + users + anonymous)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-user-sync.yaml"
       vars:
-        dto_label_name: "seaweedfs-admin-bootstrap"
-        dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
-        dto_vault_get_field: "config"
-        dto_vault_get_res_fact_name: "{{ _local_seaweedfs_admin_vault_key }}"
-        dto_vault_get_res_exists_fact_name: "{{ _local_seaweedfs_admin_vault_exists_key }}"
-      tags: [install]
-
-    - name: "[seaweedfs-admin-bootstrap] Generate admin access_key (20 chars, uppercase + digits)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
-      vars:
-        dto_label_name: "seaweedfs-admin-bootstrap"
-        dto_generate_fact_name: "{{ _local_seaweedfs_admin_access_key_generated_key }}"
-        dto_generate_length: 20
-        dto_generate_chars: "ascii_uppercase,digits"
-      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
-      tags: [install]
-
-    - name: "[seaweedfs-admin-bootstrap] Generate admin secret_key (40 chars, letters + digits)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
-      vars:
-        dto_label_name: "seaweedfs-admin-bootstrap"
-        dto_generate_fact_name: "{{ _local_seaweedfs_admin_secret_key_generated_key }}"
-        dto_generate_length: 40
-        dto_generate_chars: "ascii_letters,digits"
-      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
-      tags: [install]
-
-    - name: "[seaweedfs-admin-bootstrap] Build initial S3 identities JSON (admin only)"
-      set_fact:
-        "{{ _local_seaweedfs_admin_put_data_key }}": >-
-          {{ {
-               'config': ({
-                 'identities': [
-                   {
-                     'name': 'admin',
-                     'credentials': [
-                       {
-                         'accessKey': lookup('vars', _local_seaweedfs_admin_access_key_generated_key),
-                         'secretKey': lookup('vars', _local_seaweedfs_admin_secret_key_generated_key)
-                       }
-                     ],
-                     'actions': ['Admin']
-                   }
-                 ]
-               } | to_json)
-             } }}
-      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
-      tags: [install]
-
-    - name: "[seaweedfs-admin-bootstrap] Store initial S3 identities JSON in Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
-      vars:
-        dto_label_name: "seaweedfs-admin-bootstrap"
-        dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
-        dto_vault_put_data: "{{ lookup('vars', _local_seaweedfs_admin_put_data_key) }}"
-      when: not lookup('vars', _local_seaweedfs_admin_vault_exists_key)
-      tags: [install]
-
-    - name: "[seaweedfs-admin-bootstrap] Trigger ESO sync"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
-      vars:
-        dto_label_name: "seaweedfs-admin-bootstrap"
-        dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
-      tags: [install]
-
-    - name: "[seaweedfs-admin-bootstrap] Wait for S3 identities Secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
-      vars:
-        dto_label_name: "seaweedfs-admin-bootstrap"
-        dto_wait_secret_name: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
-        dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
-      tags: [install]
+        dto_label_name: "seaweedfs-install-user-sync"
+      tags: [user-sync]
 
     # ---------
     # ---install
@@ -497,6 +422,24 @@
       tags: [quota-cron]
 
     # =========================================================================
+    # STEP 6: BUCKET + POLICY SYNC (after install + post + quota-cron)
+    # =========================================================================
+    # Declarative bucket+quota sync + bucket policy sync. Idempotent — diffs vs
+    # K8s ConfigMap state. Requires S3 pods running + filer ready.
+
+    - name: "[seaweedfs-install-bucket-sync] Sync buckets + quotas"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-bucket-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-bucket-sync"
+      tags: [bucket-sync]
+
+    - name: "[seaweedfs-install-bucket-policy-sync] Sync bucket policies"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-bucket-policy-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-bucket-policy-sync"
+      tags: [bucket-policy-sync]
+
+    # =========================================================================
     # VERIFICATION
     # =========================================================================
 
@@ -536,7 +479,7 @@
           - ""
           - "IMPORTANT: Admin identity is bootstrapped on first install."
           - "  Back it up from Vault immediately."
-          - "  Users + bucket policies — manage via seaweedfs-sync.yaml."
+          - "  Users + bucket policies — manage via --tags user-sync/bucket-sync/bucket-policy-sync."
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
