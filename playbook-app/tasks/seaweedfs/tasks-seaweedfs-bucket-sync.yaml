@@ -1,0 +1,142 @@
+# =============================================================================
+# SeaweedFS Bucket Sync — declarative bucket + quota sync via weed shell
+# =============================================================================
+# Reusable task include. Invoked from playbook with:
+#   - include_tasks: tasks-seaweedfs-bucket-sync.yaml
+#     vars:
+#       dto_label_name: "<caller-prefix>"
+#
+# Convention: dto_label_name passed ONLY at playbook-level invocation.
+# No nested include_tasks (this file uses only command/shell modules).
+#
+# Reads inventory:
+#   - seaweedfs_sync_buckets + _extra (from hosts-vars/seaweedfs-sync.yaml)
+#   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml)
+#
+# Logic:
+#   1. Compute target buckets = seaweedfs_sync_buckets + _extra.
+#   2. Read current ConfigMap state seaweedfs-sync-buckets-state.
+#   3. Parse current state JSON (or empty list).
+#   4. Compute diff: to_create / to_update_quota / to_delete by name.
+#   5. Create new buckets via weed shell s3.bucket.create -owner=admin.
+#   6. Apply quotas via weed shell s3.bucket.quota (-op=set with MiB/GiB/TiB
+#      size conversion, or -op=disable when quota.enabled=false).
+#   7. Delete buckets via weed shell s3.bucket.delete (fails non-empty).
+#   8. Apply ConfigMap seaweedfs-sync-buckets-state with new state JSON.
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert dto_label_name provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+    fail_msg: >-
+      tasks-seaweedfs-bucket-sync: dto_label_name required (string, non-empty).
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Declare local fact keys"
+  set_fact:
+    _local_target_buckets_key: "_local_target_buckets"
+    _local_current_buckets_state_key: "_local_current_buckets_state"
+    _local_buckets_to_create_key: "_local_buckets_to_create"
+    _local_buckets_to_update_quota_key: "_local_buckets_to_update_quota"
+    _local_buckets_to_delete_key: "_local_buckets_to_delete"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute target buckets list"
+  set_fact:
+    "{{ _local_target_buckets_key }}": "{{ seaweedfs_sync_buckets + (seaweedfs_sync_buckets_extra | default([])) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Read current ConfigMap state (may not exist)"
+  command: >-
+    kubectl get configmap seaweedfs-sync-buckets-state
+    -n {{ seaweedfs_namespace }}
+    -o jsonpath={.data.state}
+  register: _local_current_buckets_state_raw_reg
+  failed_when: false
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Parse current state (or empty list)"
+  set_fact:
+    "{{ _local_current_buckets_state_key }}": >-
+      {{ _local_current_buckets_state_raw_reg.stdout | from_json
+         if (_local_current_buckets_state_raw_reg.rc == 0 and _local_current_buckets_state_raw_reg.stdout | length > 0)
+         else [] }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute diff (to_create / to_update_quota / to_delete)"
+  set_fact:
+    "{{ _local_buckets_to_create_key }}": >-
+      {{ lookup('vars', _local_target_buckets_key)
+         | rejectattr('name', 'in', lookup('vars', _local_current_buckets_state_key) | map(attribute='name') | list)
+         | list }}
+    "{{ _local_buckets_to_update_quota_key }}": >-
+      {{ lookup('vars', _local_target_buckets_key)
+         | selectattr('name', 'in', lookup('vars', _local_current_buckets_state_key) | map(attribute='name') | list)
+         | selectattr('quota', 'defined')
+         | list }}
+    "{{ _local_buckets_to_delete_key }}": >-
+      {{ lookup('vars', _local_current_buckets_state_key)
+         | rejectattr('name', 'in', lookup('vars', _local_target_buckets_key) | map(attribute='name') | list)
+         | list }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Create new buckets via weed shell"
+  shell: |
+    echo "s3.bucket.create -name={{ item.name }} -owner=admin" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ lookup('vars', _local_buckets_to_create_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Apply quotas for created+updated buckets"
+  shell: |
+    echo "s3.bucket.quota -name={{ item.name }} -op={{ 'set' if item.quota.enabled else 'disable' }}{% if item.quota.enabled %} -sizeMB={{ (item.quota.size | regex_replace('(MiB|GiB|TiB)$', '') | int) * (1 if item.quota.size.endswith('MiB') else 1024 if item.quota.size.endswith('GiB') else 1024 * 1024) }}{% endif %}" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ (lookup('vars', _local_buckets_to_create_key) + lookup('vars', _local_buckets_to_update_quota_key)) | selectattr('quota', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }} (quota: {{ item.quota }})"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Delete buckets via weed shell (fails if non-empty)"
+  shell: |
+    echo "s3.bucket.delete -name={{ item.name }}" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ lookup('vars', _local_buckets_to_delete_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Apply ConfigMap with new state"
+  shell: |
+    kubectl create configmap seaweedfs-sync-buckets-state \
+      -n {{ seaweedfs_namespace }} \
+      --from-literal=state='{{ lookup('vars', _local_target_buckets_key) | to_json }}' \
+      --dry-run=client -o yaml | kubectl apply -f -
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
