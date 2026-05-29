@@ -99,6 +99,7 @@ kubectl -n piraeus-datastore exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drb
   - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource list`
 - Получить список volumes в Linstor
   - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource list-volumes`
+  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor volume list`
 - получить список ХЗ ЧЕГО, но надо
   - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-group list`
 - Получить список настроек текущих
@@ -107,6 +108,8 @@ kubectl -n piraeus-datastore exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drb
   - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-group spawn --help`
   - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-group create --help`
   - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource create --help`
+- Удалить PV
+  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-definition delete <имя_pv>`
 
 ## CheckSum данных, перед отправкой и на стороне приемника
 - `data-integrity-alg`
