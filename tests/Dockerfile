@@ -11,7 +11,8 @@ RUN apt-get update \
 RUN pip install --no-cache-dir \
       ansible-core==2.20.5 \
       ansible-lint==26.4.0 \
-      yamllint==1.38.0
+      yamllint==1.38.0 \
+      pytest==8.3.4
 
 # ansible.posix is required for setup-ssh-keys.yaml (authorized_key module).
 # ansible-lint mocks the module via mock_modules; ansible-playbook

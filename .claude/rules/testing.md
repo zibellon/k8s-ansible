@@ -10,14 +10,15 @@ For per-rule rationale and how DevOps/DevOps-docs/TeamLead are required to use t
 
 ## 1. What is covered today
 
-Layer 1 + Layer 2 run four tools, gated by a single `make test` target:
+Layer 1 + Layer 2 + Layer 3 run five tools, gated by a single `make test` target:
 
 - **yamllint** — every YAML file in the repo (with project-aware ignores).
 - **ansible-lint** (profile: `moderate`) — every playbook in `playbook-system/` and `playbook-app/`.
 - **ansible-playbook --syntax-check** — every playbook in `playbook-system/` and `playbook-app/`, plus every task-file in their `tasks/` subdirectories (wrapped in a temporary `import_tasks` playbook because bare task-files are not valid Plays). With both `-i hosts-vars/` and `-i hosts-vars-test/`.
 - **helm template + kubeconform** — для каждого upstream Helm release (`<repo>/<chart>` или `oci://...`), который мы устанавливаем в production. Render values from `hosts-vars/` через ansible (production tasks `tasks-vault-config-verify.yaml` + `tasks-add-helm-repo.yaml` reused; `tasks-eso-verify.yaml` не вызывается из test driver — нет component scope), затем `helm template` → файл на диск → `kubeconform -strict --ignore-missing-schemas`. Render и validation разделены на отдельные шаги (см. `tests/helm-validate.yaml` STEP 4 и STEP 5). **Не** тестируются local wrappers (`pre/`, `post/`, `gitlab/postgresql/`, и т.п.) — там нет сторонней логики.
+- **pytest** — unit-тесты для filter plugins (Python compute functions, e.g. `filter_plugins/seaweedfs_sync.py`). Tests live in `tests/python/test_*.py`. Catches runtime Jinja2/Python issues которые предыдущие 4 stages не видят (syntax check ≠ runtime evaluation).
 
-All four must pass for `make test` to exit 0. Targets are independent and re-runnable individually.
+All five must pass for `make test` to exit 0. Targets are independent and re-runnable individually.
 
 ## 2. Local prerequisites
 
@@ -37,6 +38,7 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 | `make test-ansible-lint` | ansible-lint only |
 | `make test-syntax` | ansible-playbook --syntax-check only |
 | `make test-helm` | helm template + kubeconform for upstream charts only |
+| `make test-pytest` | pytest unit tests for filter plugins only |
 
 `make test` is fail-fast: if `test-yamllint` fails, the next three are not run. To see all failures at once, run each target separately.
 
@@ -51,6 +53,7 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 | `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list — keeps build context small. |
 | `tests/run-syntax-check.sh` | Bash iterator running `ansible-playbook --syntax-check` over every playbook, then over every task-file (each wrapped in a temporary `import_tasks` playbook). |
 | `tests/helm-validate.yaml` | Ansible-playbook driver for Layer 2. PRE phase: mock `master_manager_fact` + ESO secret lookups for chart values. STEP 1–7: per-chart Helm repo add (через `tasks-add-helm-repo.yaml`) → render values → `helm template` → `kubeconform` → aggregate. Reports per-chart OK/FAIL. |
+| `tests/python/test_seaweedfs_sync.py` | Pytest unit tests for `filter_plugins/seaweedfs_sync.py` (Layer 3). Covers all 13 functions: parse/extract/diff/build/validate. Path setup via `sys.path.insert` to repo-root `filter_plugins/`. |
 | `hosts-vars-test/upstream-charts.yaml` | Inventory-format vars-файл для Layer 2 (auto-loaded через `-i hosts-vars-test/`). Unified schema `upstream_charts` list для всех upstream charts (`is_oci`, `helm_url`, `helm_repo_name`, `helm_chart_name`, `helm_chart_version`, `namespace`, `values`). |
 | `.yamllint.yaml` | yamllint config — extends `default` with project-aware relaxations and ignore paths. |
 | `.ansible-lint.yml` | ansible-lint config — `profile: moderate` with documented `skip_list` and `mock_modules`. |
@@ -64,6 +67,7 @@ Recorded in `tests/Dockerfile`:
 - `ansible-core==2.20.5`
 - `ansible-lint==26.4.0`
 - `yamllint==1.38.0`
+- `pytest==8.3.4` — Python unit test framework для Layer 3 (filter plugin tests).
 - `ansible.posix:1.5.4` — required by `setup-ssh-keys.yaml` (authorized_key module).
 - `community.general:12.6.0` — required by `playbook-app/tasks/tasks-copy-chart.yaml` (`archive` module). Surfaced when task-file syntax-check coverage was added.
 - `helm 3.20.2` — pinned to match `playbook-system/install-helm.yaml` (the version actually deployed on the cluster, so test rendering reproduces production behaviour).
@@ -94,6 +98,8 @@ These layers are tracked separately. Adding them must not loosen Layer 1 or Laye
 | `make test-helm` falls render task with `'<var>' is undefined` | Production playbook sets this fact via `tasks-pre-check.yaml` / `set_fact` / direct inventory variable reference; test playbook hasn't been wired to do the same | Either (a) update `tests/helm-validate.yaml` to call the appropriate production task via `include_tasks: "{{ playbook_dir }}/../playbook-app/tasks/<task>.yaml"`, or (b) hardcode a mock in `hosts-vars-test/` |
 | `make test-helm` falls helm template with `Error: chart pull failed` | `<c>_chart_version` in inventory does not exist in upstream repo (yanked or typo'd) | Verify version exists at the published repo (e.g. `helm search repo <repo>/<chart> --versions`); update inventory if intentional |
 | `make test-helm` falls kubeconform with `key "<X>" already set in map` | Upstream chart bug — duplicate key produced by `toYaml` of merged values dict; K8s API server last-wins masks it in production | See §9 Known upstream issues; if new chart hits this, comment out the entry in `hosts-vars-test/upstream-charts.yaml` with explanation (как сделано для traefik) |
+| `make test-pytest` fails with `ModuleNotFoundError: seaweedfs_sync` | Path setup в test file не находит filter plugin (e.g. moved location) | Verify `sys.path.insert` в `tests/python/test_seaweedfs_sync.py` correctly resolves repo-root `filter_plugins/` |
+| `make test-pytest` fails with assertion mismatch | Python logic в filter plugin не matches expected behavior | Read pytest output (-v shows each test name); fix `filter_plugins/seaweedfs_sync.py` или update test if expectation outdated |
 
 ## 8. Verification idiom for SUB DONE reports
 
@@ -107,12 +113,12 @@ make test 2>&1 | tail -5
 
 ```
 ==========================================
-make test → exit 0 (all 4 stages passed)
+make test → exit 0 (all 5 stages passed)
 Wall-clock: Xm YYs
 ==========================================
 ```
 
-Где `X`/`YY` — wall-clock duration. Подстрока `make test → exit 0` — детерминированный success-маркер, присутствует **только** когда все 4 стадии (yamllint + ansible-lint + syntax-check + helm-validate) прошли. Копируй её в отчёт верботим.
+Где `X`/`YY` — wall-clock duration. Подстрока `make test → exit 0` — детерминированный success-маркер, присутствует **только** когда все 5 стадий (yamllint + ansible-lint + syntax-check + helm-validate + pytest) прошли. Копируй её в отчёт верботим.
 
 **На fail** success-блок отсутствует; `tail -5` показывает последние 5 строк output'а упавшей стадии. Make's fail-fast прерывает на первой упавшей — отображается ошибка **первой** не прошедшей стадии.
 

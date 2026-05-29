@@ -4,16 +4,17 @@ DOCKER_RUN  := docker run --rm \
                --tmpfs /tmp:rw,exec,size=100M \
                $(DOCKER_IMAGE)
 
-.PHONY: help docker-build ensure-image test test-yamllint test-ansible-lint test-syntax test-helm
+.PHONY: help docker-build ensure-image test test-yamllint test-ansible-lint test-syntax test-helm test-pytest
 
 help:
 	@echo "Targets:"
 	@echo "  docker-build       Build the test image"
-	@echo "  test               Run all tests (yamllint + ansible-lint + syntax-check + helm)"
+	@echo "  test               Run all tests (yamllint + ansible-lint + syntax-check + helm + pytest)"
 	@echo "  test-yamllint      yamllint over all YAML files"
 	@echo "  test-ansible-lint  ansible-lint over playbook-system/ + playbook-app/"
 	@echo "  test-syntax        ansible-playbook --syntax-check for every playbook"
 	@echo "  test-helm          helm template + kubeconform for upstream charts"
+	@echo "  test-pytest        pytest unit tests for filter plugins (Python compute)"
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE) -f tests/Dockerfile .
@@ -33,14 +34,17 @@ test-syntax: ensure-image
 test-helm: ensure-image
 	$(DOCKER_RUN) ansible-playbook -i hosts-vars/ -i hosts-vars-test/ tests/helm-validate.yaml
 
+test-pytest: ensure-image
+	$(DOCKER_RUN) pytest tests/python/ -v -p no:cacheprovider
+
 test:
 	@START=$$(date +%s) && \
-	$(MAKE) test-yamllint test-ansible-lint test-syntax test-helm && \
+	$(MAKE) test-yamllint test-ansible-lint test-syntax test-helm test-pytest && \
 	END=$$(date +%s) && \
 	DURATION=$$((END - START)) && \
 	M=$$((DURATION / 60)) && \
 	S=$$((DURATION % 60)) && \
 	printf "\n==========================================\n" && \
-	printf "make test → exit 0 (all 4 stages passed)\n" && \
+	printf "make test → exit 0 (all 5 stages passed)\n" && \
 	printf "Wall-clock: %dm %02ds\n" $$M $$S && \
 	printf "==========================================\n"
