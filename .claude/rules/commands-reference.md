@@ -230,23 +230,23 @@ Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + clu
 
 ### 4.9 SeaweedFS sync operations
 
-Declarative sync invoked through `seaweedfs-install.yaml` tags (architecture v3). No standalone `seaweedfs-sync.yaml` playbook — все sync logic в task includes под `playbook-app/tasks/seaweedfs/`.
+Declarative sync invoked through `seaweedfs-install.yaml` tags (architecture v4). No standalone `seaweedfs-sync.yaml` playbook — все sync logic в task includes под `playbook-app/tasks/seaweedfs/`.
 
 ```bash
 # Full install (all phases including sync):
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-install.yaml
 
-# Re-sync identities only (Vault combined JSON + ESO + K8s Secret + conditional rollout restart):
+# Re-sync identities only (Layer 1 — Vault combined JSON + ESO + K8s Secret + conditional rollout restart):
 ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync
 
-# Re-sync buckets + quotas (weed shell, K8s ConfigMap state diff):
+# Re-sync identity credentials distribution (Layer 3 — distribute identity creds в extra Vault paths из identity.extra_vault_paths):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags identity-distribute
+
+# Re-sync buckets + quotas + per-bucket policies (Layer 2 — merged: weed shell + aws s3api, K8s ConfigMap state diff):
 ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags bucket-sync
 
-# Re-sync bucket policies (aws s3api, full AWS IAM, K8s ConfigMap state diff):
-ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags bucket-policy-sync
-
-# Re-sync everything (identities + buckets + policies in order):
-ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync,bucket-sync,bucket-policy-sync
+# Re-sync everything (identities + identity-distribute + buckets in order):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync,identity-distribute,bucket-sync
 ```
 
 **Quota enforcement** — отдельный K8s CronJob `seaweedfs-quota-enforce` (chart subdir `charts/seaweedfs/quota-cron/`) запускает `weed shell s3.bucket.quota.enforce -apply` каждые 5 минут. Quota НЕ auto-enforces в SeaweedFS — без CronJob bucket может уйти выше лимита. Gated через `seaweedfs_quota_cron_enabled` (default true).
