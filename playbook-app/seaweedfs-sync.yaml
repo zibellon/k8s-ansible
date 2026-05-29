@@ -53,6 +53,14 @@
     _local_buckets_to_create_key: "_local_buckets_to_create"
     _local_buckets_to_update_quota_key: "_local_buckets_to_update_quota"
     _local_buckets_to_delete_key: "_local_buckets_to_delete"
+    # POLICIES phase keys:
+    _local_target_policies_key: "_local_target_policies"
+    _local_policies_secret_json_key: "_local_policies_secret_json"
+    _local_policies_secret_exists_key: "_local_policies_secret_exists"
+    _local_policies_admin_creds_key: "_local_policies_admin_creds"
+    _local_current_policies_state_key: "_local_current_policies_state"
+    _local_policies_to_apply_key: "_local_policies_to_apply"
+    _local_policies_to_delete_key: "_local_policies_to_delete"
 
   tasks:
     # =========================================================================
@@ -387,3 +395,161 @@
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [buckets]
+
+    # =========================================================================
+    # POLICIES PHASE
+    # =========================================================================
+
+    - name: "[seaweedfs-sync-policies] Compute target bucket policies list"
+      set_fact:
+        "{{ _local_target_policies_key }}": "{{ seaweedfs_sync_bucket_policies + (seaweedfs_sync_bucket_policies_extra | default([])) }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Validate Principal format (SeaweedFS 4.29 limitation)"
+      assert:
+        that:
+          - item.1.Principal is not mapping
+        fail_msg: >-
+          Bucket policy for '{{ item.0.bucket }}' has Statement with Principal of unsupported
+          dict form ({{ item.1.Principal }}). SeaweedFS 4.29 (policy_engine/types.go:55-77)
+          supports only flat string or array. Use:
+            Principal: "arn:aws:iam::*:user/<name>"
+            Principal: ["arn:aws:iam::*:user/u1", "arn:aws:iam::*:user/u2"]
+            Principal: "*"  (anonymous; requires anonymous identity)
+      loop: "{{ lookup('vars', _local_target_policies_key) | subelements('policy.Statement') }}"
+      loop_control:
+        label: "{{ item.0.bucket }}: {{ item.1.Sid | default('?') }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Get K8s Secret with current admin creds"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
+      vars:
+        dto_label_name: "seaweedfs-sync-policies"
+        dto_secret_namespace: "{{ seaweedfs_namespace }}"
+        dto_secret_name: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
+        dto_secret_field: "seaweedfs_s3_config"
+        dto_secret_res_fact_name: "{{ _local_policies_secret_json_key }}"
+        dto_secret_res_exists_fact_name: "{{ _local_policies_secret_exists_key }}"
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Extract admin creds from Secret JSON"
+      set_fact:
+        "{{ _local_policies_admin_creds_key }}": >-
+          {{
+            ((lookup('vars', _local_policies_secret_json_key) | from_json).identities
+             | selectattr('name', 'equalto', 'admin') | first).credentials | first
+          }}
+      when: lookup('vars', _local_policies_secret_exists_key)
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Read current ConfigMap state (may not exist)"
+      command: >-
+        kubectl get configmap seaweedfs-sync-bucket-policies-state
+        -n {{ seaweedfs_namespace }}
+        -o jsonpath={.data.state}
+      register: _local_current_policies_state_raw_reg
+      failed_when: false
+      changed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Parse current state (or empty list)"
+      set_fact:
+        "{{ _local_current_policies_state_key }}": >-
+          {{ _local_current_policies_state_raw_reg.stdout | from_json
+             if (_local_current_policies_state_raw_reg.rc == 0 and _local_current_policies_state_raw_reg.stdout | length > 0)
+             else [] }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Compute diff (to_apply / to_delete)"
+      set_fact:
+        "{{ _local_policies_to_apply_key }}": "{{ lookup('vars', _local_target_policies_key) }}"
+        "{{ _local_policies_to_delete_key }}": >-
+          {{ lookup('vars', _local_current_policies_state_key)
+             | rejectattr('bucket', 'in', lookup('vars', _local_target_policies_key) | map(attribute='bucket') | list)
+             | list }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Apply bucket policies via aws s3api"
+      shell: |
+        kubectl exec -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+          env AWS_ACCESS_KEY_ID='{{ lookup('vars', _local_policies_admin_creds_key).accessKey }}' \
+              AWS_SECRET_ACCESS_KEY='{{ lookup('vars', _local_policies_admin_creds_key).secretKey }}' \
+          aws --endpoint-url http://localhost:8333 s3api put-bucket-policy \
+            --bucket {{ item.bucket }} \
+            --policy '{{ item.policy | to_json }}'
+      loop: "{{ lookup('vars', _local_policies_to_apply_key) }}"
+      loop_control:
+        label: "{{ item.bucket }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Delete policies for removed buckets"
+      shell: |
+        kubectl exec -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+          env AWS_ACCESS_KEY_ID='{{ lookup('vars', _local_policies_admin_creds_key).accessKey }}' \
+              AWS_SECRET_ACCESS_KEY='{{ lookup('vars', _local_policies_admin_creds_key).secretKey }}' \
+          aws --endpoint-url http://localhost:8333 s3api delete-bucket-policy \
+            --bucket {{ item.bucket }}
+      loop: "{{ lookup('vars', _local_policies_to_delete_key) }}"
+      loop_control:
+        label: "{{ item.bucket }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    - name: "[seaweedfs-sync-policies] Apply ConfigMap with new state"
+      shell: |
+        kubectl create configmap seaweedfs-sync-bucket-policies-state \
+          -n {{ seaweedfs_namespace }} \
+          --from-literal=state='{{ lookup('vars', _local_target_policies_key) | to_json }}' \
+          --dry-run=client -o yaml | kubectl apply -f -
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [policies]
+
+    # =========================================================================
+    # ROLLOUT [always] — restart S3 deployment if identities changed
+    # =========================================================================
+
+    - name: "[seaweedfs-sync-rollout] Restart S3 deployment if identities changed"
+      command: >-
+        kubectl rollout restart deployment/seaweedfs-s3 -n {{ seaweedfs_namespace }}
+      when: lookup('vars', _local_identities_changed_key) | default(false)
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[seaweedfs-sync-rollout] Wait for S3 rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "seaweedfs-sync-rollout"
+        dto_rollout_namespace: "{{ seaweedfs_namespace }}"
+        dto_rollout_timeout: "{{ seaweedfs_install_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/seaweedfs-s3
+      when: lookup('vars', _local_identities_changed_key) | default(false)
+      tags: [always]
+
+    # =========================================================================
+    # VERIFY [always]
+    # =========================================================================
+
+    - name: "[seaweedfs-sync-verify] Show pods"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "seaweedfs-sync-verify"
+        dto_pods_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
