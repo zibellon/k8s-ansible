@@ -318,6 +318,33 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Callers.** `playbook-app/cluster-info.yaml` only.
 - **Idempotent.** Read-only.
 
+### 1.29 `tasks-seaweedfs-user-sync.yaml`
+
+- **Purpose.** Declarative SeaweedFS S3 identity sync. Diff current Vault combined JSON (`/seaweedfs/s3-config/all` field `config`) vs target (`seaweedfs_identities + _extra`). CREATE new identities (generate 20-char access_key + 40-char secret_key, skip 'anonymous'). UPDATE existing (refresh actions, preserve credentials). DELETE absent. Build new combined identities list, vault-put, fan-out generated creds to `additional_vault_paths` per identity, cleanup additional paths for deleted, tasks-eso-force-sync + tasks-wait-secret. Conditional rollout restart `deployment/seaweedfs-s3` (when identities changed AND deployment exists).
+- **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation; nested includes (tasks-vault-*, tasks-generate-secret, tasks-eso-force-sync, tasks-wait-secret, tasks-wait-rollout) inherit via Ansible variable scope.
+- **Validates (assert).** `dto_label_name` defined + non-empty. Admin safety warning (debug) if target identities содержит нет entry с `actions=['Admin']`.
+- **Output.** Vault combined JSON updated, K8s Secret `seaweedfs-s3-identities` materialized through ESO, optional rollout restart of S3 deployment.
+- **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 3 (tag `[user-sync]`, before helm install).
+- **Idempotent.** Yes — diff vs current state; no-op if identities unchanged. Vault writes only when changed; rollout restart only when both flags set.
+
+### 1.30 `tasks-seaweedfs-bucket-sync.yaml`
+
+- **Purpose.** Declarative SeaweedFS bucket + quota sync via weed shell. Read K8s ConfigMap `seaweedfs-sync-buckets-state` (may not exist). Compute diff vs target (`seaweedfs_sync_buckets + _extra`) by name primary key. CREATE buckets via `weed shell s3.bucket.create -name=<n> -owner=admin`. Apply quotas via `s3.bucket.quota -op=set -sizeMB=<X>` (MiB/GiB/TiB conversion) or `-op=disable`. DELETE absent buckets (`s3.bucket.delete` — fails non-empty). Apply ConfigMap with new state.
+- **Input.** `dto_label_name` (required string, log prefix). No nested include_tasks calls (uses only command/shell modules).
+- **Validates (assert).** `dto_label_name` defined + non-empty.
+- **Output.** Buckets created/updated/deleted in filer Postgres metadata, ConfigMap state updated.
+- **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 6 (tag `[bucket-sync]`, after install + post + quota-cron).
+- **Idempotent.** Yes — diff vs ConfigMap state. Non-empty bucket delete fails clearly; operator должен сначала empty bucket вручную.
+
+### 1.31 `tasks-seaweedfs-bucket-policy-sync.yaml`
+
+- **Purpose.** Declarative SeaweedFS bucket policy sync via aws s3api. Validate Principal format (SeaweedFS 4.29 non-AWS limitation — flat string или array, не dict). Self-contained admin creds fetch via `tasks-k8s-secret-get` (reads K8s Secret `seaweedfs-s3-identities`, extracts admin AK+SK from JSON). Read K8s ConfigMap `seaweedfs-sync-bucket-policies-state` (may not exist). Compute diff vs target (`seaweedfs_sync_bucket_policies + _extra`) by bucket primary key. Apply via `aws s3api put-bucket-policy` (full replacement, env-auth admin AK/SK). Delete absent bucket policies via `aws s3api delete-bucket-policy`. Apply ConfigMap with new state.
+- **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation; nested include (`tasks-k8s-secret-get`) inherits.
+- **Validates (assert).** `dto_label_name` defined + non-empty. Per-statement Principal validation: `item.1.Principal is not mapping` (fails on dict-form `{AWS: ...}`).
+- **Output.** Bucket policies set/removed in filer Postgres metadata (`entry.Extended["s3-bucket-policy"]`), ConfigMap state updated.
+- **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 6 (tag `[bucket-policy-sync]`, after bucket-sync).
+- **Idempotent.** Yes — diff vs ConfigMap state. put-bucket-policy fully replaces existing (AWS-style overwrite behavior).
+
 ---
 
 ## 2. `playbook-system/tasks/` (20 tasks)

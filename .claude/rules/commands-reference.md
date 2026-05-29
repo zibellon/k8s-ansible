@@ -228,6 +228,29 @@ ansible-playbook ... -e fio_read_directory=/data -e fio_write_directory=/data
 
 Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + cluster summary (min/max/avg per metric). Test files (`disk-io-test-randread.*`, `disk-io-test-randwrite.*`) cleaned via `always:` block regardless of failure; `fio` package stays installed.
 
+### 4.9 SeaweedFS sync operations
+
+Declarative sync invoked through `seaweedfs-install.yaml` tags (architecture v3). No standalone `seaweedfs-sync.yaml` playbook — все sync logic в task includes под `playbook-app/tasks/seaweedfs/`.
+
+```bash
+# Full install (all phases including sync):
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-install.yaml
+
+# Re-sync identities only (Vault combined JSON + ESO + K8s Secret + conditional rollout restart):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync
+
+# Re-sync buckets + quotas (weed shell, K8s ConfigMap state diff):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags bucket-sync
+
+# Re-sync bucket policies (aws s3api, full AWS IAM, K8s ConfigMap state diff):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags bucket-policy-sync
+
+# Re-sync everything (identities + buckets + policies in order):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync,bucket-sync,bucket-policy-sync
+```
+
+**Quota enforcement** — отдельный K8s CronJob `seaweedfs-quota-enforce` (chart subdir `charts/seaweedfs/quota-cron/`) запускает `weed shell s3.bucket.quota.enforce -apply` каждые 5 минут. Quota НЕ auto-enforces в SeaweedFS — без CronJob bucket может уйти выше лимита. Gated через `seaweedfs_quota_cron_enabled` (default true).
+
 ---
 
 ## 5. Debugging one-liners
