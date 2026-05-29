@@ -1,6 +1,10 @@
 # =============================================================================
 # SeaweedFS User Sync — declarative identity sync (Vault → ESO → K8s Secret)
 # =============================================================================
+# Scope: manages SeaweedFS identity state in Vault combined JSON only;
+# does NOT deliver creds to consumer namespaces — consumers integrate via
+# their own eso_vault_integration_<consumer>_secrets_extra.
+#
 # Reusable task include. Invoked from playbook with:
 #   - include_tasks: tasks-seaweedfs-user-sync.yaml
 #     vars:
@@ -13,8 +17,8 @@
 #
 # Reads inventory:
 #   - seaweedfs_identities + _extra (from hosts-vars/seaweedfs-sync.yaml)
-#   - seaweedfs_secret_s3_identities, seaweedfs_identity_default_creds_keys,
-#     eso_vault_integration_seaweedfs, seaweedfs_namespace,
+#   - seaweedfs_secret_s3_identities, eso_vault_integration_seaweedfs,
+#     seaweedfs_namespace,
 #     seaweedfs_install_rollout_timeout (from hosts-vars/seaweedfs.yaml)
 #
 # Logic:
@@ -29,11 +33,9 @@
 #   9. Build new JSON string.
 #   10. Determine identities_changed flag.
 #   11-12. Build put data + vault-put combined JSON (when changed).
-#   13. Fan-out vault-put to additional_vault_paths per identity × paths.
-#   14. Cleanup vault-delete for to_delete × additional_vault_paths.
-#   15-16. tasks-eso-force-sync + tasks-wait-secret (when changed).
-#   17. Check S3 deployment existence (kubectl get).
-#   18-19. Conditional rollout restart + wait-rollout (when changed
+#   13-14. tasks-eso-force-sync + tasks-wait-secret (when changed).
+#   15. Check S3 deployment existence (kubectl get).
+#   16-17. Conditional rollout restart + wait-rollout (when changed
 #          AND deployment exists).
 # =============================================================================
 
@@ -211,42 +213,6 @@
     dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
     dto_vault_put_data: "{{ lookup('vars', _local_identities_put_data_key) }}"
   when: lookup('vars', _local_identities_changed_key)
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Fan-out: put creds to additional_vault_paths"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
-  vars:
-    dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ item.1.vault_path }}"
-    dto_vault_put_data: >-
-      {{ {
-           (item.1.secret_keys | default(seaweedfs_identity_default_creds_keys)).username:   item.0.name,
-           (item.1.secret_keys | default(seaweedfs_identity_default_creds_keys)).access_key: (
-             lookup('vars', '_local_new_ak_' + item.0.name)
-             if item.0 in lookup('vars', _local_to_create_identities_key)
-             else (lookup('vars', _local_current_identities_key)
-                   | selectattr('name', 'equalto', item.0.name)
-                   | map(attribute='credentials') | first | first).accessKey
-           ),
-           (item.1.secret_keys | default(seaweedfs_identity_default_creds_keys)).secret_key: (
-             lookup('vars', '_local_new_sk_' + item.0.name)
-             if item.0 in lookup('vars', _local_to_create_identities_key)
-             else (lookup('vars', _local_current_identities_key)
-                   | selectattr('name', 'equalto', item.0.name)
-                   | map(attribute='credentials') | first | first).secretKey
-           )
-         } }}
-  loop: "{{ (lookup('vars', _local_to_create_identities_key) + lookup('vars', _local_to_update_identities_key)) | rejectattr('name', 'equalto', 'anonymous') | subelements('additional_vault_paths', skip_missing=True) }}"
-  loop_control:
-    label: "{{ item.0.name }} -> {{ item.1.vault_path }}"
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Cleanup: delete additional_vault_paths for DELETE'd identities"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-delete.yaml"
-  vars:
-    dto_vault_delete_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ item.1.vault_path }}"
-  loop: "{{ lookup('vars', _local_to_delete_identities_key) | subelements('additional_vault_paths', skip_missing=True) }}"
-  loop_control:
-    label: "{{ item.0.name }} -> {{ item.1.vault_path }}"
   tags: [always]
 
 - name: "[{{ dto_label_name }}] Trigger ESO sync"
