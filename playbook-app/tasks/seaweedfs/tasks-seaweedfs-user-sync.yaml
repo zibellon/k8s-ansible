@@ -1,0 +1,306 @@
+# =============================================================================
+# SeaweedFS User Sync — declarative identity sync (Vault → ESO → K8s Secret)
+# =============================================================================
+# Reusable task include. Invoked from playbook with:
+#   - include_tasks: tasks-seaweedfs-user-sync.yaml
+#     vars:
+#       dto_label_name: "<caller-prefix>"
+#
+# Convention: dto_label_name passed ONLY at playbook-level invocation;
+# nested include_tasks calls (tasks-vault-*, tasks-generate-secret,
+# tasks-eso-force-sync, tasks-wait-secret, tasks-wait-rollout) DO NOT
+# pass dto_label_name — inherited via Ansible variable scope.
+#
+# Reads inventory:
+#   - seaweedfs_identities + _extra (from hosts-vars/seaweedfs-sync.yaml)
+#   - seaweedfs_secret_s3_identities, seaweedfs_identity_default_creds_keys,
+#     eso_vault_integration_seaweedfs, seaweedfs_namespace,
+#     seaweedfs_install_rollout_timeout (from hosts-vars/seaweedfs.yaml)
+#
+# Logic:
+#   1. Compute target identities = seaweedfs_identities + _extra.
+#   2. Admin safety warning (debug) if no actions=[Admin].
+#   3. Vault-get current combined JSON (field 'config' from
+#      /seaweedfs/s3-config/all).
+#   4. Parse current or empty.
+#   5. Compute diff: to_create / to_update / to_delete by name.
+#   6-7. Generate access_key + secret_key per new non-anonymous identity.
+#   8. Build new combined identities list via single Jinja list-comp.
+#   9. Build new JSON string.
+#   10. Determine identities_changed flag.
+#   11-12. Build put data + vault-put combined JSON (when changed).
+#   13. Fan-out vault-put to additional_vault_paths per identity × paths.
+#   14. Cleanup vault-delete for to_delete × additional_vault_paths.
+#   15-16. tasks-eso-force-sync + tasks-wait-secret (when changed).
+#   17. Check S3 deployment existence (kubectl get).
+#   18-19. Conditional rollout restart + wait-rollout (when changed
+#          AND deployment exists).
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert dto_label_name provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+    fail_msg: >-
+      tasks-seaweedfs-user-sync: dto_label_name required (string, non-empty).
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Declare local fact keys"
+  set_fact:
+    _local_target_identities_key: "_local_target_identities"
+    _local_current_identities_json_key: "_local_current_identities_json"
+    _local_current_identities_exists_key: "_local_current_identities_exists"
+    _local_current_identities_key: "_local_current_identities"
+    _local_to_create_identities_key: "_local_to_create_identities"
+    _local_to_update_identities_key: "_local_to_update_identities"
+    _local_to_delete_identities_key: "_local_to_delete_identities"
+    _local_new_combined_identities_key: "_local_new_combined_identities"
+    _local_new_combined_json_key: "_local_new_combined_json"
+    _local_identities_changed_key: "_local_identities_changed"
+    _local_identities_put_data_key: "_local_identities_put_data"
+    _local_s3_deployment_exists_key: "_local_s3_deployment_exists"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute target identities list"
+  set_fact:
+    "{{ _local_target_identities_key }}": "{{ seaweedfs_identities + (seaweedfs_identities_extra | default([])) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Admin safety warning (no actions=[Admin])"
+  debug:
+    msg: |
+      WARNING: target identities does not contain any entry with actions=['Admin'].
+      This will lock out admin access to SeaweedFS S3 API after rollout restart.
+      If intentional, ignore. Otherwise add admin to seaweedfs_identities (base).
+  when: >-
+    (lookup('vars', _local_target_identities_key)
+     | selectattr('actions', 'contains', 'Admin') | list | length) == 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Get current combined JSON from Vault"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+  vars:
+    dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
+    dto_vault_get_field: "config"
+    dto_vault_get_res_fact_name: "{{ _local_current_identities_json_key }}"
+    dto_vault_get_res_exists_fact_name: "{{ _local_current_identities_exists_key }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Parse current identities (or empty)"
+  set_fact:
+    "{{ _local_current_identities_key }}": >-
+      {{ (lookup('vars', _local_current_identities_json_key) | from_json).identities
+         if lookup('vars', _local_current_identities_exists_key)
+         else [] }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute to_create / to_update / to_delete"
+  set_fact:
+    "{{ _local_to_create_identities_key }}": >-
+      {{ lookup('vars', _local_target_identities_key)
+         | rejectattr('name', 'in', lookup('vars', _local_current_identities_key) | map(attribute='name') | list)
+         | list }}
+    "{{ _local_to_update_identities_key }}": >-
+      {{ lookup('vars', _local_target_identities_key)
+         | selectattr('name', 'in', lookup('vars', _local_current_identities_key) | map(attribute='name') | list)
+         | list }}
+    "{{ _local_to_delete_identities_key }}": >-
+      {{ lookup('vars', _local_current_identities_key)
+         | rejectattr('name', 'in', lookup('vars', _local_target_identities_key) | map(attribute='name') | list)
+         | list }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Generate access_key for new non-anonymous identities"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+  vars:
+    dto_generate_fact_name: "_local_new_ak_{{ item.name }}"
+    dto_generate_length: 20
+    dto_generate_chars: "ascii_uppercase,digits"
+  loop: "{{ lookup('vars', _local_to_create_identities_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name != 'anonymous'
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Generate secret_key for new non-anonymous identities"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+  vars:
+    dto_generate_fact_name: "_local_new_sk_{{ item.name }}"
+    dto_generate_length: 40
+    dto_generate_chars: "ascii_letters,digits"
+  loop: "{{ lookup('vars', _local_to_create_identities_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name != 'anonymous'
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build new combined identities list"
+  set_fact:
+    "{{ _local_new_combined_identities_key }}": >-
+      {{
+        [
+          {
+            'name': item.name,
+            'credentials': [{
+              'accessKey': '' if item.name == 'anonymous' else lookup('vars', '_local_new_ak_' + item.name),
+              'secretKey': '' if item.name == 'anonymous' else lookup('vars', '_local_new_sk_' + item.name)
+            }],
+            'actions': item.actions | default([])
+          }
+          for item in lookup('vars', _local_to_create_identities_key)
+        ]
+        +
+        [
+          {
+            'name': target_item.name,
+            'credentials': (
+              lookup('vars', _local_current_identities_key)
+              | selectattr('name', 'equalto', target_item.name)
+              | map(attribute='credentials') | first
+            ),
+            'actions': target_item.actions | default([])
+          }
+          for target_item in lookup('vars', _local_to_update_identities_key)
+        ]
+      }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build new JSON string"
+  set_fact:
+    "{{ _local_new_combined_json_key }}": "{{ {'identities': lookup('vars', _local_new_combined_identities_key)} | to_json }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Determine if identities changed (compare JSON)"
+  set_fact:
+    "{{ _local_identities_changed_key }}": >-
+      {{ (not lookup('vars', _local_current_identities_exists_key))
+         or (lookup('vars', _local_current_identities_json_key) != lookup('vars', _local_new_combined_json_key)) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build Vault put data dict"
+  set_fact:
+    "{{ _local_identities_put_data_key }}": >-
+      {{ {'config': lookup('vars', _local_new_combined_json_key)} }}
+  when: lookup('vars', _local_identities_changed_key)
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Store new combined JSON in Vault"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+  vars:
+    dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
+    dto_vault_put_data: "{{ lookup('vars', _local_identities_put_data_key) }}"
+  when: lookup('vars', _local_identities_changed_key)
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Fan-out: put creds to additional_vault_paths"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+  vars:
+    dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ item.1.vault_path }}"
+    dto_vault_put_data: >-
+      {{ {
+           (item.1.secret_keys | default(seaweedfs_identity_default_creds_keys)).username:   item.0.name,
+           (item.1.secret_keys | default(seaweedfs_identity_default_creds_keys)).access_key: (
+             lookup('vars', '_local_new_ak_' + item.0.name)
+             if item.0 in lookup('vars', _local_to_create_identities_key)
+             else (lookup('vars', _local_current_identities_key)
+                   | selectattr('name', 'equalto', item.0.name)
+                   | map(attribute='credentials') | first | first).accessKey
+           ),
+           (item.1.secret_keys | default(seaweedfs_identity_default_creds_keys)).secret_key: (
+             lookup('vars', '_local_new_sk_' + item.0.name)
+             if item.0 in lookup('vars', _local_to_create_identities_key)
+             else (lookup('vars', _local_current_identities_key)
+                   | selectattr('name', 'equalto', item.0.name)
+                   | map(attribute='credentials') | first | first).secretKey
+           )
+         } }}
+  loop: "{{ (lookup('vars', _local_to_create_identities_key) + lookup('vars', _local_to_update_identities_key)) | rejectattr('name', 'equalto', 'anonymous') | subelements('additional_vault_paths', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }} -> {{ item.1.vault_path }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Cleanup: delete additional_vault_paths for DELETE'd identities"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-delete.yaml"
+  vars:
+    dto_vault_delete_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ item.1.vault_path }}"
+  loop: "{{ lookup('vars', _local_to_delete_identities_key) | subelements('additional_vault_paths', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }} -> {{ item.1.vault_path }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Trigger ESO sync"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+  vars:
+    dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
+  when: lookup('vars', _local_identities_changed_key)
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Wait for K8s Secret to update"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+  vars:
+    dto_wait_secret_name: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
+    dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
+  when: lookup('vars', _local_identities_changed_key)
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Check S3 deployment existence"
+  command: >-
+    kubectl get deployment seaweedfs-s3
+    -n {{ seaweedfs_namespace }}
+    -o name
+  register: _local_s3_deployment_check_reg
+  failed_when: false
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Set S3 deployment exists flag"
+  set_fact:
+    "{{ _local_s3_deployment_exists_key }}": "{{ _local_s3_deployment_check_reg.rc == 0 }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Rollout restart S3 deployment (when identities changed AND deployment exists)"
+  command: >-
+    kubectl rollout restart deployment/seaweedfs-s3 -n {{ seaweedfs_namespace }}
+  when:
+    - lookup('vars', _local_identities_changed_key)
+    - lookup('vars', _local_s3_deployment_exists_key)
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Wait for S3 rollout"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+  vars:
+    dto_rollout_namespace: "{{ seaweedfs_namespace }}"
+    dto_rollout_timeout: "{{ seaweedfs_install_rollout_timeout }}"
+    dto_rollout_resources_list:
+      - deployment.apps/seaweedfs-s3
+  when:
+    - lookup('vars', _local_identities_changed_key)
+    - lookup('vars', _local_s3_deployment_exists_key)
+  tags: [always]
