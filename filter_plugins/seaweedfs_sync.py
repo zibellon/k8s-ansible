@@ -5,9 +5,10 @@ identity-secret-distribute,bucket-sync}.yaml. All compute (diff,
 JSON building, validation) lives here; Ansible task'и используют
 filters через {{ x | seaweedfs_<filter>(y) }} syntax, оставляя
 себе только orchestration (vault-get/put/delete, kubectl, loops).
-Auto-discovered by Ansible from playbook-relative filter_plugins/
-directory (no ansible.cfg required — verified empirically with
-ansible-core 2.20.x).
+Lives in repo-root filter_plugins/ directory. Discovered by Ansible
+via ansible.cfg [defaults] filter_plugins = filter_plugins setting
+(ansible.cfg in repo root; ansible-playbook always invoked with
+cwd=repo root per project convention).
 """
 import json
 try:
