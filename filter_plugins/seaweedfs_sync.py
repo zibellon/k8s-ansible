@@ -498,8 +498,6 @@ class FilterModule(object):
     """Ansible filter plugin entry point — registers all seaweedfs_* filters."""
     def filters(self):
         return {
-            'seaweedfs_parse_combined_json': _parse_combined_json,
-            'seaweedfs_extract_creds_by_name': _extract_creds_by_name,
             'seaweedfs_user_sync_full': seaweedfs_user_sync_full,
             'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,

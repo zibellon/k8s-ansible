@@ -13,6 +13,7 @@
 # делает full validation (Principal-not-dict per statement) + diff внутри.
 # Ansible task оркеструет только I/O: kubectl-get configmap, 6 compute calls,
 # kubectl exec (weed shell, aws s3api) per phase.
+# Admin creds extraction — Ansible-native chain (from_json + selectattr + first).
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation;
 # nested include_tasks (tasks-k8s-secret-get) inherits via Ansible scope.
@@ -190,11 +191,12 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Extract admin creds via filter chain (parse → extract → [seaweedfs_identity_admin.name])"
+- name: "[{{ dto_label_name }}] Extract admin creds via Ansible-native chain (no SeaweedFS-specific filters)"
   set_fact:
     "{{ _local_admin_creds_key }}": >-
-      {{ (lookup('vars', _local_admin_secret_json_key) | seaweedfs_parse_combined_json
-          | seaweedfs_extract_creds_by_name)[seaweedfs_identity_admin.name] }}
+      {{ ((lookup('vars', _local_admin_secret_json_key) | from_json).identities
+          | selectattr('name', 'equalto', seaweedfs_identity_admin.name)
+          | first).credentials[0] }}
   when: >-
     (lookup('vars', _local_policies_to_delete_key) | length > 0)
     or (lookup('vars', _local_policies_to_apply_key) | length > 0)
