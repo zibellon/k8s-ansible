@@ -39,16 +39,18 @@ all:
       tls:
         autogenerate: true
         renew: true
-      # ----- закомментировано как memo (chart defaults, оставлены для напоминания) -----
-      # affinity: {}
-      # nodeSelector: {}
-      # tolerations:
-      #   - key: drbd.linbit.com/lost-quorum
-      #     effect: NoSchedule
-      #   - key: drbd.linbit.com/force-io-error
-      #     effect: NoSchedule
-      # operator:
-      #   resources: {}
+      # --- Pod scheduling (defaults = empty; operator override через hosts-vars-override/) ---
+      nodeSelector: {}
+      affinity: {}
+      # tolerations: chart-default содержит 2 DRBD-rules:
+      #   - {key: drbd.linbit.com/lost-quorum,    effect: NoSchedule}
+      #   - {key: drbd.linbit.com/force-io-error, effect: NoSchedule}
+      # Мы переопределяем в пустой массив — operator-pod НЕ должен быть привязан
+      # к DRBD-troubled узлам.
+      tolerations: []
+      # --- Container resources (для контейнера `manager`) ---
+      operator:
+        resources: {}
 
     # --- PHASE: install-cluster ---
     linstor_cluster_helm_timeout: "15m"
