@@ -29,13 +29,18 @@
 # extracts admin AK+SK from combined JSON. Only fetched if any policy operation
 # needed (create/delete). Asserts Secret existence if needed — fail-fast hint.
 #
-# Sync phases (5 loops + ConfigMap update):
+# Sync phases (6 loops + ConfigMap update):
 #   A. Delete стейл buckets (weed shell s3.bucket.delete).
 #   B. Delete стейл policies kept buckets (aws s3api delete-bucket-policy).
 #   C. Create new buckets (weed shell s3.bucket.create -owner=<admin name>).
+#   C2. Apply fs.configure для new buckets (combined collection + replication).
 #   D. Apply policies (kept + new merged, aws s3api put-bucket-policy) — после create.
 #   E. Apply quotas всем target buckets с quota (weed shell s3.bucket.quota).
 #   F. Update ConfigMap state с new target snapshot.
+#
+# Pre-phase ASSERT: после compute calls, до Phase A — fail-fast если ЛЮБОЕ
+# immutable поле (collection или replication) изменилось на kept bucket vs state.
+# Sync aborts с detailed message, cluster intact, state не updated.
 #
 # NOTE про bucket delete: 's3.bucket.delete' в SeaweedFS shell не имеет флага
 # -force, но команда сама делает hard delete — CollectionDelete sweeps все
@@ -66,6 +71,7 @@
     _local_admin_secret_json_key: "_local_admin_secret_json"
     _local_admin_secret_exists_key: "_local_admin_secret_exists"
     _local_admin_creds_key: "_local_admin_creds"
+    _local_immutable_violations_key: "_local_immutable_violations"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -163,6 +169,35 @@
   run_once: true
   tags: [always]
 
+- name: "[{{ dto_label_name }}] Compute bucket immutable_violations via filter (collection + replication)"
+  set_fact:
+    "{{ _local_immutable_violations_key }}": >-
+      {{ '' | seaweedfs_buckets_immutable_violations(
+           lookup('vars', _local_target_buckets_key),
+           lookup('vars', _local_configmap_raw_key)
+         ) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert no immutable settings changes (collection/replication) — fail-fast"
+  assert:
+    that:
+      - lookup('vars', _local_immutable_violations_key) | length == 0
+    fail_msg: |
+      ERROR: bucket immutable settings (collection/replication) change attempts detected.
+      Immutable settings changes post-creation cause data fragmentation in SeaweedFS — sync aborted.
+
+      Violations ({{ lookup('vars', _local_immutable_violations_key) | length }} buckets):
+      {% for v in lookup('vars', _local_immutable_violations_key) %}
+        - {{ v.name }}: collection '{{ v.state_collection }}' → '{{ v.target_collection }}', replication '{{ v.state_replication }}' → '{{ v.target_replication }}'
+      {% endfor %}
+
+      To resolve: revert inventory target к state values OR migrate data manually + align inventory.
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[{{ dto_label_name }}] Get K8s Secret with admin creds (only if any policy op needed)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
   vars:
@@ -240,6 +275,19 @@
   loop: "{{ lookup('vars', _local_to_create_buckets_key) }}"
   loop_control:
     label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE C2: Apply immutable settings (collection + replication) for new buckets ---
+- name: "[{{ dto_label_name }}] Phase C2 — Apply fs.configure для new buckets (collection + replication)"
+  shell: |
+    echo "fs.configure -locationPrefix=/buckets/{{ item.name }} -collection={{ item.collection }} -replication={{ item.replication }} -apply" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ lookup('vars', _local_to_create_buckets_key) }}"
+  loop_control:
+    label: "{{ item.name }} → collection={{ item.collection }}, replication={{ item.replication }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]

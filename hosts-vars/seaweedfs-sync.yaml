@@ -129,12 +129,25 @@ all:
     # -apply' каждые 5 минут — см. charts/seaweedfs/quota-cron/.
     #
     # Schema per bucket:
-    #   name:   bucket name (DNS-compatible, lower-case).
-    #   quota:  OPTIONAL {enabled, size}.
+    #   name:        bucket name (DNS-compatible, lower-case) — required.
+    #   collection:  SeaweedFS collection name (group of volumes) — REQUIRED string.
+    #                Set via 'fs.configure -locationPrefix=/buckets/<n> -collection=<c> -apply'
+    #                после bucket.create (Phase C2). NEW writes пойдут в указанный collection.
+    #   replication: SeaweedFS replication code — REQUIRED 3-digit string '^[0-9]{3}$'.
+    #                Format XYZ: X=other DCs, Y=other racks (same DC), Z=other servers (same rack).
+    #                Total copies = 1 + sum digits. Examples: '000' (no rep), '001' (+1 same rack),
+    #                '100' (+1 other DC), '205' (8 total copies). Same fs.configure command (combined).
+    #   IMPORTANT — collection и replication immutable post-creation:
+    #                Change post-create технически работает (fs.configure applies к новым writes),
+    #                НО existing data остаётся в old configuration → data fragmentation.
+    #                Sync code FAIL-FAST если ЛЮБОЕ из immutable полей changed vs state:
+    #                assert после compute calls, до Phase A → sync aborts, cluster intact.
+    #                To resolve: revert inventory к state values OR migrate data manually + align.
+    #   quota:       OPTIONAL {enabled, size}.
     #     enabled: bool — true → apply size limit, false → disable (keep config).
     #     size:    human-readable размер (e.g. "100GiB", "5TiB") — sync конвертирует
     #              в MiB для weed shell.
-    #   policy: OPTIONAL AWS IAM policy document {Version, Statement: [...]} (один на bucket).
+    #   policy:      OPTIONAL AWS IAM policy document {Version, Statement: [...]} (один на bucket).
     #     Storage: filer Postgres metadata (entry.Extended["s3-bucket-policy"] —
     #     persistent через pod restart automatically).
     #     Если поле отсутствует — у bucket нет policy.
@@ -165,6 +178,8 @@ all:
     # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
     # seaweedfs_sync_buckets_extra:
     #   - name: bucket-1
+    #     collection: "general"
+    #     replication: "001"   # +1 копия в same rack
     #     quota:
     #       enabled: true
     #       size: "100GiB"
@@ -185,9 +200,13 @@ all:
     #           Action: ["s3:ListBucket"]
     #           Resource: ["arn:aws:s3:::bucket-1"]
     #   - name: bucket-2
+    #     collection: "general"
+    #     replication: "001"
     #     # quota опц — без quota = unlimited
     #     # policy опц — без policy = только default-deny (admin может всегда)
     #   - name: assets-public
+    #     collection: "public"
+    #     replication: "100"   # +1 копия в other DC (durable для public assets)
     #     quota:
     #       enabled: true
     #       size: "10GiB"

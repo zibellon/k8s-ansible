@@ -213,6 +213,8 @@ def test_buckets_to_delete_raises_on_principal_dict():
     """Edge: target bucket policy Principal is dict → validation raise."""
     target = [{
         'name': 'b1',
+        'collection': 'general',
+        'replication': '001',
         'policy': {'Version': '2012-10-17', 'Statement': [
             {'Effect': 'Allow', 'Principal': {'AWS': 'arn:1'}, 'Action': [], 'Resource': []},
         ]},
@@ -223,8 +225,8 @@ def test_buckets_to_delete_raises_on_principal_dict():
 
 def test_bucket_policies_to_delete_kept_lost_policy():
     """Happy: state had policy on b1, target has b1 без policy → delete-policy."""
-    state = '[{"name": "b1", "policy": {"Version": "2012-10-17"}}]'
-    target = [{'name': 'b1'}]
+    state = '[{"name": "b1", "collection": "general", "replication": "001", "policy": {"Version": "2012-10-17"}}]'
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001'}]
     result = sw.seaweedfs_bucket_policies_to_delete('', target, state)
     assert len(result) == 1
     assert result[0]['name'] == 'b1'
@@ -232,14 +234,14 @@ def test_bucket_policies_to_delete_kept_lost_policy():
 
 def test_bucket_policies_to_delete_empty_state():
     """Edge: no state → no policies to delete."""
-    result = sw.seaweedfs_bucket_policies_to_delete('', [{'name': 'b1'}], '')
+    result = sw.seaweedfs_bucket_policies_to_delete('', [{'name': 'b1', 'collection': 'general', 'replication': '001'}], '')
     assert result == []
 
 
 def test_bucket_policies_to_delete_kept_still_has_policy():
     """Edge: state had policy, target also has policy → not in to_delete (it's to_apply)."""
-    state = '[{"name": "b1", "policy": {"Version": "2012-10-17"}}]'
-    target = [{'name': 'b1', 'policy': {'Version': '2012-10-17'}}]
+    state = '[{"name": "b1", "collection": "general", "replication": "001", "policy": {"Version": "2012-10-17"}}]'
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001', 'policy': {'Version': '2012-10-17'}}]
     result = sw.seaweedfs_bucket_policies_to_delete('', target, state)
     assert result == []
 
@@ -259,8 +261,8 @@ def test_buckets_to_create_empty_target():
 
 def test_buckets_to_create_all_kept():
     """Edge: all target in state → no creates."""
-    state = '[{"name": "b1"}]'
-    target = [{'name': 'b1'}]
+    state = '[{"name": "b1", "collection": "general", "replication": "001"}]'
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001'}]
     result = sw.seaweedfs_buckets_to_create('', target, state)
     assert result == []
 
@@ -280,7 +282,7 @@ def test_bucket_policies_to_apply_empty_target():
 
 def test_bucket_policies_to_apply_no_policies():
     """Edge: target buckets без policy field → empty list."""
-    target = [{'name': 'b1'}, {'name': 'b2'}]
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001'}, {'name': 'b2', 'collection': 'general', 'replication': '001'}]
     result = sw.seaweedfs_bucket_policies_to_apply('', target, '')
     assert result == []
 
@@ -296,21 +298,21 @@ def test_buckets_quotas_to_apply_enrich_size_mib(sample_target_buckets):
 
 def test_buckets_quotas_to_apply_disabled():
     """Edge: quota.enabled=False → size_mib=0."""
-    target = [{'name': 'b1', 'quota': {'enabled': False}}]
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001', 'quota': {'enabled': False}}]
     result = sw.seaweedfs_buckets_quotas_to_apply('', target, '')
     assert result[0]['quota']['size_mib'] == 0
 
 
 def test_buckets_quotas_to_apply_no_quota():
     """Edge: target без quota field → not in result."""
-    target = [{'name': 'b1'}]
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001'}]
     result = sw.seaweedfs_buckets_quotas_to_apply('', target, '')
     assert result == []
 
 
 def test_buckets_quotas_to_apply_invalid_size_raises():
     """Edge: invalid quota.size unit → AnsibleFilterError."""
-    target = [{'name': 'b1', 'quota': {'enabled': True, 'size': '100GB'}}]
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001', 'quota': {'enabled': True, 'size': '100GB'}}]
     with pytest.raises(AnsibleFilterError, match='Unsupported'):
         sw.seaweedfs_buckets_quotas_to_apply('', target, '')
 
@@ -329,3 +331,76 @@ def test_buckets_new_state_json_empty_target():
     """Edge: empty target → '[]' string."""
     result = sw.seaweedfs_buckets_new_state_json('', [], '')
     assert json.loads(result) == []
+# =============================================================================
+# bucket-sync (Layer 2) — collection + replication immutable settings (v7)
+# =============================================================================
+
+def test_buckets_validation_raises_on_missing_collection():
+    """Edge: bucket без collection field → validation raise."""
+    target = [{'name': 'b1', 'replication': '001'}]
+    with pytest.raises(AnsibleFilterError, match='missing required .collection'):
+        sw.seaweedfs_buckets_to_delete('', target, '')
+
+
+def test_buckets_validation_raises_on_missing_replication():
+    """Edge: bucket без replication field → validation raise."""
+    target = [{'name': 'b1', 'collection': 'general'}]
+    with pytest.raises(AnsibleFilterError, match='missing required .replication'):
+        sw.seaweedfs_buckets_to_delete('', target, '')
+
+
+def test_buckets_validation_raises_on_invalid_replication_format():
+    """Edge: replication invalid format ("01", "abc", int 1) → validation raise."""
+    for invalid in ['01', 'abc', '1', 1, '0011', '']:
+        target = [{'name': 'b1', 'collection': 'general', 'replication': invalid}]
+        with pytest.raises(AnsibleFilterError, match='Invalid replication format'):
+            sw.seaweedfs_buckets_to_delete('', target, '')
+
+
+def test_buckets_immutable_violations_collection_only():
+    """Happy: kept bucket с changed collection → 1 violation entry."""
+    state = '[{"name": "b1", "collection": "general", "replication": "001"}]'
+    target = [{'name': 'b1', 'collection': 'archive', 'replication': '001'}]
+    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
+    assert len(result) == 1
+    assert result[0]['name'] == 'b1'
+    assert result[0]['state_collection'] == 'general'
+    assert result[0]['target_collection'] == 'archive'
+
+
+def test_buckets_immutable_violations_replication_only():
+    """Happy: kept bucket с changed replication → 1 violation entry."""
+    state = '[{"name": "b1", "collection": "general", "replication": "001"}]'
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '100'}]
+    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
+    assert len(result) == 1
+    assert result[0]['state_replication'] == '001'
+    assert result[0]['target_replication'] == '100'
+
+
+def test_buckets_immutable_violations_both_changed():
+    """Happy: kept bucket с обоими changed → single unified violation entry."""
+    state = '[{"name": "b1", "collection": "general", "replication": "001"}]'
+    target = [{'name': 'b1', 'collection': 'archive', 'replication': '100'}]
+    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
+    assert len(result) == 1
+    assert result[0]['state_collection'] == 'general'
+    assert result[0]['target_collection'] == 'archive'
+    assert result[0]['state_replication'] == '001'
+    assert result[0]['target_replication'] == '100'
+
+
+def test_buckets_immutable_violations_no_change():
+    """Edge: оба unchanged → empty list."""
+    state = '[{"name": "b1", "collection": "general", "replication": "001"}]'
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001'}]
+    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
+    assert result == []
+
+
+def test_buckets_immutable_violations_new_bucket_no_violation():
+    """Edge: new bucket (not in state) → не в violations list. Идёт через Phase C2."""
+    state = '[]'
+    target = [{'name': 'b1', 'collection': 'general', 'replication': '001'}]
+    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
+    assert result == []

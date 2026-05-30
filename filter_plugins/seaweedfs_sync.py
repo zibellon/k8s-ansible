@@ -11,6 +11,7 @@ via ansible.cfg [defaults] filter_plugins = filter_plugins setting
 cwd=repo root per project convention).
 """
 import json
+import re
 import secrets
 try:
     from ansible.errors import AnsibleFilterError
@@ -347,6 +348,7 @@ def _compute_bucket_diff(current_state, target_buckets):
             if 'policy' in target_by_name[n]
         ],
         'quotas_to_apply': [b for b in target_buckets if 'quota' in b],
+        'immutable_violations': _compute_bucket_immutable_violations(current_state, target_buckets),
     }
 
 def _quota_size_to_mib(size_str):
@@ -400,6 +402,67 @@ def _enrich_quotas_with_size_mib(quota_buckets):
         new_bucket['quota'] = quota
         result.append(new_bucket)
     return result
+
+_REPLICATION_FORMAT_RE = re.compile(r'^[0-9]{3}$')
+
+def _validate_replication_format(value):
+    """Raise AnsibleFilterError если value не matches '^[0-9]{3}$' regex.
+    Used by _validate_buckets_have_collection_and_replication для каждого bucket."""
+    if not isinstance(value, str) or not _REPLICATION_FORMAT_RE.match(value):
+        raise AnsibleFilterError(
+            "Invalid replication format: '{0}' (type {1}). "
+            "Must be 3-digit string matching '^[0-9]{{3}}$'. "
+            "Examples: '000' (no rep), '001' (+1 same rack), '100' (+1 other DC), "
+            "'205' (8 total copies). See SeaweedFS replication docs.".format(value, type(value).__name__)
+        )
+
+def _validate_buckets_have_collection_and_replication(target_buckets):
+    """Iterate target buckets, validate presence of collection (non-empty string)
+    и replication (3-digit format). Called by every public Layer 2 filter."""
+    for bucket in target_buckets:
+        name = bucket.get('name', '<unnamed>')
+        collection = bucket.get('collection')
+        if not isinstance(collection, str) or not collection:
+            raise AnsibleFilterError(
+                "Bucket '{0}' missing required 'collection' field "
+                "(non-empty string). See hosts-vars/seaweedfs-sync.yaml SECTION 2 "
+                "schema documentation.".format(name)
+            )
+        replication = bucket.get('replication')
+        if replication is None:
+            raise AnsibleFilterError(
+                "Bucket '{0}' missing required 'replication' field. "
+                "Must be 3-digit string. See hosts-vars/seaweedfs-sync.yaml "
+                "SECTION 2 schema documentation.".format(name)
+            )
+        _validate_replication_format(replication)
+
+def _compute_bucket_immutable_violations(current_state, target_buckets):
+    """Compute kept buckets где collection OR replication changed vs state.
+    Unified violations list — Used by YAML assert для fail-fast ERROR + abort.
+
+    Returns: list of {name, state_collection, target_collection, state_replication, target_replication}
+    dicts. Empty list = no violations = sync can proceed."""
+    target_by_name = {b['name']: b for b in target_buckets}
+    state_by_name = {b['name']: b for b in current_state}
+    kept_names = set(target_by_name) & set(state_by_name)
+    violations = []
+    for name in kept_names:
+        state_entry = state_by_name[name]
+        target_entry = target_by_name[name]
+        state_collection = state_entry.get('collection')
+        target_collection = target_entry.get('collection')
+        state_replication = state_entry.get('replication')
+        target_replication = target_entry.get('replication')
+        if state_collection != target_collection or state_replication != target_replication:
+            violations.append({
+                'name': name,
+                'state_collection': state_collection,
+                'target_collection': target_collection,
+                'state_replication': state_replication,
+                'target_replication': target_replication,
+            })
+    return violations
 # =============================================================================
 # Public Layer 2 filters — stateless bucket-sync orchestrators
 # =============================================================================
@@ -417,6 +480,7 @@ def seaweedfs_buckets_to_delete(vault_raw_json, target_buckets, configmap_raw_js
     Raises:
         AnsibleFilterError if any target bucket has Principal-dict in policy Statement.
     """
+    _validate_buckets_have_collection_and_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -431,6 +495,7 @@ def seaweedfs_bucket_policies_to_delete(vault_raw_json, target_buckets, configma
     Returns:
         list of target {name, quota?} entries (no policy field — that's the point).
     """
+    _validate_buckets_have_collection_and_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -445,6 +510,7 @@ def seaweedfs_buckets_to_create(vault_raw_json, target_buckets, configmap_raw_js
     Returns:
         list of target {name, quota?, policy?} entries (target - state).
     """
+    _validate_buckets_have_collection_and_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -460,6 +526,7 @@ def seaweedfs_bucket_policies_to_apply(vault_raw_json, target_buckets, configmap
         list of target {name, quota?, policy} entries — kept_with_policy ∪ new_with_policy.
         One AWS CLI command (put-bucket-policy) для всех. Phase ordering: после create.
     """
+    _validate_buckets_have_collection_and_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -475,6 +542,7 @@ def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_
         list of {name, quota: {enabled, size, size_mib}, ...} entries — quota.size_mib
         pre-computed int (MiB), ready for Phase E weed shell -sizeMB=<X>.
     """
+    _validate_buckets_have_collection_and_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     quota_buckets = [b for b in target_buckets if 'quota' in b]
     return _enrich_quotas_with_size_mib(quota_buckets)
@@ -489,8 +557,34 @@ def seaweedfs_buckets_new_state_json(vault_raw_json, target_buckets, configmap_r
         str — json.dumps(target_buckets, sort_keys=True). Phase F kubectl apply
         consumes this directly без |to_json.
     """
+    _validate_buckets_have_collection_and_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     return json.dumps(target_buckets, sort_keys=True)
+
+
+def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, configmap_raw_json):
+    """Detect immutable settings (collection/replication) changes vs state.
+
+    Stateless filter: full validation + diff computation inside. Used by YAML
+    assert для fail-fast ERROR + abort if non-empty list returned.
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency.
+        target_buckets: list — full target from inventory (base + extra).
+        configmap_raw_json: str — ConfigMap state raw stdout.
+
+    Returns:
+        list of {name, state_collection, target_collection, state_replication, target_replication}
+        dicts — kept buckets с changed collection OR replication. Empty = no violations.
+
+    Raises:
+        AnsibleFilterError if validation fails (missing collection/replication field,
+        invalid replication format, or Principal-dict in policy).
+    """
+    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_principal_not_dict_in_buckets(target_buckets)
+    state = _parse_configmap_state(configmap_raw_json)
+    return _compute_bucket_immutable_violations(state, target_buckets)
 # =============================================================================
 # Ansible FilterModule registration
 # =============================================================================
@@ -508,4 +602,5 @@ class FilterModule(object):
             'seaweedfs_bucket_policies_to_apply': seaweedfs_bucket_policies_to_apply,
             'seaweedfs_buckets_quotas_to_apply': seaweedfs_buckets_quotas_to_apply,
             'seaweedfs_buckets_new_state_json': seaweedfs_buckets_new_state_json,
+            'seaweedfs_buckets_immutable_violations': seaweedfs_buckets_immutable_violations,
         }
