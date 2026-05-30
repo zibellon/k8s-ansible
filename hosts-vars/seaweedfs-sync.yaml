@@ -98,6 +98,24 @@ all:
     #     # без extra_vault_paths — distribute не выполняется для bob
 
     # ------
+    # --- Pre-built opt-in для GitLab + GitLab-Runner identities ---
+    # Если используете SeaweedFS как S3 backend для GitLab / gitlab-runner — раскомментируйте
+    # этот блок в своём hosts-vars-override/seaweedfs-sync.yaml. Это создаст identities
+    # 'gitlab' + 'gitlab-runner', distribute их creds в Vault через identity-distribute
+    # в paths из gitlab/gitlab-runner inventory ESO secrets (variable references — single
+    # source of truth, не hardcode). Альтернатива: внешнее S3 (cloud) — operator вручную
+    # делает 'vault kv put' для тех же resolved путей.
+    # seaweedfs_identities_extra:
+    #   - name: gitlab
+    #     actions: []   # policy-only principal (доступ только через bucket policy Allow)
+    #     extra_vault_paths:
+    #       - "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
+    #   - name: gitlab-runner
+    #     actions: []
+    #     extra_vault_paths:
+    #       - "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}"
+
+    # ------
     # SECTION 2: Buckets + quotas + policies
     # ------
     # S3 buckets + per-bucket SeaweedFS-native quotas + optional AWS IAM policy.
@@ -223,3 +241,123 @@ all:
     #           Principal: "*"
     #           Action: ["s3:ListBucket"]
     #           Resource: ["arn:aws:s3:::assets-public"]
+
+    # ------
+    # --- Pre-built opt-in для GitLab + GitLab-Runner buckets ---
+    # Если используете SeaweedFS как S3 backend для GitLab / gitlab-runner — раскомментируйте
+    # этот блок в своём hosts-vars-override/seaweedfs-sync.yaml. 6 buckets с full-access
+    # policies (5 для GitLab user, 1 для gitlab-runner user). Collection='gitlab'/'gitlab-runner',
+    # replication='001' (+1 копия в same rack — measure baseline durability; для более высокой
+    # надёжности используйте '100' cross-DC или '101' rack+server).
+    # Альтернатива: внешнее S3 — operator сам создаёт buckets вне Ansible.
+    # seaweedfs_sync_buckets_extra:
+    #   # --- GitLab buckets (5) — owned by 'gitlab' user ---
+    #   - name: gitlab-registry
+    #     collection: "gitlab"
+    #     replication: "001"
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "GitLabFullAccess"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/gitlab"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-registry"
+    #             - "arn:aws:s3:::gitlab-registry/*"
+    #   - name: gitlab-artifacts
+    #     collection: "gitlab"
+    #     replication: "001"
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "GitLabFullAccess"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/gitlab"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-artifacts"
+    #             - "arn:aws:s3:::gitlab-artifacts/*"
+    #   - name: gitlab-uploads
+    #     collection: "gitlab"
+    #     replication: "001"
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "GitLabFullAccess"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/gitlab"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-uploads"
+    #             - "arn:aws:s3:::gitlab-uploads/*"
+    #   - name: gitlab-packages
+    #     collection: "gitlab"
+    #     replication: "001"
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "GitLabFullAccess"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/gitlab"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-packages"
+    #             - "arn:aws:s3:::gitlab-packages/*"
+    #   - name: gitlab-backups
+    #     collection: "gitlab"
+    #     replication: "001"
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "GitLabFullAccess"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/gitlab"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-backups"
+    #             - "arn:aws:s3:::gitlab-backups/*"
+    #   # --- GitLab-Runner cache (1) — owned by 'gitlab-runner' user ---
+    #   - name: gitlab-runner-cache
+    #     collection: "gitlab-runner"
+    #     replication: "001"
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "GitLabRunnerFullAccess"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/gitlab-runner"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-runner-cache"
+    #             - "arn:aws:s3:::gitlab-runner-cache/*"
