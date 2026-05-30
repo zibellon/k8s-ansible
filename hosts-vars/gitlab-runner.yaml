@@ -40,30 +40,31 @@ all:
               key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/token"
               property: "{{ gitlab_runner_auth_token_secret_key_token }}"
 
-    # SPECIAL: minio_runner_cache remaps access_key/secret_key → accesskey/secretkey
+    # SPECIAL: s3 cache creds remaps accessKey/secretKey → accesskey/secretkey
     # as expected by the official gitlab-runner chart runners.cache.secretName.
-    gitlab_runner_minio_cache_secret_key_access_key: "access_key"
-    gitlab_runner_minio_cache_secret_key_secret_key: "secret_key"
-    gitlab_runner_minio_cache_secret_key_bucket_name: "bucket_name"
-    gitlab_runner_secret_minio_cache_creds:
-      external_secret_name: "eso-gitlab-runner-minio-cache-creds"
-      vault_path: "/gitlab-runner/minio/cache"
+    # Reads from /gitlab-runner/s3-storage (single source — works для SeaweedFS sync OR cloud S3).
+    gitlab_runner_s3_secret_key_username: "username"
+    gitlab_runner_s3_secret_key_access_key: "accessKey"
+    gitlab_runner_s3_secret_key_secret_key: "secretKey"
+    gitlab_runner_secret_s3_creds:
+      external_secret_name: "eso-gitlab-runner-s3-creds"
+      vault_path: "/gitlab-runner/s3-storage"
       body:
         target:
-          name: "eso-gitlab-runner-minio-cache-creds"
+          name: "eso-gitlab-runner-s3-creds"
         data:
           - secretKey: accesskey
             remoteRef:
-              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
-              property: "{{ gitlab_runner_minio_cache_secret_key_access_key }}"
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/s3-storage"
+              property: "{{ gitlab_runner_s3_secret_key_access_key }}"
           - secretKey: secretkey
             remoteRef:
-              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/minio/cache"
-              property: "{{ gitlab_runner_minio_cache_secret_key_secret_key }}"
+              key: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}/data/gitlab-runner/s3-storage"
+              property: "{{ gitlab_runner_s3_secret_key_secret_key }}"
 
     eso_vault_integration_gitlab_runner_secrets:
       - "{{ gitlab_runner_secret_auth_token }}"
-      - "{{ gitlab_runner_secret_minio_cache_creds }}"
+      - "{{ gitlab_runner_secret_s3_creds }}"
 
     eso_vault_integration_gitlab_runner_secrets_extra: []
     # === SECTION 3 ===
@@ -118,7 +119,7 @@ all:
     gitlab_runner_helper_image: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-alpine-v17.11.4"
     gitlab_runner_dind_image: "docker.io/docker:29.3.0"
     gitlab_runner_dind_dind_image: "docker.io/docker:29.3.0-dind"
-    gitlab_runner_minio_cache_bucket: "runner-cache"
+    gitlab_runner_s3_cache_bucket: "gitlab-runner-cache"
     gitlab_runner_config: |
       [[runners]]
         executor = "kubernetes"
@@ -131,10 +132,10 @@ all:
           Shared = false
 
           [runners.cache.s3]
-            ServerAddress = "gitlab-minio.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:9000"
+            ServerAddress = "seaweedfs-s3.{{ seaweedfs_namespace }}.svc.{{ cluster_dns_domain }}:8333"
             Insecure = false
-            BucketName = "{{ gitlab_runner_minio_cache_bucket }}"
-            BucketLocation = "{{ gitlab_minio_s3_region }}"
+            BucketName = "{{ gitlab_runner_s3_cache_bucket }}"
+            BucketLocation = "{{ gitlab_s3_region }}"
             PathStyle = true
 
         [runners.kubernetes]
@@ -168,7 +169,7 @@ all:
       runners:
         secret: "{{ gitlab_runner_secret_auth_token.body.target.name }}"
         cache:
-          secretName: "{{ gitlab_runner_secret_minio_cache_creds.body.target.name }}"
+          secretName: "{{ gitlab_runner_secret_s3_creds.body.target.name }}"
         config: "{{ gitlab_runner_config }}"
       rbac:
         create: true

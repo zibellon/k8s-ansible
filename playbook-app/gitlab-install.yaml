@@ -2,7 +2,7 @@
 # Install GitLab (Production Helm Chart)
 # Steps:
 #   1. gitlab/pre: Vault initial secrets + ESO resources (NetworkPolicies, ServiceAccount, SecretStore, ExternalSecrets)
-#   2. gitlab: PostgreSQL + Redis + MinIO + MinIO setup + GitLab (official chart)
+#   2. gitlab: PostgreSQL + Redis + GitLab (official chart, external S3 via ESO)
 #   3. gitlab/post: Ingress (Traefik) + HAProxy SSH
 #
 # Usage (tags):
@@ -35,15 +35,8 @@
     _local_gitlab_redis_vault_exists_key: "_local_gitlab_redis_vault_exists"
     _local_gitlab_redis_password_key: "_local_gitlab_redis_password"
     _local_gitlab_redis_args_key: "_local_gitlab_redis_args"
-    _local_gitlab_minio_root_vault_key: "_local_gitlab_minio_root_vault"
-    _local_gitlab_minio_root_vault_exists_key: "_local_gitlab_minio_root_vault_exists"
-    _local_gitlab_minio_root_password_generated_key: "_local_gitlab_minio_root_password_generated"
-    _local_minio_root_username_key: "_local_minio_root_username"
-    _local_minio_root_username_exists_key: "_local_minio_root_username_exists"
-    _local_minio_root_password_key: "_local_minio_root_password"
-    _local_minio_root_password_exists_key: "_local_minio_root_password_exists"
-    _local_gitlab_registry_access_key_vault_key: "_local_gitlab_registry_access_key_vault"
-    _local_gitlab_registry_access_key_vault_exists_key: "_local_gitlab_registry_access_key_vault_exists"
+    _local_gitlab_s3_access_key_vault_key: "_local_gitlab_s3_access_key_vault"
+    _local_gitlab_s3_access_key_vault_exists_key: "_local_gitlab_s3_access_key_vault_exists"
     _local_gitlab_helm_chart_source_key: "_local_gitlab_helm_chart_source"
 
   tasks:
@@ -362,236 +355,59 @@
       tags: [redis]
 
     # =========================================================================
-    # STEP 4: INSTALL MINIO
+    # STEP 4: VERIFY S3 CREDS IN VAULT (provisioned via SeaweedFS sync OR cloud S3 manual)
     # =========================================================================
 
-    # ----- MinIO root credentials -----
-    - name: "[gitlab-minio-secrets] Get MinIO root credentials from Vault"
+    - name: "[gitlab-s3-validate] Check S3 creds in Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
       vars:
-        dto_label_name: "gitlab-minio-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
-        dto_vault_get_field: "{{ gitlab_minio_root_secret_key_password }}"
-        dto_vault_get_res_fact_name: "{{ _local_gitlab_minio_root_vault_key }}"
-        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_minio_root_vault_exists_key }}"
-      tags: [minio]
+        dto_label_name: "gitlab-s3-validate"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
+        dto_vault_get_field: "{{ gitlab_s3_secret_key_access_key }}"
+        dto_vault_get_res_fact_name: "{{ _local_gitlab_s3_access_key_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_s3_access_key_vault_exists_key }}"
+      tags: [install]
 
-    - name: "[gitlab-minio-secrets] Generate MinIO root password"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-secrets"
-        dto_generate_fact_name: "{{ _local_gitlab_minio_root_password_generated_key }}"
-      when: not lookup('vars', _local_gitlab_minio_root_vault_exists_key)
-      tags: [minio]
-
-    - name: "[gitlab-minio-secrets] Store MinIO root credentials in Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
-        dto_vault_put_data: >-
-          {{ {
-               gitlab_minio_root_secret_key_username: gitlab_minio_root_user,
-               gitlab_minio_root_secret_key_password: lookup('vars', _local_gitlab_minio_root_password_generated_key)
-             } }}
-      when: not lookup('vars', _local_gitlab_minio_root_vault_exists_key)
-      tags: [minio]
-
-    - name: "[gitlab-minio-secrets] Trigger ESO sync"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-secrets"
-        dto_eso_sync_namespace: "{{ gitlab_namespace }}"
-      tags: [minio]
-
-    - name: "[gitlab-minio-secrets] Wait for secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-secrets"
-        dto_wait_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
-        dto_wait_secret_namespace: "{{ gitlab_namespace }}"
-      tags: [minio]
-
-    # ------------------
-    # ---INSTALL
-    # ------------------
-
-    - name: "[gitlab-minio] Copy chart to remote"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
-      vars:
-        dto_label_name: "gitlab-minio"
-        dto_chart_name: "minio"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/gitlab/minio/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab/minio"
-      tags: [minio]
-
-    - name: "[gitlab-minio] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
-      vars:
-        dto_label_name: "gitlab-minio"
-        dto_dir: "{{ remote_charts_dir }}/gitlab/minio"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ gitlab_minio_helm_values | to_nice_yaml }}"
-      tags: [minio]
-
-    - name: "[gitlab-minio] Build kustomize artifact"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
-      vars:
-        dto_label_name: "gitlab-minio"
-        dto_release_name: "gitlab-minio"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/gitlab/minio"
-        dto_values_file_path: "{{ remote_charts_dir }}/gitlab/minio/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/gitlab/minio-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/gitlab/minio-k"
-        dto_patches_list: "{{ gitlab_minio_kustomize_patches }}"
-        dto_target_namespace: "{{ gitlab_namespace }}"
-      tags: [minio]
-
-    - name: "[gitlab-minio] Install via Helm (async)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
-      vars:
-        dto_label_name: "gitlab-minio"
-        dto_helm_command: >
-          helm upgrade --install gitlab-minio {{ remote_charts_dir }}/gitlab/minio-k
-          --namespace {{ gitlab_namespace }}
-          --create-namespace
-          --cleanup-on-fail
-          --atomic
-          --wait
-          --timeout {{ gitlab_minio_helm_timeout }}
-      tags: [minio]
-
-    - name: "[gitlab-minio] Wait for rollout to be ready"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
-      vars:
-        dto_label_name: "gitlab-minio"
-        dto_rollout_namespace: "{{ gitlab_namespace }}"
-        dto_rollout_timeout: "{{ gitlab_minio_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - deployment.apps/gitlab-minio
-      tags: [minio]
-
-    # =========================================================================
-    # STEP 5: MINIO SETUP (Buckets and Access Keys)
-    # =========================================================================
-
-    - name: "[gitlab-minio-setup] Get MinIO pod name"
-      command: >
-        kubectl get pods -n {{ gitlab_namespace }}
-        -l app.kubernetes.io/name=gitlab-minio
-        -o jsonpath='{.items[0].metadata.name}'
-      register: _local_minio_pod_name
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [minio]
-
-    - name: "[gitlab-minio-setup] Get MinIO root username from secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-setup"
-        dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
-        dto_secret_field: "username"
-        dto_secret_res_fact_name: "{{ _local_minio_root_username_key }}"
-        dto_secret_res_exists_fact_name: "{{ _local_minio_root_username_exists_key }}"
-      tags: [minio]
-
-    - name: "[gitlab-minio-setup] Get MinIO root password from secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-setup"
-        dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
-        dto_secret_field: "password"
-        dto_secret_res_fact_name: "{{ _local_minio_root_password_key }}"
-        dto_secret_res_exists_fact_name: "{{ _local_minio_root_password_exists_key }}"
-      tags: [minio]
-
-    - name: "[gitlab-minio-setup] Assert MinIO root credentials are present"
+    - name: "[gitlab-s3-validate] Assert S3 creds exist (fail-fast если отсутствуют)"
       assert:
         that:
-          - lookup('vars', _local_minio_root_username_exists_key)
-          - lookup('vars', _local_minio_root_password_exists_key)
-        fail_msg: "MinIO root credentials not found in secret {{ gitlab_secret_minio_root_creds.body.target.name }} (namespace {{ gitlab_namespace }})"
+          - lookup('vars', _local_gitlab_s3_access_key_vault_exists_key)
+        fail_msg: |
+          ERROR: GitLab S3 creds missing в Vault path '{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}'.
+          Друг оператор, нет данных для авторизации в S3-storage.
+
+          Вариант A (SeaweedFS sync) — раскомментируй opt-in блоки в своём
+          hosts-vars-override/seaweedfs-sync.yaml (см. hosts-vars/seaweedfs-sync.yaml
+          SECTION 1 + SECTION 2 — Pre-built opt-in для GitLab + GitLab-Runner), затем:
+            ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+              playbook-app/seaweedfs-install.yaml \
+              --tags user-sync,identity-distribute,bucket-sync
+
+          Вариант B (внешний S3 — cloud/etc.):
+            vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }} \
+              {{ gitlab_s3_secret_key_username }}=<username> \
+              {{ gitlab_s3_secret_key_access_key }}=<accessKey> \
+              {{ gitlab_s3_secret_key_secret_key }}=<secretKey>
+
+          Затем повтори ansible-playbook gitlab-install.yaml.
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      tags: [minio]
+      tags: [install]
 
-    - name: "[gitlab-minio-setup] Configure mc alias"
-      command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_minio_pod_name.stdout }} --
-        mc alias set myminio http://localhost:9000
-        '{{ lookup('vars', _local_minio_root_username_key) }}'
-        '{{ lookup('vars', _local_minio_root_password_key) }}'
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [minio]
-
-    # Create buckets
-    - name: "[gitlab-minio-setup] Create buckets"
-      command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_minio_pod_name.stdout }} --
-        mc mb myminio/{{ item }} --ignore-existing
-      loop:
-        - "{{ gitlab_minio_registry_bucket }}"
-        - "{{ gitlab_minio_artifacts_bucket }}"
-        - "{{ gitlab_minio_uploads_bucket }}"
-        - "{{ gitlab_minio_packages_bucket }}"
-        - "{{ gitlab_minio_backups_bucket }}"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [minio]
-
-    # Create access keys for registry
-    - name: "[gitlab-minio-setup] Get registry access key from Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-setup"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
-        dto_vault_get_field: "{{ gitlab_minio_registry_secret_key_access_key }}"
-        dto_vault_get_res_fact_name: "{{ _local_gitlab_registry_access_key_vault_key }}"
-        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_registry_access_key_vault_exists_key }}"
-      tags: [minio]
-
-    - name: "[gitlab-minio-setup] Create access key for registry"
-      command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ lookup('vars', _local_minio_root_username_key) }}
-        --name 'registry-key' --json
-      register: _local_registry_accesskey_result
-      when: not lookup('vars', _local_gitlab_registry_access_key_vault_exists_key)
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [minio]
-
-    - name: "[gitlab-minio-setup] Store registry access key in Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
-      vars:
-        dto_label_name: "gitlab-minio-setup"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
-        dto_vault_put_data: >-
-          {{ {
-               gitlab_minio_registry_secret_key_access_key: (_local_registry_accesskey_result.stdout | from_json).accessKey,
-               gitlab_minio_registry_secret_key_secret_key: (_local_registry_accesskey_result.stdout | from_json).secretKey,
-               gitlab_minio_registry_secret_key_bucket_name: gitlab_minio_registry_bucket
-             } }}
-      when: not lookup('vars', _local_gitlab_registry_access_key_vault_exists_key)
-      tags: [minio]
-
-    - name: "[gitlab-minio-setup] Trigger ESO sync"
+    - name: "[gitlab-s3-validate] Trigger ESO sync (materialize K8s Secret)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
       vars:
-        dto_label_name: "gitlab-minio-setup"
+        dto_label_name: "gitlab-s3-validate"
         dto_eso_sync_namespace: "{{ gitlab_namespace }}"
-      tags: [minio]
+      tags: [install]
 
-    - name: "[gitlab-minio-setup] Wait for secret"
+    - name: "[gitlab-s3-validate] Wait for K8s Secret eso-gitlab-s3-creds materialized"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
-        dto_label_name: "gitlab-minio-setup"
-        dto_wait_secret_name: "{{ gitlab_secret_minio_registry_creds.body.target.name }}"
+        dto_label_name: "gitlab-s3-validate"
+        dto_wait_secret_name: "{{ gitlab_secret_s3_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
-      tags: [minio]
+      tags: [install]
 
     # =========================================================================
     # STEP 6: INSTALL GITLAB (Official Helm Chart)
@@ -754,8 +570,7 @@
           - "Credentials stored in Vault:"
           - "  PostgreSQL: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
           - "  Redis: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
-          - "  MinIO root: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_root_creds.vault_path }}"
-          - "  MinIO registry: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_minio_registry_creds.vault_path }}"
+          - "  S3 storage: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
           - ""
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."

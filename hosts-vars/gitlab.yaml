@@ -13,14 +13,10 @@ all:
     gitlab_registry_https_secret_name: "cert-gitlab-registry"
     gitlab_pages_domain: "gitlab-pages-k8s-v2.drawapp.ru"
     gitlab_pages_https_secret_name: "cert-gitlab-pages"
-    gitlab_minio_console_domain: "gitlab-minio-k8s-v2.drawapp.ru"
-    gitlab_minio_console_https_secret_name: "cert-gitlab-minio-console"
-    gitlab_minio_api_domain: "gitlab-minio-api-k8s-v2.drawapp.ru"
-    gitlab_minio_api_https_secret_name: "cert-gitlab-minio-api"
     gitlab_ingress_class_name: "traefik-lb"
     gitlab_vpn_only_enabled: false
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
-    # Один на весь gitlab (все 5 доменов: UI/registry/pages/minio-api/minio-console).
+    # Один на весь gitlab (все 3 домена: UI/registry/pages).
     # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
     # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     gitlab_cert_manager_issuer:
@@ -84,48 +80,29 @@ all:
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
         enabled: true
-    gitlab_minio_api_ingress_config:
-      domain: "{{ gitlab_minio_api_domain }}"
-      tlsSecretName: "{{ gitlab_minio_api_https_secret_name }}"
-      ingress:
-        enabled: true
-        ingressClass: "{{ gitlab_ingress_class_name }}"
-        tlsEnabled: true
-        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
-        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: true
-    gitlab_minio_console_ingress_config:
-      domain: "{{ gitlab_minio_console_domain }}"
-      tlsSecretName: "{{ gitlab_minio_console_https_secret_name }}"
-      ingress:
-        enabled: true
-        ingressClass: "{{ gitlab_ingress_class_name }}"
-        tlsEnabled: true
-        vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
-        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: true
     gitlab_postgresql_username: "gitlab"
     gitlab_postgresql_database_name: "gitlabhq_production"
     gitlab_postgresql_secret_key_username: "username"
     gitlab_postgresql_secret_key_password: "password"
     gitlab_redis_secret_key_password: "password"
     gitlab_redis_secret_key_redis_args: "redis_args"
-    gitlab_minio_root_user: "admin"
-    gitlab_minio_root_secret_key_username: "username"
-    gitlab_minio_root_secret_key_password: "password"
-    gitlab_minio_registry_bucket: "registry"
-    gitlab_minio_artifacts_bucket: "gitlab-artifacts"
-    gitlab_minio_uploads_bucket: "gitlab-uploads"
-    gitlab_minio_packages_bucket: "gitlab-packages"
-    gitlab_minio_backups_bucket: "gitlab-backups"
-    gitlab_minio_s3_endpoint: "http://gitlab-minio:9000"
-    gitlab_minio_s3_region: "us-east-1"
-    gitlab_minio_s3_path_style: true
-    gitlab_minio_registry_secret_key_access_key: "access_key"
-    gitlab_minio_registry_secret_key_secret_key: "secret_key"
-    gitlab_minio_registry_secret_key_bucket_name: "bucket_name"
+    # S3 storage backend (replaces MinIO sub-chart).
+    # Endpoint — SeaweedFS S3 service в seaweedfs namespace (default).
+    # Operator переопределяет в hosts-vars-override/gitlab.yaml если использует cloud S3.
+    gitlab_s3_endpoint: "http://seaweedfs-s3.{{ seaweedfs_namespace }}.svc.{{ cluster_dns_domain }}:8333"
+    gitlab_s3_region: "us-east-1"
+    gitlab_s3_path_style: true
+    # S3 bucket names (hardcoded, mirror seaweedfs-sync.yaml SECTION 2 commented opt-in).
+    gitlab_registry_bucket: "gitlab-registry"
+    gitlab_artifacts_bucket: "gitlab-artifacts"
+    gitlab_uploads_bucket: "gitlab-uploads"
+    gitlab_packages_bucket: "gitlab-packages"
+    gitlab_backups_bucket: "gitlab-backups"
+    # S3 creds Vault field names (standardized — identity-distribute Layer 3 fixed keys).
+    # Variable name = snake_case convention; value = actual Vault field name (camelCase).
+    gitlab_s3_secret_key_username: "username"
+    gitlab_s3_secret_key_access_key: "accessKey"
+    gitlab_s3_secret_key_secret_key: "secretKey"
 
     # === SECTION 2: ESO ===
     # ---------
@@ -162,30 +139,22 @@ all:
           - extract:
               key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/redis/creds"
 
-    gitlab_secret_minio_root_creds:
-      external_secret_name: "eso-gitlab-minio-root-creds"
-      vault_path: "/gitlab/minio/root"
+    # S3 storage creds (single source — works для SeaweedFS sync OR cloud S3 manual provisioning).
+    gitlab_secret_s3_creds:
+      external_secret_name: "eso-gitlab-s3-creds"
+      vault_path: "/gitlab/s3-storage"
       body:
         target:
-          name: "eso-gitlab-minio-root-creds"
+          name: "eso-gitlab-s3-creds"
         dataFrom:
           - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/root"
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/s3-storage"
 
-    gitlab_secret_minio_registry_creds:
-      external_secret_name: "eso-gitlab-minio-registry-creds"
-      vault_path: "/gitlab/minio/registry"
-      body:
-        target:
-          name: "eso-gitlab-minio-registry-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-
-    # SPECIAL: registry_connection_config uses ESO template to generate registry storage config
+    # SPECIAL: registry_connection_config uses ESO template to generate registry storage config.
+    # Reads creds from new /gitlab/s3-storage path (single source).
     gitlab_secret_registry_connection_config:
       external_secret_name: "eso-gitlab-registry-connection-config"
-      vault_path: "/gitlab/minio/registry"
+      vault_path: "/gitlab/s3-storage"
       body:
         target:
           name: "eso-gitlab-registry-connection-config"
@@ -194,26 +163,27 @@ all:
             data:
               config: |
                 s3:
-                  bucket: {{ gitlab_minio_registry_bucket }}
+                  bucket: {{ gitlab_registry_bucket }}
                   accesskey: {% raw %}{{ .access_key }}{% endraw +%}
                   secretkey: {% raw %}{{ .secret_key }}{% endraw +%}
-                  regionendpoint: {{ gitlab_minio_s3_endpoint }}
-                  region: {{ gitlab_minio_s3_region }}
+                  regionendpoint: {{ gitlab_s3_endpoint }}
+                  region: {{ gitlab_s3_region }}
                   v4auth: true
         data:
           - secretKey: access_key
             remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_access_key }}"
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/s3-storage"
+              property: "{{ gitlab_s3_secret_key_access_key }}"
           - secretKey: secret_key
             remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_secret_key }}"
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/s3-storage"
+              property: "{{ gitlab_s3_secret_key_secret_key }}"
 
-    # SPECIAL: backup_s3_connection_config uses ESO template to generate s3_connection YAML
+    # SPECIAL: backup_s3_connection_config uses ESO template to generate s3_connection YAML.
+    # Reads creds from new /gitlab/s3-storage path.
     gitlab_secret_backup_s3_connection_config:
       external_secret_name: "eso-gitlab-backup-s3-connection-config"
-      vault_path: "/gitlab/minio/registry"
+      vault_path: "/gitlab/s3-storage"
       body:
         target:
           name: "eso-gitlab-backup-s3-connection-config"
@@ -222,20 +192,20 @@ all:
             data:
               connection: |
                 provider: AWS
-                region: {{ gitlab_minio_s3_region }}
-                endpoint: {{ gitlab_minio_s3_endpoint }}
-                path_style: {{ gitlab_minio_s3_path_style | lower }}
+                region: {{ gitlab_s3_region }}
+                endpoint: {{ gitlab_s3_endpoint }}
+                path_style: {{ gitlab_s3_path_style | lower }}
                 aws_access_key_id: {% raw %}{{ .access_key }}{% endraw +%}
                 aws_secret_access_key: {% raw %}{{ .secret_key }}{% endraw +%}
         data:
           - secretKey: access_key
             remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_access_key }}"
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/s3-storage"
+              property: "{{ gitlab_s3_secret_key_access_key }}"
           - secretKey: secret_key
             remoteRef:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/minio/registry"
-              property: "{{ gitlab_minio_registry_secret_key_secret_key }}"
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/s3-storage"
+              property: "{{ gitlab_s3_secret_key_secret_key }}"
 
     gitlab_root_secret_key_username: "username"
     gitlab_root_secret_key_password: "password"
@@ -257,8 +227,7 @@ all:
     eso_vault_integration_gitlab_secrets:
       - "{{ gitlab_secret_postgresql_creds }}"
       - "{{ gitlab_secret_redis_creds }}"
-      - "{{ gitlab_secret_minio_root_creds }}"
-      - "{{ gitlab_secret_minio_registry_creds }}"
+      - "{{ gitlab_secret_s3_creds }}"
       - "{{ gitlab_secret_registry_connection_config }}"
       - "{{ gitlab_secret_backup_s3_connection_config }}"
       - "{{ gitlab_secret_root_creds }}"
@@ -300,10 +269,6 @@ all:
         secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
         externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
-      minio:
-        s3Endpoint: "{{ gitlab_minio_s3_endpoint }}"
-        s3Region: "{{ gitlab_minio_s3_region }}"
-        s3PathStyle: "{{ gitlab_minio_s3_path_style }}"
       issuer: "{{ gitlab_cert_manager_issuer }}"
       extraObjects: "{{ gitlab_pre_extra_objects }}"
     # --- PHASE: postgresql ---
@@ -349,27 +314,6 @@ all:
       storageClass: "{{ gitlab_redis_storage_class }}"
       storageSize: "{{ gitlab_redis_storage_size }}"
       extraObjects: "{{ gitlab_redis_extra_objects }}"
-    # --- PHASE: minio ---
-    gitlab_minio_helm_timeout: "5m"
-    gitlab_minio_rollout_timeout: "300s"
-    gitlab_minio_image: "docker.io/minio/minio:latest"
-    gitlab_minio_storage_class: "lnstr-major-local"
-    gitlab_minio_storage_size: "2Gi"
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    gitlab_minio_extra_objects: []
-    # Minio-phase kustomize patches (operator-side customization, default empty)
-    gitlab_minio_kustomize_patches: []
-    # MinIO sub-release values
-    # rootSecretName берётся из named-переменной gitlab_secret_minio_root_creds.body.target.name
-    gitlab_minio_helm_values:
-      namespace: "{{ gitlab_namespace }}"
-      image: "{{ gitlab_minio_image }}"
-      storageClass: "{{ gitlab_minio_storage_class }}"
-      storageSize: "{{ gitlab_minio_storage_size }}"
-      rootSecretName: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
-      rootSecretUsernameKey: "{{ gitlab_minio_root_secret_key_username }}"
-      rootSecretPasswordKey: "{{ gitlab_minio_root_secret_key_password }}"
-      extraObjects: "{{ gitlab_minio_extra_objects }}"
     # --- PHASE: install ---
     gitlab_install_helm_timeout: "30m"
     gitlab_rollout_timeout: "900s"
@@ -423,7 +367,7 @@ all:
         minio:
           enabled: false
         registry:
-          bucket: "{{ gitlab_minio_registry_bucket }}"
+          bucket: "{{ gitlab_registry_bucket }}"
         kas:
           enabled: false
         pages:
@@ -439,15 +383,15 @@ all:
               key: connection
           artifacts:
             enabled: true
-            bucket: "{{ gitlab_minio_artifacts_bucket }}"
+            bucket: "{{ gitlab_artifacts_bucket }}"
           uploads:
             enabled: true
-            bucket: "{{ gitlab_minio_uploads_bucket }}"
+            bucket: "{{ gitlab_uploads_bucket }}"
           packages:
             enabled: true
-            bucket: "{{ gitlab_minio_packages_bucket }}"
+            bucket: "{{ gitlab_packages_bucket }}"
           backups:
-            bucket: "{{ gitlab_minio_backups_bucket }}"
+            bucket: "{{ gitlab_backups_bucket }}"
         smtp:
           enabled: false
         monitoring:
@@ -624,8 +568,6 @@ all:
       uiIngressConfig: "{{ gitlab_ui_ingress_config }}"
       registryIngressConfig: "{{ gitlab_registry_ingress_config }}"
       pagesIngressConfig: "{{ gitlab_pages_ingress_config }}"
-      minioApiIngressConfig: "{{ gitlab_minio_api_ingress_config }}"
-      minioConsoleIngressConfig: "{{ gitlab_minio_console_ingress_config }}"
       sshPortExternal: "{{ gitlab_ssh_port_external }}"
       traefik:
         namespace: "{{ traefik_namespace }}"

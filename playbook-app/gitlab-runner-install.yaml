@@ -2,7 +2,7 @@
 # Install GitLab Runner (Official Helm Chart)
 # Steps:
 #   1. gitlab-runner/pre: ESO resources (SA, SecretStore, ExternalSecrets) + NetworkPolicies
-#   2. MinIO runner-cache: create bucket + access key, store in Vault
+#   2. S3 creds: verify exist in Vault (provisioned via SeaweedFS sync OR cloud S3 manual)
 #   3. Runner token: must be placed in Vault manually before running playbook
 #      (GitLab UI → Admin → CI/CD → Runners → Create runner → copy token → vault kv put ...)
 #   4. ESO sync: force-sync + wait for secrets
@@ -123,116 +123,57 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 2: MINIO RUNNER-CACHE SETUP (bucket + access key)
+    # STEP 2: VERIFY S3 CREDS IN VAULT (provisioned via SeaweedFS sync OR cloud S3 manual)
     # =========================================================================
 
-    - name: "[gitlab-runner-minio] Get MinIO pod name"
-      command: >
-        kubectl get pods -n {{ gitlab_namespace }}
-        -l app.kubernetes.io/name=gitlab-minio
-        -o jsonpath='{.items[0].metadata.name}'
-      register: _local_runner_minio_pod_name
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-runner-minio] Get MinIO root username from secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
-      vars:
-        dto_label_name: "gitlab-runner-minio"
-        dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
-        dto_secret_field: "username"
-        dto_secret_res_fact_name: "{{ _local_runner_minio_root_username_key }}"
-        dto_secret_res_exists_fact_name: "{{ _local_runner_minio_root_username_exists_key }}"
-      tags: [install]
-
-    - name: "[gitlab-runner-minio] Get MinIO root password from secret"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
-      vars:
-        dto_label_name: "gitlab-runner-minio"
-        dto_secret_namespace: "{{ gitlab_namespace }}"
-        dto_secret_name: "{{ gitlab_secret_minio_root_creds.body.target.name }}"
-        dto_secret_field: "password"
-        dto_secret_res_fact_name: "{{ _local_runner_minio_root_password_key }}"
-        dto_secret_res_exists_fact_name: "{{ _local_runner_minio_root_password_exists_key }}"
-      tags: [install]
-
-    - name: "[gitlab-runner-minio] Assert MinIO root credentials are present"
-      assert:
-        that:
-          - lookup('vars', _local_runner_minio_root_username_exists_key)
-          - lookup('vars', _local_runner_minio_root_password_exists_key)
-        fail_msg: "MinIO root credentials not found in secret {{ gitlab_secret_minio_root_creds.body.target.name }} (namespace {{ gitlab_namespace }})"
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-runner-minio] Configure mc alias"
-      command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_runner_minio_pod_name.stdout }} --
-        mc alias set myminio http://localhost:9000
-        '{{ lookup('vars', _local_runner_minio_root_username_key) }}'
-        '{{ lookup('vars', _local_runner_minio_root_password_key) }}'
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-runner-minio] Create runner-cache bucket"
-      command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_runner_minio_pod_name.stdout }} --
-        mc mb myminio/{{ gitlab_runner_minio_cache_bucket }} --ignore-existing
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [install]
-
-    - name: "[gitlab-runner-minio] Get runner-cache access key from Vault"
+    - name: "[gitlab-runner-s3-validate] Check S3 creds in Vault"
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
       vars:
-        dto_label_name: "gitlab-runner-minio"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_minio_cache_creds.vault_path }}"
-        dto_vault_get_field: "{{ gitlab_runner_minio_cache_secret_key_access_key }}"
-        dto_vault_get_res_fact_name: "{{ _local_runner_cache_access_key_vault_key }}"
-        dto_vault_get_res_exists_fact_name: "{{ _local_runner_cache_access_key_vault_exists_key }}"
+        dto_label_name: "gitlab-runner-s3-validate"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}"
+        dto_vault_get_field: "{{ gitlab_runner_s3_secret_key_access_key }}"
+        dto_vault_get_res_fact_name: "_local_gitlab_runner_s3_access_key_vault"
+        dto_vault_get_res_exists_fact_name: "_local_gitlab_runner_s3_access_key_vault_exists"
       tags: [install]
 
-    - name: "[gitlab-runner-minio] Create access key for runner-cache"
-      command: >
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_runner_minio_pod_name.stdout }} --
-        mc admin accesskey create myminio {{ lookup('vars', _local_runner_minio_root_username_key) }}
-        --name 'runner-cache-key' --json
-      register: _local_runner_cache_accesskey_result
-      when: not lookup('vars', _local_runner_cache_access_key_vault_exists_key)
+    - name: "[gitlab-runner-s3-validate] Assert S3 creds exist (fail-fast если отсутствуют)"
+      assert:
+        that:
+          - _local_gitlab_runner_s3_access_key_vault_exists
+        fail_msg: |
+          ERROR: GitLab-Runner S3 creds missing в Vault path '{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}'.
+          Друг оператор, нет данных для авторизации в S3-storage для runner cache.
+
+          Вариант A (SeaweedFS sync) — раскомментируй opt-in блоки в своём
+          hosts-vars-override/seaweedfs-sync.yaml (см. hosts-vars/seaweedfs-sync.yaml
+          SECTION 1 + SECTION 2 — Pre-built opt-in для GitLab + GitLab-Runner), затем:
+            ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+              playbook-app/seaweedfs-install.yaml \
+              --tags user-sync,identity-distribute,bucket-sync
+
+          Вариант B (внешний S3 — cloud/etc.):
+            vault kv put {{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }} \
+              {{ gitlab_runner_s3_secret_key_username }}=<username> \
+              {{ gitlab_runner_s3_secret_key_access_key }}=<accessKey> \
+              {{ gitlab_runner_s3_secret_key_secret_key }}=<secretKey>
+
+          Затем повтори ansible-playbook gitlab-runner-install.yaml.
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [install]
 
-    - name: "[gitlab-runner-minio] Store runner-cache access key in Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
-      vars:
-        dto_label_name: "gitlab-runner-minio"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_minio_cache_creds.vault_path }}"
-        dto_vault_put_data: >-
-          {{ {
-               gitlab_runner_minio_cache_secret_key_access_key: (_local_runner_cache_accesskey_result.stdout | from_json).accessKey,
-               gitlab_runner_minio_cache_secret_key_secret_key: (_local_runner_cache_accesskey_result.stdout | from_json).secretKey,
-               gitlab_runner_minio_cache_secret_key_bucket_name: gitlab_runner_minio_cache_bucket
-             } }}
-      when: not lookup('vars', _local_runner_cache_access_key_vault_exists_key)
-      tags: [install]
-
-    - name: "[gitlab-runner-minio] Trigger ESO sync"
+    - name: "[gitlab-runner-s3-validate] Trigger ESO sync (materialize K8s Secret)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
       vars:
-        dto_label_name: "gitlab-runner-minio"
+        dto_label_name: "gitlab-runner-s3-validate"
         dto_eso_sync_namespace: "{{ gitlab_runner_namespace }}"
       tags: [install]
 
-    - name: "[gitlab-runner-minio] Wait for secret"
+    - name: "[gitlab-runner-s3-validate] Wait for K8s Secret eso-gitlab-runner-s3-creds materialized"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
-        dto_label_name: "gitlab-runner-minio"
-        dto_wait_secret_name: "{{ gitlab_runner_secret_minio_cache_creds.body.target.name }}"
+        dto_label_name: "gitlab-runner-s3-validate"
+        dto_wait_secret_name: "{{ gitlab_runner_secret_s3_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ gitlab_runner_namespace }}"
       tags: [install]
 
@@ -367,10 +308,10 @@
           - "GitLab URL:      https://{{ gitlab_ui_domain }}"
           - "Runner chart:    gitlab/gitlab-runner {{ gitlab_runner_helm_chart_version }}"
           - "Executor:        kubernetes"
-          - "Cache:           S3 (gitlab-minio.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:9000)"
+          - "Cache:           S3 (seaweedfs-s3.{{ seaweedfs_namespace }}.svc.{{ cluster_dns_domain }}:8333)"
           - ""
           - "Runner token secret:     {{ gitlab_runner_secret_auth_token.body.target.name }}"
-          - "MinIO cache secret:      {{ gitlab_runner_secret_minio_cache_creds.body.target.name }}"
+          - "S3 cache secret:         {{ gitlab_runner_secret_s3_creds.body.target.name }}"
           - ""
           - "Verify registration in GitLab:"
           - "  Admin → CI/CD → Runners"
