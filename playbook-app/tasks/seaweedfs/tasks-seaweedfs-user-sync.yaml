@@ -6,39 +6,31 @@
 #     vars:
 #       dto_label_name: "<caller-prefix>"
 #
-# v5 refactor: compute logic вынесена в filter_plugins/seaweedfs_sync.py.
-# Ansible task оркеструет flow — vault-get, generate-secret loops,
-# vault-put, ESO sync, kubectl. Filters used:
-#   - seaweedfs_parse_combined_json   — parse current Vault combined JSON
-#   - seaweedfs_compute_identity_diff — compute to_create/to_update/to_delete
-#   - seaweedfs_build_combined_identities — assemble new identities list
-#   - seaweedfs_build_combined_json   — serialize to deterministic JSON
+# v6 refactor: stateless filter API. Compute logic (parse, diff, AK/SK generation,
+# build, serialize) — внутри одной публичной Python функции
+# seaweedfs_user_sync_full из filter_plugins/seaweedfs_sync.py. Ansible task
+# оркеструет только I/O: vault-get, один compute call, vault-put, ESO sync,
+# wait-secret, conditional rollout restart.
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation;
-# nested include_tasks (tasks-vault-*, tasks-generate-secret,
-# tasks-eso-force-sync, tasks-wait-secret, tasks-wait-rollout)
-# inherit via Ansible variable scope.
+# nested include_tasks inherit via Ansible variable scope.
 #
 # Reads inventory:
 #   - seaweedfs_identities + _extra (from hosts-vars/seaweedfs-sync.yaml)
+#   - seaweedfs_sync_{access_key,secret_key}_{length,charset} (same file)
 #   - seaweedfs_secret_s3_identities, eso_vault_integration_seaweedfs,
 #     seaweedfs_namespace, seaweedfs_install_rollout_timeout
 #     (from hosts-vars/seaweedfs.yaml)
 #
 # Logic:
 #   1. Get current combined JSON from Vault (may not exist on greenfield).
-#   2. Parse via filter — returns {'identities': [...]} (empty if missing).
-#   3. Compute target = inventory base + extra.
-#   4. Admin safety warning if no Admin actions in target.
-#   5. Compute diff via filter (by name primary key).
-#   6-7. Generate AK + SK для new non-anonymous identities (loops).
-#   8. Build new_secrets_map dict via accumulator set_fact loop.
-#   9. Build new combined identities via filter — anonymous gets empty creds,
-#      updates preserve existing credentials.
-#   10. Serialize to JSON via filter (sort_keys for deterministic comparison).
-#   11. identities_changed = current_json != new_json (or current missing).
-#   12-14. When changed: vault-put + ESO force-sync + wait Secret.
-#   15-17. When changed AND S3 deployment exists: rollout restart + wait.
+#   2. Compute target = inventory base + extra.
+#   3. Admin safety warning if no Admin actions in target.
+#   4. Compute new combined JSON via filter (single call — parse, diff, generate
+#      AK/SK для new non-anonymous, build, serialize).
+#   5. identities_changed = current_json != new_json (or current missing).
+#   6-8. When changed: vault-put + ESO force-sync + wait Secret.
+#   9-11. When changed AND S3 deployment exists: rollout restart + wait.
 # =============================================================================
 - name: "[{{ dto_label_name }}] Assert dto_label_name provided"
   assert:
@@ -50,15 +42,12 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Declare local fact keys"
   set_fact:
     _local_combined_json_key: "_local_combined_json"
     _local_combined_json_exists_key: "_local_combined_json_exists"
-    _local_current_identities_key: "_local_current_identities"
     _local_target_identities_key: "_local_target_identities"
-    _local_diff_key: "_local_diff"
-    _local_new_secrets_map_key: "_local_new_secrets_map"
-    _local_new_combined_identities_key: "_local_new_combined_identities"
     _local_new_combined_json_key: "_local_new_combined_json"
     _local_identities_changed_key: "_local_identities_changed"
     _local_identities_put_data_key: "_local_identities_put_data"
@@ -66,6 +55,7 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Get current combined JSON from Vault"
   include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
   vars:
@@ -74,19 +64,14 @@
     dto_vault_get_res_fact_name: "{{ _local_combined_json_key }}"
     dto_vault_get_res_exists_fact_name: "{{ _local_combined_json_exists_key }}"
   tags: [always]
-- name: "[{{ dto_label_name }}] Parse current identities via filter"
-  set_fact:
-    "{{ _local_current_identities_key }}": >-
-      {{ (lookup('vars', _local_combined_json_key) | seaweedfs_parse_combined_json).identities }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
+
 - name: "[{{ dto_label_name }}] Compute target identities (base + extra)"
   set_fact:
     "{{ _local_target_identities_key }}": "{{ seaweedfs_identities + (seaweedfs_identities_extra | default([])) }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Admin safety warning (no actions=[Admin])"
   debug:
     msg: |
@@ -99,76 +84,22 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
-- name: "[{{ dto_label_name }}] Compute identity diff via filter"
+
+- name: "[{{ dto_label_name }}] Compute new combined JSON via filter (parse + diff + generate + build + serialize)"
   set_fact:
-    "{{ _local_diff_key }}": >-
-      {{ lookup('vars', _local_current_identities_key)
-         | seaweedfs_compute_identity_diff(lookup('vars', _local_target_identities_key)) }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-- name: "[{{ dto_label_name }}] Generate access_key for new non-anonymous identities"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
-  vars:
-    dto_generate_fact_name: "_local_new_ak_{{ item.name }}"
-    dto_generate_length: 20
-    dto_generate_chars: "ascii_uppercase,digits"
-  loop: "{{ (lookup('vars', _local_diff_key)).to_create }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: item.name != 'anonymous'
-  tags: [always]
-- name: "[{{ dto_label_name }}] Generate secret_key for new non-anonymous identities"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
-  vars:
-    dto_generate_fact_name: "_local_new_sk_{{ item.name }}"
-    dto_generate_length: 40
-    dto_generate_chars: "ascii_letters,digits"
-  loop: "{{ (lookup('vars', _local_diff_key)).to_create }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: item.name != 'anonymous'
-  tags: [always]
-- name: "[{{ dto_label_name }}] Initialize new_secrets_map (empty dict)"
-  set_fact:
-    "{{ _local_new_secrets_map_key }}": {}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-- name: "[{{ dto_label_name }}] Accumulate new_secrets_map per to_create non-anonymous"
-  set_fact:
-    "{{ _local_new_secrets_map_key }}": >-
-      {{ lookup('vars', _local_new_secrets_map_key) | combine({
-           item.name: {
-             'accessKey': lookup('vars', '_local_new_ak_' + item.name),
-             'secretKey': lookup('vars', '_local_new_sk_' + item.name)
-           }
-         }) }}
-  loop: "{{ (lookup('vars', _local_diff_key)).to_create }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: item.name != 'anonymous'
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-- name: "[{{ dto_label_name }}] Build new combined identities via filter"
-  set_fact:
-    "{{ _local_new_combined_identities_key }}": >-
-      {{ lookup('vars', _local_diff_key)
-         | seaweedfs_build_combined_identities(
-             lookup('vars', _local_current_identities_key),
-             lookup('vars', _local_new_secrets_map_key)
+    "{{ _local_new_combined_json_key }}": >-
+      {{ lookup('vars', _local_combined_json_key)
+         | seaweedfs_user_sync_full(
+             lookup('vars', _local_target_identities_key),
+             access_key_length=seaweedfs_sync_access_key_length,
+             secret_key_length=seaweedfs_sync_secret_key_length,
+             access_key_charset=seaweedfs_sync_access_key_charset,
+             secret_key_charset=seaweedfs_sync_secret_key_charset
            ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
-- name: "[{{ dto_label_name }}] Build new combined JSON via filter"
-  set_fact:
-    "{{ _local_new_combined_json_key }}": >-
-      {{ lookup('vars', _local_new_combined_identities_key) | seaweedfs_build_combined_json }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
+
 - name: "[{{ dto_label_name }}] Determine if identities changed (compare JSON strings)"
   set_fact:
     "{{ _local_identities_changed_key }}": >-
@@ -177,6 +108,7 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Build Vault put data dict"
   set_fact:
     "{{ _local_identities_put_data_key }}": >-
@@ -185,6 +117,7 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Store new combined JSON in Vault"
   include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
   vars:
@@ -192,12 +125,14 @@
     dto_vault_put_data: "{{ lookup('vars', _local_identities_put_data_key) }}"
   when: lookup('vars', _local_identities_changed_key)
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Trigger ESO sync"
   include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
   vars:
     dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
   when: lookup('vars', _local_identities_changed_key)
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Wait for K8s Secret to update"
   include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
   vars:
@@ -205,6 +140,7 @@
     dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
   when: lookup('vars', _local_identities_changed_key)
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Check S3 deployment existence"
   command: >-
     kubectl get deployment seaweedfs-s3
@@ -216,12 +152,14 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Set S3 deployment exists flag"
   set_fact:
     "{{ _local_s3_deployment_exists_key }}": "{{ _local_s3_deployment_check_reg.rc == 0 }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Rollout restart S3 deployment (when identities changed AND deployment exists)"
   command: >-
     kubectl rollout restart deployment/seaweedfs-s3 -n {{ seaweedfs_namespace }}
@@ -231,6 +169,7 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
+
 - name: "[{{ dto_label_name }}] Wait for S3 rollout"
   include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
   vars:

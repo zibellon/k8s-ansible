@@ -4,12 +4,9 @@ Layer 3 of make test runner — catches runtime Jinja2 issues that
 syntax-check / ansible-lint / helm-validate don't see. Lives in
 tests/python/; invoked via `make test-pytest` or direct `pytest
 tests/python/`.
-Path setup: prepends repo-root filter_plugins/ to sys.path so
-seaweedfs_sync module is importable (runs from any cwd).
+Shared fixtures + path setup — in tests/python/conftest.py.
 """
-import sys
-import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent / 'filter_plugins'))
+import json
 import pytest
 import seaweedfs_sync as sw
 from ansible.errors import AnsibleFilterError
@@ -17,15 +14,15 @@ from ansible.errors import AnsibleFilterError
 # Shared utilities
 # =============================================================================
 def test_parse_combined_json_empty_returns_empty_default():
-    assert sw.seaweedfs_parse_combined_json('') == {'identities': []}
-    assert sw.seaweedfs_parse_combined_json(None) == {'identities': []}
+    assert sw._parse_combined_json('') == {'identities': []}
+    assert sw._parse_combined_json(None) == {'identities': []}
 def test_parse_combined_json_valid_returns_dict():
     s = '{"identities": [{"name": "alice", "credentials": [{"accessKey": "AK", "secretKey": "SK"}]}]}'
-    result = sw.seaweedfs_parse_combined_json(s)
+    result = sw._parse_combined_json(s)
     assert result['identities'][0]['name'] == 'alice'
 def test_parse_combined_json_malformed_returns_empty_default():
-    assert sw.seaweedfs_parse_combined_json('not valid json {') == {'identities': []}
-    assert sw.seaweedfs_parse_combined_json('{}') == {'identities': []}
+    assert sw._parse_combined_json('not valid json {') == {'identities': []}
+    assert sw._parse_combined_json('{}') == {'identities': []}
 def test_extract_creds_by_name_builds_mapping():
     combined = {
         'identities': [
@@ -33,81 +30,89 @@ def test_extract_creds_by_name_builds_mapping():
             {'name': 'bob',   'credentials': [{'accessKey': 'AK_B', 'secretKey': 'SK_B'}]},
         ]
     }
-    result = sw.seaweedfs_extract_creds_by_name(combined)
+    result = sw._extract_creds_by_name(combined)
     assert result['alice'] == {'accessKey': 'AK_A', 'secretKey': 'SK_A'}
     assert result['bob']['accessKey'] == 'AK_B'
 def test_extract_creds_by_name_empty_combined():
-    assert sw.seaweedfs_extract_creds_by_name({'identities': []}) == {}
-    assert sw.seaweedfs_extract_creds_by_name({}) == {}
+    assert sw._extract_creds_by_name({'identities': []}) == {}
+    assert sw._extract_creds_by_name({}) == {}
 def test_extract_creds_by_name_handles_missing_credentials():
     combined = {'identities': [{'name': 'alice'}]}
-    result = sw.seaweedfs_extract_creds_by_name(combined)
+    result = sw._extract_creds_by_name(combined)
     assert result['alice'] == {'accessKey': '', 'secretKey': ''}
 # =============================================================================
-# user-sync (Layer 1) filters
+# user-sync (Layer 1) — seaweedfs_user_sync_full (stateless)
 # =============================================================================
-def test_compute_identity_diff_empty_inputs():
-    result = sw.seaweedfs_compute_identity_diff([], [])
-    assert result == {'to_create': [], 'to_update': [], 'to_delete': []}
-def test_compute_identity_diff_all_to_create():
-    target = [{'name': 'alice'}, {'name': 'bob'}]
-    result = sw.seaweedfs_compute_identity_diff([], target)
-    assert len(result['to_create']) == 2
-    assert result['to_update'] == []
-    assert result['to_delete'] == []
-def test_compute_identity_diff_mixed():
-    current = [{'name': 'alice'}, {'name': 'charlie'}]
-    target = [{'name': 'alice'}, {'name': 'bob'}]
-    result = sw.seaweedfs_compute_identity_diff(current, target)
-    assert [i['name'] for i in result['to_create']] == ['bob']
-    assert [i['name'] for i in result['to_update']] == ['alice']
-    assert [i['name'] for i in result['to_delete']] == ['charlie']
-def test_build_combined_identities_create_new():
-    diff = {
-        'to_create': [{'name': 'alice', 'actions': []}],
-        'to_update': [],
-        'to_delete': [],
-    }
-    new_secrets = {'alice': {'accessKey': 'AK_A', 'secretKey': 'SK_A'}}
-    result = sw.seaweedfs_build_combined_identities(diff, [], new_secrets)
-    assert len(result) == 1
-    assert result[0]['name'] == 'alice'
-    assert result[0]['credentials'][0]['accessKey'] == 'AK_A'
-def test_build_combined_identities_anonymous_gets_empty_creds():
-    diff = {
-        'to_create': [{'name': 'anonymous', 'actions': []}],
-        'to_update': [],
-        'to_delete': [],
-    }
-    result = sw.seaweedfs_build_combined_identities(diff, [], {})
-    assert result[0]['credentials'][0]['accessKey'] == ''
-    assert result[0]['credentials'][0]['secretKey'] == ''
-def test_build_combined_identities_update_preserves_creds():
-    current = [{
-        'name': 'alice',
-        'credentials': [{'accessKey': 'EXISTING_AK', 'secretKey': 'EXISTING_SK'}],
-        'actions': ['Old'],
-    }]
-    diff = {
-        'to_create': [],
-        'to_update': [{'name': 'alice', 'actions': ['New']}],
-        'to_delete': [],
-    }
-    result = sw.seaweedfs_build_combined_identities(diff, current, {})
-    assert result[0]['credentials'][0]['accessKey'] == 'EXISTING_AK'
-    assert result[0]['actions'] == ['New']
-def test_build_combined_json_serializes_deterministically():
-    import json
-    identities = [{
-        'name': 'alice',
-        'credentials': [{'accessKey': 'AK', 'secretKey': 'SK'}],
-        'actions': [],
-    }]
-    result = sw.seaweedfs_build_combined_json(identities)
+
+def _patch_secrets_deterministic(monkeypatch):
+    """Mock secrets.choice to always return first char of alphabet — determinism."""
+    monkeypatch.setattr(sw.secrets, 'choice', lambda alphabet: alphabet[0])
+
+
+def test_user_sync_full_happy_with_mock(monkeypatch, sample_vault_json, sample_generate_params):
+    """Happy path: target = [alice], current has alice — update path, preserve creds."""
+    _patch_secrets_deterministic(monkeypatch)
+    target = [{'name': 'alice', 'actions': ['NewAction']}]
+    result = sw.seaweedfs_user_sync_full(sample_vault_json, target, **sample_generate_params)
     parsed = json.loads(result)
+    assert len(parsed['identities']) == 1
     assert parsed['identities'][0]['name'] == 'alice'
-    result2 = sw.seaweedfs_build_combined_json(identities)
-    assert result == result2  # sort_keys determinism
+    # preserved existing creds
+    assert parsed['identities'][0]['credentials'][0]['accessKey'] == 'ALICE_AK'
+    assert parsed['identities'][0]['actions'] == ['NewAction']
+
+
+def test_user_sync_full_empty_vault(monkeypatch, sample_target_identities, sample_generate_params):
+    """Edge: empty vault → all target identities to_create."""
+    _patch_secrets_deterministic(monkeypatch)
+    result = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
+    parsed = json.loads(result)
+    names = [i['name'] for i in parsed['identities']]
+    assert set(names) == {'admin', 'alice', 'anonymous'}
+    # Mocked: first char × length
+    admin = next(i for i in parsed['identities'] if i['name'] == 'admin')
+    assert admin['credentials'][0]['accessKey'] == 'A' * 20
+    # anonymous gets empty creds
+    anon = next(i for i in parsed['identities'] if i['name'] == 'anonymous')
+    assert anon['credentials'][0]['accessKey'] == ''
+    assert anon['credentials'][0]['secretKey'] == ''
+
+
+def test_user_sync_full_only_anonymous(monkeypatch, sample_generate_params):
+    """Edge: target = [anonymous] only → no AK/SK generation, empty creds."""
+    _patch_secrets_deterministic(monkeypatch)
+    target = [{'name': 'anonymous', 'actions': []}]
+    result = sw.seaweedfs_user_sync_full('', target, **sample_generate_params)
+    parsed = json.loads(result)
+    assert len(parsed['identities']) == 1
+    assert parsed['identities'][0]['credentials'][0]['accessKey'] == ''
+
+
+def test_user_sync_full_purity_length_charset(sample_generate_params):
+    """Purity (no mock): real secrets.choice — verify length + charset compliance."""
+    target = [{'name': 'alice', 'actions': []}]
+    result = sw.seaweedfs_user_sync_full('', target, **sample_generate_params)
+    parsed = json.loads(result)
+    creds = parsed['identities'][0]['credentials'][0]
+    assert len(creds['accessKey']) == 20
+    assert len(creds['secretKey']) == 40
+    assert all(c in sample_generate_params['access_key_charset'] for c in creds['accessKey'])
+    assert all(c in sample_generate_params['secret_key_charset'] for c in creds['secretKey'])
+
+
+def test_user_sync_full_determinism_with_mock(monkeypatch, sample_target_identities, sample_generate_params):
+    """Determinism: two calls with same mock → identical output string."""
+    _patch_secrets_deterministic(monkeypatch)
+    result1 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
+    result2 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
+    assert result1 == result2
+
+
+def test_user_sync_full_randomness_without_mock(sample_target_identities, sample_generate_params):
+    """Non-mocked: two calls produce different AK/SK (verify real randomness)."""
+    result1 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
+    result2 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
+    assert result1 != result2
 # =============================================================================
 # identity-distribute (Layer 3) filters
 # =============================================================================

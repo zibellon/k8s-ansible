@@ -11,15 +11,16 @@ via ansible.cfg [defaults] filter_plugins = filter_plugins setting
 cwd=repo root per project convention).
 """
 import json
+import secrets
 try:
     from ansible.errors import AnsibleFilterError
 except ImportError:
     # Allow local pytest runs without Ansible installed
     AnsibleFilterError = Exception
 # =============================================================================
-# Shared utilities
+# Private helpers (NOT registered as public filters)
 # =============================================================================
-def seaweedfs_parse_combined_json(s):
+def _parse_combined_json(s):
     """Parse Vault combined JSON string to dict with 'identities' key.
     Returns {'identities': []} for None/empty/malformed input or when
     'identities' key is missing. Never raises.
@@ -33,7 +34,7 @@ def seaweedfs_parse_combined_json(s):
     if not isinstance(data, dict) or 'identities' not in data:
         return {'identities': []}
     return data
-def seaweedfs_extract_creds_by_name(combined):
+def _extract_creds_by_name(combined):
     """Build {name: {accessKey, secretKey}} mapping from combined dict.
     Reads combined['identities'][*].credentials[0]. Missing fields
     default to empty string.
@@ -48,10 +49,7 @@ def seaweedfs_extract_creds_by_name(combined):
             'secretKey': first.get('secretKey', ''),
         }
     return result
-# =============================================================================
-# user-sync (Layer 1) filters
-# =============================================================================
-def seaweedfs_compute_identity_diff(current, target):
+def _compute_identity_diff(current, target):
     """Compute identity sync diff by name primary key.
     Args:
         current: list of identity dicts (from combined JSON parse).
@@ -66,16 +64,48 @@ def seaweedfs_compute_identity_diff(current, target):
         'to_update': [i for i in target if i['name'] in current_names],
         'to_delete': [i for i in current if i['name'] not in target_names],
     }
-def seaweedfs_build_combined_identities(diff, current, new_secrets_map):
-    """Build new combined identities list from diff + new secrets.
-    Args:
-        diff: {to_create, to_update, to_delete} from compute_identity_diff.
-        current: current identities list (for credential preservation on update).
-        new_secrets_map: {name: {accessKey, secretKey}} for to_create items.
-            Anonymous identity gets empty creds automatically.
-    Returns:
-        list of {name, credentials: [{accessKey, secretKey}], actions: [...]}
+def _gen_secret(length, charset):
+    """Generate random string of `length` chars from `charset` via secrets.choice.
+    Cryptographically secure. Mock-friendly: secrets module imported globally.
     """
+    return ''.join(secrets.choice(charset) for _ in range(length))
+# =============================================================================
+# Public Layer 1 filter — stateless user-sync orchestrator
+# =============================================================================
+def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
+                              access_key_length, secret_key_length,
+                              access_key_charset, secret_key_charset):
+    """Финальный combined JSON для записи в Vault.
+
+    Stateless filter: принимает raw Vault JSON string + target identities list,
+    возвращает str — финальный combined JSON {"identities": [...]} c sort_keys=True
+    для записи через vault kv put.
+
+    Внутренняя логика (не часть public контракта):
+        1. Parse vault → current identities list.
+        2. Compute diff vs target (to_create, to_update, to_delete) by name.
+        3. Generate fresh AK + SK для каждого to_create non-anonymous через
+           secrets.choice(charset) цикл length раз. Anonymous получает пустые creds.
+        4. Build new identities list:
+           - to_create: {name, credentials: [{accessKey, secretKey}], actions}.
+           - to_update: {name, credentials: preserved from current, actions: target's}.
+           - to_delete: skip.
+        5. Serialize {"identities": [...]} через json.dumps(... sort_keys=True).
+
+    Args:
+        vault_raw_json: str — current Vault combined JSON (may be '', None, malformed).
+        target_identities: list — target identities from inventory.
+        access_key_length: int — length of generated access_key.
+        secret_key_length: int — length of generated secret_key.
+        access_key_charset: str — charset for access_key generation.
+        secret_key_charset: str — charset for secret_key generation.
+
+    Returns:
+        str — finalized combined JSON, ready for vault kv put.
+    """
+    combined = _parse_combined_json(vault_raw_json)
+    current = combined['identities']
+    diff = _compute_identity_diff(current, target_identities)
     current_by_name = {i['name']: i for i in current}
     result = []
     for item in diff['to_create']:
@@ -83,29 +113,23 @@ def seaweedfs_build_combined_identities(diff, current, new_secrets_map):
         if name == 'anonymous':
             ak, sk = '', ''
         else:
-            secrets = new_secrets_map.get(name, {})
-            ak = secrets.get('accessKey', '')
-            sk = secrets.get('secretKey', '')
+            ak = _gen_secret(access_key_length, access_key_charset)
+            sk = _gen_secret(secret_key_length, secret_key_charset)
         result.append({
             'name': name,
             'credentials': [{'accessKey': ak, 'secretKey': sk}],
             'actions': item.get('actions', []),
         })
-    for target_item in diff['to_update']:
-        name = target_item['name']
+    for item in diff['to_update']:
+        name = item['name']
         current_entry = current_by_name.get(name, {})
         existing_creds = current_entry.get('credentials') or [{'accessKey': '', 'secretKey': ''}]
         result.append({
             'name': name,
             'credentials': existing_creds,
-            'actions': target_item.get('actions', []),
+            'actions': item.get('actions', []),
         })
-    return result
-def seaweedfs_build_combined_json(identities):
-    """Wrap identities list in {'identities': [...]} and serialize to JSON.
-    sort_keys=True для deterministic output (string comparison stability).
-    """
-    return json.dumps({'identities': identities}, sort_keys=True)
+    return json.dumps({'identities': result}, sort_keys=True)
 # =============================================================================
 # identity-distribute (Layer 3) filters
 # =============================================================================
@@ -259,11 +283,9 @@ class FilterModule(object):
     """Ansible filter plugin entry point — registers all seaweedfs_* filters."""
     def filters(self):
         return {
-            'seaweedfs_parse_combined_json': seaweedfs_parse_combined_json,
-            'seaweedfs_extract_creds_by_name': seaweedfs_extract_creds_by_name,
-            'seaweedfs_compute_identity_diff': seaweedfs_compute_identity_diff,
-            'seaweedfs_build_combined_identities': seaweedfs_build_combined_identities,
-            'seaweedfs_build_combined_json': seaweedfs_build_combined_json,
+            'seaweedfs_parse_combined_json': _parse_combined_json,
+            'seaweedfs_extract_creds_by_name': _extract_creds_by_name,
+            'seaweedfs_user_sync_full': seaweedfs_user_sync_full,
             'seaweedfs_compute_distribution_pairs': seaweedfs_compute_distribution_pairs,
             'seaweedfs_compute_state_paths_to_delete': seaweedfs_compute_state_paths_to_delete,
             'seaweedfs_build_new_distribution_state': seaweedfs_build_new_distribution_state,
