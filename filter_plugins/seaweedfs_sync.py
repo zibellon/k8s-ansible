@@ -70,6 +70,106 @@ def _gen_secret(length, charset):
     """
     return ''.join(secrets.choice(charset) for _ in range(length))
 # =============================================================================
+# Private helpers (Layer 3 — identity-distribute)
+# =============================================================================
+def _parse_configmap_state(s):
+    """Parse ConfigMap raw state JSON to list. Returns [] for empty/missing/malformed.
+    Used for identity-distribute and bucket-sync state ConfigMaps."""
+    if not s:
+        return []
+    try:
+        data = json.loads(s)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return data
+
+def _flatten_target_paths(identities):
+    """Flatten all extra_vault_paths across identities (preserve order, allow dupes
+    — dupes detected by _validate_paths_unique downstream)."""
+    paths = []
+    for i in identities:
+        paths.extend(i.get('extra_vault_paths', []))
+    return paths
+
+def _validate_anonymous_no_extra(identities):
+    """Raise AnsibleFilterError if anonymous identity has non-empty extra_vault_paths.
+    Anonymous has empty credentials in combined JSON — distribute meaningless."""
+    for identity in identities:
+        if identity.get('name') == 'anonymous' and identity.get('extra_vault_paths'):
+            raise AnsibleFilterError(
+                "Anonymous identity has non-empty extra_vault_paths — distribute "
+                "impossible (anonymous has empty credentials in combined JSON). "
+                "Remove extra_vault_paths from anonymous identity in inventory."
+            )
+
+def _validate_paths_unique(paths):
+    """Raise AnsibleFilterError if duplicate paths in flattened target paths list."""
+    paths_list = list(paths)
+    if len(paths_list) != len(set(paths_list)):
+        seen = set()
+        dups = []
+        for p in paths_list:
+            if p in seen and p not in dups:
+                dups.append(p)
+            seen.add(p)
+        raise AnsibleFilterError(
+            "Duplicate Vault paths in identity.extra_vault_paths "
+            "across identities: {0}. Each Vault path must be unique "
+            "(no race-like inventory bug).".format(dups)
+        )
+
+def _validate_creds_exist(target_identities, creds_by_name):
+    """Raise AnsibleFilterError if any target identity (with extra_vault_paths)
+    is missing in combined JSON creds_by_name dict."""
+    for identity in target_identities:
+        if not identity.get('extra_vault_paths'):
+            continue
+        name = identity['name']
+        if name not in creds_by_name:
+            raise AnsibleFilterError(
+                "Identity '{0}' has extra_vault_paths but missing in Vault "
+                "combined JSON. Run 'ansible-playbook playbook-app/seaweedfs-install.yaml "
+                "--tags user-sync' first.".format(name)
+            )
+
+def _compute_distribution_pairs(target_identities, creds_by_name):
+    """Build (path, name, accessKey, secretKey) pairs for Phase A vault-put loop.
+    Identities без extra_vault_paths skipped automatically (empty inner loop)."""
+    pairs = []
+    for identity in target_identities:
+        name = identity['name']
+        creds = creds_by_name.get(name, {})
+        for path in identity.get('extra_vault_paths', []):
+            pairs.append({
+                'path': path,
+                'name': name,
+                'accessKey': creds.get('accessKey', ''),
+                'secretKey': creds.get('secretKey', ''),
+            })
+    return pairs
+
+def _compute_state_paths_to_delete(state, target_paths):
+    """Build list of state paths to vault-delete (not in target paths set)."""
+    target_set = set(target_paths)
+    deletes = []
+    for entry in state:
+        identity_name = entry.get('identity_name')
+        for path in entry.get('vault_paths', []):
+            if path not in target_set:
+                deletes.append({'path': path, 'identity_name': identity_name})
+    return deletes
+
+def _build_new_distribution_state(target_identities):
+    """Build new state list — only identities with non-empty extra_vault_paths.
+    Preserves backward compat with current YAML behavior (selectattr-filtered list)."""
+    return [
+        {'identity_name': i['name'], 'vault_paths': i.get('extra_vault_paths', [])}
+        for i in target_identities
+        if i.get('extra_vault_paths')
+    ]
+# =============================================================================
 # Public Layer 1 filter — stateless user-sync orchestrator
 # =============================================================================
 def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
@@ -131,81 +231,80 @@ def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
         })
     return json.dumps({'identities': result}, sort_keys=True)
 # =============================================================================
-# identity-distribute (Layer 3) filters
+# Public Layer 3 filters — stateless identity-distribute orchestrators
 # =============================================================================
-def seaweedfs_compute_distribution_pairs(target_identities, creds_by_name):
-    """Build list of (path, name, accessKey, secretKey) pairs for vault-put loop.
+def seaweedfs_distribute_paths_to_delete(vault_raw_json, target_identities, configmap_raw_json):
+    """List of state paths to vault-delete (Phase B iteration list).
+
+    Stateless filter: full validation + diff computation inside.
+
     Args:
-        target_identities: list with extra_vault_paths field (full Vault paths).
-        creds_by_name: {name: {accessKey, secretKey}}.
+        vault_raw_json: ignored — kept for shape consistency with other Layer 3 filters.
+        target_identities: list — full target from inventory (base + extra).
+        configmap_raw_json: str — ConfigMap state raw stdout (may be '', None, malformed).
+
     Returns:
-        list of {path, name, accessKey, secretKey} — one per (identity, path) pair.
+        list of {path, identity_name} dicts — state paths to vault-delete.
+
+    Raises:
+        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique.
     """
-    pairs = []
-    for identity in target_identities:
-        name = identity['name']
-        creds = creds_by_name.get(name, {})
-        for path in identity.get('extra_vault_paths', []):
-            pairs.append({
-                'path': path,
-                'name': name,
-                'accessKey': creds.get('accessKey', ''),
-                'secretKey': creds.get('secretKey', ''),
-            })
-    return pairs
-def seaweedfs_compute_state_paths_to_delete(state, target_paths):
-    """Build list of state paths to vault-delete (not in target paths set).
+    _validate_anonymous_no_extra(target_identities)
+    target_paths = _flatten_target_paths(target_identities)
+    _validate_paths_unique(target_paths)
+    state = _parse_configmap_state(configmap_raw_json)
+    return _compute_state_paths_to_delete(state, target_paths)
+
+
+def seaweedfs_distribute_paths_to_add(vault_raw_json, target_identities, configmap_raw_json):
+    """List of (path, name, accessKey, secretKey) pairs for Phase A vault-put.
+
+    Stateless filter: full validation + creds extraction + pairs computation inside.
+
     Args:
-        state: list of state entries [{identity_name, vault_paths: [...]}, ...].
-        target_paths: iterable of full target paths.
+        vault_raw_json: str — Vault combined JSON (source of identity credentials).
+        target_identities: list — full target from inventory (base + extra).
+        configmap_raw_json: ignored — kept for shape consistency.
+
     Returns:
-        list of {path, identity_name} dicts.
+        list of {path, name, accessKey, secretKey} dicts — (identity, path) pairs
+        with embedded credentials for Ansible vault-put loop.
+
+    Raises:
+        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique
+            OR any identity (with extra_vault_paths) missing in combined JSON.
     """
-    target_set = set(target_paths)
-    deletes = []
-    for entry in state:
-        identity_name = entry.get('identity_name')
-        for path in entry.get('vault_paths', []):
-            if path not in target_set:
-                deletes.append({'path': path, 'identity_name': identity_name})
-    return deletes
-def seaweedfs_build_new_distribution_state(target_identities):
-    """Build new state list for ConfigMap update.
-    Returns: list of {identity_name, vault_paths: [...]} entries.
+    _validate_anonymous_no_extra(target_identities)
+    target_paths = _flatten_target_paths(target_identities)
+    _validate_paths_unique(target_paths)
+    combined = _parse_combined_json(vault_raw_json)
+    creds_by_name = _extract_creds_by_name(combined)
+    _validate_creds_exist(target_identities, creds_by_name)
+    return _compute_distribution_pairs(target_identities, creds_by_name)
+
+
+def seaweedfs_distribute_new_state_json(vault_raw_json, target_identities, configmap_raw_json):
+    """JSON-serialized new ConfigMap state for Phase C kubectl apply.
+
+    Stateless filter: full validation + state build + serialize inside.
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency.
+        target_identities: list — full target from inventory (base + extra).
+        configmap_raw_json: ignored — kept for shape consistency.
+
+    Returns:
+        str — JSON-serialized list of {identity_name, vault_paths} entries
+        (only identities with non-empty extra_vault_paths), sort_keys=True.
+
+    Raises:
+        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique.
     """
-    return [
-        {'identity_name': i['name'], 'vault_paths': i.get('extra_vault_paths', [])}
-        for i in target_identities
-    ]
-def seaweedfs_validate_target_paths_unique(paths):
-    """Return True if all paths unique; raise AnsibleFilterError if duplicates."""
-    paths_list = list(paths)
-    if len(paths_list) != len(set(paths_list)):
-        seen = set()
-        dups = []
-        for p in paths_list:
-            if p in seen and p not in dups:
-                dups.append(p)
-            seen.add(p)
-        raise AnsibleFilterError(
-            "Duplicate Vault paths in identity.extra_vault_paths "
-            "across identities: {0}. Each Vault path must be unique "
-            "(no race-like inventory bug).".format(dups)
-        )
-    return True
-def seaweedfs_validate_anonymous_no_extra_paths(identities):
-    """Return True if anonymous identity does NOT have non-empty extra_vault_paths.
-    Raises AnsibleFilterError otherwise — anonymous has no credentials in
-    combined JSON, distribute is meaningless.
-    """
-    for identity in identities:
-        if identity.get('name') == 'anonymous' and identity.get('extra_vault_paths'):
-            raise AnsibleFilterError(
-                "Anonymous identity has non-empty extra_vault_paths — distribute "
-                "impossible (anonymous has empty credentials in combined JSON). "
-                "Remove extra_vault_paths from anonymous identity in inventory."
-            )
-    return True
+    _validate_anonymous_no_extra(target_identities)
+    target_paths = _flatten_target_paths(target_identities)
+    _validate_paths_unique(target_paths)
+    new_state = _build_new_distribution_state(target_identities)
+    return json.dumps(new_state, sort_keys=True)
 # =============================================================================
 # bucket-sync (Layer 2) filters
 # =============================================================================
@@ -286,11 +385,9 @@ class FilterModule(object):
             'seaweedfs_parse_combined_json': _parse_combined_json,
             'seaweedfs_extract_creds_by_name': _extract_creds_by_name,
             'seaweedfs_user_sync_full': seaweedfs_user_sync_full,
-            'seaweedfs_compute_distribution_pairs': seaweedfs_compute_distribution_pairs,
-            'seaweedfs_compute_state_paths_to_delete': seaweedfs_compute_state_paths_to_delete,
-            'seaweedfs_build_new_distribution_state': seaweedfs_build_new_distribution_state,
-            'seaweedfs_validate_target_paths_unique': seaweedfs_validate_target_paths_unique,
-            'seaweedfs_validate_anonymous_no_extra_paths': seaweedfs_validate_anonymous_no_extra_paths,
+            'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
+            'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,
+            'seaweedfs_distribute_new_state_json': seaweedfs_distribute_new_state_json,
             'seaweedfs_compute_bucket_diff': seaweedfs_compute_bucket_diff,
             'seaweedfs_quota_size_to_mib': seaweedfs_quota_size_to_mib,
             'seaweedfs_validate_principal_not_dict': seaweedfs_validate_principal_not_dict,

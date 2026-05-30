@@ -114,60 +114,84 @@ def test_user_sync_full_randomness_without_mock(sample_target_identities, sample
     result2 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
     assert result1 != result2
 # =============================================================================
-# identity-distribute (Layer 3) filters
+# identity-distribute (Layer 3) — seaweedfs_distribute_* (stateless)
 # =============================================================================
-def test_compute_distribution_pairs_single_identity_multiple_paths():
-    target = [{'name': 'alice', 'extra_vault_paths': ['path/X', 'path/Y']}]
-    creds = {'alice': {'accessKey': 'AK_A', 'secretKey': 'SK_A'}}
-    result = sw.seaweedfs_compute_distribution_pairs(target, creds)
-    assert len(result) == 2
-    assert result[0] == {'path': 'path/X', 'name': 'alice',
-                         'accessKey': 'AK_A', 'secretKey': 'SK_A'}
-    assert result[1]['path'] == 'path/Y'
-def test_compute_distribution_pairs_multiple_identities():
-    target = [
-        {'name': 'alice', 'extra_vault_paths': ['path/A']},
-        {'name': 'bob',   'extra_vault_paths': ['path/B1', 'path/B2']},
-    ]
-    creds = {
-        'alice': {'accessKey': 'AK_A', 'secretKey': 'SK_A'},
-        'bob':   {'accessKey': 'AK_B', 'secretKey': 'SK_B'},
-    }
-    result = sw.seaweedfs_compute_distribution_pairs(target, creds)
-    assert len(result) == 3
-def test_compute_distribution_pairs_missing_creds():
-    target = [{'name': 'orphan', 'extra_vault_paths': ['path/X']}]
-    result = sw.seaweedfs_compute_distribution_pairs(target, {})
-    assert result[0]['accessKey'] == ''
-    assert result[0]['secretKey'] == ''
-def test_compute_state_paths_to_delete_empty_state():
-    assert sw.seaweedfs_compute_state_paths_to_delete([], ['path/X']) == []
-def test_compute_state_paths_to_delete_path_in_target_not_deleted():
-    state = [{'identity_name': 'alice', 'vault_paths': ['path/X', 'path/Y']}]
-    result = sw.seaweedfs_compute_state_paths_to_delete(state, ['path/X', 'path/Y'])
+
+def test_distribute_paths_to_delete_orphan_path(sample_vault_json, sample_configmap_state_distribute):
+    """Happy: state has stale path 'eso-secret/team/alice/old', target has new path — old returned for delete."""
+    target = [{'name': 'alice', 'extra_vault_paths': ['eso-secret/team/alice/new']}]
+    result = sw.seaweedfs_distribute_paths_to_delete(
+        sample_vault_json, target, sample_configmap_state_distribute)
+    assert result == [{'path': 'eso-secret/team/alice/old', 'identity_name': 'alice'}]
+
+
+def test_distribute_paths_to_delete_empty_state(sample_vault_json):
+    """Edge: empty state (no ConfigMap yet) → empty deletes list."""
+    target = [{'name': 'alice', 'extra_vault_paths': ['p1']}]
+    result = sw.seaweedfs_distribute_paths_to_delete(sample_vault_json, target, '')
     assert result == []
-def test_compute_state_paths_to_delete_orphan_paths():
-    state = [{'identity_name': 'alice', 'vault_paths': ['path/X', 'path/STALE']}]
-    result = sw.seaweedfs_compute_state_paths_to_delete(state, ['path/X'])
-    assert result == [{'path': 'path/STALE', 'identity_name': 'alice'}]
-def test_build_new_distribution_state_empty():
-    assert sw.seaweedfs_build_new_distribution_state([]) == []
-def test_build_new_distribution_state_with_paths():
-    identities = [{'name': 'alice', 'extra_vault_paths': ['path/A', 'path/B']}]
-    result = sw.seaweedfs_build_new_distribution_state(identities)
-    assert result == [{'identity_name': 'alice', 'vault_paths': ['path/A', 'path/B']}]
-def test_validate_target_paths_unique_ok():
-    assert sw.seaweedfs_validate_target_paths_unique(['path/A', 'path/B']) is True
-def test_validate_target_paths_unique_raises_on_duplicate():
-    with pytest.raises(AnsibleFilterError, match='Duplicate'):
-        sw.seaweedfs_validate_target_paths_unique(['path/A', 'path/A'])
-def test_validate_anonymous_no_extra_paths_ok():
-    identities = [{'name': 'alice', 'extra_vault_paths': ['p']}, {'name': 'anonymous'}]
-    assert sw.seaweedfs_validate_anonymous_no_extra_paths(identities) is True
-def test_validate_anonymous_no_extra_paths_raises_on_anonymous():
-    identities = [{'name': 'anonymous', 'extra_vault_paths': ['p']}]
+
+
+def test_distribute_paths_to_delete_raises_on_anonymous_with_extra():
+    """Edge: anonymous identity with extra_vault_paths → validation raise."""
+    target = [{'name': 'anonymous', 'extra_vault_paths': ['p1']}]
     with pytest.raises(AnsibleFilterError, match='Anonymous'):
-        sw.seaweedfs_validate_anonymous_no_extra_paths(identities)
+        sw.seaweedfs_distribute_paths_to_delete('', target, '')
+
+
+def test_distribute_paths_to_add_happy(sample_vault_json):
+    """Happy: alice with one path → returns one pair with embedded creds."""
+    target = [{'name': 'alice', 'extra_vault_paths': ['eso-secret/team/alice/new']}]
+    result = sw.seaweedfs_distribute_paths_to_add(sample_vault_json, target, '')
+    assert result == [{
+        'path': 'eso-secret/team/alice/new',
+        'name': 'alice',
+        'accessKey': 'ALICE_AK',
+        'secretKey': 'ALICE_SK',
+    }]
+
+
+def test_distribute_paths_to_add_raises_on_missing_creds(sample_vault_json):
+    """Edge: identity 'orphan' not in combined JSON → validation raise."""
+    target = [{'name': 'orphan', 'extra_vault_paths': ['p1']}]
+    with pytest.raises(AnsibleFilterError, match='missing in Vault'):
+        sw.seaweedfs_distribute_paths_to_add(sample_vault_json, target, '')
+
+
+def test_distribute_paths_to_add_raises_on_duplicate_paths(sample_vault_json):
+    """Edge: two identities sharing same path → paths-unique validation raise."""
+    target = [
+        {'name': 'admin', 'extra_vault_paths': ['shared/path']},
+        {'name': 'alice', 'extra_vault_paths': ['shared/path']},
+    ]
+    with pytest.raises(AnsibleFilterError, match='Duplicate'):
+        sw.seaweedfs_distribute_paths_to_add(sample_vault_json, target, '')
+
+
+def test_distribute_new_state_json_happy(sample_target_identities):
+    """Happy: target with alice + extra_vault_paths → serialized state JSON contains alice entry."""
+    target = [{'name': 'alice', 'extra_vault_paths': ['p1', 'p2']}]
+    result = sw.seaweedfs_distribute_new_state_json('', target, '')
+    parsed = json.loads(result)
+    assert parsed == [{'identity_name': 'alice', 'vault_paths': ['p1', 'p2']}]
+
+
+def test_distribute_new_state_json_empty_target():
+    """Edge: empty target → '[]' string."""
+    result = sw.seaweedfs_distribute_new_state_json('', [], '')
+    assert json.loads(result) == []
+
+
+def test_distribute_new_state_json_skips_identities_without_paths():
+    """Edge: target with identity без extra_vault_paths → not included in state."""
+    target = [
+        {'name': 'admin', 'actions': ['Admin']},  # no extra_vault_paths
+        {'name': 'alice', 'extra_vault_paths': ['p1']},
+    ]
+    result = sw.seaweedfs_distribute_new_state_json('', target, '')
+    parsed = json.loads(result)
+    assert len(parsed) == 1
+    assert parsed[0]['identity_name'] == 'alice'
 # =============================================================================
 # bucket-sync (Layer 2) filters
 # =============================================================================
