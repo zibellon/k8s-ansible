@@ -162,9 +162,23 @@ all:
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ seaweedfs_cert_manager_issuer }}"
       extraObjects: "{{ seaweedfs_pre_extra_objects }}"
+      # ------
+      # AWS CLI helper Deployment (consumed by tasks-seaweedfs-bucket-sync.yaml)
+      # ------
+      # SeaweedFS native shell не имеет команд для bucket policies. Bucket policy
+      # хранится в filer как entry.Extended["s3-bucket-policy"] и применяется ТОЛЬКО
+      # через S3 API (aws s3api). Образ chrislusf/seaweedfs не содержит aws CLI,
+      # поэтому seaweedfs/pre/ chart деплоит постоянный Deployment
+      # seaweedfs-aws-cli-helper (1 replica, sleep infinity, image amazon/aws-cli).
+      # Bucket-sync Phase B (delete-bucket-policy) + Phase D (put-bucket-policy)
+      # обращаются к Deployment через kubectl exec.
+      # imagePullSecrets — extension для AirGap (default []).
       awsCliHelper:
-        image: "{{ seaweedfs_sync_aws_cli_image }}"
-        imagePullSecrets: "{{ seaweedfs_sync_aws_cli_image_pull_secrets }}"
+        image: "amazon/aws-cli:2.32.0"
+        imagePullSecrets: []
+        tolerations: []
+        nodeSelector: {}
+        resources: {}
 
     # --- PHASE: postgresql ---
     seaweedfs_postgresql_helm_timeout: "5m"
