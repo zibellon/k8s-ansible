@@ -1,6 +1,10 @@
 # =============================================================================
 # SEAWEEDFS NETWORK POLICIES - HARDENED
 # =============================================================================
+# Intra-namespace traffic (между master/volume/filer/s3/postgresql/aws-cli-helper)
+# покрыт общей политикой allow-internal-traffic. Per-component policies оставлены
+# только для cross-namespace правил (Traefik ingress) + egress к apiserver.
+# =============================================================================
 
 # =============================================================================
 # BASE POLICIES
@@ -44,12 +48,32 @@ spec:
         - protocol: TCP
           port: {{ .Values.dns.port }}
 
+---
+# Allow all traffic between pods inside the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
 # =============================================================================
 # SEAWEEDFS MASTER POLICIES
 # =============================================================================
 
 ---
-# SeaweedFS Master: ingress from volume/filer/s3/master; egress to master (Raft) + apiserver
+# SeaweedFS Master: egress to apiserver (pod management via ClusterRole).
+# Intra-namespace traffic covered by allow-internal-traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -60,60 +84,8 @@ spec:
     matchLabels:
       app.kubernetes.io/component: master
   policyTypes:
-    - Ingress
     - Egress
-  ingress:
-    # From volume pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: volume
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
-    # From filer pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: filer
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
-    # From s3 pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: s3
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
-    # From master pods (Raft consensus)
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: master
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
   egress:
-    # To master pods (Raft consensus)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: master
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
     # To Kubernetes apiserver (pod management via ClusterRole)
     - ports:
         - protocol: TCP
@@ -124,7 +96,8 @@ spec:
 # =============================================================================
 
 ---
-# SeaweedFS Volume: ingress from master/filer/s3; egress to master + apiserver
+# SeaweedFS Volume: egress to apiserver (pod management via ClusterRole).
+# Intra-namespace traffic covered by allow-internal-traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -135,50 +108,8 @@ spec:
     matchLabels:
       app.kubernetes.io/component: volume
   policyTypes:
-    - Ingress
     - Egress
-  ingress:
-    # From master pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: master
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeGrpcPort }}
-    # From filer pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: filer
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeGrpcPort }}
-    # From s3 pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: s3
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeGrpcPort }}
   egress:
-    # To master pods (heartbeat, volume assignments)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: master
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
     # To Kubernetes apiserver (pod management via ClusterRole)
     - ports:
         - protocol: TCP
@@ -189,7 +120,8 @@ spec:
 # =============================================================================
 
 ---
-# SeaweedFS Filer: ingress from components + Traefik (admin UI); egress to master/volume/postgresql/apiserver
+# SeaweedFS Filer: ingress from Traefik (admin UI); egress to apiserver.
+# Intra-namespace traffic covered by allow-internal-traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -203,36 +135,6 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # From master pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: master
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerGrpcPort }}
-    # From volume pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: volume
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerGrpcPort }}
-    # From s3 pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: s3
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerGrpcPort }}
     # From Traefik (admin UI)
     - from:
         - namespaceSelector:
@@ -245,34 +147,6 @@ spec:
         - protocol: TCP
           port: {{ .Values.seaweedfs.filerHttpPort }}
   egress:
-    # To master pods (metadata, volume assignments)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: master
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
-    # To volume pods
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: volume
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeGrpcPort }}
-    # To PostgreSQL backend (our local chart)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: seaweedfs-postgresql
-      ports:
-        - protocol: TCP
-          port: {{ .Values.postgresql.port }}
     # To Kubernetes apiserver (pod management via ClusterRole)
     - ports:
         - protocol: TCP
@@ -283,7 +157,8 @@ spec:
 # =============================================================================
 
 ---
-# SeaweedFS S3: ingress from Traefik; egress to master/volume/filer/apiserver
+# SeaweedFS S3: ingress from Traefik (S3 endpoint); egress to apiserver.
+# Intra-namespace traffic covered by allow-internal-traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -309,69 +184,10 @@ spec:
         - protocol: TCP
           port: {{ .Values.seaweedfs.s3HttpPort }}
   egress:
-    # To master pods (metadata, volume locations)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: master
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.masterGrpcPort }}
-    # To volume pods
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: volume
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.volumeGrpcPort }}
-    # To filer pods (bucket operations)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: filer
-      ports:
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerHttpPort }}
-        - protocol: TCP
-          port: {{ .Values.seaweedfs.filerGrpcPort }}
     # To Kubernetes apiserver (pod management via ClusterRole)
     - ports:
         - protocol: TCP
           port: {{ .Values.apiserver.port }}
-
-# =============================================================================
-# SEAWEEDFS POSTGRESQL POLICIES (filer metadata backend)
-# =============================================================================
-
----
-# SeaweedFS PostgreSQL: ingress from filer (metadata store connection)
-# Postgres egress covered by baseline allow-dns-egress; no other outgoing
-# connections needed for single-replica filer-backend Postgres.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: seaweedfs-postgresql
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: seaweedfs-postgresql
-  policyTypes:
-    - Ingress
-  ingress:
-    # From filer pods (PostgreSQL connection for metadata store)
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: filer
-      ports:
-        - protocol: TCP
-          port: {{ .Values.postgresql.port }}
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
