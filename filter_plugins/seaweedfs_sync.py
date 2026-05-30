@@ -310,11 +310,11 @@ def seaweedfs_distribute_new_state_json(vault_raw_json, target_identities, confi
 # Private helpers (Layer 2 — bucket-sync)
 # =============================================================================
 def _compute_bucket_diff(current_state, target_buckets):
-    """Compute unified bucket+policy+quota sync diff.
+    """Compute unified bucket+policy+quota+immutable-violations sync diff.
 
     Args:
-        current_state: list [{name, quota?, policy?}, ...] from parsed ConfigMap.
-        target_buckets: target list [{name, quota?, policy?}, ...].
+        current_state: list [{name, collection, replication, quota?, policy?}, ...] from parsed ConfigMap.
+        target_buckets: target list [{name, collection, replication, quota?, policy?}, ...].
 
     Returns:
         {
@@ -325,6 +325,8 @@ def _compute_bucket_diff(current_state, target_buckets):
             'to_create_buckets': [target entries new vs state],
             'new_policies_to_apply': [to_create entries with policy],
             'quotas_to_apply': [target entries with quota defined],
+            'immutable_violations': [kept entries where collection OR replication changed —
+                                     used by YAML assert for fail-fast ERROR + abort],
         }
     """
     target_by_name = {b['name']: b for b in target_buckets}
