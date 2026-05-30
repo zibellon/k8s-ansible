@@ -40,7 +40,7 @@
 #      A. Delete стейл buckets (weed shell s3.bucket.delete).
 #      B. Delete стейл policies у kept buckets (aws s3api delete-bucket-policy).
 #      C. Apply policies у kept buckets (aws s3api put-bucket-policy).
-#      D. Create new buckets (weed shell s3.bucket.create -owner=admin).
+#      D. Create new buckets (weed shell s3.bucket.create -owner=<admin name>).
 #      E. Apply policies у new buckets (aws s3api put-bucket-policy).
 #      F. Apply quotas всем target buckets с quota (weed shell s3.bucket.quota).
 #      G. Update ConfigMap state с new target snapshot.
@@ -156,11 +156,11 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Extract admin creds via filter chain (parse → extract → ['admin'])"
+- name: "[{{ dto_label_name }}] Extract admin creds via filter chain (parse → extract → [seaweedfs_identity_admin.name])"
   set_fact:
     "{{ _local_admin_creds_key }}": >-
       {{ (lookup('vars', _local_admin_secret_json_key) | seaweedfs_parse_combined_json
-          | seaweedfs_extract_creds_by_name)['admin'] }}
+          | seaweedfs_extract_creds_by_name)[seaweedfs_identity_admin.name] }}
   when: lookup('vars', _local_any_policy_op_key)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -211,7 +211,7 @@
 # --- PHASE D: Create new buckets ---
 - name: "[{{ dto_label_name }}] Phase D — Create new buckets via weed shell"
   shell: |
-    echo "s3.bucket.create -name={{ item.name }} -owner=admin" | \
+    echo "s3.bucket.create -name={{ item.name }} -owner={{ seaweedfs_identity_admin.name }}" | \
       kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
         weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
   loop: "{{ (lookup('vars', _local_diff_key)).to_create_buckets }}"
