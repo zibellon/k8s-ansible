@@ -306,13 +306,15 @@ def seaweedfs_distribute_new_state_json(vault_raw_json, target_identities, confi
     new_state = _build_new_distribution_state(target_identities)
     return json.dumps(new_state, sort_keys=True)
 # =============================================================================
-# bucket-sync (Layer 2) filters
+# Private helpers (Layer 2 — bucket-sync)
 # =============================================================================
-def seaweedfs_compute_bucket_diff(current_state, target_buckets):
+def _compute_bucket_diff(current_state, target_buckets):
     """Compute unified bucket+policy+quota sync diff.
+
     Args:
-        current_state: list [{name, quota?, policy?}, ...] from ConfigMap.
+        current_state: list [{name, quota?, policy?}, ...] from parsed ConfigMap.
         target_buckets: target list [{name, quota?, policy?}, ...].
+
     Returns:
         {
             'to_delete_buckets': [state entries to remove],
@@ -346,11 +348,10 @@ def seaweedfs_compute_bucket_diff(current_state, target_buckets):
         ],
         'quotas_to_apply': [b for b in target_buckets if 'quota' in b],
     }
-def seaweedfs_quota_size_to_mib(size_str):
-    """Convert human-readable size (e.g. '100GiB') to MiB integer.
-    Supports MiB / GiB / TiB suffix. Raises AnsibleFilterError for any
-    other suffix or malformed input.
-    """
+
+def _quota_size_to_mib(size_str):
+    """Convert human-readable size (e.g. '100GiB') to MiB int.
+    Supports MiB / GiB / TiB. Raises AnsibleFilterError for other suffix."""
     s = str(size_str).strip()
     if s.endswith('MiB'):
         return int(s[:-3])
@@ -361,11 +362,10 @@ def seaweedfs_quota_size_to_mib(size_str):
     raise AnsibleFilterError(
         "Unsupported size unit in '{0}'. Use MiB/GiB/TiB.".format(size_str)
     )
-def seaweedfs_validate_principal_not_dict(statement):
-    """Return True if Statement.Principal is NOT a dict.
-    Raises AnsibleFilterError on dict form — SeaweedFS 4.29 non-AWS
-    limitation (policy_engine/types.go:55-77 accepts only string or list).
-    """
+
+def _validate_principal_not_dict(statement):
+    """Raise AnsibleFilterError if Statement.Principal is dict.
+    SeaweedFS 4.29 non-AWS limitation — accepts only string or list."""
     principal = statement.get('Principal')
     if isinstance(principal, dict):
         raise AnsibleFilterError(
@@ -374,7 +374,123 @@ def seaweedfs_validate_principal_not_dict(statement):
             "\"arn:aws:iam::*:user/<name>\" (single), "
             "[\"arn:...\", \"arn:...\"] (multiple), or \"*\" (anonymous).".format(principal)
         )
-    return True
+
+def _validate_principal_not_dict_in_buckets(target_buckets):
+    """Iterate buckets with policy, validate Principal-not-dict per statement.
+    Called by every public Layer 2 filter (cheap, idempotent)."""
+    for bucket in target_buckets:
+        policy = bucket.get('policy')
+        if not policy:
+            continue
+        for statement in policy.get('Statement', []):
+            _validate_principal_not_dict(statement)
+
+def _enrich_quotas_with_size_mib(quota_buckets):
+    """Return quota buckets list with quota.size_mib int field added.
+    quota.enabled=True → compute size_mib from quota.size.
+    quota.enabled=False → size_mib=0 (not used by Phase E weed shell)."""
+    result = []
+    for b in quota_buckets:
+        quota = dict(b.get('quota') or {})
+        if quota.get('enabled') and 'size' in quota:
+            quota['size_mib'] = _quota_size_to_mib(quota['size'])
+        else:
+            quota['size_mib'] = 0
+        new_bucket = dict(b)
+        new_bucket['quota'] = quota
+        result.append(new_bucket)
+    return result
+# =============================================================================
+# Public Layer 2 filters — stateless bucket-sync orchestrators
+# =============================================================================
+def seaweedfs_buckets_to_delete(vault_raw_json, target_buckets, configmap_raw_json):
+    """State entries not in target → list to delete via weed shell s3.bucket.delete.
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency.
+        target_buckets: list — full target from inventory (base + extra).
+        configmap_raw_json: str — ConfigMap state raw stdout.
+
+    Returns:
+        list of state {name, quota?, policy?} entries (state - target).
+
+    Raises:
+        AnsibleFilterError if any target bucket has Principal-dict in policy Statement.
+    """
+    _validate_principal_not_dict_in_buckets(target_buckets)
+    state = _parse_configmap_state(configmap_raw_json)
+    diff = _compute_bucket_diff(state, target_buckets)
+    return diff['to_delete_buckets']
+
+
+def seaweedfs_bucket_policies_to_delete(vault_raw_json, target_buckets, configmap_raw_json):
+    """Kept target buckets без policy that had policy in state → list for delete-bucket-policy.
+
+    Args, Raises: same as seaweedfs_buckets_to_delete.
+
+    Returns:
+        list of target {name, quota?} entries (no policy field — that's the point).
+    """
+    _validate_principal_not_dict_in_buckets(target_buckets)
+    state = _parse_configmap_state(configmap_raw_json)
+    diff = _compute_bucket_diff(state, target_buckets)
+    return diff['kept_policies_to_delete']
+
+
+def seaweedfs_buckets_to_create(vault_raw_json, target_buckets, configmap_raw_json):
+    """New target entries not in state → list to create via weed shell s3.bucket.create.
+
+    Args, Raises: same as above.
+
+    Returns:
+        list of target {name, quota?, policy?} entries (target - state).
+    """
+    _validate_principal_not_dict_in_buckets(target_buckets)
+    state = _parse_configmap_state(configmap_raw_json)
+    diff = _compute_bucket_diff(state, target_buckets)
+    return diff['to_create_buckets']
+
+
+def seaweedfs_bucket_policies_to_apply(vault_raw_json, target_buckets, configmap_raw_json):
+    """All target buckets с policy (kept + new merged) → list for put-bucket-policy.
+
+    Args, Raises: same as above.
+
+    Returns:
+        list of target {name, quota?, policy} entries — kept_with_policy ∪ new_with_policy.
+        One AWS CLI command (put-bucket-policy) для всех. Phase ordering: после create.
+    """
+    _validate_principal_not_dict_in_buckets(target_buckets)
+    state = _parse_configmap_state(configmap_raw_json)
+    diff = _compute_bucket_diff(state, target_buckets)
+    return diff['kept_policies_to_apply'] + diff['new_policies_to_apply']
+
+
+def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_raw_json):
+    """Target entries с quota → enriched with quota.size_mib int field.
+
+    Args, Raises: same as above.
+
+    Returns:
+        list of {name, quota: {enabled, size, size_mib}, ...} entries — quota.size_mib
+        pre-computed int (MiB), ready for Phase E weed shell -sizeMB=<X>.
+    """
+    _validate_principal_not_dict_in_buckets(target_buckets)
+    quota_buckets = [b for b in target_buckets if 'quota' in b]
+    return _enrich_quotas_with_size_mib(quota_buckets)
+
+
+def seaweedfs_buckets_new_state_json(vault_raw_json, target_buckets, configmap_raw_json):
+    """JSON-serialized target_buckets for ConfigMap state update (Phase F).
+
+    Args, Raises: same as above.
+
+    Returns:
+        str — json.dumps(target_buckets, sort_keys=True). Phase F kubectl apply
+        consumes this directly без |to_json.
+    """
+    _validate_principal_not_dict_in_buckets(target_buckets)
+    return json.dumps(target_buckets, sort_keys=True)
 # =============================================================================
 # Ansible FilterModule registration
 # =============================================================================
@@ -388,7 +504,10 @@ class FilterModule(object):
             'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,
             'seaweedfs_distribute_new_state_json': seaweedfs_distribute_new_state_json,
-            'seaweedfs_compute_bucket_diff': seaweedfs_compute_bucket_diff,
-            'seaweedfs_quota_size_to_mib': seaweedfs_quota_size_to_mib,
-            'seaweedfs_validate_principal_not_dict': seaweedfs_validate_principal_not_dict,
+            'seaweedfs_buckets_to_delete': seaweedfs_buckets_to_delete,
+            'seaweedfs_bucket_policies_to_delete': seaweedfs_bucket_policies_to_delete,
+            'seaweedfs_buckets_to_create': seaweedfs_buckets_to_create,
+            'seaweedfs_bucket_policies_to_apply': seaweedfs_bucket_policies_to_apply,
+            'seaweedfs_buckets_quotas_to_apply': seaweedfs_buckets_quotas_to_apply,
+            'seaweedfs_buckets_new_state_json': seaweedfs_buckets_new_state_json,
         }

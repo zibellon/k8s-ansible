@@ -193,54 +193,139 @@ def test_distribute_new_state_json_skips_identities_without_paths():
     assert len(parsed) == 1
     assert parsed[0]['identity_name'] == 'alice'
 # =============================================================================
-# bucket-sync (Layer 2) filters
+# bucket-sync (Layer 2) — seaweedfs_buckets_* / _bucket_policies_* (stateless)
 # =============================================================================
-def test_compute_bucket_diff_empty_state_all_to_create():
-    target = [{'name': 'b1'}, {'name': 'b2'}]
-    result = sw.seaweedfs_compute_bucket_diff([], target)
-    assert len(result['to_create_buckets']) == 2
-    assert result['to_delete_buckets'] == []
-def test_compute_bucket_diff_all_to_delete():
-    state = [{'name': 'b1'}, {'name': 'b2'}]
-    result = sw.seaweedfs_compute_bucket_diff(state, [])
-    assert len(result['to_delete_buckets']) == 2
-    assert result['to_create_buckets'] == []
-def test_compute_bucket_diff_kept_policies_to_apply():
-    state = [{'name': 'b1'}]
-    target = [{'name': 'b1', 'policy': {'Version': '2012-10-17'}}]
-    result = sw.seaweedfs_compute_bucket_diff(state, target)
-    assert len(result['kept_policies_to_apply']) == 1
-def test_compute_bucket_diff_kept_policies_to_delete():
-    state = [{'name': 'b1', 'policy': {'Version': '2012-10-17'}}]
-    target = [{'name': 'b1'}]
-    result = sw.seaweedfs_compute_bucket_diff(state, target)
-    assert len(result['kept_policies_to_delete']) == 1
-    assert result['kept_policies_to_delete'][0]['name'] == 'b1'
-def test_compute_bucket_diff_quotas_filter():
-    target = [
-        {'name': 'b1', 'quota': {'enabled': True, 'size': '1GiB'}},
-        {'name': 'b2'},
-    ]
-    result = sw.seaweedfs_compute_bucket_diff([], target)
-    assert len(result['quotas_to_apply']) == 1
-    assert result['quotas_to_apply'][0]['name'] == 'b1'
-def test_quota_size_to_mib_mib():
-    assert sw.seaweedfs_quota_size_to_mib('100MiB') == 100
-def test_quota_size_to_mib_gib():
-    assert sw.seaweedfs_quota_size_to_mib('1GiB') == 1024
-    assert sw.seaweedfs_quota_size_to_mib('100GiB') == 102400
-def test_quota_size_to_mib_tib():
-    assert sw.seaweedfs_quota_size_to_mib('1TiB') == 1048576
-def test_quota_size_to_mib_invalid_suffix_raises():
-    with pytest.raises(AnsibleFilterError, match='Unsupported'):
-        sw.seaweedfs_quota_size_to_mib('100GB')
-def test_validate_principal_not_dict_string_ok():
-    assert sw.seaweedfs_validate_principal_not_dict(
-        {'Principal': 'arn:aws:iam::*:user/alice'}) is True
-def test_validate_principal_not_dict_list_ok():
-    assert sw.seaweedfs_validate_principal_not_dict(
-        {'Principal': ['arn:1', 'arn:2']}) is True
-def test_validate_principal_not_dict_dict_raises():
+
+def test_buckets_to_delete_orphan(sample_target_buckets, sample_configmap_state_buckets):
+    """Happy: state has 'b_stale' not in target → returned for delete."""
+    result = sw.seaweedfs_buckets_to_delete('', sample_target_buckets, sample_configmap_state_buckets)
+    assert len(result) == 1
+    assert result[0]['name'] == 'b_stale'
+
+
+def test_buckets_to_delete_empty_state(sample_target_buckets):
+    """Edge: no ConfigMap state → no deletes."""
+    result = sw.seaweedfs_buckets_to_delete('', sample_target_buckets, '')
+    assert result == []
+
+
+def test_buckets_to_delete_raises_on_principal_dict():
+    """Edge: target bucket policy Principal is dict → validation raise."""
+    target = [{
+        'name': 'b1',
+        'policy': {'Version': '2012-10-17', 'Statement': [
+            {'Effect': 'Allow', 'Principal': {'AWS': 'arn:1'}, 'Action': [], 'Resource': []},
+        ]},
+    }]
     with pytest.raises(AnsibleFilterError, match='must be flat string'):
-        sw.seaweedfs_validate_principal_not_dict(
-            {'Principal': {'AWS': 'arn:1'}})
+        sw.seaweedfs_buckets_to_delete('', target, '')
+
+
+def test_bucket_policies_to_delete_kept_lost_policy():
+    """Happy: state had policy on b1, target has b1 без policy → delete-policy."""
+    state = '[{"name": "b1", "policy": {"Version": "2012-10-17"}}]'
+    target = [{'name': 'b1'}]
+    result = sw.seaweedfs_bucket_policies_to_delete('', target, state)
+    assert len(result) == 1
+    assert result[0]['name'] == 'b1'
+
+
+def test_bucket_policies_to_delete_empty_state():
+    """Edge: no state → no policies to delete."""
+    result = sw.seaweedfs_bucket_policies_to_delete('', [{'name': 'b1'}], '')
+    assert result == []
+
+
+def test_bucket_policies_to_delete_kept_still_has_policy():
+    """Edge: state had policy, target also has policy → not in to_delete (it's to_apply)."""
+    state = '[{"name": "b1", "policy": {"Version": "2012-10-17"}}]'
+    target = [{'name': 'b1', 'policy': {'Version': '2012-10-17'}}]
+    result = sw.seaweedfs_bucket_policies_to_delete('', target, state)
+    assert result == []
+
+
+def test_buckets_to_create_new(sample_target_buckets, sample_configmap_state_buckets):
+    """Happy: target has 'b2' not in state → returned for create."""
+    result = sw.seaweedfs_buckets_to_create('', sample_target_buckets, sample_configmap_state_buckets)
+    names = [b['name'] for b in result]
+    assert 'b2' in names
+
+
+def test_buckets_to_create_empty_target():
+    """Edge: empty target → no creates."""
+    result = sw.seaweedfs_buckets_to_create('', [], '')
+    assert result == []
+
+
+def test_buckets_to_create_all_kept():
+    """Edge: all target in state → no creates."""
+    state = '[{"name": "b1"}]'
+    target = [{'name': 'b1'}]
+    result = sw.seaweedfs_buckets_to_create('', target, state)
+    assert result == []
+
+
+def test_bucket_policies_to_apply_kept_and_new(sample_target_buckets, sample_configmap_state_buckets):
+    """Happy: target b1 (kept) and b2 (new) — only b1 has policy → returned."""
+    result = sw.seaweedfs_bucket_policies_to_apply('', sample_target_buckets, sample_configmap_state_buckets)
+    assert len(result) == 1
+    assert result[0]['name'] == 'b1'
+
+
+def test_bucket_policies_to_apply_empty_target():
+    """Edge: no target → no policies."""
+    result = sw.seaweedfs_bucket_policies_to_apply('', [], '')
+    assert result == []
+
+
+def test_bucket_policies_to_apply_no_policies():
+    """Edge: target buckets без policy field → empty list."""
+    target = [{'name': 'b1'}, {'name': 'b2'}]
+    result = sw.seaweedfs_bucket_policies_to_apply('', target, '')
+    assert result == []
+
+
+def test_buckets_quotas_to_apply_enrich_size_mib(sample_target_buckets):
+    """Happy: b1 has quota=1GiB → returned with size_mib=1024 field."""
+    result = sw.seaweedfs_buckets_quotas_to_apply('', sample_target_buckets, '')
+    assert len(result) == 1
+    assert result[0]['name'] == 'b1'
+    assert result[0]['quota']['size_mib'] == 1024
+    assert result[0]['quota']['size'] == '1GiB'  # original preserved
+
+
+def test_buckets_quotas_to_apply_disabled():
+    """Edge: quota.enabled=False → size_mib=0."""
+    target = [{'name': 'b1', 'quota': {'enabled': False}}]
+    result = sw.seaweedfs_buckets_quotas_to_apply('', target, '')
+    assert result[0]['quota']['size_mib'] == 0
+
+
+def test_buckets_quotas_to_apply_no_quota():
+    """Edge: target без quota field → not in result."""
+    target = [{'name': 'b1'}]
+    result = sw.seaweedfs_buckets_quotas_to_apply('', target, '')
+    assert result == []
+
+
+def test_buckets_quotas_to_apply_invalid_size_raises():
+    """Edge: invalid quota.size unit → AnsibleFilterError."""
+    target = [{'name': 'b1', 'quota': {'enabled': True, 'size': '100GB'}}]
+    with pytest.raises(AnsibleFilterError, match='Unsupported'):
+        sw.seaweedfs_buckets_quotas_to_apply('', target, '')
+
+
+def test_buckets_new_state_json_serializes_target(sample_target_buckets):
+    """Happy: target serialized to JSON string with sort_keys."""
+    result = sw.seaweedfs_buckets_new_state_json('', sample_target_buckets, '')
+    parsed = json.loads(result)
+    assert len(parsed) == 2
+    # determinism via sort_keys=True
+    result2 = sw.seaweedfs_buckets_new_state_json('', sample_target_buckets, '')
+    assert result == result2
+
+
+def test_buckets_new_state_json_empty_target():
+    """Edge: empty target → '[]' string."""
+    result = sw.seaweedfs_buckets_new_state_json('', [], '')
+    assert json.loads(result) == []
