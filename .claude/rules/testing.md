@@ -53,7 +53,7 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 | `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list — keeps build context small. |
 | `tests/run-syntax-check.sh` | Bash iterator running `ansible-playbook --syntax-check` over every playbook, then over every task-file (each wrapped in a temporary `import_tasks` playbook). |
 | `tests/helm-validate.yaml` | Ansible-playbook driver for Layer 2. PRE phase: mock `master_manager_fact` + ESO secret lookups for chart values. STEP 1–7: per-chart Helm repo add (через `tasks-add-helm-repo.yaml`) → render values → `helm template` → `kubeconform` → aggregate. Reports per-chart OK/FAIL. |
-| `tests/python/test_seaweedfs_sync.py` | Pytest unit tests for `filter_plugins/seaweedfs_sync.py` (Layer 3). Covers all 13 functions: parse/extract/diff/build/validate. Path setup via `sys.path.insert` to repo-root `filter_plugins/`. |
+| `tests/python/test_seaweedfs_sync.py` | Pytest unit tests for `filter_plugins/seaweedfs_sync.py` (Layer 3). Covers all 10 public + ~12 private helpers: parse/extract/diff/build/validate. Path setup via `sys.path.insert` to repo-root `filter_plugins/`. |
 | `hosts-vars-test/upstream-charts.yaml` | Inventory-format vars-файл для Layer 2 (auto-loaded через `-i hosts-vars-test/`). Unified schema `upstream_charts` list для всех upstream charts (`is_oci`, `helm_url`, `helm_repo_name`, `helm_chart_name`, `helm_chart_version`, `namespace`, `values`). |
 | `.yamllint.yaml` | yamllint config — extends `default` with project-aware relaxations and ignore paths. |
 | `.ansible-lint.yml` | ansible-lint config — `profile: moderate` with documented `skip_list` and `mock_modules`. |
