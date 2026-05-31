@@ -199,3 +199,37 @@ Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../../playbo
 
 - `playbook-app/charts/argocd/install/templates/install.yaml` — vendored upstream ArgoCD chart; embedded NP ports remain hardcoded (modifying upstream chart would break sync). Tracked in `todo.md`.
 - Migration of values from chart `values.yaml` to inventory `hosts-vars/<c>.yaml` (so operators can override per environment) — separate future task.
+
+---
+
+## 8. Cross-namespace cluster-internal access — consumer-owned pattern
+
+Когда workload в namespace `A` должен достучаться до service в namespace `B`, и **оба** namespace имеют baseline `deny-all` NetworkPolicy, cross-ns доступ требует пару NPs (egress в `A` + ingress в `B`). По проектной convention эту пару рендерит **consumer chart** (тот что в namespace `A`), не backend chart (в `B`).
+
+### 8.1 Rationale
+
+- **Dependency order.** Backend (seaweedfs, traefik, gitlab и т.п.) ставится первым в bootstrap sequence — он не знает о future consumer'ах.
+- **Single source of truth.** Consumer объявляет свои dependencies в своём chart'е; backend остаётся agnostic к consumer list.
+- **No coupling.** Добавление нового consumer'а не требует правки backend chart'а.
+
+### 8.2 Precedents в репо
+
+| Consumer chart | Target backend | Pair of NPs |
+|---|---|---|
+| consumer's `pre/` (range loop по `issuer.body.spec.acme.solvers`) | `traefik` (ACME HTTP-01) | `allow-acme-solver-<i>` в consumer ns + `<consumer-ns>-allow-acme-solver-<i>` в traefik ns |
+| `gitlab/pre` | `traefik` | egress entries в `{namespace}-allow-traefik` (NP в traefik ns) |
+| `gitlab/pre` | `haproxy` | `{namespace}-allow-haproxy` в haproxy ns |
+| `gitlab-runner/pre` | `gitlab` (webservice, shell) | `{namespace}-allow-gitlab-webservice` + `{namespace}-allow-gitlab-shell` в gitlab ns |
+| `seaweedfs/pre` | `traefik` | embedded в seaweedfs's own `allow-traefik` block |
+| `gitlab/pre` | `seaweedfs` S3 | `allow-seaweedfs-s3` в gitlab ns + `gitlab-allow-seaweedfs-s3` в seaweedfs ns |
+| `gitlab-runner/pre` | `seaweedfs` S3 | `To SeaweedFS S3` egress entries в `allow-gitlab-runner` + `allow-job-pod` NPs + `gitlab-runner-allow-seaweedfs-s3` ingress в seaweedfs ns |
+
+### 8.3 Naming convention
+
+- **NP в consumer ns** (egress allow): короткое имя `allow-<target-name>` (например `allow-seaweedfs-s3`).
+- **NP в backend ns** (ingress allow): префикс consumer namespace для уникальности — `{consumer-ns}-allow-<target-name>` (например `gitlab-allow-seaweedfs-s3`, `gitlab-runner-allow-seaweedfs-s3`).
+- Префикс предотвращает коллизии когда несколько consumer'ов рендерят NP к одному backend.
+
+### 8.4 Anti-pattern
+
+**Не делать**: backend chart рендерит NP «allow ingress from gitlab/gitlab-runner» в своём `pre/` — это hard-codes список consumer'ов в backend, нарушает dependency order. См. также [`playbook-conventions.md`](playbook-conventions.md) §17.11.

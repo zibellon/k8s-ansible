@@ -150,7 +150,7 @@ Template fields:
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
 - **Non-install playbooks.** `gitlab-configure.yaml` (rotate root password, regenerate PAT, etc.).
-- **Notes.** Uses `tasks-helm-upgrade-async.yaml` for the main `gitlab` release (synchronous Ansible command times out on the multi-release GitLab chart).
+- **Notes.** Uses `tasks-helm-upgrade-async.yaml` for the main `gitlab` release (synchronous Ansible command times out on the multi-release GitLab chart). Cross-ns NP к SeaweedFS S3 backend (`allow-seaweedfs-s3` egress в gitlab ns + `gitlab-allow-seaweedfs-s3` ingress в seaweedfs ns) — hardcoded в `gitlab/pre/templates/network-policy.yaml`, без opt-in переменной; SeaweedFS — invariant L5 dependency для GitLab L7 deployment'а; см. [`networking.md`](networking.md) §8.
 
 ## 12. `gitlab-runner`
 
@@ -163,6 +163,7 @@ Template fields:
 - **ESO integration.** Yes (via `eso_vault_integration_gitlab_runner` in `hosts-vars/gitlab-runner.yaml`) — registration token + S3 cache creds. The runner-token secret uses `body.target.template.data.*` with ESO template placeholders wrapped in `{% raw %}...{% endraw %}`.
 - **ServiceMonitor.** No (runner itself doesn't expose metrics worth scraping).
 - **Dependencies.** `gitlab` (for runner registration token).
+- **Notes.** Cross-ns NP к SeaweedFS S3 backend (`To SeaweedFS S3` egress entries в `allow-gitlab-runner` + `allow-job-pod` NPs + `gitlab-runner-allow-seaweedfs-s3` ingress в seaweedfs ns с двумя `from` entries — runner pods + job pods) — hardcoded в `gitlab-runner/pre/templates/network-policy.yaml`, без opt-in переменной; SeaweedFS — invariant L5 dependency; см. [`networking.md`](networking.md) §8.
 
 ## 13. `zitadel`
 
@@ -265,7 +266,7 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 - **Non-install playbooks.** None. Sync invoked via install playbook tags. Admin safety guard — warning only (sync playbook не hard-fail if no `actions=[Admin]` in target identities; operator решает).
 - **Admin identity inventory pattern.** Admin identity вынесена в отдельную inventory переменную `seaweedfs_identity_admin` (object `{name, actions}`) в `hosts-vars/seaweedfs-sync.yaml` — устраняет hardcoded `'admin'` string в `tasks-seaweedfs-bucket-sync.yaml` (admin creds lookup + `-owner=` для `weed shell s3.bucket.create`). `seaweedfs_identities` base array содержит ссылку `"{{ seaweedfs_identity_admin }}"` как один из элементов. Operator может переименовать admin без поиска по коду — по аналогии с GitLab pattern (`gitlab_postgresql_username`).
 - **GitLab + GitLab-Runner S3 backend opt-in (v8).** `hosts-vars/seaweedfs-sync.yaml` SECTION 1 + SECTION 2 содержат **commented opt-in блоки** для GitLab/runner identities (2 entries) + buckets (6 entries — 5 GitLab + 1 runner-cache, collection=`gitlab`/`gitlab-runner`, replication=`001`, full-access policies). Operator копирует в свой `hosts-vars-override/seaweedfs-sync.yaml` (через `seaweedfs_identities_extra` + `seaweedfs_sync_buckets_extra`) если использует SeaweedFS как S3 backend для GitLab. Vault paths в `extra_vault_paths` используют variable references из `gitlab.yaml` / `gitlab-runner.yaml` ESO secrets (single source of truth — `{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}`). Альтернатива: cloud S3 — operator вручную `vault kv put` для тех же resolved paths без SeaweedFS sync.
-- **Notes.** S3 HA — 3 replicas + Kubernetes Deployment default RollingUpdate strategy (zero downtime при rollout restart). Master 3 replicas с `podAntiAffinity` (3 узла). Volume server'ы — только на worker'ах через `nodeSelector`. Filer metadata в локальном PostgreSQL chart. **Identity model не verified empirically** — Модель 2 (policy-only principals) + identity-Secret mounted persistence требуют PoC на dev cluster для full confidence; см. [`secrets-and-eso.md`](secrets-and-eso.md) §11.
+- **Notes.** S3 HA — 3 replicas + Kubernetes Deployment default RollingUpdate strategy (zero downtime при rollout restart). Master 3 replicas с `podAntiAffinity` (3 узла). Volume server'ы — только на worker'ах через `nodeSelector`. Filer metadata в локальном PostgreSQL chart. **Identity model не verified empirically** — Модель 2 (policy-only principals) + identity-Secret mounted persistence требуют PoC на dev cluster для full confidence; см. [`secrets-and-eso.md`](secrets-and-eso.md) §11. Cross-namespace ingress NPs в seaweedfs ns (например `gitlab-allow-seaweedfs-s3`, `gitlab-runner-allow-seaweedfs-s3`) owned by **consumer chart's pre/ release** (`gitlab/pre`, `gitlab-runner/pre`), не `seaweedfs/pre` — поэтому 10 NPs в `charts/seaweedfs/pre/` не покрывают полный runtime список NPs в namespace; см. [`networking.md`](networking.md) §8.
 
 ### Erasure Coding Migration Playbook (operational reference)
 
