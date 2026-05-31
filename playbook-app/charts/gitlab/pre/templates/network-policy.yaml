@@ -98,40 +98,6 @@ spec:
           port: {{ .Values.gitlab.sidekiqMetricsPort }} # sidekiq
 
 # =============================================================================
-# STORAGE POLICIES (PostgreSQL, Redis, MinIO)
-# =============================================================================
-
----
-# MinIO: ingress from GitLab components and Traefik (console)
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-minio
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: gitlab-minio
-      app.kubernetes.io/instance: gitlab-minio-{{ .Values.namespace }}
-  policyTypes:
-    - Ingress
-  ingress:
-    # From Traefik (console UI)
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: traefik
-              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.gitlab.minioApiPort }}
-        - protocol: TCP
-          port: {{ .Values.gitlab.minioConsolePort }}
-
-# =============================================================================
 # GITLAB CORE POLICIES
 # =============================================================================
 
@@ -194,7 +160,7 @@ spec:
           port: {{ .Values.external.httpPort }}
 
 ---
-# GitLab registry: ingress from Traefik, egress to MinIO
+# GitLab registry: ingress from Traefik (egress на SeaweedFS S3 backend через allow-seaweedfs-s3)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -367,6 +333,60 @@ spec:
 {{- end }}
 
 # =============================================================================
+# CROSS-NAMESPACE TARGETS (SeaweedFS S3 — invariant L5 dependency)
+# =============================================================================
+
+---
+# Cross-ns: GitLab pods → SeaweedFS S3 (egress в gitlab ns)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-seaweedfs-s3
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      release: {{ .Values.gitlab.releaseName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.seaweedfs.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: {{ .Values.seaweedfs.s3Component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.s3HttpPort }}
+
+---
+# Cross-ns: SeaweedFS S3 ← GitLab pods (ingress в seaweedfs ns)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-seaweedfs-s3
+  namespace: {{ .Values.seaweedfs.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: {{ .Values.seaweedfs.s3Component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              release: {{ .Values.gitlab.releaseName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.s3HttpPort }}
+
+# =============================================================================
 # EXTERNAL NAMESPACE POLICIES
 # =============================================================================
 
@@ -421,20 +441,6 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.gitlab.pagesPort }}
-    # To MinIO (console)
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: gitlab-minio
-              app.kubernetes.io/instance: gitlab-minio-{{ .Values.namespace }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.gitlab.minioApiPort }}
-        - protocol: TCP
-          port: {{ .Values.gitlab.minioConsolePort }}
 
 ---
 # HAProxy egress to GitLab shell (in haproxy namespace)
