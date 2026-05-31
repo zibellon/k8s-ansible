@@ -67,10 +67,44 @@ all:
           - operator: Exists
         controller:
           enabled: true
+          # podTemplate: nodeSelector/affinity — пустые {} placeholder'ы (NO-OP,
+          # operator's nodeSelector/affinity сохраняются). tolerations НАМЕРЕННО
+          # опущено — пустой [] в podTemplate REPLACE'ит operator-defaults
+          # (LinstorControllerTolerations + HAControllerTolerations + cluster-wide
+          # `[{operator: Exists}]`); operator override через hosts-vars-override/
+          # добавляет поле когда нужно. resources — per-container, container name
+          # `linstor-controller`.
+          podTemplate:
+            spec:
+              nodeSelector: {}
+              affinity: {}
+              containers:
+                - name: linstor-controller
+                  resources: {}
         csiController:
           enabled: true
+          # podTemplate: scheduling/resources placeholder'ы, см. controller выше.
+          # Container name для CSI controller pod'а: linstor-csi (sidecars типа
+          # csi-provisioner/csi-attacher не перечислены — operator override
+          # добавляет когда нужно).
+          podTemplate:
+            spec:
+              nodeSelector: {}
+              affinity: {}
+              containers:
+                - name: linstor-csi
+                  resources: {}
         csiNode:
           enabled: true
+          # podTemplate: scheduling/resources placeholder'ы, см. controller выше.
+          # Container name для CSI node pod'а: linstor-csi.
+          podTemplate:
+            spec:
+              nodeSelector: {}
+              affinity: {}
+              containers:
+                - name: linstor-csi
+                  resources: {}
         # === High Availability Controller (DaemonSet) ===
         # Образ piraeus-ha-controller:v1.3.2 (подставляет оператор). Ускоряет
         # failover stateful-подов при отказе узла: на каждом узле мониторит DRBD
@@ -87,23 +121,26 @@ all:
           enabled: true
           podTemplate:
             spec:
-              # --- Размещение пода (по умолчанию не задано) ---
-              # tolerations здесь ЗАМЕНЯЕТ список целиком; cluster-wide
-              # linstorCluster.tolerations: [{operator: Exists}] (выше) уже
-              # распространяется на этот под — обычно переопределять не нужно.
-              # nodeSelector: {}
-              # tolerations: []
-              # affinity: {}
-              # priorityClassName: system-cluster-critical  # база оператора уже = это
+              # --- Размещение пода ---
+              # nodeSelector/affinity: empty {} = NO-OP (operator's сохраняются).
+              # tolerations НАМЕРЕННО опущено — empty [] REPLACE'ит operator-defaults
+              # (HAControllerTolerations + cluster-wide); operator override через
+              # hosts-vars-override/ добавляет поле когда нужно.
+              # priorityClassName: оставлен на operator-default (system-cluster-critical),
+              # вне scope этой задачи.
+              nodeSelector: {}
+              affinity: {}
               containers:
                 - name: ha-controller
-                  # resources контейнера — по умолчанию не заданы. Шаблон:
-                  # resources:
-                  #   requests:
-                  #     cpu: "..."
-                  #     memory: "..."
-                  #   limits:
-                  #     memory: "..."
+                  # resources: per-container placeholder (NO-OP когда {}). Шаблон
+                  # для override:
+                  #   resources:
+                  #     requests:
+                  #       cpu: "..."
+                  #       memory: "..."
+                  #     limits:
+                  #       memory: "..."
+                  resources: {}
                   # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1] —
                   # /agent и --v=1 ниже продублированы намеренно.
                   args:
@@ -163,24 +200,29 @@ all:
           # replicas — кол-во подов. Явно фиксируем upstream-дефолт (1) для защиты
           # от изменения дефолта upstream.
           replicas: 1
-          # podTemplate — переопределение Pod-template. По умолчанию не нужно;
-          # раскомментировать и заполнить при необходимости:
-          #   podTemplate:
-          #     spec:
-          #       nodeSelector: {}
-          #       tolerations: []     # ЗАМЕНЯЕТ список; cluster-wide tolerations см. выше
-          #       affinity: {}
-          #       priorityClassName: system-cluster-critical  # база оператора уже = это
-          #       containers:
-          #         - name: linstor-affinity-controller
-          #           resources:
-          #             requests:
-          #               cpu: "..."
-          #               memory: "..."
-          #             limits:
-          #               memory: "..."
+          # podTemplate: nodeSelector/affinity — пустые {} placeholder'ы (NO-OP).
+          # tolerations НАМЕРЕННО опущено (см. highAvailabilityController выше про
+          # REPLACE-семантику). priorityClassName на operator-default, вне scope.
+          # Container name для resources patch: linstor-affinity-controller.
+          podTemplate:
+            spec:
+              nodeSelector: {}
+              affinity: {}
+              containers:
+                - name: linstor-affinity-controller
+                  resources: {}
         nfsServer:
           enabled: true
+          # podTemplate: scheduling/resources placeholder'ы, см. controller выше.
+          # Container name для NFS server pod'а: nfs-server (DaemonSet называется
+          # linstor-csi-nfs-server, но main container — nfs-server).
+          podTemplate:
+            spec:
+              nodeSelector: {}
+              affinity: {}
+              containers:
+                - name: nfs-server
+                  resources: {}
         # === Active cluster-wide DRBD properties (controller-level) ===
         # Property keys verified через `linstor controller drbd-options --<flag>` на кластере.
         # Defaults для sync rate слишком консервативны (c-min-rate=250 KB/s, c-fill-target=50 KiB);
