@@ -88,7 +88,7 @@ spec:
 # =============================================================================
 
 ---
-# GitLab Runner pod: egress to GitLab API, MinIO cache, kube-apiserver, external
+# GitLab Runner pod: egress to GitLab API, SeaweedFS S3 (cache), kube-apiserver, external
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -114,17 +114,17 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.gitlab.webservicePort }}
-    # To GitLab MinIO (runner cache read/write)
+    # To SeaweedFS S3 (runner cache read/write)
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+              kubernetes.io/metadata.name: {{ .Values.seaweedfs.namespace }}
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: gitlab-minio
+              app.kubernetes.io/component: {{ .Values.seaweedfs.s3Component }}
       ports:
         - protocol: TCP
-          port: {{ .Values.gitlab.minioApiPort }}
+          port: {{ .Values.seaweedfs.s3HttpPort }}
     # To GitLab Shell (internal SSH for git operations)
     - to:
         - namespaceSelector:
@@ -190,17 +190,17 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.gitlab.webservicePort }}
-    # To GitLab MinIO (cache read/write)
+    # To SeaweedFS S3 (cache read/write)
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+              kubernetes.io/metadata.name: {{ .Values.seaweedfs.namespace }}
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: gitlab-minio
+              app.kubernetes.io/component: {{ .Values.seaweedfs.s3Component }}
       ports:
         - protocol: TCP
-          port: {{ .Values.gitlab.minioApiPort }}
+          port: {{ .Values.seaweedfs.s3HttpPort }}
     # To GitLab Shell (internal SSH for git operations)
     - to:
         - namespaceSelector:
@@ -278,45 +278,6 @@ spec:
           port: {{ .Values.gitlab.webservicePort }}
 
 ---
-# Allow runner namespace → GitLab MinIO (cache read/write)
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ .Values.namespace }}-allow-gitlab-minio
-  namespace: {{ .Values.gitlab.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: gitlab-minio
-  policyTypes:
-    - Ingress
-  ingress:
-    # From runner pod
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: {{ .Values.gitlab_runner.name }}
-              app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.gitlab.minioApiPort }}
-    # From job pods
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
-              app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.gitlab.minioApiPort }}
-
----
 # Allow runner namespace → GitLab Shell (internal SSH)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -355,3 +316,46 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.gitlab.sshPortInternal }}
+
+# =============================================================================
+# CROSS-NAMESPACE TARGETS (SeaweedFS S3 — invariant L5 dependency)
+# =============================================================================
+
+---
+# Cross-ns: SeaweedFS S3 ← GitLab Runner pods + job pods (ingress в seaweedfs ns)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-seaweedfs-s3
+  namespace: {{ .Values.seaweedfs.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: {{ .Values.seaweedfs.s3Component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # From runner pod
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.s3HttpPort }}
+    # From job pods
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.gitlab_runner_job.name }}
+              app.kubernetes.io/component: {{ .Values.gitlab_runner_job.component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.s3HttpPort }}
