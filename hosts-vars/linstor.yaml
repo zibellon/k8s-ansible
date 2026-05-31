@@ -6,9 +6,11 @@ all:
     # Cluster:  oci://ghcr.io/piraeusdatastore/helm-charts/linstor-cluster
     # =============================================================================
 
-    linstor_namespace: "piraeus-datastore"
+    linstor_namespace: "linstor"
     linstor_rollout_timeout: "300s"
-    # === SECTION 3 ===
+    # ======
+    # === SECTION 1 ===
+    # ======
     # --- PHASE: pre ---
     linstor_pre_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
@@ -26,7 +28,9 @@ all:
       kubelet:
         port: 10250
       extraObjects: "{{ linstor_pre_extra_objects }}"
+    # ---
     # --- PHASE: install-operator ---
+    # ---
     piraeus_operator_helm_timeout: "15m"
     piraeus_operator_rollout_timeout: "900s"
     piraeus_operator_helm_is_oci: true
@@ -39,20 +43,19 @@ all:
       tls:
         autogenerate: true
         renew: true
-      # --- Pod scheduling (defaults = empty; operator override через hosts-vars-override/) ---
       nodeSelector: {}
       affinity: {}
       # tolerations: chart-default содержит 2 DRBD-rules:
       #   - {key: drbd.linbit.com/lost-quorum,    effect: NoSchedule}
       #   - {key: drbd.linbit.com/force-io-error, effect: NoSchedule}
-      # Мы переопределяем в пустой массив — operator-pod НЕ должен быть привязан
-      # к DRBD-troubled узлам.
       tolerations: []
       # --- Container resources (для контейнера `manager`) ---
       operator:
         resources: {}
 
+    # ---
     # --- PHASE: install-cluster ---
+    # ---
     linstor_cluster_helm_timeout: "15m"
     linstor_cluster_rollout_timeout: "900s"
     linstor_cluster_helm_is_oci: true
@@ -60,20 +63,24 @@ all:
     linstor_cluster_helm_chart_version: "1.1.1"
 
     linstor_cluster_helm_values:
-      # === linstorCluster — главный CR ===
+      # === linstorCluster ===
       linstorCluster:
         nodeSelector: {}
         tolerations:
           - operator: Exists
+        # ---
+        # ---
+        # ---
         controller:
           enabled: true
-          # podTemplate: nodeSelector/affinity — пустые {} placeholder'ы (NO-OP,
-          # operator's nodeSelector/affinity сохраняются). tolerations НАМЕРЕННО
-          # опущено — пустой [] в podTemplate REPLACE'ит operator-defaults
+          # DEFAULT: nodeSelector/affinity — пустые {}
+          # tolerations НАМЕРЕННО опущено — пустой [] в podTemplate REPLACE'ит operator-defaults
           # (LinstorControllerTolerations + HAControllerTolerations + cluster-wide
-          # `[{operator: Exists}]`); operator override через hosts-vars-override/
-          # добавляет поле когда нужно. resources — per-container, container name
-          # `linstor-controller`.
+          # `[{operator: Exists}]`); operator override через hosts-vars-override/ добавляет поле когда нужно
+          # ---
+          # resources = per-container
+          # container name = linstor-controller
+          # ---
           podTemplate:
             spec:
               nodeSelector: {}
@@ -83,10 +90,11 @@ all:
                   resources: {}
         csiController:
           enabled: true
-          # podTemplate: scheduling/resources placeholder'ы, см. controller выше.
-          # Container name для CSI controller pod'а: linstor-csi (sidecars типа
-          # csi-provisioner/csi-attacher не перечислены — operator override
-          # добавляет когда нужно).
+          # DEFAULT: nodeSelector/affinity — пустые {}
+          # sidecars csi-provisioner/csi-attacher не перечислены — operator override добавляет когда нужно
+          # ---
+          # container name = linstor-csi
+          # ---
           podTemplate:
             spec:
               nodeSelector: {}
@@ -96,8 +104,10 @@ all:
                   resources: {}
         csiNode:
           enabled: true
-          # podTemplate: scheduling/resources placeholder'ы, см. controller выше.
-          # Container name для CSI node pod'а: linstor-csi.
+          # DEFAULT: nodeSelector/affinity — пустые {}
+          # ---
+          # container name = linstor-csi
+          # ---
           podTemplate:
             spec:
               nodeSelector: {}
@@ -106,104 +116,86 @@ all:
                 - name: linstor-csi
                   resources: {}
         # === High Availability Controller (DaemonSet) ===
-        # Образ piraeus-ha-controller:v1.3.2 (подставляет оператор). Ускоряет
-        # failover stateful-подов при отказе узла: на каждом узле мониторит DRBD
-        # и эвакуирует поды с узла, потерявшего доступ к данным.
+        # Ускоряет failover stateful-подов при отказе узла: на каждом узле мониторит DRBD и эвакуирует поды с узла, потерявшего доступ к данным
         # Конфигурируется полями LinstorCluster.spec.highAvailabilityController:
         #   enabled      — разворачивать ли DaemonSet
         #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
         #
-        # ВАЖНО — per-workload, НЕ настраивается здесь (memo):
-        #   аннотация drbd.linbit.com/ignore-fail-over на Pod исключает этот Pod
-        #   из управления HA-controller'ом. Ставится на потребительский Pod:
-        #     kubectl annotate pod <name> drbd.linbit.com/ignore-fail-over=""
+        # ВАЖНО! per-workload, НЕ настраивается здесь
+        #   аннотация drbd.linbit.com/ignore-fail-over на Pod исключает этот Pod из управления HA-controller
+        #   kubectl annotate pod <name> drbd.linbit.com/ignore-fail-over=""
         highAvailabilityController:
           enabled: true
           podTemplate:
             spec:
               # --- Размещение пода ---
-              # nodeSelector/affinity: empty {} = NO-OP (operator's сохраняются).
+              # nodeSelector/affinity: empty {}
               # tolerations НАМЕРЕННО опущено — empty [] REPLACE'ит operator-defaults
-              # (HAControllerTolerations + cluster-wide); operator override через
-              # hosts-vars-override/ добавляет поле когда нужно.
-              # priorityClassName: оставлен на operator-default (system-cluster-critical),
-              # вне scope этой задачи.
+              # (HAControllerTolerations + cluster-wide)
               nodeSelector: {}
               affinity: {}
               containers:
                 - name: ha-controller
-                  # resources: per-container placeholder (NO-OP когда {}). Шаблон
-                  # для override:
-                  #   resources:
-                  #     requests:
-                  #       cpu: "..."
-                  #       memory: "..."
-                  #     limits:
-                  #       memory: "..."
+                  # ---
+                  # resources: per-container placeholder. Шаблон
+                  # ---
                   resources: {}
-                  # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1] —
-                  # /agent и --v=1 ниже продублированы намеренно.
+                  # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1]. /agent и --v=1 ниже продублированы
                   args:
                     - /agent
-                    # --v: уровень логирования. База оператора: 1 — сохраняем.
+                    # --v: уровень логирования. 1 — DEFAULT
                     - --v=1
-                    # --fail-over-timeout: пауза перед эвакуацией подов с "мёртвого"
-                    # узла. 6m — осознанный backstop: Kubernetes сам эвакуирует поды
-                    # с unreachable-узла ~через 5 мин (tolerationSeconds=300), а
-                    # HA-controller добивает на 6-й минуте. Upstream-дефолт: 5s.
+                    # пауза перед эвакуацией подов с "мёртвого" узла. 6m — осознанный backstop
+                    # Kubernetes сам эвакуирует поды ~через 5 мин (tolerationSeconds=300)
+                    # HA-controller добивает на 6 минуте
+                    # DEFAULT: 5s
                     - --fail-over-timeout=6m
-                    # --- Прочие флаги (upstream-дефолты; для смены — раскомментировать) ---
-                    # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из
-                    # genericclioptions.ConfigFlags (--request-timeout, --namespace,
-                    # --server, --kubeconfig, --context, --token, --certificate-authority).
-                    # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через
-                    # cfgflags.ToRESTConfig(), внутри — clientcmd DeferredLoadingClientConfig,
-                    # in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен
-                    # bare-дефолту. Любой ConfigFlags-override (например --request-timeout
-                    # выставляет overrides.Timeout) → детект отключается → клиент уходит
-                    # на http://localhost:8080 → DaemonSet не Ready.
-                    # Все перечисленные ниже флаги — кастомные (cmd.Flags), override
-                    # не трогают, добавлять безопасно.
+                    # --- Прочие флаги (upstream-дефолты) ---
+                    # ---
+                    # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из genericclioptions.ConfigFlags
+                    # (--request-timeout, --namespace, --server, --kubeconfig, --context, --token, --certificate-authority).
+                    # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через cfgflags.ToRESTConfig()
+                    # внутри — clientcmd DeferredLoadingClientConfig, in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен bare-дефолту
+                    # Любой ConfigFlags-override (например --request-timeout выставляет overrides.Timeout) → детект отключается
+                    # → клиент уходит на http://localhost:8080 → DaemonSet не Ready.
+                    # ---
+                    # Все перечисленные ниже флаги — кастомные (cmd.Flags), override не трогают, добавлять безопасно.
                     # - --grace-period-seconds=10    # grace-period при force-delete пода (сек)
                     # - --drbd-status-interval=5s    # период опроса статуса DRBD на узле
                     # - --reconcile-interval=10s     # макс. интервал цикла reconcile
                     # - --resync-interval=15m        # период пересинхронизации внутр. кэша
                     # - --operations-timeout=30s     # таймаут отдельной операции
                     # - --disable-node-taints=false  # true → не ставить taint'ы на узел
-                    # --node-name оператор задаёт из env NODE_NAME — здесь не указывать.
+                    # --node-name оператор задаёт из env NODE_NAME — здесь не указывать
+                    # ---
         # === Affinity Controller (Deployment) ===
-        # Образ linstor-affinity-controller:v1.4.1 (подставляет оператор). Держит
-        # nodeAffinity у PersistentVolume в синхроне с реальным размещением реплик
-        # в LINSTOR (нужно при миграции томов и на эфемерных узлах).
+        # Держит nodeAffinity у PersistentVolume в синхроне с реальным размещением реплик в LINSTOR
+        # нужно при миграции томов и на эфемерных узлах
         # Конфигурируется полями LinstorCluster.spec.affinityController:
         #   enabled      — разворачивать ли Deployment
         #   replicas     — кол-во подов (между ними leader-election)
         #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
         #
-        # ВАЖНО — per-workload, НЕ настраивается здесь (memo):
-        #   аннотация piraeus.io/skip-affinity-controller на PV запрещает контроллеру
-        #   трогать (пересоздавать) этот PV. Ставится на потребительский PV:
+        # ВАЖНО! per-workload, НЕ настраивается здесь:
+        #   аннотация piraeus.io/skip-affinity-controller на PV запрещает контроллеру трогать (пересоздавать) этот PV
+        #   Ставится на потребительский PV:
         #     kubectl annotate pv <name> piraeus.io/skip-affinity-controller=true
         #
-        # Поведенческие флаги (НЕ меняем — memo). Оператор задаёт v / leader-election /
-        # property-namespace через env-переменные контейнера linstor-affinity-controller:
+        # Поведенческие флаги (НЕ меняем — memo). Оператор задаёт v / leader-election / property-namespace
+        # через env-переменные контейнера linstor-affinity-controller:
         #   --v                   лог-уровень. Дефолт 1 (env VERBOSE)
         #   --leader-election     leader-election между репликами. Дефолт true (env LEADER_ELECTION)
-        #   --property-namespace  LINSTOR property namespace для node-меток.
-        #                         Оператор: Aux/topology (env PROPERTY_NAMESPACE)
-        #   --reconcile-rate      как часто сверять affinity PV vs LINSTOR. Дефолт 15s
-        #                         (оператором НЕ задаётся — дефолт бинаря)
-        #   --resync-rate         период пересинхронизации кэша K8s-ресурсов. Дефолт 15m
-        #                         (оператором НЕ задаётся — дефолт бинаря)
+        #   --property-namespace  LINSTOR property namespace для node-меток. Оператор: Aux/topology (env PROPERTY_NAMESPACE)
+        #   --reconcile-rate      как часто сверять affinity PV vs LINSTOR. Дефолт 15s (оператором НЕ задаётся — дефолт бинаря)
+        #   --resync-rate         период пересинхронизации кэша K8s-ресурсов. Дефолт 15m (оператором НЕ задаётся — дефолт бинаря)
         affinityController:
           enabled: true
-          # replicas — кол-во подов. Явно фиксируем upstream-дефолт (1) для защиты
-          # от изменения дефолта upstream.
           replicas: 1
-          # podTemplate: nodeSelector/affinity — пустые {} placeholder'ы (NO-OP).
-          # tolerations НАМЕРЕННО опущено (см. highAvailabilityController выше про
-          # REPLACE-семантику). priorityClassName на operator-default, вне scope.
-          # Container name для resources patch: linstor-affinity-controller.
+          # DEFAULT: nodeSelector/affinity — пустые {}
+          # tolerations НАМЕРЕННО опущено (см. highAvailabilityController).
+          # ---
+          # Container name: linstor-affinity-controller
+          # ---
           podTemplate:
             spec:
               nodeSelector: {}
@@ -213,9 +205,11 @@ all:
                   resources: {}
         nfsServer:
           enabled: true
-          # podTemplate: scheduling/resources placeholder'ы, см. controller выше.
-          # Container name для NFS server pod'а: nfs-server (DaemonSet называется
-          # linstor-csi-nfs-server, но main container — nfs-server).
+          # DEFAULT: nodeSelector/affinity — пустые {}
+          # ---
+          # Container name
+          # - для NFS server: nfs-server (DaemonSet называется linstor-csi-nfs-server).
+          # - но main container — nfs-server
           podTemplate:
             spec:
               nodeSelector: {}
@@ -323,10 +317,10 @@ all:
           #   spec.podTemplate.spec.nodeSelector    = pod scheduling override на DaemonSet
           #                                           (обычно redundant для DaemonSet, ставит
           #                                           дополнительные требования к node).
-          # tolerations НАМЕРЕННО опущено — empty [] в podTemplate REPLACE'ит operator-defaults
-          # (HAControllerTolerations + NoScheduleToleration + cluster-wide `[{operator: Exists}]`);
-          # operator override через hosts-vars-override/ добавляет поле когда нужно.
-          # Container name для resources patch: linstor-satellite.
+          # tolerations НАМЕРЕННО опущено — empty []
+          # ---
+          # Container name: linstor-satellite.
+          # ---
           podTemplate:
             spec:
               nodeSelector: {}
@@ -486,14 +480,3 @@ all:
           scrapeTimeout: "15s"
           labels: {}
       extraObjects: "{{ linstor_post_extra_objects }}"
-
-    # === COMPANION PLAYBOOK: linstor-restart.yaml ===
-    linstor_restart_resources:
-      - deployment/piraeus-operator-controller-manager
-      - deployment/linstor-controller
-      - deployment/linstor-csi-controller
-      - daemonset/linstor-csi-node
-      - deployment/ha-controller
-      - deployment/affinity-controller
-      - daemonset/linstor-satellite.managers-config
-      - daemonset/linstor-satellite.workers-config

@@ -5,9 +5,6 @@
 # =============================================================================
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/linstor-restart.yaml
-#
-# Override list of resources (optional):
-#   ansible-playbook ... --extra-vars 'linstor_restart_resources=["deployment/linstor-controller"]'
 # =============================================================================
 
 - name: Restart LINSTOR / Piraeus stack
@@ -51,7 +48,15 @@
 
     - name: "[linstor-restart] Rollout-restart workloads from linstor_restart_resources"
       command: kubectl rollout restart {{ item }} -n {{ linstor_namespace }}
-      loop: "{{ linstor_restart_resources }}"
+      loop:
+        - deployment.apps/piraeus-operator-controller-manager
+        - deployment.apps/linstor-controller
+        - deployment.apps/linstor-csi-controller
+        - daemonset.apps/linstor-csi-node
+        - deployment.apps/ha-controller
+        - deployment.apps/affinity-controller
+        - daemonset.apps/linstor-satellite.managers-config
+        - daemonset.apps/linstor-satellite.workers-config
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -65,7 +70,15 @@
         dto_label_name: "linstor-restart"
         dto_rollout_namespace: "{{ linstor_namespace }}"
         dto_rollout_timeout: "{{ linstor_rollout_timeout }}"
-        dto_rollout_resources_list: "{{ linstor_restart_resources }}"
+        dto_rollout_resources_list:
+          - deployment.apps/piraeus-operator-controller-manager
+          - deployment.apps/linstor-controller
+          - deployment.apps/linstor-csi-controller
+          - daemonset.apps/linstor-csi-node
+          - deployment.apps/ha-controller
+          - deployment.apps/affinity-controller
+          - daemonset.apps/linstor-satellite.managers-config
+          - daemonset.apps/linstor-satellite.workers-config
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART
@@ -79,6 +92,6 @@
 
     - name: "[linstor-verify] Restart completed"
       debug:
-        msg: "LINSTOR / Piraeus stack restart complete ({{ linstor_restart_resources | length }} workloads)"
+        msg: "LINSTOR / Piraeus stack restart complete (workloads)"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
