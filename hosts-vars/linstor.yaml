@@ -314,6 +314,26 @@ all:
         - name: manager
           nodeSelector:
             node-role.kubernetes.io/control-plane: ""
+          # podTemplate: scheduling/resources placeholder'ы для DaemonSet pod'ов
+          # satellite на узлах выбранных через `nodeSelector:` выше.
+          # ВАЖНО — два разных nodeSelector в этом config'е:
+          #   spec.nodeSelector (выше)              = на каких узлах вообще запускать
+          #                                           satellite DaemonSet (config применяется
+          #                                           только к узлам, проходящим селектор).
+          #   spec.podTemplate.spec.nodeSelector    = pod scheduling override на DaemonSet
+          #                                           (обычно redundant для DaemonSet, ставит
+          #                                           дополнительные требования к node).
+          # tolerations НАМЕРЕННО опущено — empty [] в podTemplate REPLACE'ит operator-defaults
+          # (HAControllerTolerations + NoScheduleToleration + cluster-wide `[{operator: Exists}]`);
+          # operator override через hosts-vars-override/ добавляет поле когда нужно.
+          # Container name для resources patch: linstor-satellite.
+          podTemplate:
+            spec:
+              nodeSelector: {}
+              affinity: {}
+              containers:
+                - name: linstor-satellite
+                  resources: {}
           storagePools:
             - name: lnstr-file-thin-manager
               fileThinPool:
@@ -330,6 +350,14 @@ all:
         - name: worker
           nodeSelector:
             node-role.kubernetes.io/worker: ""
+          # podTemplate: scheduling/resources placeholder'ы, см. memo у manager выше.
+          podTemplate:
+            spec:
+              nodeSelector: {}
+              affinity: {}
+              containers:
+                - name: linstor-satellite
+                  resources: {}
           storagePools:
             - name: lnstr-file-thin-worker
               fileThinPool:
