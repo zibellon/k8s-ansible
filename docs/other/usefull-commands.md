@@ -304,3 +304,9 @@ REVISION	UPDATED                 	STATUS         	CHART                   	APP V
 
 # Получить в yaml формате то, что helm реально применил в кластер
 `helm get manifest linstor-cluster -n piraeus-datastore`
+
+# Заставить синхронизироваться немедленно
+`sudo systemctl restart systemd-timesyncd`
+
+# Рестарт сбрасывает интервал опроса на стартовые 32 c и сразу шлёт запрос. Тут же смотри лог в реальном времени:
+`journalctl -u systemd-timesyncd -f`
