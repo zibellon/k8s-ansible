@@ -310,3 +310,6 @@ REVISION	UPDATED                 	STATUS         	CHART                   	APP V
 
 # Рестарт сбрасывает интервал опроса на стартовые 32 c и сразу шлёт запрос. Тут же смотри лог в реальном времени:
 `journalctl -u systemd-timesyncd -f`
+
+# Проверить что в POD
+`kubectl exec -n <NS_NAME> <POD_NAME> -- date -u +%T.%N`
