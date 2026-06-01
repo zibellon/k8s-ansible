@@ -383,3 +383,54 @@ https://github.com/argoproj-labs/argocd-image-updater/blob/stable/manifests/inst
 
 ## Скачать файл
 https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/refs/tags/stable/manifests/install.yaml
+
+
+## Как сделать через ArgoCD - rollingUpdate ? +tag=latest
+
+1. делать будем через API-call: ..../restart
+   1. Это добавляет к манифесту в kubernetes annotations: kubectl.kubernetes.io/restartedAt: '2026-06-01T09:36:52Z'
+2. Но тогжа возникает вопрос - а что делать с
+   1. autoSync
+   2. selfHeal
+
+добавить в Application такую настройку
+```
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jqPathExpressions:
+        - '.spec.template.metadata.annotations."kubectl.kubernetes.io/restartedAt"'
+```
+
+Добавить в Application такую настройку
+```
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
+      - ApplyOutOfSyncOnly=true
+      - PrunePropagationPolicy=background
+      - RespectIgnoreDifferences=true # ВОТ ЭТО
+```
+
+Добавить во ВСЕ Resources, которые планируется перезапускать. Иначе будем висеть в статусе OutOfSync
+```
+      annotations:
+        my-custom.restart.io/managed: "true"
+```
+
+## Фаза 1 — сравнение (diff / drift-detection). ArgoCD постоянно сверяет git ↔ кластер и считает статус Synced/OutOfSync
+## Фаза 2 — применение (sync / apply). Когда реально запускается синк, ArgoCD делает apply манифеста из git в кластер
+
+`ignoreDifferences` влияет только на фазу 1
+- поле restartedAt не считается дрейфом → app не уходит в OutOfSync → selfHeal не откатывает
+- Этого достаточно, чтобы selfHeal не воевал с рестартом
+
+`RespectIgnoreDifferences`=true распространяет тот же ignore на фазу 2:
+- при реальном apply ArgoCD не трогает (не затирает) проигнорированное поле
+- Что будет, если НЕ ставить флаг
+  - selfHeal всё равно не откатит restartedAt (это фаза 1, её закрывает ignoreDifferences)
+  - Проблема в другом сценарии — когда происходит настоящий sync Deployment'а:
+
+Позже поменяешь в git-ops что-то в самом Deployment (env, лимиты, и т.п.), или кто-то нажмёт Sync/Replace вручную;
+ArgoCD применит манифест из git, в котором restartedAt нет;
+при некоторых режимах apply (server-side apply, отдельные версии) аннотация restartedAt будет затёрта → меняется hash pod-шаблона → лишний незапланированный rolling-restart подов прямо в момент этого синка.
+То есть риск не «всё сломается», а «поды неожиданно перезапустятся, когда ты синкаешь что-то совсем другое». С RespectIgnoreDifferences=true restartedAt переживает любой sync → поды крутятся только когда ты сам дёрнул restart-action, и никогда как побочка.
