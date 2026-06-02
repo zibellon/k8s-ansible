@@ -154,9 +154,10 @@ all:
     # (sweeps bucket record). Bucket с объектами удаляется без жалоб.
     # Единственное препятствие — Object Lock с locked objects (s3_objectlock check).
     #
-    # Quota enforcement: НЕ автоматический в SeaweedFS (command_s3_bucket_quota_check.go:38-103).
-    # K8s CronJob 'seaweedfs-quota-enforce' запускает 'weed shell s3.bucket.quota.enforce
-    # -apply' каждые 5 минут — см. charts/seaweedfs/quota-cron/.
+    # Quota enforcement: нативный в SeaweedFS 4.31+ — s3-gateway сам переключает bucket
+    # read-only в обе стороны (~раз в минуту, leader-locked на одной из реплик), без
+    # внешнего крона. Источник: weed/s3api/bucket_size_metrics.go (enforceBucketQuotas).
+    # bucket-sync Phase E только ЗАДАЁТ квоты (s3.bucket.quota -op=set); энфорсит gateway.
     #
     # Schema per bucket:
     #   name:        bucket name (DNS-compatible, lower-case) — required.

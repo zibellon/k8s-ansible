@@ -226,7 +226,7 @@ all:
     seaweedfs_helm_url: "https://seaweedfs.github.io/seaweedfs/helm"
     seaweedfs_helm_repo_name: "seaweedfs"
     seaweedfs_helm_chart_name: "seaweedfs"
-    seaweedfs_helm_chart_version: "4.30.0"
+    seaweedfs_helm_chart_version: "4.31.0"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     seaweedfs_install_extra_objects: []
     # Install-phase kustomize patches (operator-side customization, default empty)
@@ -351,22 +351,3 @@ all:
           websecure: "{{ traefik_websecure_entrypoint }}"
       serviceMonitor: "{{ seaweedfs_service_monitor }}"
       extraObjects: "{{ seaweedfs_post_extra_objects }}"
-
-    # --- PHASE: quota-cron ---
-    # Critical operational requirement: quota НЕ auto-enforces в SeaweedFS
-    # (command_s3_bucket_quota_check.go:38-103). K8s CronJob запускает
-    # 'weed shell s3.bucket.quota.enforce -apply' каждые 5 минут intra-cluster.
-    seaweedfs_quota_cron_enabled: true
-    seaweedfs_quota_cron_helm_timeout: "2m"
-    seaweedfs_quota_cron_schedule: "*/5 * * * *"
-    seaweedfs_quota_cron_image: "chrislusf/seaweedfs:4.30"
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    seaweedfs_quota_cron_extra_objects: []
-    # Quota-cron-phase kustomize patches (operator-side customization, default empty)
-    seaweedfs_quota_cron_kustomize_patches: []
-    # Quota-cron-phase values (CronJob chart)
-    seaweedfs_quota_cron_helm_values:
-      namespace: "{{ seaweedfs_namespace }}"
-      schedule: "{{ seaweedfs_quota_cron_schedule }}"
-      image: "{{ seaweedfs_quota_cron_image }}"
-      extraObjects: "{{ seaweedfs_quota_cron_extra_objects }}"
