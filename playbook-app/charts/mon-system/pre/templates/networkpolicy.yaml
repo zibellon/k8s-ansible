@@ -240,6 +240,82 @@ spec:
 {{- end }}
 
 # =============================================================================
+# LOKI S3 BACKEND (egress к object store: seaweedfs cross-ns пара ИЛИ внешний S3)
+# =============================================================================
+{{- if .Values.loki.enabled }}
+{{- if .Values.loki.s3.seaweedfsEnabled }}
+---
+# egress: loki → seaweedfs S3 (в namespace mon-system)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-loki-seaweedfs-s3
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.seaweedfs.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: {{ .Values.seaweedfs.s3Component }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.s3HttpPort }}
+---
+# ingress: seaweedfs S3 ← loki (в namespace seaweedfs)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ .Values.namespace }}-allow-loki-seaweedfs-s3"
+  namespace: {{ .Values.seaweedfs.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: {{ .Values.seaweedfs.s3Component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.s3HttpPort }}
+{{- else }}
+---
+# egress: loki → внешний S3 (интернет, HTTP/HTTPS)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-loki-external-s3
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+{{- end }}
+{{- end }}
+
+# =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
 # =============================================================================
 {{- $anyUI := or .Values.grafana.enabled (and .Values.prometheus_operator.enabled .Values.prometheus.enabled) }}
