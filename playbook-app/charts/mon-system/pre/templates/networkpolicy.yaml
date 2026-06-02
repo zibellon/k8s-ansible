@@ -240,8 +240,8 @@ spec:
 {{- end }}
 
 # =============================================================================
-# LOKI S3 BACKEND (egress к SeaweedFS object store — всегда, SeaweedFS = L5 dep)
-# Для внешнего S3 оператор добавляет свой egress NP через mon_system_pre_extra_objects.
+# LOKI S3 BACKEND (egress: SeaweedFS S3 на 8333 + внешний S3 на 443/80)
+# SeaweedFS = L5 dep; external egress нужен, чтобы Loki дошёл до внешнего S3 (cloud).
 # =============================================================================
 {{- if .Values.loki.enabled }}
 ---
@@ -249,7 +249,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-loki-seaweedfs-s3
+  name: allow-loki
   namespace: {{ .Values.namespace }}
 spec:
   podSelector:
@@ -268,12 +268,17 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.seaweedfs.s3HttpPort }}
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
 ---
 # ingress: seaweedfs S3 ← loki (в namespace seaweedfs)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: "{{ .Values.namespace }}-allow-loki-seaweedfs-s3"
+  name: "{{ .Values.namespace }}-allow-loki"
   namespace: {{ .Values.seaweedfs.namespace }}
 spec:
   podSelector:
