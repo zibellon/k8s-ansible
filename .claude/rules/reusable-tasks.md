@@ -342,7 +342,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation; nested include (`tasks-k8s-secret-get`) inherits via Ansible scope.
 - **Validates (assert).** `dto_label_name` defined + non-empty. Per-statement Principal validation: `item.1.Principal is not mapping` (fails on dict-form `{AWS: ...}`). Admin Secret existence (when any policy op needed) — fail-fast with hint to run `--tags user-sync` first.
 - **Output.** Buckets created/updated/deleted в filer Postgres metadata; policies set/removed в filer Postgres metadata (`entry.Extended["s3-bucket-policy"]`); ConfigMap state updated.
-- **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 6 (tag `[bucket-sync]`, after install + post + quota-cron).
+- **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 5 (tag `[bucket-sync]`, after install + post).
 - **Idempotent.** Yes — diff vs ConfigMap state. put-bucket-policy fully replaces existing (AWS-style overwrite behavior). `s3.bucket.delete` без `-force` флага но делает hard delete (CollectionDelete sweeps все volumes/objects; Object Lock с locked objects — единственное препятствие).
 
 ---

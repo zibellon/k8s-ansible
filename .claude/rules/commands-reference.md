@@ -249,7 +249,7 @@ ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags bucket-sync
 ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync,identity-distribute,bucket-sync
 ```
 
-**Quota enforcement** — отдельный K8s CronJob `seaweedfs-quota-enforce` (chart subdir `charts/seaweedfs/quota-cron/`) запускает `weed shell s3.bucket.quota.enforce -apply` каждые 5 минут. Quota НЕ auto-enforces в SeaweedFS — без CronJob bucket может уйти выше лимита. Gated через `seaweedfs_quota_cron_enabled` (default true).
+**Quota enforcement** — нативный в SeaweedFS 4.31+: s3-gateway сам переключает bucket read-only в обе стороны (~раз в минуту, leader-locked на одной из реплик). Отдельного крона / ручного `s3.bucket.quota.enforce` не требуется — квоты задаёт `bucket-sync` (Phase E `s3.bucket.quota -op=set`), энфорсит gateway.
 
 ---
 
