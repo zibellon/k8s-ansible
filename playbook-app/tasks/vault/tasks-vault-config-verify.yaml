@@ -1,10 +1,12 @@
 # =============================================================================
 # Vault Config Verify (uniqueness + role→policy refs)
 # =============================================================================
-# Pure validation pre-check для Vault policies + roles. Read-only, без set_fact.
+# Pure validation pre-check для Vault policies + roles. Тонкий wrapper: делегирует
+# валидацию в Python-фильтр vault_config_verify (filter_plugins/vault_config_verify.py).
 # Каждый caller передаёт только dto_label_name; vault_policies/_extra и
-# vault_roles/_extra читаются inline из inventory. Merge выполняется через
-# Jinja expression base + (extra | default([])) внутри vars каждого assert/fail.
+# vault_roles/_extra читаются inline из inventory, merge base + (extra | default([]))
+# делается в set_fact и передаётся фильтру. Фильтр возвращает list нарушений;
+# wrapper делает assert length == 0 (fail с полным отчётом при непустом списке).
 #
 # Params:
 #   - dto_label_name (string): log prefix
@@ -20,7 +22,7 @@
 #   2. Unique `name` in merged vault_roles.
 #   3. Referential integrity: each role.policies references existing policy.
 #
-# Output: none.
+# Output: _local_error_item_list (local fact — list[str] нарушений; [] = OK).
 # Callers: vault-install.yaml + 11 ESO callers (see SUB-3).
 # =============================================================================
 
@@ -38,55 +40,25 @@
   run_once: true
   tags: [always]
 
-# -------------------------------------------------------------------------
-# Group 1: Unique policy names in vault_policies + vault_policies_extra
-# -------------------------------------------------------------------------
-- name: "[{{ dto_label_name }}] Check unique policy names in merged vault_policies"
-  fail:
-    msg: >-
-      tasks-vault-config-verify: duplicate policy names in merged
-      vault_policies (base + extra). Duplicates: {{ _names | difference(_names | unique) }}
-  vars:
-    _merged: "{{ vault_policies + (vault_policies_extra | default([])) }}"
-    _names: "{{ _merged | map(attribute='name') | list }}"
-  when: _names | length != _names | unique | length
+- name: "[{{ dto_label_name }}] Compute Vault config violations via filter"
+  set_fact:
+    _local_error_item_list: >-
+      {{ (vault_policies + (vault_policies_extra | default([])))
+         | vault_config_verify(vault_roles + (vault_roles_extra | default([]))) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-# -------------------------------------------------------------------------
-# Group 2: Unique role names in vault_roles + vault_roles_extra
-# -------------------------------------------------------------------------
-- name: "[{{ dto_label_name }}] Check unique role names in merged vault_roles"
-  fail:
-    msg: >-
-      tasks-vault-config-verify: duplicate role names in merged
-      vault_roles (base + extra). Duplicates: {{ _names | difference(_names | unique) }}
-  vars:
-    _merged: "{{ vault_roles + (vault_roles_extra | default([])) }}"
-    _names: "{{ _merged | map(attribute='name') | list }}"
-  when: _names | length != _names | unique | length
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# -------------------------------------------------------------------------
-# Group 3: Each role.policies references existing policy in merged vault_policies
-# -------------------------------------------------------------------------
-- name: "[{{ dto_label_name }}] Check all role policies reference existing policies"
-  fail:
-    msg: >-
-      tasks-vault-config-verify: role '{{ item.name }}' references policy
-      '{{ _missing | first }}' which does NOT exist in merged vault_policies.
-      Define this policy in vault_policies or vault_policies_extra.
-  vars:
-    _merged_policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
-    _policy_names: "{{ _merged_policies | map(attribute='name') | list }}"
-    _missing: "{{ item.policies | default([]) | difference(_policy_names) }}"
-  when: _missing | length > 0
-  loop: "{{ vault_roles + (vault_roles_extra | default([])) }}"
-  loop_control:
-    label: "{{ item.name }}"
+- name: "[{{ dto_label_name }}] Assert no Vault config violations"
+  assert:
+    that:
+      - _local_error_item_list | length == 0
+    fail_msg: |
+      [{{ dto_label_name }}] Vault config verify failed
+      ({{ _local_error_item_list | length }} violations):
+      {% for v in _local_error_item_list %}
+        - {{ v }}
+      {% endfor %}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
