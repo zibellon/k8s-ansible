@@ -223,6 +223,7 @@ Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../../playbo
 | `seaweedfs/pre` | `traefik` | embedded в seaweedfs's own `allow-traefik` block |
 | `gitlab/pre` | `seaweedfs` S3 | `allow-seaweedfs-s3` в gitlab ns + `gitlab-allow-seaweedfs-s3` в seaweedfs ns |
 | `gitlab-runner/pre` | `seaweedfs` S3 | `To SeaweedFS S3` egress entries в `allow-gitlab-runner` + `allow-job-pod` NPs + `gitlab-runner-allow-seaweedfs-s3` ingress в seaweedfs ns |
+| `mon-system/pre` (loki) | `seaweedfs` S3 + external S3 | `allow-loki` в mon-system ns (egress → seaweedfs S3 8333 + external 443/80) + `mon-system-allow-loki` ingress в seaweedfs ns |
 
 ### 8.3 Naming convention
 

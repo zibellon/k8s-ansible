@@ -125,7 +125,7 @@ Secret fields (webhook URLs, Slack tokens, etc.) should come from Vault via ESO 
 
 ## 5. Loki and Vector
 
-`mon-system-loki` (single-binary Deployment + PVC + ConfigMap + Service) and `mon-system-vector` (DaemonSet + RBAC + ConfigMap, no Service) are independent of the Prometheus Operator stack and can be enabled/disabled separately via `mon_system_loki_enabled` / `mon_system_vector_enabled`.
+`mon-system-loki` (single-binary Deployment + emptyDir + ConfigMap + Service) and `mon-system-vector` (DaemonSet + RBAC + ConfigMap, no Service) are independent of the Prometheus Operator stack and can be enabled/disabled separately via `mon_system_loki_enabled` / `mon_system_vector_enabled`.
 
 ### 5.1 Vector → Loki
 
@@ -134,6 +134,12 @@ Vector ships logs to Loki via in-cluster DNS `http://loki.{{ mon_system_namespac
 ### 5.2 Grafana → Loki
 
 Grafana datasources can point at `http://loki.mon-system.svc.cluster.local:3100`. Like Vector→Loki, this is intra-namespace and needs no extra NetworkPolicy.
+
+### 5.3 Loki S3 storage
+
+Loki stores its chunks (compressed logs) **and** TSDB index in an S3 object store (`schema_config…object_store: s3`, `common.storage.s3`); the tsdb-shipper ships the index to S3 and caches it locally. The Loki Deployment is therefore **stateless** — its only local volume is an `emptyDir` (`mon_system_loki_emptydir_size_limit`, default `4Gi`) under `/loki` holding the ingester WAL, the tsdb-shipper index cache, and the compactor working directory; the chunk-bearing PVC is gone.
+
+S3 endpoint/bucket/region/path-style come from `mon_system_loki_s3_*` (default the in-cluster SeaweedFS S3, bucket `loki-logs`; point `mon_system_loki_s3_endpoint` elsewhere for external/cloud S3). Credentials come from Vault via the ESO secret `eso-mon-system-loki-s3-creds`, injected as env `CUSTOM_LOKI_STORE_S3_ACCESS_KEY_ID` / `CUSTOM_LOKI_STORE_S3_SECRET_ACCESS_KEY` and expanded into the config with `-config.expand-env=true`. The loki phase of `mon-system-install.yaml` fail-fasts if those creds are absent from Vault (see [`secrets-and-eso.md`](secrets-and-eso.md) §9). Egress is allowed by the always-on `allow-loki` NetworkPolicy in `mon-system/pre/` (to SeaweedFS S3 on 8333 + external S3 on 443/80) with a matching `mon-system-allow-loki` ingress in the seaweedfs namespace. Provision the SeaweedFS bucket + creds via the Loki opt-in in `hosts-vars/seaweedfs-sync.yaml`.
 
 ---
 
