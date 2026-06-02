@@ -191,22 +191,22 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 
 ### 3.1 `tasks-vault-config-verify.yaml`
 
-**Purpose.** Pure validation pre-check для Vault policies + roles. Read-only, no `set_fact`.
+**Purpose.** Тонкий wrapper над Python-фильтром `vault_config_verify` (`filter_plugins/vault_config_verify.py`) — pre-check для Vault policies + roles. Wrapper: Rule-19 assert + `set_fact` `_local_error_item_list` (вызов фильтра) + `assert length == 0`. Фильтр возвращает `list[str]` нарушений, не кидает.
 
 **Input (dto):** `dto_label_name` (log prefix).
 
-**Reads (inventory):** `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (inline merge внутри vars каждого assert/fail).
+**Reads (inventory):** `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (merge в wrapper'е, merged списки передаются фильтру).
 
 **Validates:**
 - Unique `name` in merged policies.
 - Unique `name` in merged roles.
 - Referential integrity: each role's `policies` references existing policy.
 
-**Callers:** `vault-install.yaml` + 10 ESO-integrated install/configure playbook'ов + `tests/helm-validate.yaml` (12 callers total).
+**Callers:** `vault-install.yaml` + 9 ESO-install + 2 ESO-configure playbook'ов + `tests/helm-validate.yaml` (13 callers total).
 
 ### 3.2 `tasks-eso-verify.yaml`
 
-**Purpose.** Pure validation pre-check для одного ESO-integrated компонента. Read-only, no `set_fact`. Вызывается **после** `tasks-vault-config-verify.yaml` в playbook'е (две независимые task'и, не include task-from-task).
+**Purpose.** Тонкий wrapper над Python-фильтром `eso_verify` (`filter_plugins/eso_verify.py`) — pre-check для одного ESO-integrated компонента. Group A — Rule-19 assert в YAML; B/C/D — в фильтре. Wrapper: assert + `set_fact` `_local_error_item_list` + `assert length == 0`. Фильтр возвращает `list[str]`, не кидает. Вызывается **после** `tasks-vault-config-verify.yaml` в playbook'е (две независимые task'и, не include task-from-task).
 
 **Input (dto):**
 - `dto_label_name` (log prefix).
@@ -214,7 +214,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - `dto_eso_integration_object` (mapping — `eso_vault_integration_<c>`).
 - `dto_namespace` (K8s namespace компонента).
 
-**Reads (inventory):** `vault_policies/_extra`, `vault_roles/_extra` (inline merge).
+**Reads (inventory):** `vault_policies/_extra`, `vault_roles/_extra` (merge в wrapper'е, merged списки передаются фильтру).
 
 **Validates (4 groups):**
 - A. Input asserts.
@@ -222,7 +222,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - C. ESO uniqueness: `external_secret_name`, `body.target.name`.
 - D. Policy path coverage scoped к role's policies: каждый Vault path (из `body.dataFrom[].extract.key` и `body.data[].remoteRef.key`) должен быть substring какого-либо path-prefix из policies этой role (после stripping `/*`).
 
-**Callers:** 10 ESO-integrated install/configure playbook'ов (8 install + 2 configure).
+**Callers:** 11 ESO-integrated install/configure playbook'ов (9 install + 2 configure). НЕ вызывается из `tests/helm-validate.yaml`.
 
 ---
 
@@ -502,3 +502,4 @@ All under `eso-secret/` KV engine.
 - **gitlab + gitlab-runner v8.1 (cross-ns NP к SeaweedFS S3 backend)** добавил hard-coded cross-namespace NetworkPolicy pairs в обоих consumer chart'ах: `gitlab/pre` рендерит `allow-seaweedfs-s3` (egress в gitlab ns, podSelector `release=gitlab`) + `gitlab-allow-seaweedfs-s3` (ingress в seaweedfs ns, podSelector `app.kubernetes.io/component=s3`); `gitlab-runner/pre` рендерит `To SeaweedFS S3` egress entries в existing `allow-gitlab-runner` и `allow-job-pod` NPs + `gitlab-runner-allow-seaweedfs-s3` ingress в seaweedfs ns (две `from` entries — runner pods + job pods). Параметризация через `.Values.seaweedfs.{namespace, s3Component, s3HttpPort}` с wiring `<c>_pre_helm_values.seaweedfs.*` в inventory. SeaweedFS — invariant L5 dependency для GitLab family L7 deployment'а; opt-in inventory переменной нет — хардкод (consumer-owned pattern, см. [`networking.md`](networking.md) §8). Также удалены v8 MinIO leftovers: NP `allow-minio` (gitlab/pre), cross-ns NP `{namespace}-allow-gitlab-minio` (gitlab-runner/pre), MinIO egress entries в `{namespace}-allow-traefik` (gitlab) и `allow-gitlab-runner`/`allow-job-pod` (gitlab-runner), stale `gitlab.minioApiPort` / `minioConsolePort` keys + блок `minio:` из values.yaml обоих pre chart'ов.
 - **Loki S3 storage backend (Loki stateless)** перевёл mon-system Loki с локального PVC (chunks+index+WAL на LINSTOR) на S3 object store: `mon_system_loki_config_yaml` теперь `common.storage.s3` + `schema_config…object_store: s3` + `compactor.delete_request_store: s3`; chunks И tsdb-индекс уезжают в S3, локально остаётся только `emptyDir` (`mon_system_loki_emptydir_size_limit`, default `4Gi`) под WAL + index-cache + compactor scratch — Loki Deployment stateless (PVC удалён). S3 endpoint/bucket/region/path-style/insecure — `mon_system_loki_s3_*` (default in-cluster SeaweedFS, bucket `loki-logs`; внешний S3 — смена `mon_system_loki_s3_endpoint`). Creds из Vault через новый ESO secret `mon_system_secret_loki_s3_creds` (path `eso-secret/mon-system/loki/s3/creds`, fields `username`/`accessKey`/`secretKey`), добавлен в существующий `eso_vault_integration_mon_system_secrets` — новый ESO-компонент НЕ создавался (policy glob `eso-secret/data/mon-system/*` уже покрывает путь, `vault.yaml` без изменений). Loki контейнер читает creds через env `CUSTOM_LOKI_STORE_S3_ACCESS_KEY_ID` / `CUSTOM_LOKI_STORE_S3_SECRET_ACCESS_KEY` + флаг `-config.expand-env=true`. NetworkPolicy `allow-loki` (`mon-system/pre`, всегда при `loki.enabled`) даёт egress к SeaweedFS S3 (8333) + внешнему S3 (443/80), парный ingress `mon-system-allow-loki` в seaweedfs ns. Loki-фаза `mon-system-install.yaml` fail-fast'ит при отсутствии creds в Vault (vault-get → assert → eso-force-sync → wait-secret, калька с gitlab). Provisioning через SeaweedFS — loki opt-in в `hosts-vars/seaweedfs-sync.yaml` (identity `loki` + bucket `loki-logs`); альтернатива — внешний S3 + ручной `vault kv put`.
 - **seaweedfs chart 4.31.0 bump + native quota enforcement, quota-cron removal (v10)** поднял upstream SeaweedFS Helm chart `4.30.0 → 4.31.0` (`hosts-vars/seaweedfs.yaml` `seaweedfs_helm_chart_version`) и **удалил** локальный quota-cron компонент целиком: chart subdir `charts/seaweedfs/quota-cron/` (CronJob `seaweedfs-quota-enforce` + values + extra-objects), STEP 5 QUOTA-CRON блок в `seaweedfs-install.yaml` (4 task'а + тег `[quota-cron]`, bucket-sync перенумерован STEP 6 → 5), PHASE-блок `seaweedfs_quota_cron_*` (7 переменных) в `hosts-vars/seaweedfs.yaml`. Образ master/volume/filer/s3 трекает `appVersion` через chart `_helpers.tpl` → pods переезжают на `chrislusf/seaweedfs:4.31`, отдельный пин не нужен. **Причина:** в 4.31 (commit `8c60408bf`, PR #9774) enforcement квот стал нативным и безусловным — s3-gateway каждую минуту (leader-locked через distributed-lock на одной из 3 реплик) переключает read-only-флаг bucket'а в обе стороны и переписывает filer.conf только при изменении флага (`weed/s3api/bucket_size_metrics.go` `enforceBucketQuotas` + `weed/filer/filer_conf.go` `ApplyBucketQuotaReadOnly`; цикл запускается безусловно в `weed/s3api/s3api_server.go` `go startBucketSizeMetricsLoop(...)`, без привязки к Prometheus/monitoring). Внешний крон (`weed shell s3.bucket.quota.enforce -apply` раз в 5 минут) стал избыточен. **Критическая связка:** удаление крона валидно ТОЛЬКО вместе с bump'ом на 4.31 (на 4.30 нативного энфорса нет) — оба изменения в одном commit. **bucket-sync не тронут** — Phase E по-прежнему ЗАДАЁТ квоты (`s3.bucket.quota -op=set`); «энфорсит» теперь gateway. Orphan'ов не осталось: quota-cron chart своего NP/RBAC не имел (pod ходил к master/filer через общий `allow-internal-traffic` NP в `seaweedfs/pre/`). Бонусом приехали фиксы #9755 (write-stall на auto-sized дисках `maxVolumes: 0`), #9772 (multipart-ETag совместимость для Loki/GitLab), #9760 (S3 отклоняет bucket с именем `filemeta` — у нас таких нет). seaweedfs не в `hosts-vars-test/upstream-charts.yaml` → helm-validate Layer 2 этот chart не рендерит; bump проверяется yamllint/syntax.
+- **ESO/Vault verify → Python filter plugins** перенёс validation-логику двух pure-validation task'ей (`tasks-vault-config-verify.yaml` + `tasks-eso-verify.yaml`) из сырого Ansible Jinja2 в два независимых Python filter plugin'а: `filter_plugins/vault_config_verify.py` (global — policy/role uniqueness + referential integrity) и `filter_plugins/eso_verify.py` (per-component — Groups B/C/D: SecretStore→Vault connectivity scoped к role, ESO uniqueness, policy path coverage). Каждый фильтр stateless: принимает pre-merged `vault_policies`/`vault_roles` (merge `base + (extra | default([]))` делается в YAML-wrapper'е), возвращает `list[str]` нарушений и **не кидает**. YAML-task'и ужаты до тонких wrapper'ов: Rule-19 input-assert (для eso-verify — бывшая Group A) + `set_fact` `_local_error_item_list` (вызов фильтра) + `assert length == 0` (fail с полным multi-violation отчётом) — паттерн зеркалит `seaweedfs_buckets_immutable_violations` + его assert. Callers (config-verify 13, eso-verify 11) и dto-контракт не изменились. Поведение pass/fail сохранено; два latent-нюанса исправлены: (1) старый `Duplicates: {{ _names | difference(_names | unique) }}` всегда давал пустой список — `_find_duplicates` теперь показывает реальные дубликаты; (2) substring-проверка SA/namespace binding нормализована в exact membership через `_as_list` (идентично для реальных данных). Pytest: `tests/python/test_vault_config_verify.py` (13 cases) + `tests/python/test_eso_verify.py` (23 cases) — Layer 3 в `make test` (total pytest 83). `tasks-eso-verify.yaml` НЕ вызывается из `tests/helm-validate.yaml` (нет component scope); `tasks-vault-config-verify.yaml` — вызывается.

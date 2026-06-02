@@ -94,10 +94,10 @@ Each phase is an independent Helm release — re-runnable with `--tags pre|insta
 
 ### 1.7 Two verify tasks
 
-- **`tasks-vault-config-verify.yaml`** — pure validation pre-check для Vault config: проверяет uniqueness `name` в merged `vault_policies + vault_policies_extra` и `vault_roles + vault_roles_extra`, а также referential integrity (`role.policies` → existing policy). Вызывается из `vault-install.yaml` и всех 10 ESO-integrated install/configure playbook'ов + `tests/helm-validate.yaml`.
-- **`tasks-eso-verify.yaml`** — pure validation pre-check для одного компонента: 4 группы (input asserts, SecretStore→Vault connectivity scoped к role, ESO uniqueness `external_secret_name`/`body.target.name`, policy path coverage scoped к role's policies). Вызывается из всех 10 ESO-integrated install/configure playbook'ов.
+- **`tasks-vault-config-verify.yaml`** — тонкий wrapper над Python-фильтром `vault_config_verify` (`filter_plugins/vault_config_verify.py`): проверяет uniqueness `name` в merged `vault_policies + vault_policies_extra` и `vault_roles + vault_roles_extra`, а также referential integrity (`role.policies` → existing policy). Вызывается из `vault-install.yaml`, 9 ESO-install + 2 ESO-configure playbook'ов и `tests/helm-validate.yaml` (13 callers).
+- **`tasks-eso-verify.yaml`** — тонкий wrapper над Python-фильтром `eso_verify` (`filter_plugins/eso_verify.py`): 4 группы (input asserts, SecretStore→Vault connectivity scoped к role, ESO uniqueness `external_secret_name`/`body.target.name`, policy path coverage scoped к role's policies). Вызывается из 9 ESO-install + 2 ESO-configure playbook'ов (11 callers; **не** из `tests/helm-validate.yaml`).
 
-Оба task'а pure read-only — не создают runtime facts. Inline merge `base + (extra | default([]))` выполняется прямо в местах использования (`<c>_pre_helm_values.eso.secrets`, `vault_spec.externalConfig.policies/roles`). Подробности — [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) §3 и [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1.8a–§1.8b.
+Каждый wrapper: Rule-19 input-assert (для eso-verify — Group A) + `set_fact` `_local_error_item_list` (вызов фильтра с merged policies/roles) + `assert length == 0` (fail с полным отчётом). Фильтр — stateless, возвращает `list[str]` нарушений и не кидает; raise делает wrapper. Inline merge `base + (extra | default([]))` для secrets выполняется в местах использования (`<c>_pre_helm_values.eso.secrets`), для policies/roles — в wrapper'е. Подробности — [`secrets-and-eso.md`](.claude/rules/secrets-and-eso.md) §3 и [`reusable-tasks.md`](.claude/rules/reusable-tasks.md) §1.8a–§1.8b.
 
 ---
 
