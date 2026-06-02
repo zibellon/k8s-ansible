@@ -1,7 +1,8 @@
 # =============================================================================
 # ESO Verify (per-component validation)
 # =============================================================================
-# Pure validation pre-check для одного компонента. Read-only, без set_fact.
+# Pure validation pre-check для одного компонента. Тонкий wrapper: Group A (input
+# asserts) — в YAML; B/C/D делегированы в Python-фильтр eso_verify (filter_plugins/eso_verify.py).
 # Каждый ESO-integrated playbook вызывает с собственными dto-параметрами после
 # вызова tasks-vault-config-verify.yaml (он валидирует Vault config глобально).
 #
@@ -26,7 +27,7 @@
 #   D. Policy path coverage (scoped к role's policies — substring check
 #      каждого item Vault path против path "X" patterns из HCL policies).
 #
-# Output: none.
+# Output: _local_error_item_list (local fact — list[str] нарушений; [] = OK).
 # Callers: 8 <c>-install + 2 <c>-configure + 1 tests/helm-validate (см. SUB-3).
 # =============================================================================
 
@@ -56,127 +57,27 @@
   run_once: true
   tags: [always]
 
-# -------------------------------------------------------------------------
-# Group B: SecretStore→Vault connectivity (scoped к role this component)
-# -------------------------------------------------------------------------
-- name: "[{{ dto_label_name }}] Assert role '{{ dto_eso_integration_object.role_name }}' exists in vault_roles"
+- name: "[{{ dto_label_name }}] Compute ESO violations via filter"
+  set_fact:
+    _local_error_item_list: >-
+      {{ dto_eso_secrets_list
+         | eso_verify(dto_eso_integration_object, dto_namespace,
+                      vault_policies + (vault_policies_extra | default([])),
+                      vault_roles + (vault_roles_extra | default([]))) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert no ESO violations"
   assert:
     that:
-      - _role_matches | length == 1
-    fail_msg: >-
-      tasks-eso-verify: role '{{ dto_eso_integration_object.role_name }}' NOT found
-      in merged vault_roles. Available roles: {{ _all_role_names }}.
-      Define this role in vault_roles or vault_roles_extra.
-  vars:
-    _merged_roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
-    _role_matches: "{{ _merged_roles | selectattr('name', 'equalto', dto_eso_integration_object.role_name) | list }}"
-    _all_role_names: "{{ _merged_roles | map(attribute='name') | list }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Assert role binds SA '{{ dto_eso_integration_object.sa_name }}' in namespace '{{ dto_namespace }}'"
-  assert:
-    that:
-      - dto_eso_integration_object.sa_name in (_role.bound_service_account_names | default([]))
-      - dto_namespace in (_role.bound_service_account_namespaces | default([]))
-      - (_role.policies | default([])) | length > 0
-    fail_msg: >-
-      tasks-eso-verify: role '{{ dto_eso_integration_object.role_name }}' must bind
-      SA '{{ dto_eso_integration_object.sa_name }}' in namespace '{{ dto_namespace }}'
-      and have at least one policy. Current role:
-      bound_service_account_names={{ _role.bound_service_account_names | default([]) }},
-      bound_service_account_namespaces={{ _role.bound_service_account_namespaces | default([]) }},
-      policies={{ _role.policies | default([]) }}.
-  vars:
-    _merged_roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
-    _role: "{{ (_merged_roles | selectattr('name', 'equalto', dto_eso_integration_object.role_name) | list)[0] }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Assert all role policies exist in merged vault_policies"
-  fail:
-    msg: >-
-      tasks-eso-verify: role '{{ dto_eso_integration_object.role_name }}' references
-      policy '{{ _missing | first }}' which does NOT exist in merged vault_policies.
-      Define this policy in vault_policies or vault_policies_extra.
-  vars:
-    _merged_roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
-    _role: "{{ (_merged_roles | selectattr('name', 'equalto', dto_eso_integration_object.role_name) | list)[0] }}"
-    _merged_policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
-    _policy_names: "{{ _merged_policies | map(attribute='name') | list }}"
-    _missing: "{{ (_role.policies | default([])) | difference(_policy_names) }}"
-  when: _missing | length > 0
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# -------------------------------------------------------------------------
-# Group C: ESO uniqueness
-# -------------------------------------------------------------------------
-- name: "[{{ dto_label_name }}] Check unique external_secret_name in dto_eso_secrets_list"
-  fail:
-    msg: >-
-      tasks-eso-verify: duplicate external_secret_name in dto_eso_secrets_list
-      for namespace '{{ dto_namespace }}'. Duplicates: {{ _names | difference(_names | unique) }}
-  vars:
-    _names: "{{ dto_eso_secrets_list | map(attribute='external_secret_name') | list }}"
-  when: _names | length != _names | unique | length
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Check unique body.target.name in dto_eso_secrets_list"
-  fail:
-    msg: >-
-      tasks-eso-verify: duplicate body.target.name in dto_eso_secrets_list
-      for namespace '{{ dto_namespace }}'. Duplicates: {{ _names | difference(_names | unique) }}
-  vars:
-    _names: "{{ dto_eso_secrets_list | map(attribute='body') | map(attribute='target') | map(attribute='name') | list }}"
-  when: _names | length != _names | unique | length
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# -------------------------------------------------------------------------
-# Group D: Policy path coverage (scoped к policies этой role)
-# -------------------------------------------------------------------------
-- name: "[{{ dto_label_name }}] Assert each item Vault path is covered by at least one policy prefix"
-  assert:
-    that:
-      - _verify_prefixes | select('in', item) | list | length > 0
-    fail_msg: >-
-      tasks-eso-verify: Vault path '{{ item }}' is NOT covered by any policy of role
-      '{{ dto_eso_integration_object.role_name }}'.
-      Available scoped policy prefixes (after stripping /*): {{ _verify_prefixes }}.
-      Add or extend a policy in vault_policies or vault_policies_extra.
-  vars:
-    _merged_roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
-    _role: "{{ (_merged_roles | selectattr('name', 'equalto', dto_eso_integration_object.role_name) | list)[0] }}"
-    _merged_policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
-    _verify_prefixes: >-
-      {{ _merged_policies
-         | selectattr('name', 'in', _role.policies | default([]))
-         | map(attribute='rules')
-         | map('regex_findall', 'path "([^"]+)"')
-         | flatten
-         | map('regex_replace', '/\*$', '')
-         | unique | list }}
-  loop: >-
-    {{ (dto_eso_secrets_list
-         | map(attribute='body')
-         | map(attribute='dataFrom', default=[]) | flatten
-         | selectattr('extract', 'defined')
-         | map(attribute='extract.key') | list)
-     + (dto_eso_secrets_list
-         | map(attribute='body')
-         | map(attribute='data', default=[]) | flatten
-         | selectattr('remoteRef', 'defined')
-         | map(attribute='remoteRef.key') | list)
-     | unique }}
-  loop_control:
-    label: "{{ item }}"
+      - _local_error_item_list | length == 0
+    fail_msg: |
+      [{{ dto_label_name }}] ESO verify failed for namespace '{{ dto_namespace }}'
+      ({{ _local_error_item_list | length }} violations):
+      {% for v in _local_error_item_list %}
+        - {{ v }}
+      {% endfor %}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
