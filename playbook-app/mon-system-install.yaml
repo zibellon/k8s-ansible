@@ -12,7 +12,7 @@
 #   alertmanager          Alertmanager CR + AlertmanagerConfig + Service
 #   node-exporter         DaemonSet + Service
 #   ksm                   kube-state-metrics Deployment + RBAC + Service
-#   loki                  Loki Deployment + PVC + ConfigMap + Service
+#   loki                  Loki Deployment + emptyDir + ConfigMap + Service
 #   vector                Vector DaemonSet + RBAC + ConfigMap (no Service)
 #   grafana               Grafana Deployment + PVC + Service (with Vault/ESO lifecycle)
 #   post                  Ingresses + Certificates + ServiceMonitors + system-* (always rendered)
@@ -37,6 +37,8 @@
     _local_grafana_admin_vault_key: "_local_grafana_admin_vault"
     _local_grafana_admin_vault_exists_key: "_local_grafana_admin_vault_exists"
     _local_grafana_admin_password_generated_key: "_local_grafana_admin_password_generated"
+    _local_loki_s3_access_key_vault_key: "_local_loki_s3_access_key_vault"
+    _local_loki_s3_access_key_vault_exists_key: "_local_loki_s3_access_key_vault_exists"
 
   tasks:
     - name: "[mon-system-pre-check] Validate target"
@@ -485,8 +487,66 @@
       tags: [ksm]
 
     # =========================================================================
-    # STEP 8: loki (Loki Deployment + PVC + ConfigMap + Service)
+    # STEP 8: loki (Loki Deployment + emptyDir + ConfigMap + Service)
     # =========================================================================
+
+    - name: "[mon-system-loki-s3-validate] Check S3 creds in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "mon-system-loki-s3-validate"
+        dto_vault_get_path: "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }}"
+        dto_vault_get_field: "{{ mon_system_loki_s3_secret_key_access_key }}"
+        dto_vault_get_res_fact_name: "{{ _local_loki_s3_access_key_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_loki_s3_access_key_vault_exists_key }}"
+      when: mon_system_loki_enabled
+      tags: [loki]
+
+    - name: "[mon-system-loki-s3-validate] Assert S3 creds exist (fail-fast)"
+      assert:
+        that:
+          - lookup('vars', _local_loki_s3_access_key_vault_exists_key)
+        fail_msg: |
+          ERROR: Loki S3 creds missing в Vault path
+          '{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }}'.
+          Loki не запустится без доступа к S3 object store.
+
+          Вариант A (SeaweedFS sync) — раскомментируй loki opt-in в своём
+          hosts-vars-override/seaweedfs-sync.yaml (см. hosts-vars/seaweedfs-sync.yaml —
+          Pre-built opt-in для Loki: identity + bucket), затем:
+            ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+              playbook-app/seaweedfs-install.yaml \
+              --tags user-sync,identity-distribute,bucket-sync
+
+          Вариант B (внешний S3 — cloud/etc.): в hosts-vars-override/mon-system.yaml
+          задай mon_system_loki_s3_endpoint + mon_system_loki_s3_seaweedfs_enabled=false,
+          затем положи creds в Vault вручную:
+            vault kv put {{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }} \
+              {{ mon_system_loki_s3_secret_key_username }}=<username> \
+              {{ mon_system_loki_s3_secret_key_access_key }}=<accessKey> \
+              {{ mon_system_loki_s3_secret_key_secret_key }}=<secretKey>
+
+          Затем повтори: ansible-playbook ... mon-system-install.yaml --tags loki
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      when: mon_system_loki_enabled
+      tags: [loki]
+
+    - name: "[mon-system-loki-s3-validate] Trigger ESO sync (materialize K8s Secret)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "mon-system-loki-s3-validate"
+        dto_eso_sync_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_loki_enabled
+      tags: [loki]
+
+    - name: "[mon-system-loki-s3-validate] Wait for K8s Secret materialized"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "mon-system-loki-s3-validate"
+        dto_wait_secret_name: "{{ mon_system_secret_loki_s3_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ mon_system_namespace }}"
+      when: mon_system_loki_enabled
+      tags: [loki]
 
     - name: "[mon-system-loki] Copy loki chart to remote"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
