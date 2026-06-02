@@ -204,8 +204,6 @@ all:
         port: "{{ mon_system_grafana_port }}"
       loki:
         enabled: "{{ mon_system_loki_enabled }}"
-        s3:
-          seaweedfsEnabled: "{{ mon_system_loki_s3_seaweedfs_enabled }}"
       vector:
         enabled: "{{ mon_system_vector_enabled }}"
       nodeExporter:
@@ -517,11 +515,11 @@ all:
     mon_system_loki_rollout_timeout: "120s"
     mon_system_loki_image: "docker.io/grafana/loki:3.5.0"
     # --- Loki S3 object-store backend ---
-    # seaweedfsEnabled: true (default) → наш SeaweedFS (NP рендерит cross-ns пару;
-    #   creds провижинятся через seaweedfs-install sync, loki opt-in).
-    # false → внешний S3 (cloud): задай endpoint в override + положи creds в Vault
-    #   вручную (vault kv put); NP рендерит egress в интернет.
-    mon_system_loki_s3_seaweedfs_enabled: true
+    # Default — наш SeaweedFS (cross-ns NetworkPolicy Loki→seaweedfs ВСЕГДА создаётся
+    # в pre-чарте; creds провижинятся через seaweedfs-install sync, loki opt-in).
+    # Для внешнего S3 (cloud): задай endpoint ниже + положи creds в Vault вручную
+    # (vault kv put) + добавь свой egress NP через mon_system_pre_extra_objects
+    # (baseline deny-all блокирует прочий egress).
     mon_system_loki_s3_endpoint: "seaweedfs-s3.{{ seaweedfs_namespace }}.svc.{{ cluster_dns_domain }}:8333"
     mon_system_loki_s3_bucket: "loki-logs"
     mon_system_loki_s3_region: "us-east-1"

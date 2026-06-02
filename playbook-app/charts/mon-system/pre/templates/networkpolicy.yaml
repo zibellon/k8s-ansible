@@ -240,10 +240,10 @@ spec:
 {{- end }}
 
 # =============================================================================
-# LOKI S3 BACKEND (egress к object store: seaweedfs cross-ns пара ИЛИ внешний S3)
+# LOKI S3 BACKEND (egress к SeaweedFS object store — всегда, SeaweedFS = L5 dep)
+# Для внешнего S3 оператор добавляет свой egress NP через mon_system_pre_extra_objects.
 # =============================================================================
 {{- if .Values.loki.enabled }}
-{{- if .Values.loki.s3.seaweedfsEnabled }}
 ---
 # egress: loki → seaweedfs S3 (в namespace mon-system)
 apiVersion: networking.k8s.io/v1
@@ -292,27 +292,6 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.seaweedfs.s3HttpPort }}
-{{- else }}
----
-# egress: loki → внешний S3 (интернет, HTTP/HTTPS)
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-loki-external-s3
-  namespace: {{ .Values.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: loki
-  policyTypes:
-    - Egress
-  egress:
-    - ports:
-        - protocol: TCP
-          port: {{ .Values.external.httpPort }}
-        - protocol: TCP
-          port: {{ .Values.external.httpsPort }}
-{{- end }}
 {{- end }}
 
 # =============================================================================
