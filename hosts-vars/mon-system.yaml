@@ -159,9 +159,20 @@ all:
           - extract:
               key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/postgresql/creds"
 
+    mon_system_secret_loki_s3_creds:
+      external_secret_name: "eso-mon-system-loki-s3-creds"
+      vault_path: "/mon-system/loki/s3/creds"
+      body:
+        target:
+          name: "eso-mon-system-loki-s3-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/loki/s3/creds"
+
     eso_vault_integration_mon_system_secrets:
       - "{{ mon_system_secret_grafana_admin_creds }}"
       - "{{ mon_system_secret_grafana_postgresql_creds }}"
+      - "{{ mon_system_secret_loki_s3_creds }}"
 
     eso_vault_integration_mon_system_secrets_extra: []
 
@@ -193,6 +204,8 @@ all:
         port: "{{ mon_system_grafana_port }}"
       loki:
         enabled: "{{ mon_system_loki_enabled }}"
+        s3:
+          seaweedfsEnabled: "{{ mon_system_loki_s3_seaweedfs_enabled }}"
       vector:
         enabled: "{{ mon_system_vector_enabled }}"
       nodeExporter:
@@ -202,6 +215,10 @@ all:
       traefik:
         namespace: "{{ traefik_namespace }}"
         instanceName: "traefik-{{ traefik_namespace }}"
+      seaweedfs:
+        namespace: "{{ seaweedfs_namespace }}"
+        s3Component: "s3"
+        s3HttpPort: 8333
       issuer: "{{ mon_system_cert_manager_issuer }}"
       eso:
         vaultServerUrl: "{{ vault_internal_url }}"
@@ -499,10 +516,27 @@ all:
     mon_system_loki_helm_timeout: "5m"
     mon_system_loki_rollout_timeout: "120s"
     mon_system_loki_image: "docker.io/grafana/loki:3.5.0"
+    # --- Loki S3 object-store backend ---
+    # seaweedfsEnabled: true (default) → наш SeaweedFS (NP рендерит cross-ns пару;
+    #   creds провижинятся через seaweedfs-install sync, loki opt-in).
+    # false → внешний S3 (cloud): задай endpoint в override + положи creds в Vault
+    #   вручную (vault kv put); NP рендерит egress в интернет.
+    mon_system_loki_s3_seaweedfs_enabled: true
+    mon_system_loki_s3_endpoint: "seaweedfs-s3.{{ seaweedfs_namespace }}.svc.{{ cluster_dns_domain }}:8333"
+    mon_system_loki_s3_bucket: "loki-logs"
+    mon_system_loki_s3_region: "us-east-1"
+    mon_system_loki_s3_path_style: true
+    mon_system_loki_s3_insecure: true
+    # Vault field names (standardized identity-distribute Layer 3 keys)
+    mon_system_loki_s3_secret_key_username: "username"
+    mon_system_loki_s3_secret_key_access_key: "accessKey"
+    mon_system_loki_s3_secret_key_secret_key: "secretKey"
+    # emptyDir size cap for Loki local volume (WAL + index cache + compactor scratch)
+    mon_system_loki_emptydir_size_limit: "4Gi"
     # Full loki-config.yaml as block scalar — override entire variable in
-    # hosts-vars-override/mon-system.yaml to change any parameter.
-    # Single Jinja substitution: {{ mon_system_loki_port }} keeps http_listen_port
-    # in sync with the port used by Deployment containerPort and Service port.
+    # hosts-vars-override/mon-system.yaml to change any parameter. Jinja
+    # substitutions: port, S3 endpoint/bucket/region/path-style/insecure
+    # (S3 creds come via ${S3_ACCESS_KEY_ID}/${S3_SECRET_ACCESS_KEY} env at runtime).
     mon_system_loki_config_yaml: |
       auth_enabled: false
 
@@ -513,9 +547,14 @@ all:
         instance_addr: 127.0.0.1
         path_prefix: /loki
         storage:
-          filesystem:
-            chunks_directory: /loki/chunks
-            rules_directory: /loki/rules
+          s3:
+            endpoint: {{ mon_system_loki_s3_endpoint }}
+            bucketnames: {{ mon_system_loki_s3_bucket }}
+            region: {{ mon_system_loki_s3_region }}
+            access_key_id: ${S3_ACCESS_KEY_ID}
+            secret_access_key: ${S3_SECRET_ACCESS_KEY}
+            s3forcepathstyle: {{ mon_system_loki_s3_path_style | lower }}
+            insecure: {{ mon_system_loki_s3_insecure | lower }}
         replication_factor: 1
         ring:
           kvstore:
@@ -525,7 +564,7 @@ all:
         configs:
           - from: 2025-05-15
             store: tsdb
-            object_store: filesystem
+            object_store: s3
             schema: v13
             index:
               prefix: index_
@@ -533,7 +572,7 @@ all:
 
       compactor:
         working_directory: /loki/retention
-        delete_request_store: filesystem
+        delete_request_store: s3
         compaction_interval: 10m
         retention_enabled: true
         retention_delete_delay: 2h
@@ -558,11 +597,12 @@ all:
       loki:
         image: "{{ mon_system_loki_image }}"
         port: "{{ mon_system_loki_port }}"
-      pvc:
-        accessMode: "ReadWriteOnce"
-        storageClassName: "lnstr-major-multi-sync"
-        storageSize: "4Gi"
-        subpath: "some-data"
+        s3:
+          secretName: "{{ mon_system_secret_loki_s3_creds.body.target.name }}"
+          accessKeyIdKey: "{{ mon_system_loki_s3_secret_key_access_key }}"
+          secretAccessKeyKey: "{{ mon_system_loki_s3_secret_key_secret_key }}"
+      emptyDir:
+        sizeLimit: "{{ mon_system_loki_emptydir_size_limit }}"
       config_yaml: "{{ mon_system_loki_config_yaml }}"
       tolerations: []
       nodeSelector:
