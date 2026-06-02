@@ -114,6 +114,18 @@ all:
     #     actions: []
     #     extra_vault_paths:
     #       - "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}"
+    # ------
+    # --- Pre-built opt-in для Loki (mon-system) identity ---
+    # Если используете SeaweedFS как S3 backend для Loki — раскомментируйте этот блок
+    # (объедините с gitlab-блоком выше в ОДИН seaweedfs_identities_extra, если нужны оба).
+    # Создаёт identity 'loki', distribute её creds в Vault path из mon-system ESO secret
+    # (variable reference — single source of truth). Альтернатива: внешний S3 — operator
+    # вручную делает 'vault kv put' для того же resolved пути.
+    # seaweedfs_identities_extra:
+    #   - name: loki
+    #     actions: []   # policy-only principal (доступ только через bucket policy Allow)
+    #     extra_vault_paths:
+    #       - "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }}"
 
     # ------
     # SECTION 2: Buckets + quotas + policies
@@ -361,3 +373,28 @@ all:
     #           Resource:
     #             - "arn:aws:s3:::gitlab-runner-cache"
     #             - "arn:aws:s3:::gitlab-runner-cache/*"
+    # ------
+    # --- Pre-built opt-in для Loki (mon-system) bucket ---
+    # Если используете SeaweedFS как S3 backend для Loki — раскомментируйте этот блок
+    # (объедините с gitlab-блоком выше в ОДИН seaweedfs_sync_buckets_extra, если нужны оба).
+    # 1 bucket 'loki-logs' (ДОЛЖЕН совпадать с mon_system_loki_s3_bucket) с full-access
+    # policy для 'loki' user. Collection='loki', replication='001'.
+    # seaweedfs_sync_buckets_extra:
+    #   - name: loki-logs
+    #     collection: "loki"
+    #     replication: "001"
+    #     policy:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Sid: "LokiFullAccess"
+    #           Effect: "Allow"
+    #           Principal: "arn:aws:iam::*:user/loki"
+    #           Action:
+    #             - "s3:GetObject"
+    #             - "s3:PutObject"
+    #             - "s3:DeleteObject"
+    #             - "s3:ListBucket"
+    #             - "s3:GetBucketLocation"
+    #           Resource:
+    #             - "arn:aws:s3:::loki-logs"
+    #             - "arn:aws:s3:::loki-logs/*"
