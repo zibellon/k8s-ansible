@@ -259,17 +259,19 @@ all:
       # поэтому держим singular минимальным; каждая группа специфицирует всё полностью.
       volume:
         enabled: false
-      # Тир-группы volume-серверов. rack-метка = логический ТИР (managers/workers),
-      # потребляется bucket-схемой (hosts-vars/seaweedfs-sync.yaml: bucket.rack → fs.configure -rack).
-      # dataCenter единый (dc1, одно-DC). replication '001' держит реплики в тире (00Z).
+      # Тир-группы volume-серверов. rack-метка = тир + номер физ. rack (managers-1/workers-1;
+      # в одном DC физически может быть несколько rack), потребляется bucket-схемой
+      # (hosts-vars/seaweedfs-sync.yaml: bucket.rack → fs.configure -rack).
+      # dataCenter 'dc-1' (одно-DC). replication '001' держит реплики в том же rack (00Z).
       # storageClass *-local (НЕ *-multi-sync) — реплику делает SeaweedFS, не LINSTOR. maxVolumes:0 = auto-size.
       volumes:
         # 3 control-plane (диск 100GB, делят с OS/etcd/containerd/LINSTOR/Vault).
-        managers:
+        # rack 'managers-1' в DC 'dc-1' (имя группы кодирует rack+DC).
+        managers-1-dc-1:
           enabled: true
           replicas: 3
-          dataCenter: "dc1"
-          rack: "managers"
+          dataCenter: "dc-1"
+          rack: "managers-1"
           # ⚠️ РАЗМЕР — КОНСЕРВАТИВНО: control-plane диск 100GB делит etcd/OS/LINSTOR;
           # переполнение рискует etcd. Tune под реальное free space.
           dataDirs:
@@ -293,11 +295,12 @@ all:
               cpu: "1"
               memory: "1Gi"
         # 5 worker (диск 300GB).
-        workers:
+        # rack 'workers-1' в DC 'dc-1'.
+        workers-1-dc-1:
           enabled: true
           replicas: 5
-          dataCenter: "dc1"
-          rack: "workers"
+          dataCenter: "dc-1"
+          rack: "workers-1"
           dataDirs:
             - name: data1
               type: "persistentVolumeClaim"
