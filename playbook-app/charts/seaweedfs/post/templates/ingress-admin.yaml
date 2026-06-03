@@ -1,0 +1,42 @@
+# =============================================================================
+# INGRESSROUTE FOR SEAWEEDFS ADMIN COMPONENT UI (Traefik)
+#   admin (полноценная панель управления) на отдельном поддомене (только Host,
+#   без path-prefix). Защита — TLS + login/password (WEED_ADMIN_USER/PASSWORD).
+#   ingress.enabled    → рендерить IngressRoute
+#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
+#   vpnOnlyEnabled     → false (admin открыт наружу в тестовой фазе)
+# =============================================================================
+{{- if .Values.adminIngressConfig.ingress.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: seaweedfs-admin
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.adminIngressConfig.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    {{- if .Values.adminIngressConfig.ingress.tlsEnabled }}
+    - {{ .Values.traefik.entryPoints.websecure }}
+    {{- else }}
+    - {{ .Values.traefik.entryPoints.web }}
+    {{- end }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.adminIngressConfig.domain }}`)
+      {{- if .Values.adminIngressConfig.ingress.vpnOnlyEnabled }}
+      middlewares:
+        {{- range .Values.adminIngressConfig.ingress.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
+      {{- end }}
+      services:
+        - name: {{ .Values.seaweedfs.name }}-admin
+          port: http
+  {{- if and .Values.adminIngressConfig.ingress.tlsEnabled .Values.adminIngressConfig.tlsSecretName }}
+  tls:
+    secretName: {{ .Values.adminIngressConfig.tlsSecretName }}
+  {{- end }}
+{{- end }}

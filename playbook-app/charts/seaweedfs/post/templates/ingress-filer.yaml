@@ -1,0 +1,41 @@
+# =============================================================================
+# INGRESSROUTE FOR SEAWEEDFS FILER UI (Traefik)
+#   filer UI на отдельном поддомене (только Host, без path-prefix).
+#   ingress.enabled    → рендерить IngressRoute
+#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
+#   vpnOnlyEnabled     → false (filer UI открыт наружу в тестовой фазе)
+# =============================================================================
+{{- if .Values.filerIngressConfig.ingress.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: seaweedfs-filer-ui
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.filerIngressConfig.ingress.ingressClass }}"
+spec:
+  entryPoints:
+    {{- if .Values.filerIngressConfig.ingress.tlsEnabled }}
+    - {{ .Values.traefik.entryPoints.websecure }}
+    {{- else }}
+    - {{ .Values.traefik.entryPoints.web }}
+    {{- end }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.filerIngressConfig.domain }}`)
+      {{- if .Values.filerIngressConfig.ingress.vpnOnlyEnabled }}
+      middlewares:
+        {{- range .Values.filerIngressConfig.ingress.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
+      {{- end }}
+      services:
+        - name: {{ .Values.seaweedfs.name }}-filer
+          port: swfs-filer
+  {{- if and .Values.filerIngressConfig.ingress.tlsEnabled .Values.filerIngressConfig.tlsSecretName }}
+  tls:
+    secretName: {{ .Values.filerIngressConfig.tlsSecretName }}
+  {{- end }}
+{{- end }}
