@@ -254,21 +254,59 @@ all:
         # defaultReplication "001" — 1 replica в другом rack'е (для 3 мастеров с anti-affinity)
         defaultReplication: "000"
 
+      # Singular volume отключён — используем volumes: (plural) для тир-размещения.
+      # Chart мёрджит singular в named-группы (mergeOverwrite deepCopy volume → group),
+      # поэтому держим singular минимальным; каждая группа специфицирует всё полностью.
       volume:
-        enabled: true
-        replicas: 2
-        # Данные только на worker'ах (lnstr-worker-local — single replica PVC)
-        dataDirs:
-          - name: data1
-            type: "persistentVolumeClaim"
-            size: "4Gi"
-            storageClass: "lnstr-worker-local"
-            maxVolumes: 0
-        # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
-        logs: {}
-        # nodeSelector — только worker'ы (project convention из hosts-vars/hosts.yaml node_labels)
-        nodeSelector: |
-          node-role.kubernetes.io/worker: ""
+        enabled: false
+      # Тир-группы volume-серверов. rack-метка = логический ТИР (managers/workers),
+      # потребляется bucket-схемой (hosts-vars/seaweedfs-sync.yaml: bucket.rack → fs.configure -rack).
+      # dataCenter единый (dc1, одно-DC). replication '001' держит реплики в тире (00Z).
+      # storageClass *-local (НЕ *-multi-sync) — реплику делает SeaweedFS, не LINSTOR. maxVolumes:0 = auto-size.
+      volumes:
+        # 3 control-plane (диск 100GB, делят с OS/etcd/containerd/LINSTOR/Vault).
+        managers:
+          enabled: true
+          replicas: 3
+          dataCenter: "dc1"
+          rack: "managers"
+          # ⚠️ РАЗМЕР — КОНСЕРВАТИВНО: control-plane диск 100GB делит etcd/OS/LINSTOR;
+          # переполнение рискует etcd. Tune под реальное free space.
+          dataDirs:
+            - name: data1
+              type: "persistentVolumeClaim"
+              size: "40Gi"
+              storageClass: "lnstr-manager-local"
+              maxVolumes: 0
+          logs: {}
+          nodeSelector: |
+            node-role.kubernetes.io/control-plane: ""
+          tolerations: |
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+        # 5 worker (диск 300GB).
+        workers:
+          enabled: true
+          replicas: 5
+          dataCenter: "dc1"
+          rack: "workers"
+          dataDirs:
+            - name: data1
+              type: "persistentVolumeClaim"
+              size: "250Gi"
+              storageClass: "lnstr-worker-local"
+              maxVolumes: 0
+          logs: {}
+          nodeSelector: |
+            node-role.kubernetes.io/worker: ""
 
       filer:
         enabled: true
