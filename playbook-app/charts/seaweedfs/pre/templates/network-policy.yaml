@@ -72,7 +72,7 @@ spec:
 # =============================================================================
 
 ---
-# SeaweedFS Master: egress to apiserver (pod management via ClusterRole).
+# SeaweedFS Master: ingress from Traefik (master UI); egress to apiserver.
 # Intra-namespace traffic covered by allow-internal-traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -84,7 +84,20 @@ spec:
     matchLabels:
       app.kubernetes.io/component: master
   policyTypes:
+    - Ingress
     - Egress
+  ingress:
+    # From Traefik (master UI)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.masterHttpPort }}
   egress:
     # To Kubernetes apiserver (pod management via ClusterRole)
     - ports:
@@ -190,6 +203,44 @@ spec:
           port: {{ .Values.apiserver.port }}
 
 # =============================================================================
+# SEAWEEDFS ADMIN POLICIES
+# =============================================================================
+
+---
+# SeaweedFS Admin: ingress from Traefik (admin UI); egress to apiserver.
+# Intra-namespace traffic (admin <-> master/filer, worker -> admin gRPC)
+# covered by allow-internal-traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: seaweedfs-admin
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: admin
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik (admin UI)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.adminHttpPort }}
+  egress:
+    # To Kubernetes apiserver (pod management via ClusterRole)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
 # =============================================================================
 {{- if .Values.issuer.enabled }}
@@ -257,7 +308,7 @@ spec:
 # =============================================================================
 
 ---
-# Allow Traefik to reach SeaweedFS S3 endpoint and Filer admin UI
+# Allow Traefik to reach SeaweedFS S3 endpoint and master/filer/admin UIs
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -281,7 +332,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.seaweedfs.s3HttpPort }}
-    # To SeaweedFS Filer (admin UI)
+    # To SeaweedFS Filer (filer UI)
     - to:
         - namespaceSelector:
             matchLabels:
@@ -292,3 +343,25 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.seaweedfs.filerHttpPort }}
+    # To SeaweedFS Master (master UI)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: master
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.masterHttpPort }}
+    # To SeaweedFS Admin (admin UI)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: admin
+      ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.adminHttpPort }}
