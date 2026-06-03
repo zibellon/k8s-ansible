@@ -3,16 +3,24 @@ all:
     seaweedfs_namespace: "seaweedfs"
 
     # Domain'ы — placeholder values в hosts-vars/, реальные в hosts-vars-override/
+    # S3 endpoint + три раздельных UI-поддомена (master/filer/admin), без path-prefix.
     seaweedfs_s3_domain: "s3-k8s-v2.drawapp.ru"
-    seaweedfs_admin_ui_domain: "s3-ui-k8s-v2.drawapp.ru"
+    seaweedfs_master_ui_domain: "s3-master-k8s-v2.drawapp.ru"
+    seaweedfs_filer_ui_domain: "s3-filer-k8s-v2.drawapp.ru"
+    seaweedfs_admin_ui_domain: "s3-admin-k8s-v2.drawapp.ru"
 
     seaweedfs_s3_tls_secret_name: "cert-seaweedfs-s3"
-    seaweedfs_admin_ui_tls_secret_name: "cert-seaweedfs-admin-ui"
+    seaweedfs_master_ui_tls_secret_name: "cert-seaweedfs-master"
+    seaweedfs_filer_ui_tls_secret_name: "cert-seaweedfs-filer"
+    seaweedfs_admin_ui_tls_secret_name: "cert-seaweedfs-admin"
 
     seaweedfs_ingress_class_name: "traefik-lb"
 
-    # VPN-only middleware: S3 endpoint открыт наружу, admin UI только из VPN
+    # VPN-only middleware: в тестовой фазе всё открыто наружу (false). Для prod-харденинга
+    # admin/master/filer UI можно закрыть в VPN правкой соответствующего флага.
     seaweedfs_s3_vpn_only_enabled: false
+    seaweedfs_master_ui_vpn_only_enabled: false
+    seaweedfs_filer_ui_vpn_only_enabled: false
     seaweedfs_admin_ui_vpn_only_enabled: false
 
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
@@ -58,7 +66,33 @@ all:
       certificate:
         enabled: true
 
-    # Ingress config 2: Admin UI (с VPN-only) — 1 domain === 1 ingress_config
+    # Ingress config 2: Master UI — отдельный поддомен (только Host, без path-prefix)
+    seaweedfs_master_ui_ingress_config:
+      domain: "{{ seaweedfs_master_ui_domain }}"
+      tlsSecretName: "{{ seaweedfs_master_ui_tls_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ seaweedfs_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ seaweedfs_master_ui_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      certificate:
+        enabled: true
+
+    # Ingress config 3: Filer UI — отдельный поддомен (только Host, без path-prefix)
+    seaweedfs_filer_ui_ingress_config:
+      domain: "{{ seaweedfs_filer_ui_domain }}"
+      tlsSecretName: "{{ seaweedfs_filer_ui_tls_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ seaweedfs_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ seaweedfs_filer_ui_vpn_only_enabled }}"
+        vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
+      certificate:
+        enabled: true
+
+    # Ingress config 4: Admin component UI — отдельный поддомен (только Host, без path-prefix)
     seaweedfs_admin_ui_ingress_config:
       domain: "{{ seaweedfs_admin_ui_domain }}"
       tlsSecretName: "{{ seaweedfs_admin_ui_tls_secret_name }}"
@@ -385,7 +419,9 @@ all:
       namespace: "{{ seaweedfs_namespace }}"
       issuer: "{{ seaweedfs_cert_manager_issuer }}"
       s3IngressConfig: "{{ seaweedfs_s3_ingress_config }}"
-      adminUiIngressConfig: "{{ seaweedfs_admin_ui_ingress_config }}"
+      masterIngressConfig: "{{ seaweedfs_master_ui_ingress_config }}"
+      filerIngressConfig: "{{ seaweedfs_filer_ui_ingress_config }}"
+      adminIngressConfig: "{{ seaweedfs_admin_ui_ingress_config }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
