@@ -111,6 +111,12 @@ all:
     seaweedfs_postgresql_secret_key_username: "username"
     seaweedfs_postgresql_secret_key_password: "password"
 
+    # Admin UI creds: login-значение + field names (K8s Secret keys = Vault поля).
+    # Потребляются: admin.secret.{userKey,pwKey} (helm) + seaweedfs-install.yaml seed (login).
+    seaweedfs_admin_username: "admin"
+    seaweedfs_admin_secret_key_user: "adminUser"
+    seaweedfs_admin_secret_key_password: "adminPassword"
+
 
     # === SECTION 2: ESO ===
     # ---------
@@ -162,9 +168,23 @@ all:
               key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/s3-config/all"
               property: config
 
+    # Named secret 3: Admin UI creds (simple dataFrom.extract — adminUser + adminPassword).
+    # Vault поля 'adminUser'/'adminPassword' → K8s Secret eso-seaweedfs-admin-creds с теми же
+    # ключами; чарт admin.secret.{userKey,pwKey} указывает на них. Seed — seaweedfs-install.yaml.
+    seaweedfs_secret_admin_creds:
+      external_secret_name: "eso-seaweedfs-admin-creds"
+      vault_path: "/seaweedfs/admin/creds"
+      body:
+        target:
+          name: "eso-seaweedfs-admin-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/admin/creds"
+
     eso_vault_integration_seaweedfs_secrets:
       - "{{ seaweedfs_secret_postgresql_creds }}"
       - "{{ seaweedfs_secret_s3_identities }}"
+      - "{{ seaweedfs_secret_admin_creds }}"
 
     eso_vault_integration_seaweedfs_secrets_extra: []
 
@@ -385,6 +405,40 @@ all:
         # writes от seaweedfs-install.yaml через tasks-seaweedfs-user-sync (--tags user-sync).
         enableAuth: true
         existingConfigSecret: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
+
+      # Admin компонент (StatefulSet) — панель управления + координатор worker'ов.
+      admin:
+        enabled: true
+        replicas: 1
+        # Креды admin UI — через ESO-materialised Secret (existingSecret); чарт инжектит
+        # WEED_ADMIN_USER / WEED_ADMIN_PASSWORD из него.
+        secret:
+          existingSecret: "{{ seaweedfs_secret_admin_creds.body.target.name }}"
+          userKey: "{{ seaweedfs_admin_secret_key_user }}"
+          pwKey: "{{ seaweedfs_admin_secret_key_password }}"
+        # Persistence: admin хранит session keys + maintenance/task config + историю задач
+        # ТОЛЬКО на FS (Postgres-бэкенда у admin нет — verified config_persistence.go).
+        # data.type=PVC → чарт авто-выставляет -dataDir=/data и монтирует PVC в /data.
+        data:
+          type: "persistentVolumeClaim"
+          size: "2Gi"
+          storageClass: "lnstr-major-multi-sync"
+        # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
+        logs:
+          type: ""
+
+      # Worker компонент (Deployment) — background-job runner (vacuum/balance/EC/...).
+      # Требует admin (чарт hard-fail'ит без admin.enabled); adminServer не задаём —
+      # чарт авто-указывает на in-cluster admin gRPC.
+      worker:
+        enabled: true
+        replicas: 1
+        # jobType "all" — default (vacuum/volume_balance/ec_balance/admin_script)
+        # + heavy (erasure_coding/iceberg_maintenance). Фиксируем явно (= upstream default).
+        jobType: "all"
+        # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
+        logs:
+          type: ""
 
     # --- PHASE: post ---
     seaweedfs_post_helm_timeout: "5m"
