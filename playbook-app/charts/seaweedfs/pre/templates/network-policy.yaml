@@ -241,6 +241,29 @@ spec:
           port: {{ .Values.apiserver.port }}
 
 # =============================================================================
+# PROMETHEUS SCRAPING
+# =============================================================================
+
+---
+# Allow Prometheus scraping on metrics ports for all seaweedfs pods (9327 =
+# master/volume/filer/s3/worker metrics; 23646 = admin /metrics on its http port).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-for-monitoring
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.metricsPort }}
+        - protocol: TCP
+          port: {{ .Values.seaweedfs.adminHttpPort }}
+
+# =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
 # =============================================================================
 {{- if .Values.issuer.enabled }}

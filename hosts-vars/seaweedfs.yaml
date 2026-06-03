@@ -287,6 +287,12 @@ all:
     seaweedfs_install_kustomize_patches: []
     # Helm chart values — структура соответствует upstream chart 4.31.0
     seaweedfs_helm_values:
+      # Включить upstream Prometheus ServiceMonitor для всех компонентов
+      # (master/volume/filer/s3/worker/admin). gatewayHost остаётся null → pull-only.
+      global:
+        seaweedfs:
+          monitoring:
+            enabled: true
       master:
         enabled: true
         replicas: 1
@@ -408,15 +414,12 @@ all:
       admin:
         enabled: true
         replicas: 1
-        # Креды admin UI — через ESO-materialised Secret (existingSecret); чарт инжектит
-        # WEED_ADMIN_USER / WEED_ADMIN_PASSWORD из него.
+        # Креды admin UI — через ESO (existingSecret)
         secret:
           existingSecret: "{{ seaweedfs_secret_admin_ui_creds.body.target.name }}"
           userKey: "{{ seaweedfs_admin_ui_secret_key_user }}"
           pwKey: "{{ seaweedfs_admin_ui_secret_key_password }}"
         # Persistence: admin хранит session keys + maintenance/task config + историю задач
-        # ТОЛЬКО на FS (Postgres-бэкенда у admin нет — verified config_persistence.go).
-        # data.type=PVC → чарт авто-выставляет -dataDir=/data и монтирует PVC в /data.
         data:
           type: "persistentVolumeClaim"
           size: "2Gi"
@@ -440,28 +443,6 @@ all:
 
     # --- PHASE: post ---
     seaweedfs_post_helm_timeout: "5m"
-    # ServiceMonitor per-component configuration (consumed by seaweedfs/post chart)
-    seaweedfs_service_monitor:
-      master:
-        enabled: true
-        interval: "30s"
-        scrapeTimeout: "15s"
-        additionalLabels: {}
-      volume:
-        enabled: true
-        interval: "30s"
-        scrapeTimeout: "15s"
-        additionalLabels: {}
-      filer:
-        enabled: true
-        interval: "30s"
-        scrapeTimeout: "15s"
-        additionalLabels: {}
-      s3:
-        enabled: true
-        interval: "30s"
-        scrapeTimeout: "15s"
-        additionalLabels: {}
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     seaweedfs_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -479,5 +460,4 @@ all:
         entryPoints:
           web: "{{ traefik_web_entrypoint }}"
           websecure: "{{ traefik_websecure_entrypoint }}"
-      serviceMonitor: "{{ seaweedfs_service_monitor }}"
       extraObjects: "{{ seaweedfs_post_extra_objects }}"
