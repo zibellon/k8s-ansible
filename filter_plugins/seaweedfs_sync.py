@@ -313,8 +313,8 @@ def _compute_bucket_diff(current_state, target_buckets):
     """Compute unified bucket+policy+quota+immutable-violations sync diff.
 
     Args:
-        current_state: list [{name, collection, replication, quota?, policy?}, ...] from parsed ConfigMap.
-        target_buckets: target list [{name, collection, replication, quota?, policy?}, ...].
+        current_state: list [{name, replication, rack?, dataCenter?, quota?, policy?}, ...] from parsed ConfigMap.
+        target_buckets: target list [{name, replication, rack?, dataCenter?, quota?, policy?}, ...].
 
     Returns:
         {
@@ -325,7 +325,7 @@ def _compute_bucket_diff(current_state, target_buckets):
             'to_create_buckets': [target entries new vs state],
             'new_policies_to_apply': [to_create entries with policy],
             'quotas_to_apply': [target entries with quota defined],
-            'immutable_violations': [kept entries where collection OR replication changed —
+            'immutable_violations': [kept entries where replication, rack, OR dataCenter changed —
                                      used by YAML assert for fail-fast ERROR + abort],
         }
     """
@@ -409,7 +409,7 @@ _REPLICATION_FORMAT_RE = re.compile(r'^[0-9]{3}$')
 
 def _validate_replication_format(value):
     """Raise AnsibleFilterError если value не matches '^[0-9]{3}$' regex.
-    Used by _validate_buckets_have_collection_and_replication для каждого bucket."""
+    Used by _validate_buckets_have_replication для каждого bucket."""
     if not isinstance(value, str) or not _REPLICATION_FORMAT_RE.match(value):
         raise AnsibleFilterError(
             "Invalid replication format: '{0}' (type {1}). "
@@ -418,18 +418,12 @@ def _validate_replication_format(value):
             "'205' (8 total copies). See SeaweedFS replication docs.".format(value, type(value).__name__)
         )
 
-def _validate_buckets_have_collection_and_replication(target_buckets):
-    """Iterate target buckets, validate presence of collection (non-empty string)
-    и replication (3-digit format). Called by every public Layer 2 filter."""
+def _validate_buckets_have_replication(target_buckets):
+    """Iterate target buckets, validate replication (required, 3-digit format)
+    и optional rack/dataCenter (non-empty string if present).
+    Called by every public Layer 2 filter."""
     for bucket in target_buckets:
         name = bucket.get('name', '<unnamed>')
-        collection = bucket.get('collection')
-        if not isinstance(collection, str) or not collection:
-            raise AnsibleFilterError(
-                "Bucket '{0}' missing required 'collection' field "
-                "(non-empty string). See hosts-vars/seaweedfs-sync.yaml SECTION 2 "
-                "schema documentation.".format(name)
-            )
         replication = bucket.get('replication')
         if replication is None:
             raise AnsibleFilterError(
@@ -438,13 +432,22 @@ def _validate_buckets_have_collection_and_replication(target_buckets):
                 "SECTION 2 schema documentation.".format(name)
             )
         _validate_replication_format(replication)
+        for field in ('rack', 'dataCenter'):
+            if field in bucket:
+                value = bucket.get(field)
+                if not isinstance(value, str) or not value:
+                    raise AnsibleFilterError(
+                        "Bucket '{0}' field '{1}' must be a non-empty string if present. "
+                        "See hosts-vars/seaweedfs-sync.yaml SECTION 2 schema "
+                        "documentation.".format(name, field)
+                    )
 
 def _compute_bucket_immutable_violations(current_state, target_buckets):
-    """Compute kept buckets где collection OR replication changed vs state.
+    """Compute kept buckets где replication, rack OR dataCenter changed vs state.
     Unified violations list — Used by YAML assert для fail-fast ERROR + abort.
 
-    Returns: list of {name, state_collection, target_collection, state_replication, target_replication}
-    dicts. Empty list = no violations = sync can proceed."""
+    Returns: list of {name, state_replication, target_replication, state_rack,
+    target_rack, state_dataCenter, target_dataCenter} dicts. Empty list = no violations."""
     target_by_name = {b['name']: b for b in target_buckets}
     state_by_name = {b['name']: b for b in current_state}
     kept_names = set(target_by_name) & set(state_by_name)
@@ -452,17 +455,23 @@ def _compute_bucket_immutable_violations(current_state, target_buckets):
     for name in kept_names:
         state_entry = state_by_name[name]
         target_entry = target_by_name[name]
-        state_collection = state_entry.get('collection')
-        target_collection = target_entry.get('collection')
         state_replication = state_entry.get('replication')
         target_replication = target_entry.get('replication')
-        if state_collection != target_collection or state_replication != target_replication:
+        state_rack = state_entry.get('rack')
+        target_rack = target_entry.get('rack')
+        state_dc = state_entry.get('dataCenter')
+        target_dc = target_entry.get('dataCenter')
+        if (state_replication != target_replication
+                or state_rack != target_rack
+                or state_dc != target_dc):
             violations.append({
                 'name': name,
-                'state_collection': state_collection,
-                'target_collection': target_collection,
                 'state_replication': state_replication,
                 'target_replication': target_replication,
+                'state_rack': state_rack,
+                'target_rack': target_rack,
+                'state_dataCenter': state_dc,
+                'target_dataCenter': target_dc,
             })
     return violations
 # =============================================================================
@@ -482,7 +491,7 @@ def seaweedfs_buckets_to_delete(vault_raw_json, target_buckets, configmap_raw_js
     Raises:
         AnsibleFilterError if any target bucket has Principal-dict in policy Statement.
     """
-    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_buckets_have_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -497,7 +506,7 @@ def seaweedfs_bucket_policies_to_delete(vault_raw_json, target_buckets, configma
     Returns:
         list of target {name, quota?} entries (no policy field — that's the point).
     """
-    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_buckets_have_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -512,7 +521,7 @@ def seaweedfs_buckets_to_create(vault_raw_json, target_buckets, configmap_raw_js
     Returns:
         list of target {name, quota?, policy?} entries (target - state).
     """
-    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_buckets_have_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -528,7 +537,7 @@ def seaweedfs_bucket_policies_to_apply(vault_raw_json, target_buckets, configmap
         list of target {name, quota?, policy} entries — kept_with_policy ∪ new_with_policy.
         One AWS CLI command (put-bucket-policy) для всех. Phase ordering: после create.
     """
-    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_buckets_have_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
@@ -544,7 +553,7 @@ def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_
         list of {name, quota: {enabled, size, size_mib}, ...} entries — quota.size_mib
         pre-computed int (MiB), ready for Phase E weed shell -sizeMB=<X>.
     """
-    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_buckets_have_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     quota_buckets = [b for b in target_buckets if 'quota' in b]
     return _enrich_quotas_with_size_mib(quota_buckets)
@@ -559,13 +568,13 @@ def seaweedfs_buckets_new_state_json(vault_raw_json, target_buckets, configmap_r
         str — json.dumps(target_buckets, sort_keys=True). Phase F kubectl apply
         consumes this directly без |to_json.
     """
-    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_buckets_have_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     return json.dumps(target_buckets, sort_keys=True)
 
 
 def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, configmap_raw_json):
-    """Detect immutable settings (collection/replication) changes vs state.
+    """Detect immutable settings (replication/rack/dataCenter) changes vs state.
 
     Stateless filter: full validation + diff computation inside. Used by YAML
     assert для fail-fast ERROR + abort if non-empty list returned.
@@ -576,14 +585,15 @@ def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, confi
         configmap_raw_json: str — ConfigMap state raw stdout.
 
     Returns:
-        list of {name, state_collection, target_collection, state_replication, target_replication}
-        dicts — kept buckets с changed collection OR replication. Empty = no violations.
+        list of {name, state_replication, target_replication, state_rack,
+        target_rack, state_dataCenter, target_dataCenter} dicts — kept buckets
+        с changed replication, rack, OR dataCenter. Empty = no violations.
 
     Raises:
-        AnsibleFilterError if validation fails (missing collection/replication field,
-        invalid replication format, or Principal-dict in policy).
+        AnsibleFilterError if validation fails (missing replication field,
+        invalid replication format, invalid rack/dataCenter, or Principal-dict in policy).
     """
-    _validate_buckets_have_collection_and_replication(target_buckets)
+    _validate_buckets_have_replication(target_buckets)
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     return _compute_bucket_immutable_violations(state, target_buckets)

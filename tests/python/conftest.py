@@ -36,11 +36,10 @@ def sample_target_identities():
 
 @pytest.fixture
 def sample_target_buckets():
-    """Default target buckets: b1 with quota+policy, b2 without (both с collection + replication)."""
+    """Default target buckets: b1 with quota+policy, b2 without (both с replication)."""
     return [
         {
             'name': 'b1',
-            'collection': 'general',
             'replication': '001',
             'quota': {'enabled': True, 'size': '1GiB'},
             'policy': {
@@ -51,7 +50,7 @@ def sample_target_buckets():
                 ],
             },
         },
-        {'name': 'b2', 'collection': 'general', 'replication': '001'},
+        {'name': 'b2', 'replication': '001'},
     ]
 
 
@@ -65,10 +64,10 @@ def sample_configmap_state_distribute():
 
 @pytest.fixture
 def sample_configmap_state_buckets():
-    """Sample ConfigMap state for bucket-sync (Layer 2) tests. Includes collection + replication."""
+    """Sample ConfigMap state for bucket-sync (Layer 2) tests. Includes replication."""
     return json.dumps([
-        {'name': 'b1', 'collection': 'general', 'replication': '001'},
-        {'name': 'b_stale', 'collection': 'archive', 'replication': '000'},
+        {'name': 'b1', 'replication': '001'},
+        {'name': 'b_stale', 'replication': '000'},
     ])
 
 

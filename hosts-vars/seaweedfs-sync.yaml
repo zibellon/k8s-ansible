@@ -136,8 +136,8 @@ all:
     #
     # Sync order (6 фаз):
     #   1. DELETE стейл buckets (in state, not in target): weed shell
-    #      's3.bucket.delete -name=<n>' — sweep вместе с их policies (collection
-    #      delete через master). См. NOTE про -force ниже.
+    #      's3.bucket.delete -name=<n>' — hard delete via master (CollectionDelete
+    #      sweeps volumes/objects; policies swept automatically). См. NOTE ниже.
     #   2. DELETE стейл policies у kept buckets (in state with policy, in target
     #      without): aws s3api delete-bucket-policy --bucket <n>.
     #   3. APPLY policies у kept buckets (target has policy — всегда put,
@@ -161,14 +161,21 @@ all:
     #
     # Schema per bucket:
     #   name:        bucket name (DNS-compatible, lower-case) — required.
-    #   collection:  SeaweedFS collection name (group of volumes) — REQUIRED string.
-    #                Set via 'fs.configure -locationPrefix=/buckets/<n> -collection=<c> -apply'
-    #                после bucket.create (Phase C2). NEW writes пойдут в указанный collection.
+    #   rack:        OPTIONAL string — preferred volume tier (SeaweedFS rack axis).
+    #                Допустимые = rack-метки volume-групп из hosts-vars/seaweedfs.yaml
+    #                (по конвенции 'managers' / 'workers'). SOFT preference: при заполнении
+    #                тира SeaweedFS спилит на другой (altRequest fallback). Пусто = без
+    #                преференса (weighted-by-free-space). IMMUTABLE post-creation.
+    #   dataCenter:  OPTIONAL string — preferred DC (SeaweedFS dataCenter axis). Сейчас
+    #                кластер одно-DC ('dc1'). SOFT preference. IMMUTABLE post-creation.
     #   replication: SeaweedFS replication code — REQUIRED 3-digit string '^[0-9]{3}$'.
     #                Format XYZ: X=other DCs, Y=other racks (same DC), Z=other servers (same rack).
     #                Total copies = 1 + sum digits. Examples: '000' (no rep), '001' (+1 same rack),
     #                '100' (+1 other DC), '205' (8 total copies). Same fs.configure command (combined).
-    #   IMPORTANT — collection и replication immutable post-creation:
+    #                ВНИМАНИЕ при rack-преференсе: используй формат 00Z (реплики в том же
+    #                тире, e.g. '001'), НЕ 0Y0 ('010') — иначе копия форсится в другой тир,
+    #                ломая rack-преференс. Лимиты: workers до '004' (5 нод), managers до '002' (3).
+    #   IMPORTANT — replication, rack, dataCenter immutable post-creation:
     #                Change post-create технически работает (fs.configure applies к новым writes),
     #                НО existing data остаётся в old configuration → data fragmentation.
     #                Sync code FAIL-FAST если ЛЮБОЕ из immutable полей changed vs state:
@@ -209,64 +216,23 @@ all:
     # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
     # seaweedfs_sync_buckets_extra:
     #   - name: bucket-1
-    #     collection: "general"
-    #     replication: "001"   # +1 копия в same rack
+    #     replication: "001"   # +1 копия в том же тире
+    #     rack: "workers"      # OPTIONAL: preferred tier (soft), IMMUTABLE
     #     quota:
     #       enabled: true
     #       size: "100GiB"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "UserAliceObjects"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/alice"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #           Resource: ["arn:aws:s3:::bucket-1/*"]
-    #         - Sid: "UserAliceBucketOps"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/alice"
-    #           Action: ["s3:ListBucket"]
-    #           Resource: ["arn:aws:s3:::bucket-1"]
-    #   - name: bucket-2
-    #     collection: "general"
-    #     replication: "001"
-    #     # quota опц — без quota = unlimited
-    #     # policy опц — без policy = только default-deny (admin может всегда)
-    #   - name: assets-public
-    #     collection: "public"
-    #     replication: "100"   # +1 копия в other DC (durable для public assets)
-    #     quota:
-    #       enabled: true
-    #       size: "10GiB"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "PublicReadObjects"
-    #           Effect: "Allow"
-    #           Principal: "*"
-    #           Action: ["s3:GetObject"]
-    #           Resource: ["arn:aws:s3:::assets-public/*"]
-    #         - Sid: "PublicListBucket"
-    #           Effect: "Allow"
-    #           Principal: "*"
-    #           Action: ["s3:ListBucket"]
-    #           Resource: ["arn:aws:s3:::assets-public"]
 
     # ------
     # --- Pre-built opt-in для GitLab + GitLab-Runner buckets ---
     # Если используете SeaweedFS как S3 backend для GitLab / gitlab-runner — раскомментируйте
     # этот блок в своём hosts-vars-override/seaweedfs-sync.yaml. 6 buckets с full-access
-    # policies (5 для GitLab user, 1 для gitlab-runner user). Collection='gitlab'/'gitlab-runner',
-    # replication='001' (+1 копия в same rack — measure baseline durability; для более высокой
-    # надёжности используйте '100' cross-DC или '101' rack+server).
+    # policies (5 для GitLab user, 1 для gitlab-runner user). replication='001' (+1 копия
+    # в same rack — measure baseline durability; для более высокой надёжности используйте
+    # '100' cross-DC или '101' rack+server).
     # Альтернатива: внешнее S3 — operator сам создаёт buckets вне Ansible.
     # seaweedfs_sync_buckets_extra:
     #   # --- GitLab buckets (5) — owned by 'gitlab' user ---
     #   - name: gitlab-registry
-    #     collection: "gitlab"
     #     replication: "001"
     #     policy:
     #       Version: "2012-10-17"
@@ -284,7 +250,6 @@ all:
     #             - "arn:aws:s3:::gitlab-registry"
     #             - "arn:aws:s3:::gitlab-registry/*"
     #   - name: gitlab-artifacts
-    #     collection: "gitlab"
     #     replication: "001"
     #     policy:
     #       Version: "2012-10-17"
@@ -302,7 +267,6 @@ all:
     #             - "arn:aws:s3:::gitlab-artifacts"
     #             - "arn:aws:s3:::gitlab-artifacts/*"
     #   - name: gitlab-uploads
-    #     collection: "gitlab"
     #     replication: "001"
     #     policy:
     #       Version: "2012-10-17"
@@ -320,7 +284,6 @@ all:
     #             - "arn:aws:s3:::gitlab-uploads"
     #             - "arn:aws:s3:::gitlab-uploads/*"
     #   - name: gitlab-packages
-    #     collection: "gitlab"
     #     replication: "001"
     #     policy:
     #       Version: "2012-10-17"
@@ -338,7 +301,6 @@ all:
     #             - "arn:aws:s3:::gitlab-packages"
     #             - "arn:aws:s3:::gitlab-packages/*"
     #   - name: gitlab-backups
-    #     collection: "gitlab"
     #     replication: "001"
     #     policy:
     #       Version: "2012-10-17"
@@ -357,7 +319,6 @@ all:
     #             - "arn:aws:s3:::gitlab-backups/*"
     #   # --- GitLab-Runner cache (1) — owned by 'gitlab-runner' user ---
     #   - name: gitlab-runner-cache
-    #     collection: "gitlab-runner"
     #     replication: "001"
     #     policy:
     #       Version: "2012-10-17"
@@ -382,7 +343,6 @@ all:
     # policy для 'loki' user. Collection='loki', replication='001'.
     # seaweedfs_sync_buckets_extra:
     #   - name: loki-logs
-    #     collection: "loki"
     #     replication: "001"
     #     policy:
     #       Version: "2012-10-17"
