@@ -113,9 +113,9 @@ all:
 
     # Admin UI creds: login-значение + field names (K8s Secret keys = Vault поля).
     # Потребляются: admin.secret.{userKey,pwKey} (helm) + seaweedfs-install.yaml seed (login).
-    seaweedfs_admin_username: "admin"
-    seaweedfs_admin_secret_key_user: "adminUser"
-    seaweedfs_admin_secret_key_password: "adminPassword"
+    seaweedfs_admin_ui_username: "admin"
+    seaweedfs_admin_ui_secret_key_user: "adminUser"
+    seaweedfs_admin_ui_secret_key_password: "adminPassword"
 
 
     # === SECTION 2: ESO ===
@@ -169,22 +169,22 @@ all:
               property: config
 
     # Named secret 3: Admin UI creds (simple dataFrom.extract — adminUser + adminPassword).
-    # Vault поля 'adminUser'/'adminPassword' → K8s Secret eso-seaweedfs-admin-creds с теми же
+    # Vault поля 'adminUser'/'adminPassword' → K8s Secret eso-seaweedfs-admin-ui-creds с теми же
     # ключами; чарт admin.secret.{userKey,pwKey} указывает на них. Seed — seaweedfs-install.yaml.
-    seaweedfs_secret_admin_creds:
-      external_secret_name: "eso-seaweedfs-admin-creds"
-      vault_path: "/seaweedfs/admin/creds"
+    seaweedfs_secret_admin_ui_creds:
+      external_secret_name: "eso-seaweedfs-admin-ui-creds"
+      vault_path: "/seaweedfs/admin-ui/creds"
       body:
         target:
-          name: "eso-seaweedfs-admin-creds"
+          name: "eso-seaweedfs-admin-ui-creds"
         dataFrom:
           - extract:
-              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/admin/creds"
+              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/admin-ui/creds"
 
     eso_vault_integration_seaweedfs_secrets:
       - "{{ seaweedfs_secret_postgresql_creds }}"
       - "{{ seaweedfs_secret_s3_identities }}"
-      - "{{ seaweedfs_secret_admin_creds }}"
+      - "{{ seaweedfs_secret_admin_ui_creds }}"
 
     eso_vault_integration_seaweedfs_secrets_extra: []
 
@@ -413,9 +413,9 @@ all:
         # Креды admin UI — через ESO-materialised Secret (existingSecret); чарт инжектит
         # WEED_ADMIN_USER / WEED_ADMIN_PASSWORD из него.
         secret:
-          existingSecret: "{{ seaweedfs_secret_admin_creds.body.target.name }}"
-          userKey: "{{ seaweedfs_admin_secret_key_user }}"
-          pwKey: "{{ seaweedfs_admin_secret_key_password }}"
+          existingSecret: "{{ seaweedfs_secret_admin_ui_creds.body.target.name }}"
+          userKey: "{{ seaweedfs_admin_ui_secret_key_user }}"
+          pwKey: "{{ seaweedfs_admin_ui_secret_key_password }}"
         # Persistence: admin хранит session keys + maintenance/task config + историю задач
         # ТОЛЬКО на FS (Postgres-бэкенда у admin нет — verified config_persistence.go).
         # data.type=PVC → чарт авто-выставляет -dataDir=/data и монтирует PVC в /data.
