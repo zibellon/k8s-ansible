@@ -193,7 +193,7 @@ def test_distribute_new_state_json_skips_identities_without_paths():
     assert len(parsed) == 1
     assert parsed[0]['identity_name'] == 'alice'
 # =============================================================================
-# bucket-sync (Layer 2) — seaweedfs_buckets_* / _bucket_policies_* (stateless)
+# bucket-sync (Layer 2) — seaweedfs_buckets_* (stateless)
 # =============================================================================
 
 def test_buckets_to_delete_orphan(sample_target_buckets, sample_configmap_state_buckets):
@@ -206,42 +206,6 @@ def test_buckets_to_delete_orphan(sample_target_buckets, sample_configmap_state_
 def test_buckets_to_delete_empty_state(sample_target_buckets):
     """Edge: no ConfigMap state → no deletes."""
     result = sw.seaweedfs_buckets_to_delete('', sample_target_buckets, '')
-    assert result == []
-
-
-def test_buckets_to_delete_raises_on_principal_dict():
-    """Edge: target bucket policy Principal is dict → validation raise."""
-    target = [{
-        'name': 'b1',
-        'replication': '001',
-        'policy': {'Version': '2012-10-17', 'Statement': [
-            {'Effect': 'Allow', 'Principal': {'AWS': 'arn:1'}, 'Action': [], 'Resource': []},
-        ]},
-    }]
-    with pytest.raises(AnsibleFilterError, match='must be flat string'):
-        sw.seaweedfs_buckets_to_delete('', target, '')
-
-
-def test_bucket_policies_to_delete_kept_lost_policy():
-    """Happy: state had policy on b1, target has b1 без policy → delete-policy."""
-    state = '[{"name": "b1", "replication": "001", "policy": {"Version": "2012-10-17"}}]'
-    target = [{'name': 'b1', 'replication': '001'}]
-    result = sw.seaweedfs_bucket_policies_to_delete('', target, state)
-    assert len(result) == 1
-    assert result[0]['name'] == 'b1'
-
-
-def test_bucket_policies_to_delete_empty_state():
-    """Edge: no state → no policies to delete."""
-    result = sw.seaweedfs_bucket_policies_to_delete('', [{'name': 'b1', 'replication': '001'}], '')
-    assert result == []
-
-
-def test_bucket_policies_to_delete_kept_still_has_policy():
-    """Edge: state had policy, target also has policy → not in to_delete (it's to_apply)."""
-    state = '[{"name": "b1", "replication": "001", "policy": {"Version": "2012-10-17"}}]'
-    target = [{'name': 'b1', 'replication': '001', 'policy': {'Version': '2012-10-17'}}]
-    result = sw.seaweedfs_bucket_policies_to_delete('', target, state)
     assert result == []
 
 
@@ -263,26 +227,6 @@ def test_buckets_to_create_all_kept():
     state = '[{"name": "b1", "replication": "001"}]'
     target = [{'name': 'b1', 'replication': '001'}]
     result = sw.seaweedfs_buckets_to_create('', target, state)
-    assert result == []
-
-
-def test_bucket_policies_to_apply_kept_and_new(sample_target_buckets, sample_configmap_state_buckets):
-    """Happy: target b1 (kept) and b2 (new) — only b1 has policy → returned."""
-    result = sw.seaweedfs_bucket_policies_to_apply('', sample_target_buckets, sample_configmap_state_buckets)
-    assert len(result) == 1
-    assert result[0]['name'] == 'b1'
-
-
-def test_bucket_policies_to_apply_empty_target():
-    """Edge: no target → no policies."""
-    result = sw.seaweedfs_bucket_policies_to_apply('', [], '')
-    assert result == []
-
-
-def test_bucket_policies_to_apply_no_policies():
-    """Edge: target buckets без policy field → empty list."""
-    target = [{'name': 'b1', 'replication': '001'}, {'name': 'b2', 'replication': '001'}]
-    result = sw.seaweedfs_bucket_policies_to_apply('', target, '')
     assert result == []
 
 

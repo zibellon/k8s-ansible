@@ -36,20 +36,13 @@ def sample_target_identities():
 
 @pytest.fixture
 def sample_target_buckets():
-    """Default target buckets: b1 with quota+policy, b2 without (both с replication)."""
+    """Default target buckets: b1 with quota, b2 without (both с replication + owner)."""
     return [
         {
             'name': 'b1',
             'replication': '001',
             'owner': 'gitlab',
             'quota': {'enabled': True, 'size': '1GiB'},
-            'policy': {
-                'Version': '2012-10-17',
-                'Statement': [
-                    {'Sid': 'S1', 'Effect': 'Allow', 'Principal': 'arn:aws:iam::*:user/alice',
-                     'Action': ['s3:GetObject'], 'Resource': ['arn:aws:s3:::b1/*']},
-                ],
-            },
         },
         {'name': 'b2', 'replication': '001', 'owner': 'loki'},
     ]

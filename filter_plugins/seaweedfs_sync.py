@@ -330,22 +330,18 @@ def seaweedfs_distribute_new_state_json(vault_raw_json, target_identities, confi
 # Private helpers (Layer 2 — bucket-sync)
 # =============================================================================
 def _compute_bucket_diff(current_state, target_buckets):
-    """Compute unified bucket+policy+quota+immutable-violations sync diff.
+    """Compute unified bucket+owner+quota+immutable-violations sync diff.
 
     Args:
-        current_state: list [{name, replication, rack?, dataCenter?, quota?, policy?}, ...] from parsed ConfigMap.
-        target_buckets: target list [{name, replication, rack?, dataCenter?, quota?, policy?}, ...].
+        current_state: list [{name, replication, rack?, dataCenter?, owner?, quota?}, ...] from parsed ConfigMap.
+        target_buckets: target list [{name, replication, rack?, dataCenter?, owner?, quota?}, ...].
 
     Returns:
         {
             'to_delete_buckets': [state entries to remove],
             'owners_to_set': [kept entries where target owner != state owner —
                               reconcile via s3.bucket.owner],
-            'kept_policies_to_delete': [target entries — state had policy,
-                                        target doesn't],
-            'kept_policies_to_apply': [target kept entries with policy],
             'to_create_buckets': [target entries new vs state],
-            'new_policies_to_apply': [to_create entries with policy],
             'quotas_to_apply': [target entries with quota defined],
             'immutable_violations': [kept entries where replication, rack, OR dataCenter changed —
                                      used by YAML assert for fail-fast ERROR + abort],
@@ -362,19 +358,7 @@ def _compute_bucket_diff(current_state, target_buckets):
             target_by_name[n] for n in kept_names
             if target_by_name[n].get('owner') != state_by_name[n].get('owner')
         ],
-        'kept_policies_to_delete': [
-            target_by_name[n] for n in kept_names
-            if 'policy' in state_by_name[n] and 'policy' not in target_by_name[n]
-        ],
-        'kept_policies_to_apply': [
-            target_by_name[n] for n in kept_names
-            if 'policy' in target_by_name[n]
-        ],
         'to_create_buckets': [target_by_name[n] for n in target_names - state_names],
-        'new_policies_to_apply': [
-            target_by_name[n] for n in target_names - state_names
-            if 'policy' in target_by_name[n]
-        ],
         'quotas_to_apply': [b for b in target_buckets if 'quota' in b],
         'immutable_violations': _compute_bucket_immutable_violations(current_state, target_buckets),
     }
@@ -392,28 +376,6 @@ def _quota_size_to_mib(size_str):
     raise AnsibleFilterError(
         "Unsupported size unit in '{0}'. Use MiB/GiB/TiB.".format(size_str)
     )
-
-def _validate_principal_not_dict(statement):
-    """Raise AnsibleFilterError if Statement.Principal is dict.
-    SeaweedFS 4.29 non-AWS limitation — accepts only string or list."""
-    principal = statement.get('Principal')
-    if isinstance(principal, dict):
-        raise AnsibleFilterError(
-            "Statement Principal must be flat string or array, not dict "
-            "(got {0}). SeaweedFS 4.29 limitation. Use "
-            "\"arn:aws:iam::*:user/<name>\" (single), "
-            "[\"arn:...\", \"arn:...\"] (multiple), or \"*\" (anonymous).".format(principal)
-        )
-
-def _validate_principal_not_dict_in_buckets(target_buckets):
-    """Iterate buckets with policy, validate Principal-not-dict per statement.
-    Called by every public Layer 2 filter (cheap, idempotent)."""
-    for bucket in target_buckets:
-        policy = bucket.get('policy')
-        if not policy:
-            continue
-        for statement in policy.get('Statement', []):
-            _validate_principal_not_dict(statement)
 
 def _enrich_quotas_with_size_mib(quota_buckets):
     """Return quota buckets list with quota.size_mib int field added.
@@ -512,75 +474,41 @@ def seaweedfs_buckets_to_delete(vault_raw_json, target_buckets, configmap_raw_js
         configmap_raw_json: str — ConfigMap state raw stdout.
 
     Returns:
-        list of state {name, quota?, policy?} entries (state - target).
+        list of state {name, owner?, quota?} entries (state - target).
 
     Raises:
-        AnsibleFilterError if any target bucket has Principal-dict in policy Statement.
+        AnsibleFilterError if any target bucket missing/invalid replication.
     """
     _validate_buckets_have_replication(target_buckets)
-    _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
     return diff['to_delete_buckets']
 
 
-def seaweedfs_bucket_policies_to_delete(vault_raw_json, target_buckets, configmap_raw_json):
-    """Kept target buckets без policy that had policy in state → list for delete-bucket-policy.
+def seaweedfs_buckets_to_create(vault_raw_json, target_buckets, configmap_raw_json):
+    """New target entries not in state → list to create via weed shell s3.bucket.create.
 
     Args, Raises: same as seaweedfs_buckets_to_delete.
 
     Returns:
-        list of target {name, quota?} entries (no policy field — that's the point).
+        list of target {name, owner?, quota?} entries (target - state).
     """
     _validate_buckets_have_replication(target_buckets)
-    _validate_principal_not_dict_in_buckets(target_buckets)
-    state = _parse_configmap_state(configmap_raw_json)
-    diff = _compute_bucket_diff(state, target_buckets)
-    return diff['kept_policies_to_delete']
-
-
-def seaweedfs_buckets_to_create(vault_raw_json, target_buckets, configmap_raw_json):
-    """New target entries not in state → list to create via weed shell s3.bucket.create.
-
-    Args, Raises: same as above.
-
-    Returns:
-        list of target {name, quota?, policy?} entries (target - state).
-    """
-    _validate_buckets_have_replication(target_buckets)
-    _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_bucket_diff(state, target_buckets)
     return diff['to_create_buckets']
 
 
-def seaweedfs_bucket_policies_to_apply(vault_raw_json, target_buckets, configmap_raw_json):
-    """All target buckets с policy (kept + new merged) → list for put-bucket-policy.
-
-    Args, Raises: same as above.
-
-    Returns:
-        list of target {name, quota?, policy} entries — kept_with_policy ∪ new_with_policy.
-        One AWS CLI command (put-bucket-policy) для всех. Phase ordering: после create.
-    """
-    _validate_buckets_have_replication(target_buckets)
-    _validate_principal_not_dict_in_buckets(target_buckets)
-    state = _parse_configmap_state(configmap_raw_json)
-    diff = _compute_bucket_diff(state, target_buckets)
-    return diff['kept_policies_to_apply'] + diff['new_policies_to_apply']
-
-
 def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_raw_json):
     """Target entries с quota → enriched with quota.size_mib int field.
 
-    Args, Raises: same as above.
+    Args, Raises: same as seaweedfs_buckets_to_delete.
 
     Returns:
         list of {name, quota: {enabled, size, size_mib}, ...} entries — quota.size_mib
         pre-computed int (MiB), ready for Phase E weed shell -sizeMB=<X>.
     """
     _validate_buckets_have_replication(target_buckets)
-    _validate_principal_not_dict_in_buckets(target_buckets)
     quota_buckets = [b for b in target_buckets if 'quota' in b]
     return _enrich_quotas_with_size_mib(quota_buckets)
 
@@ -588,14 +516,13 @@ def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_
 def seaweedfs_buckets_new_state_json(vault_raw_json, target_buckets, configmap_raw_json):
     """JSON-serialized target_buckets for ConfigMap state update (Phase F).
 
-    Args, Raises: same as above.
+    Args, Raises: same as seaweedfs_buckets_to_delete.
 
     Returns:
         str — json.dumps(target_buckets, sort_keys=True). Phase F kubectl apply
         consumes this directly без |to_json.
     """
     _validate_buckets_have_replication(target_buckets)
-    _validate_principal_not_dict_in_buckets(target_buckets)
     return json.dumps(target_buckets, sort_keys=True)
 
 
@@ -617,10 +544,9 @@ def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, confi
 
     Raises:
         AnsibleFilterError if validation fails (missing replication field,
-        invalid replication format, invalid rack/dataCenter, or Principal-dict in policy).
+        invalid replication format, or invalid rack/dataCenter).
     """
     _validate_buckets_have_replication(target_buckets)
-    _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     return _compute_bucket_immutable_violations(state, target_buckets)
 
@@ -766,9 +692,7 @@ class FilterModule(object):
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,
             'seaweedfs_distribute_new_state_json': seaweedfs_distribute_new_state_json,
             'seaweedfs_buckets_to_delete': seaweedfs_buckets_to_delete,
-            'seaweedfs_bucket_policies_to_delete': seaweedfs_bucket_policies_to_delete,
             'seaweedfs_buckets_to_create': seaweedfs_buckets_to_create,
-            'seaweedfs_bucket_policies_to_apply': seaweedfs_bucket_policies_to_apply,
             'seaweedfs_buckets_quotas_to_apply': seaweedfs_buckets_quotas_to_apply,
             'seaweedfs_buckets_new_state_json': seaweedfs_buckets_new_state_json,
             'seaweedfs_buckets_immutable_violations': seaweedfs_buckets_immutable_violations,
