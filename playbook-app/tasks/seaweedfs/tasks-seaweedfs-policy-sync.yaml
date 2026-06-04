@@ -1,0 +1,158 @@
+# =============================================================================
+# SeaweedFS Policy Sync (Layer P) — declarative managed IAM policies
+# =============================================================================
+# Reusable task include. Invoked from playbook with:
+#   - include_tasks: tasks-seaweedfs-policy-sync.yaml
+#     vars:
+#       dto_label_name: "<caller-prefix>"
+#
+# v14 filer-driven IAM. Managed policies (named AWS-style documents) применяются
+# в filer через weed shell s3.policy -put/-delete → /etc/iam/policies/<n>.json.
+# Прикрепляются к identities через identity.policy_names (user-sync, s3.configure
+# -policies). Этот task должен выполняться ДО user-sync (policy должна существовать
+# до attach).
+#
+# Stateless filter API (SUB-1): seaweedfs_policies_to_put / _to_delete /
+# _new_state_json, signature (vault_raw_json, target_policies, configmap_raw_json).
+# vault_raw_json игнорируется (передаём ''). Ansible task оркеструет только I/O:
+# kubectl-get configmap, 3 compute calls, kubectl exec (weed shell) per phase.
+#
+# Convention: dto_label_name passed ONLY at playbook-level invocation.
+#
+# Reads inventory:
+#   - seaweedfs_managed_policies + _extra (from hosts-vars/seaweedfs-sync.yaml).
+#     Schema per policy: {name, document} where document is AWS IAM policy doc.
+#   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
+#
+# Sync phases (2 loops + ConfigMap update):
+#   A. Delete стейл policies (in state, not in target): weed shell s3.policy -delete.
+#   B. Put target policies (put-all, idempotent overwrite): weed shell s3.policy -put -file.
+#   C. Update ConfigMap state с new target snapshot.
+#
+# Phase B detail: s3.policy -put требует -file=<path> (нет inline варианта). Document
+# передаётся через stdin (printf | kubectl exec -i) в pod и пишется в /tmp файл,
+# затем weed shell -put -file — ОБА в одном kubectl exec (sh -c 'cat > f && weed shell'),
+# т.к. deploy/seaweedfs-s3 многорепличный (один exec = один pod = файл доступен).
+# Document передаётся в single-quoted printf (managed policy documents не содержат
+# одинарных кавычек — only JSON double-quotes).
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert dto_label_name provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+    fail_msg: >-
+      tasks-seaweedfs-policy-sync: dto_label_name required (string, non-empty).
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Declare local fact keys"
+  set_fact:
+    _local_target_policies_key: "_local_target_policies"
+    _local_configmap_raw_key: "_local_configmap_raw"
+    _local_to_put_policies_key: "_local_to_put_policies"
+    _local_to_delete_policies_key: "_local_to_delete_policies"
+    _local_new_state_json_key: "_local_new_state_json"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute target managed policies list"
+  set_fact:
+    "{{ _local_target_policies_key }}": "{{ seaweedfs_managed_policies + (seaweedfs_managed_policies_extra | default([])) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Read current ConfigMap state (may not exist)"
+  command: >-
+    kubectl get configmap seaweedfs-sync-policies-state -n {{ seaweedfs_namespace }} -o jsonpath={.data.state}
+  register: _local_configmap_raw_reg
+  failed_when: false
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Capture ConfigMap raw stdout (empty if missing)"
+  set_fact:
+    "{{ _local_configmap_raw_key }}": >-
+      {{ _local_configmap_raw_reg.stdout
+         if (_local_configmap_raw_reg.rc == 0 and _local_configmap_raw_reg.stdout | length > 0)
+         else '' }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute policies_to_delete via filter"
+  set_fact:
+    "{{ _local_to_delete_policies_key }}": >-
+      {{ '' | seaweedfs_policies_to_delete(
+           lookup('vars', _local_target_policies_key),
+           lookup('vars', _local_configmap_raw_key)
+         ) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute policies_to_put via filter (put-all target)"
+  set_fact:
+    "{{ _local_to_put_policies_key }}": >-
+      {{ '' | seaweedfs_policies_to_put(
+           lookup('vars', _local_target_policies_key),
+           lookup('vars', _local_configmap_raw_key)
+         ) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute new ConfigMap state JSON via filter (Phase C input)"
+  set_fact:
+    "{{ _local_new_state_json_key }}": >-
+      {{ '' | seaweedfs_policies_new_state_json(
+           lookup('vars', _local_target_policies_key),
+           lookup('vars', _local_configmap_raw_key)
+         ) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE A: Delete стейл policies (in state, not in target) ---
+- name: "[{{ dto_label_name }}] Phase A — Delete стейл managed policies via weed shell"
+  shell: |
+    echo "s3.policy -delete -name={{ item.name }}" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ lookup('vars', _local_to_delete_policies_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE B: Put target policies (put-all, idempotent overwrite) ---
+# Document -> stdin -> /tmp file -> weed shell -put -file, всё в одном kubectl exec
+# (single pod из многорепличного deploy/seaweedfs-s3 — файл доступен weed shell'у).
+- name: "[{{ dto_label_name }}] Phase B — Put target managed policies via weed shell s3.policy -put -file"
+  shell: |
+    printf '%s' '{{ item.document | to_json }}' | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        sh -c 'cat > /tmp/policy-sync.json && echo "s3.policy -put -name={{ item.name }} -file=/tmp/policy-sync.json" | weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888'
+  loop: "{{ lookup('vars', _local_to_put_policies_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE C: Update ConfigMap state с new target snapshot ---
+- name: "[{{ dto_label_name }}] Phase C — Update ConfigMap state с new target snapshot"
+  shell: |
+    kubectl create configmap seaweedfs-sync-policies-state -n {{ seaweedfs_namespace }} \
+      --from-literal=state='{{ lookup('vars', _local_new_state_json_key) }}' \
+      --dry-run=client -o yaml | kubectl apply -f -
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
