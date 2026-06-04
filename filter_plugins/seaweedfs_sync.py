@@ -598,6 +598,115 @@ def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, confi
     state = _parse_configmap_state(configmap_raw_json)
     return _compute_bucket_immutable_violations(state, target_buckets)
 # =============================================================================
+# Private helpers (Layer P — managed policy sync)
+# =============================================================================
+def _validate_managed_policies(target_policies):
+    """Iterate target managed policies, validate name (required non-empty string)
+    + document (required non-empty mapping). Called by every public Layer P filter."""
+    for policy in target_policies:
+        name = policy.get('name')
+        if not isinstance(name, str) or not name:
+            raise AnsibleFilterError(
+                "Managed policy missing required non-empty string 'name' field "
+                "(got {0}). See hosts-vars/seaweedfs-sync.yaml seaweedfs_managed_policies "
+                "schema documentation.".format(name)
+            )
+        document = policy.get('document')
+        if not isinstance(document, dict) or not document:
+            raise AnsibleFilterError(
+                "Managed policy '{0}' missing required non-empty mapping 'document' "
+                "field (AWS IAM policy doc). See hosts-vars/seaweedfs-sync.yaml "
+                "seaweedfs_managed_policies schema documentation.".format(name)
+            )
+
+
+def _compute_policy_diff(current_state, target_policies):
+    """Compute managed-policy sync diff by name primary key.
+
+    Args:
+        current_state: list [{name, document}, ...] from parsed ConfigMap state.
+        target_policies: target list [{name, document}, ...] from inventory.
+
+    Returns:
+        {
+            'to_put': [all target entries — s3.policy -put idempotent overwrite],
+            'to_delete': [state entries not in target — s3.policy -delete],
+        }
+    """
+    target_names = {p['name'] for p in target_policies}
+    return {
+        'to_put': list(target_policies),
+        'to_delete': [p for p in current_state if p.get('name') not in target_names],
+    }
+# =============================================================================
+# Public Layer P filters — stateless managed-policy-sync orchestrators
+# =============================================================================
+def seaweedfs_policies_to_put(vault_raw_json, target_policies, configmap_raw_json):
+    """All target managed policies → list to put via weed shell s3.policy -put.
+
+    Stateless filter: validate + return all target (s3.policy -put is idempotent
+    overwrite, so put-all every run is self-healing).
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency with other filters.
+        target_policies: list — full target from inventory (base + extra).
+        configmap_raw_json: str — ConfigMap state raw stdout (unused for put-all,
+            kept for signature consistency).
+
+    Returns:
+        list of target {name, document} entries (all target policies).
+
+    Raises:
+        AnsibleFilterError if any policy missing name or document.
+    """
+    _validate_managed_policies(target_policies)
+    state = _parse_configmap_state(configmap_raw_json)
+    diff = _compute_policy_diff(state, target_policies)
+    return diff['to_put']
+
+
+def seaweedfs_policies_to_delete(vault_raw_json, target_policies, configmap_raw_json):
+    """State managed policies not in target → list to delete via weed shell s3.policy -delete.
+
+    Stateless filter: validate + diff + return state-only entries.
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency.
+        target_policies: list — full target from inventory (base + extra).
+        configmap_raw_json: str — ConfigMap state raw stdout.
+
+    Returns:
+        list of state {name, ...} entries (state - target by name).
+
+    Raises:
+        AnsibleFilterError if any policy missing name or document.
+    """
+    _validate_managed_policies(target_policies)
+    state = _parse_configmap_state(configmap_raw_json)
+    diff = _compute_policy_diff(state, target_policies)
+    return diff['to_delete']
+
+
+def seaweedfs_policies_new_state_json(vault_raw_json, target_policies, configmap_raw_json):
+    """JSON-serialized target_policies for ConfigMap state update.
+
+    Stateless filter: validate + serialize target.
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency.
+        target_policies: list — full target from inventory (base + extra).
+        configmap_raw_json: ignored — kept for shape consistency.
+
+    Returns:
+        str — json.dumps(target_policies, sort_keys=True). ConfigMap kubectl apply
+        consumes this directly без |to_json.
+
+    Raises:
+        AnsibleFilterError if any policy missing name or document.
+    """
+    _validate_managed_policies(target_policies)
+    return json.dumps(target_policies, sort_keys=True)
+# =============================================================================
 # Ansible FilterModule registration
 # =============================================================================
 class FilterModule(object):
@@ -615,4 +724,7 @@ class FilterModule(object):
             'seaweedfs_buckets_quotas_to_apply': seaweedfs_buckets_quotas_to_apply,
             'seaweedfs_buckets_new_state_json': seaweedfs_buckets_new_state_json,
             'seaweedfs_buckets_immutable_violations': seaweedfs_buckets_immutable_violations,
+            'seaweedfs_policies_to_put': seaweedfs_policies_to_put,
+            'seaweedfs_policies_to_delete': seaweedfs_policies_to_delete,
+            'seaweedfs_policies_new_state_json': seaweedfs_policies_new_state_json,
         }

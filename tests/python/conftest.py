@@ -80,3 +80,39 @@ def sample_generate_params():
         'access_key_charset': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
         'secret_key_charset': 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
     }
+
+
+@pytest.fixture
+def sample_managed_policies():
+    """Default target managed policies: gitlab-rw + loki-rw."""
+    return [
+        {
+            'name': 'gitlab-rw',
+            'document': {
+                'Version': '2012-10-17',
+                'Statement': [
+                    {'Effect': 'Allow', 'Action': ['s3:*'],
+                     'Resource': ['arn:aws:s3:::gitlab-registry', 'arn:aws:s3:::gitlab-registry/*']},
+                ],
+            },
+        },
+        {
+            'name': 'loki-rw',
+            'document': {
+                'Version': '2012-10-17',
+                'Statement': [
+                    {'Effect': 'Allow', 'Action': ['s3:*'],
+                     'Resource': ['arn:aws:s3:::loki-logs', 'arn:aws:s3:::loki-logs/*']},
+                ],
+            },
+        },
+    ]
+
+
+@pytest.fixture
+def sample_configmap_state_policies():
+    """Sample ConfigMap state for policy-sync (Layer P) tests: gitlab-rw kept + p_stale orphan."""
+    return json.dumps([
+        {'name': 'gitlab-rw', 'document': {'Version': '2012-10-17'}},
+        {'name': 'p_stale', 'document': {'Version': '2012-10-17'}},
+    ])

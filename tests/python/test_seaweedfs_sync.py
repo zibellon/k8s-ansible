@@ -420,3 +420,67 @@ def test_buckets_immutable_violations_new_bucket_no_violation():
     target = [{'name': 'b1', 'replication': '001'}]
     result = sw.seaweedfs_buckets_immutable_violations('', target, state)
     assert result == []
+# =============================================================================
+# managed policy sync (Layer P) — seaweedfs_policies_* (stateless)
+# =============================================================================
+
+def test_policies_to_put_returns_all_target(sample_managed_policies, sample_configmap_state_policies):
+    """Happy: put-all — returns every target policy (idempotent overwrite)."""
+    result = sw.seaweedfs_policies_to_put('', sample_managed_policies, sample_configmap_state_policies)
+    names = [p['name'] for p in result]
+    assert names == ['gitlab-rw', 'loki-rw']
+
+
+def test_policies_to_put_empty_target():
+    """Edge: empty target → empty put list."""
+    result = sw.seaweedfs_policies_to_put('', [], '')
+    assert result == []
+
+
+def test_policies_to_delete_orphan(sample_managed_policies, sample_configmap_state_policies):
+    """Happy: state has 'p_stale' not in target → returned for delete."""
+    result = sw.seaweedfs_policies_to_delete('', sample_managed_policies, sample_configmap_state_policies)
+    assert len(result) == 1
+    assert result[0]['name'] == 'p_stale'
+
+
+def test_policies_to_delete_empty_state(sample_managed_policies):
+    """Edge: no ConfigMap state → no deletes."""
+    result = sw.seaweedfs_policies_to_delete('', sample_managed_policies, '')
+    assert result == []
+
+
+def test_policies_new_state_json_serializes_target(sample_managed_policies):
+    """Happy: target serialized to JSON with sort_keys (deterministic)."""
+    result = sw.seaweedfs_policies_new_state_json('', sample_managed_policies, '')
+    parsed = json.loads(result)
+    assert len(parsed) == 2
+    result2 = sw.seaweedfs_policies_new_state_json('', sample_managed_policies, '')
+    assert result == result2
+
+
+def test_policies_new_state_json_empty_target():
+    """Edge: empty target → '[]' string."""
+    result = sw.seaweedfs_policies_new_state_json('', [], '')
+    assert json.loads(result) == []
+
+
+def test_policies_validation_raises_on_missing_name():
+    """Edge: policy без name → validation raise."""
+    target = [{'document': {'Version': '2012-10-17'}}]
+    with pytest.raises(AnsibleFilterError, match="missing required non-empty string 'name'"):
+        sw.seaweedfs_policies_to_put('', target, '')
+
+
+def test_policies_validation_raises_on_missing_document():
+    """Edge: policy без document → validation raise."""
+    target = [{'name': 'gitlab-rw'}]
+    with pytest.raises(AnsibleFilterError, match="missing required non-empty mapping 'document'"):
+        sw.seaweedfs_policies_to_put('', target, '')
+
+
+def test_policies_validation_raises_on_non_dict_document():
+    """Edge: document not a mapping → validation raise."""
+    target = [{'name': 'gitlab-rw', 'document': 'not-a-dict'}]
+    with pytest.raises(AnsibleFilterError, match="missing required non-empty mapping 'document'"):
+        sw.seaweedfs_policies_to_put('', target, '')
