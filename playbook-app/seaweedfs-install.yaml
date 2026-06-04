@@ -1,24 +1,28 @@
 # =============================================================================
-# Install SeaweedFS (Central S3 Storage, multi-phase)
+# Install SeaweedFS (Central S3 Storage, multi-phase) — v14 filer-driven IAM
 # Steps:
-#   1.  seaweedfs/pre: NetworkPolicies + ESO resources (ServiceAccount, SecretStore, ExternalSecrets)
-#   2.  seaweedfs/postgresql: Filer PostgreSQL backend
-#   3a. user-sync: Identity sync (admin + users + anonymous) → Vault combined JSON
-#   3b. identity-distribute: Distribute identity creds (username/accessKey/secretKey)
-#       в дополнительные Vault paths из identity.extra_vault_paths
-#   3c. seaweedfs/install: Main upstream chart (seaweedfs/seaweedfs 4.31.0)
-#   4.  seaweedfs/post: Certificate + IngressRoute + ServiceMonitor
-#   5.  bucket-sync: Declarative buckets + quotas + per-bucket policies sync
+#   1. seaweedfs/pre: NetworkPolicies + ESO resources (SA, SecretStore, ExternalSecrets
+#      incl. bootstrap empty-config)
+#   2. seaweedfs/postgresql: Filer PostgreSQL backend
+#   3. seaweedfs/install: bootstrap-config + admin-ui seeds, затем main upstream chart
+#      (seaweedfs/seaweedfs 4.31.0). Cluster стартует с empty static config (filer-driven).
+#   4. SYNC (в живой filer, после install — weed shell live-reload):
+#      4a. policy-sync: managed IAM policies (s3.policy)
+#      4b. user-sync: identities (s3.configure -apply) + Vault combined JSON key-store
+#      4c. identity-distribute: identity creds → extra Vault paths
+#      4d. bucket-sync: buckets + owner + quotas (s3.bucket.*)
+#   5. seaweedfs/post: Certificate + IngressRoute + ServiceMonitor
 #
 # Usage (tags):
-#   ansible-playbook seaweedfs-install.yaml              # full install
-#   ansible-playbook seaweedfs-install.yaml --tags pre   # only pre (ESO resources)
+#   ansible-playbook seaweedfs-install.yaml                      # full install
+#   ansible-playbook seaweedfs-install.yaml --tags pre
 #   ansible-playbook seaweedfs-install.yaml --tags postgresql
+#   ansible-playbook seaweedfs-install.yaml --tags install
+#   ansible-playbook seaweedfs-install.yaml --tags policy-sync
 #   ansible-playbook seaweedfs-install.yaml --tags user-sync
 #   ansible-playbook seaweedfs-install.yaml --tags identity-distribute
-#   ansible-playbook seaweedfs-install.yaml --tags install
-#   ansible-playbook seaweedfs-install.yaml --tags post  # only post (Ingress + SM)
 #   ansible-playbook seaweedfs-install.yaml --tags bucket-sync
+#   ansible-playbook seaweedfs-install.yaml --tags post
 #
 # Prerequisites:
 #   - Vault must be installed and unsealed
@@ -44,6 +48,9 @@
     _local_seaweedfs_admin_ui_vault_exists_key: "_local_seaweedfs_admin_ui_vault_exists"
     _local_seaweedfs_admin_ui_password_generated_key: "_local_seaweedfs_admin_ui_password_generated"
     _local_seaweedfs_admin_ui_put_data_key: "_local_seaweedfs_admin_ui_put_data"
+    _local_seaweedfs_bootstrap_vault_key: "_local_seaweedfs_bootstrap_vault"
+    _local_seaweedfs_bootstrap_vault_exists_key: "_local_seaweedfs_bootstrap_vault_exists"
+    _local_seaweedfs_bootstrap_put_data_key: "_local_seaweedfs_bootstrap_put_data"
     _local_seaweedfs_helm_chart_source_key: "_local_seaweedfs_helm_chart_source"
 
   tasks:
@@ -261,29 +268,56 @@
       tags: [postgresql]
 
     # =========================================================================
-    # STEP 3: IDENTITIES SYNC + DISTRIBUTE + SEAWEEDFS INSTALL
+    # STEP 3: SEAWEEDFS INSTALL (bootstrap-config + admin-ui seeds + main chart)
     # =========================================================================
+    # Cluster стартует с empty static config (seaweedfs-s3-empty-config) → filer-driven
+    # (Replace) режим. Identities/policies/buckets применяются ПОСЛЕ install (STEP 4 SYNC),
+    # т.к. weed shell требует running filer (live-reload).
 
-    # ----- User sync (admin + users + anonymous) via tasks-seaweedfs-user-sync -----
-    # Replaces previous admin-only bootstrap. Full identity sync logic — diff vs
-    # Vault combined JSON, generate-if-missing, ESO sync, conditional rollout
-    # restart (when identities changed AND deployment exists).
-    - name: "[seaweedfs-install-user-sync] Sync identities (admin + users + anonymous)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-user-sync.yaml"
-      vars:
-        dto_label_name: "seaweedfs-install-user-sync"
-      tags: [user-sync]
+    # ---------
+    # ---bootstrap-config (seed ПЕРЕД main install — S3 gateway монтирует через existingConfigSecret)
+    # ---------
 
-    # ----- Identity secret distribution via tasks-seaweedfs-identity-secret-distribute -----
-    # Distribute identity credentials (fixed keys: username, accessKey, secretKey)
-    # в каждый дополнительный Vault path из identity.extra_vault_paths (inventory).
-    # Source-of-truth для creds — Vault combined JSON (записанный user-sync above).
-    # Diff-based via ConfigMap seaweedfs-sync-identity-distributions-state.
-    - name: "[seaweedfs-install-identity-distribute] Distribute identity creds to extra Vault paths"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-identity-secret-distribute.yaml"
+    - name: "[seaweedfs-bootstrap-secrets] Get bootstrap config from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
       vars:
-        dto_label_name: "seaweedfs-install-identity-distribute"
-      tags: [identity-distribute]
+        dto_label_name: "seaweedfs-bootstrap-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_bootstrap.vault_path }}"
+        dto_vault_get_field: "{{ seaweedfs_s3_config_vault_field }}"
+        dto_vault_get_res_fact_name: "{{ _local_seaweedfs_bootstrap_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_seaweedfs_bootstrap_vault_exists_key }}"
+      tags: [install]
+
+    - name: "[seaweedfs-bootstrap-secrets] Prepare bootstrap Vault put data (empty static config)"
+      set_fact:
+        "{{ _local_seaweedfs_bootstrap_put_data_key }}": >-
+          {{ {seaweedfs_s3_config_vault_field: '{"identities":[]}'} }}
+      when: not lookup('vars', _local_seaweedfs_bootstrap_vault_exists_key)
+      tags: [install]
+
+    - name: "[seaweedfs-bootstrap-secrets] Store bootstrap config in Vault (seed-if-not-exists)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "seaweedfs-bootstrap-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_bootstrap.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_seaweedfs_bootstrap_put_data_key) }}"
+      when: not lookup('vars', _local_seaweedfs_bootstrap_vault_exists_key)
+      tags: [install]
+
+    - name: "[seaweedfs-bootstrap-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-bootstrap-secrets"
+        dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
+      tags: [install]
+
+    - name: "[seaweedfs-bootstrap-secrets] Wait for secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "seaweedfs-bootstrap-secrets"
+        dto_wait_secret_name: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
+        dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
+      tags: [install]
 
     # ---------
     # ---admin-creds (seed ПЕРЕД main install — admin StatefulSet монтирует Secret через existingSecret)
@@ -397,7 +431,47 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 4: POST CHART (Certificate + IngressRoute + ServiceMonitor)
+    # STEP 4: SYNC (policy → identity → distribute → bucket) — в живой filer
+    # =========================================================================
+    # Cluster up (empty static config → filer-driven). Применяем IAM в живой filer
+    # через weed shell (live-reload, без рестарта S3). Order: policy (must exist before
+    # identity attach) → identity → distribute creds → bucket.
+
+    # ----- Managed policy sync via tasks-seaweedfs-policy-sync (Layer P) -----
+    - name: "[seaweedfs-install-policy-sync] Sync managed IAM policies"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-policy-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-policy-sync"
+      tags: [policy-sync]
+
+    # ----- User sync (admin + users + anonymous) via tasks-seaweedfs-user-sync -----
+    # Vault combined JSON key-store update + weed shell s3.configure -apply (live filer).
+    - name: "[seaweedfs-install-user-sync] Sync identities (admin + users + anonymous)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-user-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-user-sync"
+      tags: [user-sync]
+
+    # ----- Identity secret distribution via tasks-seaweedfs-identity-secret-distribute -----
+    # Distribute identity credentials (fixed keys: username, accessKey, secretKey)
+    # в каждый дополнительный Vault path из identity.extra_vault_paths (inventory).
+    # Source-of-truth для creds — Vault combined JSON (записанный user-sync above).
+    - name: "[seaweedfs-install-identity-distribute] Distribute identity creds to extra Vault paths"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-identity-secret-distribute.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-identity-distribute"
+      tags: [identity-distribute]
+
+    # ----- Bucket sync via tasks-seaweedfs-bucket-sync -----
+    # Declarative buckets + owner + quotas. Idempotent — diffs vs K8s ConfigMap state.
+    - name: "[seaweedfs-install-bucket-sync] Sync buckets + quotas"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-bucket-sync.yaml"
+      vars:
+        dto_label_name: "seaweedfs-install-bucket-sync"
+      tags: [bucket-sync]
+
+    # =========================================================================
+    # STEP 5: POST CHART (Certificate + IngressRoute + ServiceMonitor)
     # =========================================================================
 
     - name: "[seaweedfs-post] Copy chart to remote"
@@ -446,19 +520,6 @@
       tags: [post]
 
     # =========================================================================
-    # STEP 5: BUCKET SYNC (after install + post)
-    # =========================================================================
-    # Declarative buckets + quotas + per-bucket policies sync (объединено в один
-    # task — см. tasks-seaweedfs-bucket-sync). Idempotent — diffs vs K8s ConfigMap
-    # state. Requires S3 pods running + filer ready.
-
-    - name: "[seaweedfs-install-bucket-sync] Sync buckets + quotas"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-bucket-sync.yaml"
-      vars:
-        dto_label_name: "seaweedfs-install-bucket-sync"
-      tags: [bucket-sync]
-
-    # =========================================================================
     # VERIFICATION
     # =========================================================================
 
@@ -496,12 +557,12 @@
           - ""
           - "Credentials stored in Vault:"
           - "  PostgreSQL:    {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_postgresql_creds.vault_path }}"
-          - "  S3 identities: {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }} (combined JSON)"
+          - "  S3 identities: {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }} (combined JSON key-store)"
           - "  Admin UI:      {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_ui_creds.vault_path }}"
           - ""
           - "IMPORTANT: Admin identity is bootstrapped on first install."
           - "  Back it up from Vault immediately."
-          - "  Users + bucket policies — manage via --tags user-sync/identity-distribute/bucket-sync."
+          - "  Policies + users + buckets — manage via --tags policy-sync/user-sync/identity-distribute/bucket-sync."
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
