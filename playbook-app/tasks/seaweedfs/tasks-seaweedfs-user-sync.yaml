@@ -1,36 +1,46 @@
 # =============================================================================
-# SeaweedFS User Sync — declarative identity sync (Vault → ESO → K8s Secret)
+# SeaweedFS User Sync (Layer 1) — declarative identity sync (Vault key-store + filer apply)
 # =============================================================================
 # Reusable task include. Invoked from playbook with:
 #   - include_tasks: tasks-seaweedfs-user-sync.yaml
 #     vars:
 #       dto_label_name: "<caller-prefix>"
 #
-# v6 refactor: stateless filter API. Compute logic (parse, diff, AK/SK generation,
-# build, serialize) — внутри одной публичной Python функции
-# seaweedfs_user_sync_full из filter_plugins/seaweedfs_sync.py. Ansible task
-# оркеструет только I/O: vault-get, один compute call, vault-put, ESO sync,
-# wait-secret, conditional rollout restart.
+# v14 filer-driven IAM. Identities live in two places:
+#   1. Vault combined JSON key-store (/seaweedfs/s3-config/all, field 'config') —
+#      source-of-truth для credentials (AK/SK). Written here (when changed).
+#   2. filer /etc/iam/identities/<n>.json — applied via weed shell s3.configure
+#      -apply (live-reload, без рестарта S3). Access model: actions=[] +
+#      policy_names=[<p>] (managed policy attached, identity-based).
+#
+# NO ESO/K8s-Secret/rollout-restart for identities (combined JSON НЕ монтируется
+# в S3 — bootstrap empty-config это отдельный ESO secret). Identities применяются
+# в живой filer через weed shell.
+#
+# Stateless filter API: seaweedfs_user_sync_full (combined JSON build incl.
+# policy_names) + seaweedfs_identities_to_delete (стейл names).
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation;
 # nested include_tasks inherit via Ansible variable scope.
 #
 # Reads inventory:
-#   - seaweedfs_identities + _extra (from hosts-vars/seaweedfs-sync.yaml)
-#   - seaweedfs_sync_{access_key,secret_key}_{length,charset} (same file)
-#   - seaweedfs_secret_s3_identities, eso_vault_integration_seaweedfs,
-#     seaweedfs_namespace, seaweedfs_install_rollout_timeout
-#     (from hosts-vars/seaweedfs.yaml)
+#   - seaweedfs_identities + _extra, seaweedfs_sync_{access,secret}_key_{length,charset}
+#     (from hosts-vars/seaweedfs-sync.yaml).
+#   - seaweedfs_s3_config_vault_path / _field, eso_vault_integration_seaweedfs,
+#     seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
 #
 # Logic:
 #   1. Get current combined JSON from Vault (may not exist on greenfield).
 #   2. Compute target = inventory base + extra.
 #   3. Admin safety warning if no Admin actions in target.
-#   4. Compute new combined JSON via filter (single call — parse, diff, generate
-#      AK/SK для new non-anonymous, build, serialize).
-#   5. identities_changed = current_json != new_json (or current missing).
-#   6-8. When changed: vault-put + ESO force-sync + wait Secret.
-#   9-11. When changed AND S3 deployment exists: rollout restart + wait.
+#   4. Compute new combined JSON via filter (parse, diff, generate AK/SK для new
+#      non-anonymous, build incl. policy_names, serialize).
+#   5. Compute identities_to_delete (in Vault, not in target).
+#   6. identities_changed = current missing OR current_json != new_json.
+#   7. When changed: vault-put new combined JSON (key-store update).
+#   8. Phase A: weed shell s3.configure -delete стейл identities (filer).
+#   9. Phase B: weed shell s3.configure -apply target identities (filer; skip
+#      anonymous — empty creds). actions → -actions, policy_names → -policies.
 # =============================================================================
 - name: "[{{ dto_label_name }}] Assert dto_label_name provided"
   assert:
@@ -51,7 +61,7 @@
     _local_new_combined_json_key: "_local_new_combined_json"
     _local_identities_changed_key: "_local_identities_changed"
     _local_identities_put_data_key: "_local_identities_put_data"
-    _local_s3_deployment_exists_key: "_local_s3_deployment_exists"
+    _local_identities_to_delete_key: "_local_identities_to_delete"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -59,8 +69,8 @@
 - name: "[{{ dto_label_name }}] Get current combined JSON from Vault"
   include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
   vars:
-    dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
-    dto_vault_get_field: "config"
+    dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }}"
+    dto_vault_get_field: "{{ seaweedfs_s3_config_vault_field }}"
     dto_vault_get_res_fact_name: "{{ _local_combined_json_key }}"
     dto_vault_get_res_exists_fact_name: "{{ _local_combined_json_exists_key }}"
   tags: [always]
@@ -76,7 +86,7 @@
   debug:
     msg: |
       WARNING: target identities does not contain any entry with actions=['Admin'].
-      This will lock out admin access to SeaweedFS S3 API after rollout restart.
+      This will lock out admin (full) access to SeaweedFS S3 API once applied to the filer.
       If intentional, ignore. Otherwise add admin to seaweedfs_identities (base).
   when: >-
     (lookup('vars', _local_target_identities_key)
@@ -100,6 +110,15 @@
   run_once: true
   tags: [always]
 
+- name: "[{{ dto_label_name }}] Compute identities_to_delete via filter (in Vault, not in target)"
+  set_fact:
+    "{{ _local_identities_to_delete_key }}": >-
+      {{ lookup('vars', _local_combined_json_key)
+         | seaweedfs_identities_to_delete(lookup('vars', _local_target_identities_key)) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[{{ dto_label_name }}] Determine if identities changed (compare JSON strings)"
   set_fact:
     "{{ _local_identities_changed_key }}": >-
@@ -112,72 +131,45 @@
 - name: "[{{ dto_label_name }}] Build Vault put data dict"
   set_fact:
     "{{ _local_identities_put_data_key }}": >-
-      {{ {'config': lookup('vars', _local_new_combined_json_key)} }}
+      {{ {seaweedfs_s3_config_vault_field: lookup('vars', _local_new_combined_json_key)} }}
   when: lookup('vars', _local_identities_changed_key)
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Store new combined JSON in Vault"
+- name: "[{{ dto_label_name }}] Store new combined JSON in Vault (key-store update, when changed)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
   vars:
-    dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_identities.vault_path }}"
+    dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }}"
     dto_vault_put_data: "{{ lookup('vars', _local_identities_put_data_key) }}"
   when: lookup('vars', _local_identities_changed_key)
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Trigger ESO sync"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
-  vars:
-    dto_eso_sync_namespace: "{{ seaweedfs_namespace }}"
-  when: lookup('vars', _local_identities_changed_key)
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Wait for K8s Secret to update"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
-  vars:
-    dto_wait_secret_name: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
-    dto_wait_secret_namespace: "{{ seaweedfs_namespace }}"
-  when: lookup('vars', _local_identities_changed_key)
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Check S3 deployment existence"
-  command: >-
-    kubectl get deployment seaweedfs-s3
-    -n {{ seaweedfs_namespace }}
-    -o name
-  register: _local_s3_deployment_check_reg
-  failed_when: false
-  changed_when: false
+# --- PHASE A: Delete стейл identities from filer (in Vault, not in target) ---
+- name: "[{{ dto_label_name }}] Phase A — Delete стейл identities via weed shell s3.configure -delete"
+  shell: |
+    echo "s3.configure -user={{ item }} -delete -apply" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ lookup('vars', _local_identities_to_delete_key) }}"
+  loop_control:
+    label: "{{ item }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Set S3 deployment exists flag"
-  set_fact:
-    "{{ _local_s3_deployment_exists_key }}": "{{ _local_s3_deployment_check_reg.rc == 0 }}"
+# --- PHASE B: Apply target identities to filer (put-all from new combined JSON; live-reload) ---
+# anonymous (empty creds) skipped — s3.configure needs access_key/secret_key.
+# actions → -actions (admin), policy_names → -policies (identity-based consumers).
+- name: "[{{ dto_label_name }}] Phase B — Apply target identities via weed shell s3.configure -apply"
+  shell: |
+    echo "s3.configure -user={{ item.name }} -access_key={{ item.credentials[0].accessKey }} -secret_key={{ item.credentials[0].secretKey }}{% if item.actions %} -actions={{ item.actions | join(',') }}{% endif %}{% if item.policy_names %} -policies={{ item.policy_names | join(',') }}{% endif %} -apply" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  loop: "{{ (lookup('vars', _local_new_combined_json_key) | from_json).identities }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.credentials[0].accessKey | length > 0
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Rollout restart S3 deployment (when identities changed AND deployment exists)"
-  command: >-
-    kubectl rollout restart deployment/seaweedfs-s3 -n {{ seaweedfs_namespace }}
-  when:
-    - lookup('vars', _local_identities_changed_key)
-    - lookup('vars', _local_s3_deployment_exists_key)
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Wait for S3 rollout"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
-  vars:
-    dto_rollout_namespace: "{{ seaweedfs_namespace }}"
-    dto_rollout_timeout: "{{ seaweedfs_install_rollout_timeout }}"
-    dto_rollout_resources_list:
-      - deployment.apps/seaweedfs-s3
-  when:
-    - lookup('vars', _local_identities_changed_key)
-    - lookup('vars', _local_s3_deployment_exists_key)
   tags: [always]
