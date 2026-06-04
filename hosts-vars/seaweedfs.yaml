@@ -133,6 +133,14 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
+    # Combined identity JSON key-store (Vault path /seaweedfs/s3-config/all, field 'config').
+    # Source-of-truth для всех identity credentials (admin + users). Пишется user-sync,
+    # читается user-sync (diff) + identity-distribute (creds extraction). Доступ — plain-var
+    # (НЕ ESO secret): в SeaweedFS НЕ монтируется (v14 filer-driven). НЕ путать с bootstrap
+    # empty-config (seaweedfs_secret_s3_bootstrap) который монтируется через existingConfigSecret.
+    seaweedfs_s3_config_vault_path: "/seaweedfs/s3-config/all"
+    seaweedfs_s3_config_vault_field: "config"
+
     # Named secret 1: PostgreSQL creds (simple dataFrom.extract)
     seaweedfs_secret_postgresql_creds:
       external_secret_name: "eso-seaweedfs-postgresql-creds"
@@ -144,17 +152,19 @@ all:
           - extract:
               key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/postgresql/creds"
 
-    # Named secret 2: S3 identities (ESO template — single Vault field 'config' со строкой JSON,
-    # рендерит K8s Secret с key 'seaweedfs_s3_config' для upstream chart's existingConfigSecret).
-    # JSON содержит full identity list (admin + все users из seaweedfs_identities).
-    # Source-of-truth — Vault path /seaweedfs/s3-config/all;
-    # writes от seaweedfs-install.yaml через tasks-seaweedfs-user-sync (--tags user-sync).
-    seaweedfs_secret_s3_identities:
-      external_secret_name: "eso-seaweedfs-s3-identities"
-      vault_path: "/seaweedfs/s3-config/all"
+    # Named secret 2: S3 bootstrap config (ESO template — single Vault field 'config' со строкой
+    # JSON, рендерит K8s Secret с key 'seaweedfs_s3_config' для upstream chart's existingConfigSecret).
+    # Содержимое — empty static config '{"identities":[]}': форсит S3-gateway в filer-driven
+    # (Replace) режим (staticIdentityNames=0 → hasStaticConfig=false), identity/policy приходят
+    # в живой filer через weed shell (НЕ static mount). Vault path /seaweedfs/s3-config/bootstrap;
+    # seed (seed-if-not-exists) от seaweedfs-install.yaml (--tags install). НЕ путать с
+    # /seaweedfs/s3-config/all (combined JSON key-store, plain-var выше, в K8s не материализуется).
+    seaweedfs_secret_s3_bootstrap:
+      external_secret_name: "eso-seaweedfs-s3-bootstrap"
+      vault_path: "/seaweedfs/s3-config/bootstrap"
       body:
         target:
-          name: "seaweedfs-s3-identities"
+          name: "seaweedfs-s3-empty-config"
           template:
             engineVersion: v2
             data:
@@ -165,7 +175,7 @@ all:
         data:
           - secretKey: config
             remoteRef:
-              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/s3-config/all"
+              key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/s3-config/bootstrap"
               property: config
 
     # Named secret 3: Admin UI creds (simple dataFrom.extract — adminUser + adminPassword).
@@ -183,7 +193,7 @@ all:
 
     eso_vault_integration_seaweedfs_secrets:
       - "{{ seaweedfs_secret_postgresql_creds }}"
-      - "{{ seaweedfs_secret_s3_identities }}"
+      - "{{ seaweedfs_secret_s3_bootstrap }}"
       - "{{ seaweedfs_secret_admin_ui_creds }}"
 
     eso_vault_integration_seaweedfs_secrets_extra: []
@@ -216,23 +226,6 @@ all:
         externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ seaweedfs_cert_manager_issuer }}"
       extraObjects: "{{ seaweedfs_pre_extra_objects }}"
-      # ------
-      # AWS CLI helper Deployment (consumed by tasks-seaweedfs-bucket-sync.yaml)
-      # ------
-      # SeaweedFS native shell не имеет команд для bucket policies. Bucket policy
-      # хранится в filer как entry.Extended["s3-bucket-policy"] и применяется ТОЛЬКО
-      # через S3 API (aws s3api). Образ chrislusf/seaweedfs не содержит aws CLI,
-      # поэтому seaweedfs/pre/ chart деплоит постоянный Deployment
-      # seaweedfs-aws-cli-helper (1 replica, sleep infinity, image amazon/aws-cli).
-      # Bucket-sync Phase B (delete-bucket-policy) + Phase D (put-bucket-policy)
-      # обращаются к Deployment через kubectl exec.
-      # imagePullSecrets — extension для AirGap (default []).
-      awsCliHelper:
-        image: "amazon/aws-cli:2.32.0"
-        imagePullSecrets: []
-        tolerations: []
-        nodeSelector: {}
-        resources: {}
 
     # --- PHASE: postgresql ---
     seaweedfs_postgresql_helm_timeout: "5m"
@@ -398,15 +391,14 @@ all:
       s3:
         enabled: true
         replicas: 3
-        # HA: 3 replicas + Kubernetes Deployment default RollingUpdate strategy
-        # = zero downtime при rollout restart после identity Secret update.
-        # IAM auth: identities приходят через ESO-materialized Secret seaweedfs-s3-identities
-        # (rendered из named-variable seaweedfs_secret_s3_identities),
-        # mounted upstream chart через existingConfigSecret в /etc/sw/seaweedfs_s3_config.
-        # Vault source of truth — /seaweedfs/s3-config/all (полный JSON identity list);
-        # writes от seaweedfs-install.yaml через tasks-seaweedfs-user-sync (--tags user-sync).
+        # HA: 3 replicas + Kubernetes Deployment default RollingUpdate strategy.
+        # IAM auth: filer-driven (v14). existingConfigSecret указывает на empty-config
+        # (seaweedfs-s3-empty-config, '{"identities":[]}') — форсит S3-gateway в Replace-режим
+        # (staticIdentityNames=0 → hasStaticConfig=false → чистый filer-driven, без anvAdmin/anvReadOnly).
+        # Identities/policies применяются в живой filer через weed shell (policy-sync/user-sync),
+        # live-reload подхватывает без рестарта. Combined JSON key-store — /seaweedfs/s3-config/all (plain-var).
         enableAuth: true
-        existingConfigSecret: "{{ seaweedfs_secret_s3_identities.body.target.name }}"
+        existingConfigSecret: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
 
       # Admin компонент (StatefulSet) — панель управления + координатор worker'ов.
       admin:
