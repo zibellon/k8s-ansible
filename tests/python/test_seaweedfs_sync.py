@@ -484,3 +484,56 @@ def test_policies_validation_raises_on_non_dict_document():
     target = [{'name': 'gitlab-rw', 'document': 'not-a-dict'}]
     with pytest.raises(AnsibleFilterError, match="missing required non-empty mapping 'document'"):
         sw.seaweedfs_policies_to_put('', target, '')
+# =============================================================================
+# v14 additions — identity policy_names, identities_to_delete, bucket owners
+# =============================================================================
+
+def test_user_sync_full_includes_policy_names(sample_generate_params):
+    """to_create + to_update identities carry policy_names (default [] if absent)."""
+    target = [
+        {'name': 'gitlab', 'actions': [], 'policy_names': ['gitlab-rw']},
+        {'name': 'noattach', 'actions': []},
+    ]
+    result = sw.seaweedfs_user_sync_full('', target, **sample_generate_params)
+    parsed = json.loads(result)
+    by_name = {i['name']: i for i in parsed['identities']}
+    assert by_name['gitlab']['policy_names'] == ['gitlab-rw']
+    assert by_name['noattach']['policy_names'] == []
+
+
+def test_identities_to_delete_orphans(sample_vault_json):
+    """Vault has admin/alice/anonymous; target = [admin] → alice + anonymous to delete."""
+    target = [{'name': 'admin', 'actions': ['Admin']}]
+    result = sw.seaweedfs_identities_to_delete(sample_vault_json, target)
+    assert set(result) == {'alice', 'anonymous'}
+
+
+def test_identities_to_delete_empty_vault():
+    """Edge: empty Vault → nothing to delete."""
+    result = sw.seaweedfs_identities_to_delete('', [{'name': 'admin', 'actions': ['Admin']}])
+    assert result == []
+
+
+def test_buckets_owners_to_set_changed():
+    """Kept bucket with changed owner → returned for s3.bucket.owner reconcile."""
+    state = '[{"name": "b1", "replication": "001", "owner": "admin"}]'
+    target = [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]
+    result = sw.seaweedfs_buckets_owners_to_set('', target, state)
+    assert len(result) == 1
+    assert result[0]['name'] == 'b1'
+    assert result[0]['owner'] == 'gitlab'
+
+
+def test_buckets_owners_to_set_unchanged():
+    """Kept bucket with same owner → not returned."""
+    state = '[{"name": "b1", "replication": "001", "owner": "gitlab"}]'
+    target = [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]
+    result = sw.seaweedfs_buckets_owners_to_set('', target, state)
+    assert result == []
+
+
+def test_buckets_owners_to_set_new_bucket_excluded():
+    """New bucket (not in state) → not in owners_to_set (gets owner at create)."""
+    target = [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]
+    result = sw.seaweedfs_buckets_owners_to_set('', target, '')
+    assert result == []

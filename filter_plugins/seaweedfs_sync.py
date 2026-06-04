@@ -188,8 +188,8 @@ def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
         3. Generate fresh AK + SK для каждого to_create non-anonymous через
            secrets.choice(charset) цикл length раз. Anonymous получает пустые creds.
         4. Build new identities list:
-           - to_create: {name, credentials: [{accessKey, secretKey}], actions}.
-           - to_update: {name, credentials: preserved from current, actions: target's}.
+           - to_create: {name, credentials: [{accessKey, secretKey}], actions, policy_names}.
+           - to_update: {name, credentials: preserved from current, actions: target's, policy_names: target's}.
            - to_delete: skip.
         5. Serialize {"identities": [...]} через json.dumps(... sort_keys=True).
 
@@ -220,6 +220,7 @@ def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
             'name': name,
             'credentials': [{'accessKey': ak, 'secretKey': sk}],
             'actions': item.get('actions', []),
+            'policy_names': item.get('policy_names', []),
         })
     for item in diff['to_update']:
         name = item['name']
@@ -229,8 +230,27 @@ def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
             'name': name,
             'credentials': existing_creds,
             'actions': item.get('actions', []),
+            'policy_names': item.get('policy_names', []),
         })
     return json.dumps({'identities': result}, sort_keys=True)
+
+
+def seaweedfs_identities_to_delete(vault_raw_json, target_identities):
+    """Names of identities present in Vault combined JSON but absent from target.
+
+    Stateless filter: parse current Vault combined JSON, diff vs target by name,
+    return names to delete via weed shell s3.configure -user=<n> -delete -apply.
+
+    Args:
+        vault_raw_json: str — current Vault combined JSON (may be '', None, malformed).
+        target_identities: list — full target from inventory (base + extra).
+
+    Returns:
+        list of str — identity names present in Vault but not in target (to delete).
+    """
+    combined = _parse_combined_json(vault_raw_json)
+    diff = _compute_identity_diff(combined['identities'], target_identities)
+    return [i['name'] for i in diff['to_delete']]
 # =============================================================================
 # Public Layer 3 filters — stateless identity-distribute orchestrators
 # =============================================================================
@@ -319,6 +339,8 @@ def _compute_bucket_diff(current_state, target_buckets):
     Returns:
         {
             'to_delete_buckets': [state entries to remove],
+            'owners_to_set': [kept entries where target owner != state owner —
+                              reconcile via s3.bucket.owner],
             'kept_policies_to_delete': [target entries — state had policy,
                                         target doesn't],
             'kept_policies_to_apply': [target kept entries with policy],
@@ -336,6 +358,10 @@ def _compute_bucket_diff(current_state, target_buckets):
     kept_names = target_names & state_names
     return {
         'to_delete_buckets': [state_by_name[n] for n in state_names - target_names],
+        'owners_to_set': [
+            target_by_name[n] for n in kept_names
+            if target_by_name[n].get('owner') != state_by_name[n].get('owner')
+        ],
         'kept_policies_to_delete': [
             target_by_name[n] for n in kept_names
             if 'policy' in state_by_name[n] and 'policy' not in target_by_name[n]
@@ -597,6 +623,27 @@ def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, confi
     _validate_principal_not_dict_in_buckets(target_buckets)
     state = _parse_configmap_state(configmap_raw_json)
     return _compute_bucket_immutable_violations(state, target_buckets)
+
+
+def seaweedfs_buckets_owners_to_set(vault_raw_json, target_buckets, configmap_raw_json):
+    """Kept buckets where target owner differs from state owner → reconcile list.
+
+    Stateless filter: validate + diff + return kept buckets needing s3.bucket.owner.
+    New buckets get owner at create time (s3.bucket.create -owner); this covers
+    owner changes on already-existing buckets (owner is mutable).
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency.
+        target_buckets: list — full target from inventory (base + extra).
+        configmap_raw_json: str — ConfigMap state raw stdout.
+
+    Returns:
+        list of target {name, owner, ...} entries (kept buckets with changed owner).
+    """
+    _validate_buckets_have_replication(target_buckets)
+    state = _parse_configmap_state(configmap_raw_json)
+    diff = _compute_bucket_diff(state, target_buckets)
+    return diff['owners_to_set']
 # =============================================================================
 # Private helpers (Layer P — managed policy sync)
 # =============================================================================
@@ -714,6 +761,7 @@ class FilterModule(object):
     def filters(self):
         return {
             'seaweedfs_user_sync_full': seaweedfs_user_sync_full,
+            'seaweedfs_identities_to_delete': seaweedfs_identities_to_delete,
             'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,
             'seaweedfs_distribute_new_state_json': seaweedfs_distribute_new_state_json,
@@ -724,6 +772,7 @@ class FilterModule(object):
             'seaweedfs_buckets_quotas_to_apply': seaweedfs_buckets_quotas_to_apply,
             'seaweedfs_buckets_new_state_json': seaweedfs_buckets_new_state_json,
             'seaweedfs_buckets_immutable_violations': seaweedfs_buckets_immutable_violations,
+            'seaweedfs_buckets_owners_to_set': seaweedfs_buckets_owners_to_set,
             'seaweedfs_policies_to_put': seaweedfs_policies_to_put,
             'seaweedfs_policies_to_delete': seaweedfs_policies_to_delete,
             'seaweedfs_policies_new_state_json': seaweedfs_policies_new_state_json,

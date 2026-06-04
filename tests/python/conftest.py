@@ -41,6 +41,7 @@ def sample_target_buckets():
         {
             'name': 'b1',
             'replication': '001',
+            'owner': 'gitlab',
             'quota': {'enabled': True, 'size': '1GiB'},
             'policy': {
                 'Version': '2012-10-17',
@@ -50,7 +51,7 @@ def sample_target_buckets():
                 ],
             },
         },
-        {'name': 'b2', 'replication': '001'},
+        {'name': 'b2', 'replication': '001', 'owner': 'loki'},
     ]
 
 
