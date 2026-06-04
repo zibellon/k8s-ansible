@@ -1,23 +1,26 @@
 all:
   vars:
     # =============================================================================
-    # SeaweedFS Sync — declarative source-of-truth для identities, buckets, policies
+    # SeaweedFS Sync — declarative source-of-truth для managed policies, identities, buckets
     # =============================================================================
     # Этот файл потребляется:
     #   - playbook-app/seaweedfs-install.yaml — bootstrap admin identity (читает
     #     seaweedfs_identities entry где actions=['Admin']).
-    #   - playbook-app/seaweedfs-install.yaml — sync через --tags user-sync/bucket-sync/bucket-policy-sync.
+    #   - playbook-app/seaweedfs-install.yaml — sync через
+    #     --tags policy-sync/user-sync/identity-distribute/bucket-sync.
     #
-    # Архитектура (см. .claude/rules/components.md §17.5):
-    #   Layer 1: Identities → Vault path /seaweedfs/s3-config/all (combined JSON)
-    #            → ESO template → K8s Secret seaweedfs-s3-identities → mounted в
-    #            S3 pods через existingConfigSecret.
-    #   Layer 2: Buckets + quotas + AWS IAM policies → filer Postgres metadata
-    #            (weed shell для buckets/quotas + CronJob enforce; aws s3api для
-    #            policies). Policies — per-bucket field в SECTION 2 schema.
+    # Архитектура v14 — filer-driven IAM (см. .claude/rules/components.md §17.5):
+    #   Layer P: Managed policies (seaweedfs_managed_policies) → weed shell s3.policy
+    #            -put/-delete → filer /etc/iam/policies/<n>.json. Прикрепляются к
+    #            identities через identity.policy_names (identity-based access).
+    #   Layer 1: Identities → Vault combined JSON key-store /seaweedfs/s3-config/all (creds)
+    #            + weed shell s3.configure -apply → filer /etc/iam/identities/<n>.json
+    #            (live-reload, без рестарта S3). Доступ: actions=[] + policy_names=[<p>].
     #   Layer 3: Identity credentials distribution → произвольные дополнительные
-    #            Vault paths (через identity.extra_vault_paths, SECTION 1 schema),
+    #            Vault paths (через identity.extra_vault_paths, SECTION 2 schema),
     #            ConfigMap-tracked diff sync.
+    #   Layer 2: Buckets + quotas + owner → filer Postgres metadata (weed shell
+    #            s3.bucket.create -owner / s3.bucket.quota / s3.bucket.owner / fs.configure).
     #
     # base arrays — committed (admin + anonymous identities в seaweedfs_identities).
     # _extra arrays — для hosts-vars-override/, merged at runtime через `+ (var | default([]))`.
@@ -35,7 +38,82 @@ all:
     seaweedfs_sync_secret_key_charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
     # ------
-    # SECTION 1: Identities
+    # SECTION 1: Managed policies (Layer P)
+    # ------
+    # SeaweedFS managed IAM policies — named AWS-style policy documents, хранятся в filer
+    # (weed shell s3.policy -put/-delete → /etc/iam/policies/<n>.json). Прикрепляются к
+    # identities через identity.policy_names (SECTION 2). Identity-based access model:
+    # права на identity (через attached managed policy), НЕ на bucket (v14 — bucket policies
+    # удалены). Sync (--tags policy-sync) приводит filer к target (diff vs ConfigMap
+    # 'seaweedfs-sync-policies-state'): put-all target (idempotent overwrite) + delete стейл.
+    #
+    # Granularity: одна policy на consumer (gitlab-rw покрывает все бакеты gitlab) —
+    # см. .claude/rules/secrets-and-eso.md §11 (v14).
+    #
+    # Schema per policy:
+    #   name:     policy name (ссылается из identity.policy_names) — required non-empty string.
+    #   document: AWS IAM policy document {Version, Statement: [...]} — required non-empty mapping.
+    #     Statement[].Effect:   "Allow" (только Allow; explicit Deny блокирует и admin).
+    #     Statement[].Action:   list S3 actions ("s3:GetObject", "s3:*", ...).
+    #     Statement[].Resource: bucket ARN(s) — "arn:aws:s3:::<bucket>" + "arn:aws:s3:::<bucket>/*".
+    #     Principal НЕ нужен — policy прикрепляется к identity (principal = эта identity).
+    # ------
+    seaweedfs_managed_policies: []
+    seaweedfs_managed_policies_extra: []
+    # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
+    # seaweedfs_managed_policies_extra:
+    #   - name: team-alpha-rw
+    #     document:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Effect: "Allow"
+    #           Action: ["s3:*"]
+    #           Resource:
+    #             - "arn:aws:s3:::team-alpha"
+    #             - "arn:aws:s3:::team-alpha/*"
+    # ------
+    # --- Pre-built opt-in для GitLab + GitLab-Runner + Loki managed policies ---
+    # Раскомментируйте вместе с identity (SECTION 2) + bucket (SECTION 3) opt-in блоками.
+    # Одна policy на consumer (gitlab-rw покрывает все 5 GitLab бакетов).
+    # seaweedfs_managed_policies_extra:
+    #   - name: gitlab-rw
+    #     document:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Effect: "Allow"
+    #           Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-registry"
+    #             - "arn:aws:s3:::gitlab-registry/*"
+    #             - "arn:aws:s3:::gitlab-artifacts"
+    #             - "arn:aws:s3:::gitlab-artifacts/*"
+    #             - "arn:aws:s3:::gitlab-uploads"
+    #             - "arn:aws:s3:::gitlab-uploads/*"
+    #             - "arn:aws:s3:::gitlab-packages"
+    #             - "arn:aws:s3:::gitlab-packages/*"
+    #             - "arn:aws:s3:::gitlab-backups"
+    #             - "arn:aws:s3:::gitlab-backups/*"
+    #   - name: gitlab-runner-rw
+    #     document:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Effect: "Allow"
+    #           Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
+    #           Resource:
+    #             - "arn:aws:s3:::gitlab-runner-cache"
+    #             - "arn:aws:s3:::gitlab-runner-cache/*"
+    #   - name: loki-rw
+    #     document:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Effect: "Allow"
+    #           Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
+    #           Resource:
+    #             - "arn:aws:s3:::loki-logs"
+    #             - "arn:aws:s3:::loki-logs/*"
+
+    # ------
+    # SECTION 2: Identities
     # ------
     # SeaweedFS S3 IAM identities — admin + per-user named principals + anonymous.
     # Sync (--tags user-sync) приводит Vault combined JSON к target state:
@@ -46,17 +124,17 @@ all:
     #   DELETE (in Vault, not in target): remove from combined JSON.
     #
     # Schema per identity:
-    #   name:    SeaweedFS identity name. Используется в bucket policies как
-    #            Principal: "arn:aws:iam::*:user/<name>" (wildcard accountID).
-    #            Special name 'anonymous' для public-read (Principal: '*' в bucket
-    #            policy совпадёт с anonymous identity — special name required
-    #            in static JSON; см. buildPrincipalARN auth_credentials.go:1640).
+    #   name:    SeaweedFS identity name. Используется в bucket.owner (SECTION 3) и как
+    #            S3 credential identity. Special name 'anonymous' для public-read.
     #   actions: SeaweedFS-internal actions list.
-    #            - admin:  ["Admin"] → bypass identity check (isAdmin()).
-    #            - users:  [] → "policy-only principals" (auth_credentials.go:1481),
-    #                        доступ ТОЛЬКО через bucket policy Allow (по design,
-    #                        не workaround).
-    #            - anonymous: [] (same).
+    #            - admin:  ["Admin"] → bypass identity check (isAdmin()), доступ ко всему.
+    #            - users:  [] + policy_names=[<p>] → identity-based access через attached
+    #                        managed policy Allow (см. policy_names ниже; v14 model).
+    #            - anonymous: [] (public-read через managed policy на anonymous, опционально).
+    #   policy_names: OPTIONAL list of managed-policy names (из seaweedfs_managed_policies,
+    #            SECTION 1) прикрепляемых к identity (weed shell s3.configure -policies=<csv>).
+    #            Identity с actions=[] + policy_names=[<p>] = identity-based access. Пусто/
+    #            отсутствует — без attached policies (нет доступа кроме admin bypass).
     #   extra_vault_paths: OPTIONAL list of full Vault paths (с mount engine prefix,
     #            например "eso-secret/gitlab/s3-storage" или "secret/team-alpha/creds").
     #            Sync (--tags identity-distribute) дополнительно доставляет identity
@@ -90,12 +168,13 @@ all:
     # seaweedfs_identities_extra:
     #   - name: alice
     #     actions: []
+    #     policy_names: ["team-alpha-rw"]   # attached managed policy (SECTION 1)
     #     extra_vault_paths:
     #       - "eso-secret/gitlab/s3-storage"
     #       - "secret/team-alpha/s3-creds"
     #   - name: bob
     #     actions: []
-    #     # без extra_vault_paths — distribute не выполняется для bob
+    #     # без policy_names — нет доступа; без extra_vault_paths — distribute не выполняется
 
     # ------
     # --- Pre-built opt-in для GitLab + GitLab-Runner identities ---
@@ -107,11 +186,13 @@ all:
     # делает 'vault kv put' для тех же resolved путей.
     # seaweedfs_identities_extra:
     #   - name: gitlab
-    #     actions: []   # policy-only principal (доступ только через bucket policy Allow)
+    #     actions: []                       # identity-based: доступ через managed policy
+    #     policy_names: ["gitlab-rw"]       # attach managed policy (SECTION 1 opt-in)
     #     extra_vault_paths:
     #       - "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
     #   - name: gitlab-runner
     #     actions: []
+    #     policy_names: ["gitlab-runner-rw"]
     #     extra_vault_paths:
     #       - "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}"
     # ------
@@ -123,30 +204,27 @@ all:
     # вручную делает 'vault kv put' для того же resolved пути.
     # seaweedfs_identities_extra:
     #   - name: loki
-    #     actions: []   # policy-only principal (доступ только через bucket policy Allow)
+    #     actions: []                       # identity-based: доступ через managed policy
+    #     policy_names: ["loki-rw"]         # attach managed policy (SECTION 1 opt-in)
     #     extra_vault_paths:
     #       - "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }}"
 
     # ------
-    # SECTION 2: Buckets + quotas + policies
+    # SECTION 3: Buckets + quotas + owner
     # ------
-    # S3 buckets + per-bucket SeaweedFS-native quotas + optional AWS IAM policy.
+    # S3 buckets + per-bucket SeaweedFS-native quotas + owner. Доступ к данным — через
+    # managed policy на identity (SECTION 1+2), НЕ через bucket (v14 — bucket policies удалены).
     # Sync (--tags bucket-sync) применяет diff vs K8s ConfigMap state
-    # 'seaweedfs-sync-buckets-state' (хранит target snapshot — [{name, quota, policy}, ...]).
+    # 'seaweedfs-sync-buckets-state' (хранит target snapshot — [{name, owner, replication, ...}, ...]).
     #
-    # Sync order (6 фаз):
-    #   1. DELETE стейл buckets (in state, not in target): weed shell
-    #      's3.bucket.delete -name=<n>' — hard delete via master (CollectionDelete
-    #      sweeps volumes/objects; policies swept automatically). См. NOTE ниже.
-    #   2. DELETE стейл policies у kept buckets (in state with policy, in target
-    #      without): aws s3api delete-bucket-policy --bucket <n>.
-    #   3. APPLY policies у kept buckets (target has policy — всегда put,
-    #      idempotent): aws s3api put-bucket-policy --bucket <n> --policy '<JSON>'.
-    #   4. CREATE new buckets (in target, not in state): weed shell
-    #      's3.bucket.create -name=<n> -owner={{ seaweedfs_identity_admin.name }}'; затем apply policy (если есть).
-    #   5. APPLY quotas для всех target buckets с quota.defined (новых и kept):
-    #      weed shell 's3.bucket.quota -name=<n> -op=set|disable -sizeMB=<X>'.
-    #   6. UPDATE ConfigMap state с новым target snapshot.
+    # Sync order (--tags bucket-sync; фактический порядок фаз — tasks-seaweedfs-bucket-sync.yaml,
+    # immutable-assert до Phase A):
+    #   1. DELETE стейл buckets (in state, not in target): weed shell 's3.bucket.delete -name=<n>'.
+    #   2. CREATE new buckets: 's3.bucket.create -name=<n> -owner=<owner>' + fs.configure
+    #      (-replication [-rack] [-dataCenter]).
+    #   3. RECONCILE owner у kept buckets (owner changed vs state): 's3.bucket.owner -name=<n> -owner=<o>'.
+    #   4. APPLY quotas для target buckets с quota.defined: 's3.bucket.quota -op=set|disable -sizeMB=<X>'.
+    #   5. UPDATE ConfigMap state с новым target snapshot.
     #
     # NOTE про bucket delete: в SeaweedFS shell command 's3.bucket.delete' нет
     # флага -force. Команда сама по себе делает hard delete — CollectionDelete
@@ -157,10 +235,14 @@ all:
     # Quota enforcement: нативный в SeaweedFS 4.31+ — s3-gateway сам переключает bucket
     # read-only в обе стороны (~раз в минуту, leader-locked на одной из реплик), без
     # внешнего крона. Источник: weed/s3api/bucket_size_metrics.go (enforceBucketQuotas).
-    # bucket-sync Phase E только ЗАДАЁТ квоты (s3.bucket.quota -op=set); энфорсит gateway.
+    # bucket-sync Phase 4 только ЗАДАЁТ квоты (s3.bucket.quota -op=set); энфорсит gateway.
     #
     # Schema per bucket:
     #   name:        bucket name (DNS-compatible, lower-case) — required.
+    #   owner:       SeaweedFS identity name — owner бакета (s3.bucket.create -owner) — REQUIRED.
+    #                Owner видит бакет в ListBuckets + владеет объектами. Доступ к данным —
+    #                через managed policy identity (owner НЕ влияет на policy-check). Mutable:
+    #                смена owner reconcile'ится через s3.bucket.owner (kept buckets).
     #   rack:        OPTIONAL string — preferred volume tier (SeaweedFS rack axis).
     #                Допустимые = rack-метки volume-групп из hosts-vars/seaweedfs.yaml
     #                (по конвенции 'managers-1' / 'workers-1'). SOFT preference: при заполнении
@@ -185,37 +267,13 @@ all:
     #     enabled: bool — true → apply size limit, false → disable (keep config).
     #     size:    human-readable размер (e.g. "100GiB", "5TiB") — sync конвертирует
     #              в MiB для weed shell.
-    #   policy:      OPTIONAL AWS IAM policy document {Version, Statement: [...]} (один на bucket).
-    #     Storage: filer Postgres metadata (entry.Extended["s3-bucket-policy"] —
-    #     persistent через pod restart automatically).
-    #     Если поле отсутствует — у bucket нет policy.
-    #
-    # CRITICAL — SeaweedFS 4.29 non-AWS policy deviations:
-    #
-    #   1. Principal — ТОЛЬКО flat string или array, НЕ AWS dict-form
-    #      `{"AWS": "..."}` (policy_engine/types.go:55-77 — UnmarshalJSON
-    #      принимает только string или []string).
-    #         OK:    Principal: "arn:aws:iam::*:user/alice"
-    #         OK:    Principal: ["arn:aws:iam::*:user/alice", "arn:aws:iam::*:user/bob"]
-    #         OK:    Principal: "*"     # anonymous (требует anonymous identity)
-    #         FAIL:  Principal: {AWS: "arn:aws:iam::*:user/alice"}
-    #      Sync task валидирует — отклоняет dict-form с явным сообщением.
-    #
-    #   2. Resource — должен ссылаться на ЭТОТ bucket (cross-bucket policy запрещён;
-    #      s3api_bucket_policy_handlers.go:340-366):
-    #         "arn:aws:s3:::<bucket>"    — на сам bucket (s3:ListBucket, s3:GetBucketLocation).
-    #         "arn:aws:s3:::<bucket>/*"  — на objects (s3:GetObject, s3:PutObject, ...).
-    #
-    #   3. Explicit Deny statement блокирует и admin (auth_credentials.go:1487).
-    #      Использовать ТОЛЬКО Allow statements; rely on default-deny для остального.
-    #
-    #   4. Account ID в Principal ARN — wildcard '*' (no per-user account binding).
     # ------
     seaweedfs_sync_buckets: []
     seaweedfs_sync_buckets_extra: []
     # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
     # seaweedfs_sync_buckets_extra:
     #   - name: bucket-1
+    #     owner: "alice"       # SeaweedFS identity (REQUIRED), access через её managed policy
     #     replication: "001"   # +1 копия в том же тире
     #     rack: "workers-1"    # preferred tier (soft), IMMUTABLE
     #     dataCenter: "dc-1"   # preferred DC (soft), IMMUTABLE
@@ -226,151 +284,26 @@ all:
     # ------
     # --- Pre-built opt-in для GitLab + GitLab-Runner buckets ---
     # Если используете SeaweedFS как S3 backend для GitLab / gitlab-runner — раскомментируйте
-    # этот блок в своём hosts-vars-override/seaweedfs-sync.yaml. 6 buckets с full-access
-    # policies (5 для GitLab user, 1 для gitlab-runner user). replication='001' (+1 копия
-    # в same rack — measure baseline durability; для более высокой надёжности используйте
-    # '100' cross-DC или '101' rack+server).
+    # этот блок в своём hosts-vars-override/seaweedfs-sync.yaml (вместе с managed policies
+    # gitlab-rw/gitlab-runner-rw SECTION 1 + identities gitlab/gitlab-runner SECTION 2).
+    # 6 buckets: 5 owned by 'gitlab', 1 by 'gitlab-runner'. Доступ — через attached managed
+    # policy (SECTION 1). replication='001' (+1 копия в same rack — baseline durability).
     # Альтернатива: внешнее S3 — operator сам создаёт buckets вне Ansible.
     # seaweedfs_sync_buckets_extra:
-    #   # --- GitLab buckets (5) — owned by 'gitlab' user ---
-    #   - name: gitlab-registry
-    #     replication: "001"
-    #     rack: "workers-1"
-    #     dataCenter: "dc-1"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "GitLabFullAccess"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/gitlab"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #             - "s3:ListBucket"
-    #             - "s3:GetBucketLocation"
-    #           Resource:
-    #             - "arn:aws:s3:::gitlab-registry"
-    #             - "arn:aws:s3:::gitlab-registry/*"
-    #   - name: gitlab-artifacts
-    #     replication: "001"
-    #     rack: "workers-1"
-    #     dataCenter: "dc-1"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "GitLabFullAccess"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/gitlab"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #             - "s3:ListBucket"
-    #             - "s3:GetBucketLocation"
-    #           Resource:
-    #             - "arn:aws:s3:::gitlab-artifacts"
-    #             - "arn:aws:s3:::gitlab-artifacts/*"
-    #   - name: gitlab-uploads
-    #     replication: "001"
-    #     rack: "workers-1"
-    #     dataCenter: "dc-1"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "GitLabFullAccess"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/gitlab"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #             - "s3:ListBucket"
-    #             - "s3:GetBucketLocation"
-    #           Resource:
-    #             - "arn:aws:s3:::gitlab-uploads"
-    #             - "arn:aws:s3:::gitlab-uploads/*"
-    #   - name: gitlab-packages
-    #     replication: "001"
-    #     rack: "workers-1"
-    #     dataCenter: "dc-1"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "GitLabFullAccess"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/gitlab"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #             - "s3:ListBucket"
-    #             - "s3:GetBucketLocation"
-    #           Resource:
-    #             - "arn:aws:s3:::gitlab-packages"
-    #             - "arn:aws:s3:::gitlab-packages/*"
-    #   - name: gitlab-backups
-    #     replication: "001"
-    #     rack: "workers-1"
-    #     dataCenter: "dc-1"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "GitLabFullAccess"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/gitlab"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #             - "s3:ListBucket"
-    #             - "s3:GetBucketLocation"
-    #           Resource:
-    #             - "arn:aws:s3:::gitlab-backups"
-    #             - "arn:aws:s3:::gitlab-backups/*"
-    #   # --- GitLab-Runner cache (1) — owned by 'gitlab-runner' user ---
-    #   - name: gitlab-runner-cache
-    #     replication: "001"
-    #     rack: "workers-1"
-    #     dataCenter: "dc-1"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "GitLabRunnerFullAccess"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/gitlab-runner"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #             - "s3:ListBucket"
-    #             - "s3:GetBucketLocation"
-    #           Resource:
-    #             - "arn:aws:s3:::gitlab-runner-cache"
-    #             - "arn:aws:s3:::gitlab-runner-cache/*"
+    #   # --- GitLab buckets (5) — owner 'gitlab' (access через managed policy gitlab-rw) ---
+    #   - {name: gitlab-registry,  owner: gitlab, replication: "001", rack: "workers-1", dataCenter: "dc-1"}
+    #   - {name: gitlab-artifacts, owner: gitlab, replication: "001", rack: "workers-1", dataCenter: "dc-1"}
+    #   - {name: gitlab-uploads,   owner: gitlab, replication: "001", rack: "workers-1", dataCenter: "dc-1"}
+    #   - {name: gitlab-packages,  owner: gitlab, replication: "001", rack: "workers-1", dataCenter: "dc-1"}
+    #   - {name: gitlab-backups,   owner: gitlab, replication: "001", rack: "workers-1", dataCenter: "dc-1"}
+    #   # --- GitLab-Runner cache (1) — owner 'gitlab-runner' (managed policy gitlab-runner-rw) ---
+    #   - {name: gitlab-runner-cache, owner: gitlab-runner, replication: "001", rack: "workers-1", dataCenter: "dc-1"}
     # ------
     # --- Pre-built opt-in для Loki (mon-system) bucket ---
     # Если используете SeaweedFS как S3 backend для Loki — раскомментируйте этот блок
-    # (объедините с gitlab-блоком выше в ОДИН seaweedfs_sync_buckets_extra, если нужны оба).
-    # 1 bucket 'loki-logs' (ДОЛЖЕН совпадать с mon_system_loki_s3_bucket) с full-access
-    # policy для 'loki' user. Collection='loki', replication='001'.
+    # (объедините с gitlab-блоком выше в ОДИН seaweedfs_sync_buckets_extra, если нужны оба;
+    # вместе с managed policy loki-rw SECTION 1 + identity loki SECTION 2).
+    # 1 bucket 'loki-logs' (ДОЛЖЕН совпадать с mon_system_loki_s3_bucket), owner 'loki'.
+    # Альтернатива: внешний S3 — operator сам создаёт bucket вне Ansible.
     # seaweedfs_sync_buckets_extra:
-    #   - name: loki-logs
-    #     replication: "001"
-    #     rack: "workers-1"
-    #     dataCenter: "dc-1"
-    #     policy:
-    #       Version: "2012-10-17"
-    #       Statement:
-    #         - Sid: "LokiFullAccess"
-    #           Effect: "Allow"
-    #           Principal: "arn:aws:iam::*:user/loki"
-    #           Action:
-    #             - "s3:GetObject"
-    #             - "s3:PutObject"
-    #             - "s3:DeleteObject"
-    #             - "s3:ListBucket"
-    #             - "s3:GetBucketLocation"
-    #           Resource:
-    #             - "arn:aws:s3:::loki-logs"
-    #             - "arn:aws:s3:::loki-logs/*"
+    #   - {name: loki-logs, owner: loki, replication: "001", rack: "workers-1", dataCenter: "dc-1"}
