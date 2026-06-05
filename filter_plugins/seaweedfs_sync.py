@@ -680,6 +680,170 @@ def seaweedfs_policies_new_state_json(vault_raw_json, target_policies, configmap
     _validate_managed_policies(target_policies)
     return json.dumps(target_policies, sort_keys=True)
 # =============================================================================
+# Private helpers (per-item ConfigMap state split)
+# =============================================================================
+_CM_PREFIX_BUCKETS = 'seaweedfs-sync-buckets-'
+_CM_PREFIX_POLICIES = 'seaweedfs-sync-policies-'
+_CM_PREFIX_DISTRIBUTIONS = 'seaweedfs-sync-identity-distributions-'
+
+_CONFIGMAP_NAME_RE = re.compile(r'^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+
+def _validate_configmap_name(name):
+    """Raise AnsibleFilterError if `name` is not a valid RFC 1123 DNS subdomain
+    (lowercase alphanumeric, '-', '.'; <=253 chars). Used by *_configmaps_to_apply
+    so an invalid bucket/policy/identity name fails fast before any kubectl mutation."""
+    if not name or len(name) > 253 or not _CONFIGMAP_NAME_RE.match(name):
+        raise AnsibleFilterError(
+            "Computed ConfigMap name '{0}' is not a valid RFC 1123 DNS subdomain "
+            "(lowercase alphanumeric, '-', '.'; <=253 chars). The bucket/policy/"
+            "identity name embedded in it must be DNS-compatible.".format(name)
+        )
+
+def _item_configmap_entry(prefix, item_name, stored_dict):
+    """Build a single per-item state ConfigMap descriptor {name, content}.
+    name = prefix + item_name (validated RFC 1123); content = single-item JSON
+    (sort_keys=True) stored verbatim in ConfigMap .data.state."""
+    cm_name = prefix + item_name
+    _validate_configmap_name(cm_name)
+    return {'name': cm_name, 'content': json.dumps(stored_dict, sort_keys=True)}
+
+def _parse_configmaplist(raw):
+    """Parse `kubectl get configmap -l <label> -o json` stdout to the .items list.
+    Returns [] for empty/missing/malformed input or when items is absent. Never raises."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    items = data.get('items', [])
+    return items if isinstance(items, list) else []
+# =============================================================================
+# Public filters — per-item ConfigMap state split (generic + per-group apply)
+# =============================================================================
+def seaweedfs_state_configmaps_to_combined_json(configmaplist_raw):
+    """Reconstruct combined-array state JSON from a labeled ConfigMapList.
+
+    Stateless generic filter: parse `kubectl get cm -l <label> -o json` stdout,
+    collect each item's .data.state (a single-item JSON object string), parse it,
+    return json.dumps(list, sort_keys=True). Result is shape-identical to the OLD
+    single-ConfigMap .data.state array, so existing diff filters consume it unchanged.
+
+    Args:
+        configmaplist_raw: str — `kubectl get cm -l ... -o json` stdout (List kind).
+            '' / None / malformed → '[]'. Greenfield ({items:[]}) → '[]'.
+
+    Returns:
+        str — JSON array of single-item dicts, sort_keys=True.
+    """
+    items = _parse_configmaplist(configmaplist_raw)
+    out = []
+    for item in items:
+        state_str = (item.get('data') or {}).get('state')
+        if not state_str:
+            continue
+        try:
+            out.append(json.loads(state_str))
+        except (ValueError, TypeError):
+            continue
+    return json.dumps(out, sort_keys=True)
+
+
+def seaweedfs_state_configmaps_to_delete(configmaplist_raw, target_cm_names):
+    """Names of existing state ConfigMaps no longer in target → list to delete.
+
+    Stateless generic filter: existing ConfigMap names (.items[].metadata.name)
+    minus target_cm_names set. Prunes per-item state ConfigMaps for buckets/
+    policies/identities that dropped out of the target.
+
+    Args:
+        configmaplist_raw: str — `kubectl get cm -l ... -o json` stdout.
+        target_cm_names: list of str — ConfigMap names that SHOULD exist
+            (from <group>_configmaps_to_apply | map(attribute='name')).
+
+    Returns:
+        list of str — existing ConfigMap names not in target_cm_names.
+    """
+    items = _parse_configmaplist(configmaplist_raw)
+    target_set = set(target_cm_names or [])
+    result = []
+    for item in items:
+        name = (item.get('metadata') or {}).get('name')
+        if name and name not in target_set:
+            result.append(name)
+    return result
+
+
+def seaweedfs_buckets_configmaps_to_apply(target_buckets):
+    """Per-item state ConfigMap descriptors for buckets.
+
+    Stateless filter: validate (replication presence/format + rack/dataCenter),
+    then one {name, content} per target bucket. content = full bucket dict
+    (sort_keys=True), stored verbatim.
+
+    Args:
+        target_buckets: list — full target from inventory (base + extra).
+
+    Returns:
+        list of {name, content} — name='seaweedfs-sync-buckets-<bucket>'.
+
+    Raises:
+        AnsibleFilterError on invalid replication or non-DNS bucket name.
+    """
+    _validate_buckets_have_replication(target_buckets)
+    return [_item_configmap_entry(_CM_PREFIX_BUCKETS, b['name'], b) for b in target_buckets]
+
+
+def seaweedfs_policies_configmaps_to_apply(target_policies):
+    """Per-item state ConfigMap descriptors for managed policies.
+
+    Stateless filter: validate (name + document), then one {name, content} per
+    target policy. content = full policy dict (sort_keys=True).
+
+    Args:
+        target_policies: list — full target from inventory (base + extra).
+
+    Returns:
+        list of {name, content} — name='seaweedfs-sync-policies-<policy>'.
+
+    Raises:
+        AnsibleFilterError on missing name/document or non-DNS policy name.
+    """
+    _validate_managed_policies(target_policies)
+    return [_item_configmap_entry(_CM_PREFIX_POLICIES, p['name'], p) for p in target_policies]
+
+
+def seaweedfs_distribute_configmaps_to_apply(target_identities):
+    """Per-item state ConfigMap descriptors for identity-distribution.
+
+    Stateless filter: validate (anonymous-no-extra + paths-unique), then one
+    {name, content} per identity WITH non-empty extra_vault_paths. content =
+    {identity_name, vault_paths} (sort_keys=True) — same shape as one element of
+    the distribution state array consumed by seaweedfs_distribute_paths_to_delete.
+
+    Args:
+        target_identities: list — full target from inventory (base + extra).
+
+    Returns:
+        list of {name, content} — name='seaweedfs-sync-identity-distributions-<identity>'.
+        Identities without extra_vault_paths are skipped.
+
+    Raises:
+        AnsibleFilterError if anonymous has extra_vault_paths, paths not unique,
+        or non-DNS identity name.
+    """
+    _validate_anonymous_no_extra(target_identities)
+    _validate_paths_unique(_flatten_target_paths(target_identities))
+    return [
+        _item_configmap_entry(
+            _CM_PREFIX_DISTRIBUTIONS, i['name'],
+            {'identity_name': i['name'], 'vault_paths': i.get('extra_vault_paths', [])},
+        )
+        for i in target_identities if i.get('extra_vault_paths')
+    ]
+# =============================================================================
 # Ansible FilterModule registration
 # =============================================================================
 class FilterModule(object):
@@ -699,5 +863,10 @@ class FilterModule(object):
             'seaweedfs_buckets_owners_to_set': seaweedfs_buckets_owners_to_set,
             'seaweedfs_policies_to_put': seaweedfs_policies_to_put,
             'seaweedfs_policies_to_delete': seaweedfs_policies_to_delete,
+            'seaweedfs_state_configmaps_to_combined_json': seaweedfs_state_configmaps_to_combined_json,
+            'seaweedfs_state_configmaps_to_delete': seaweedfs_state_configmaps_to_delete,
+            'seaweedfs_buckets_configmaps_to_apply': seaweedfs_buckets_configmaps_to_apply,
+            'seaweedfs_policies_configmaps_to_apply': seaweedfs_policies_configmaps_to_apply,
+            'seaweedfs_distribute_configmaps_to_apply': seaweedfs_distribute_configmaps_to_apply,
             'seaweedfs_policies_new_state_json': seaweedfs_policies_new_state_json,
         }

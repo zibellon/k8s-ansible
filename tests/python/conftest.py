@@ -110,3 +110,28 @@ def sample_configmap_state_policies():
         {'name': 'gitlab-rw', 'document': {'Version': '2012-10-17'}},
         {'name': 'p_stale', 'document': {'Version': '2012-10-17'}},
     ])
+
+
+@pytest.fixture
+def sample_configmaplist_raw():
+    """Sample `kubectl get cm -l <label> -o json` stdout: List with 2 per-item
+    state ConfigMaps (each .data.state = single-item JSON object string).
+    Used by seaweedfs_state_configmaps_* tests."""
+    return json.dumps({
+        "apiVersion": "v1",
+        "kind": "List",
+        "items": [
+            {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "seaweedfs-sync-buckets-b1",
+                             "labels": {"seaweedfs-sync-state": "buckets"}},
+                "data": {"state": json.dumps({"name": "b1", "replication": "001", "owner": "gitlab"}, sort_keys=True)},
+            },
+            {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "seaweedfs-sync-buckets-b2",
+                             "labels": {"seaweedfs-sync-state": "buckets"}},
+                "data": {"state": json.dumps({"name": "b2", "replication": "001", "owner": "loki"}, sort_keys=True)},
+            },
+        ],
+    })
