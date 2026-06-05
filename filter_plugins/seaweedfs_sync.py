@@ -338,11 +338,11 @@ def seaweedfs_distribute_paths_to_add(vault_raw_json, target_identities, configm
 # Private helpers (Layer 2 — bucket-sync)
 # =============================================================================
 def _compute_bucket_diff(current_state, target_buckets):
-    """Compute unified bucket+owner+quota+immutable-violations sync diff.
+    """Compute unified bucket+owner+immutable-violations sync diff.
 
     Args:
-        current_state: list [{name, replication, rack?, dataCenter?, owner?, quota?}, ...] from parsed ConfigMap.
-        target_buckets: target list [{name, replication, rack?, dataCenter?, owner?, quota?}, ...].
+        current_state: list [{name, replication, rack?, dataCenter?, owner?, quota_size?}, ...] from parsed ConfigMap.
+        target_buckets: target list [{name, replication, rack?, dataCenter?, owner?, quota_size?}, ...].
 
     Returns:
         {
@@ -350,7 +350,6 @@ def _compute_bucket_diff(current_state, target_buckets):
             'owners_to_set': [kept entries where target owner != state owner —
                               reconcile via s3.bucket.owner],
             'to_create_buckets': [target entries new vs state],
-            'quotas_to_apply': [target entries with quota defined],
             'immutable_violations': [kept entries where replication, rack, OR dataCenter changed —
                                      used by YAML assert for fail-fast ERROR + abort],
         }
@@ -367,39 +366,35 @@ def _compute_bucket_diff(current_state, target_buckets):
             if target_by_name[n].get('owner') != state_by_name[n].get('owner')
         ],
         'to_create_buckets': [target_by_name[n] for n in target_names - state_names],
-        'quotas_to_apply': [b for b in target_buckets if 'quota' in b],
         'immutable_violations': _compute_bucket_immutable_violations(current_state, target_buckets),
     }
 
 def _quota_size_to_mib(size_str):
-    """Convert human-readable size (e.g. '100GiB') to MiB int.
-    Supports MiB / GiB / TiB. Raises AnsibleFilterError for other suffix."""
+    """Convert human-readable size (e.g. '100GiB') to a positive MiB int.
+    Supports MiB / GiB / TiB. Raises AnsibleFilterError on a bad unit, a
+    non-integer numeric part, or a non-positive value (use an absent quota_size
+    to express 'no limit', not '0GiB')."""
     s = str(size_str).strip()
-    if s.endswith('MiB'):
-        return int(s[:-3])
-    if s.endswith('GiB'):
-        return int(s[:-3]) * 1024
-    if s.endswith('TiB'):
-        return int(s[:-3]) * 1024 * 1024
+    for suffix, factor in (('MiB', 1), ('GiB', 1024), ('TiB', 1024 * 1024)):
+        if s.endswith(suffix):
+            num = s[:-3].strip()
+            try:
+                value = int(num)
+            except (ValueError, TypeError):
+                raise AnsibleFilterError(
+                    "Invalid quota_size '{0}': '{1}' is not an integer.".format(size_str, num)
+                )
+            if value <= 0:
+                raise AnsibleFilterError(
+                    "Invalid quota_size '{0}': value must be a positive integer "
+                    "(use an absent quota_size for no limit).".format(size_str)
+                )
+            return value * factor
     raise AnsibleFilterError(
-        "Unsupported size unit in '{0}'. Use MiB/GiB/TiB.".format(size_str)
+        "Invalid quota_size '{0}': unsupported unit. Use MiB/GiB/TiB "
+        "(e.g. '100GiB').".format(size_str)
     )
 
-def _enrich_quotas_with_size_mib(quota_buckets):
-    """Return quota buckets list with quota.size_mib int field added.
-    quota.enabled=True → compute size_mib from quota.size.
-    quota.enabled=False → size_mib=0 (not used by Phase E weed shell)."""
-    result = []
-    for b in quota_buckets:
-        quota = dict(b.get('quota') or {})
-        if quota.get('enabled') and 'size' in quota:
-            quota['size_mib'] = _quota_size_to_mib(quota['size'])
-        else:
-            quota['size_mib'] = 0
-        new_bucket = dict(b)
-        new_bucket['quota'] = quota
-        result.append(new_bucket)
-    return result
 
 _REPLICATION_FORMAT_RE = re.compile(r'^[0-9]{3}$')
 
@@ -508,17 +503,39 @@ def seaweedfs_buckets_to_create(vault_raw_json, target_buckets, configmap_raw_js
 
 
 def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_raw_json):
-    """Target entries с quota → enriched with quota.size_mib int field.
+    """All target buckets annotated with the quota operation to apply.
 
-    Args, Raises: same as seaweedfs_buckets_to_delete.
+    Each returned entry adds:
+      _quota_op:       'set' if the bucket has a (valid) quota_size, else 'remove'.
+      _quota_size_mib: size in MiB (int) when _quota_op == 'set'; 0 for 'remove'.
+
+    Emitting 'remove' for buckets WITHOUT quota_size every run is idempotent
+    (s3.bucket.quota -op=remove zeroes the quota = unlimited) and is what lets a
+    dropped quota_size actually lift the limit.
+
+    Args:
+        vault_raw_json: ignored — kept for shape consistency.
+        target_buckets: list — full target from inventory (base + extra).
+        configmap_raw_json: ignored — quotas applied to all target buckets every run.
 
     Returns:
-        list of {name, quota: {enabled, size, size_mib}, ...} entries — quota.size_mib
-        pre-computed int (MiB), ready for Phase E weed shell -sizeMB=<X>.
+        list of target buckets, each with _quota_op + _quota_size_mib added.
+
+    Raises:
+        AnsibleFilterError on invalid replication OR invalid quota_size.
     """
     _validate_buckets_have_replication(target_buckets)
-    quota_buckets = [b for b in target_buckets if 'quota' in b]
-    return _enrich_quotas_with_size_mib(quota_buckets)
+    result = []
+    for b in target_buckets:
+        new_bucket = dict(b)
+        if 'quota_size' in b:
+            new_bucket['_quota_op'] = 'set'
+            new_bucket['_quota_size_mib'] = _quota_size_to_mib(b['quota_size'])
+        else:
+            new_bucket['_quota_op'] = 'remove'
+            new_bucket['_quota_size_mib'] = 0
+        result.append(new_bucket)
+    return result
 
 
 def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, configmap_raw_json):

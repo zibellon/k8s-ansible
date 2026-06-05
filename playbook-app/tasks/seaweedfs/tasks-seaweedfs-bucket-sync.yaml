@@ -36,7 +36,7 @@
 #   B. Create new buckets (weed shell s3.bucket.create -owner=<owner>).
 #   C. Apply fs.configure для new buckets (replication + optional rack + dataCenter).
 #   D. Reconcile owner у kept buckets (weed shell s3.bucket.owner; owner mutable).
-#   E. Apply quotas всем target buckets с quota (weed shell s3.bucket.quota).
+#   E. Apply quotas всем target buckets (quota_size задан → -op=set; иначе -op=remove; weed shell s3.bucket.quota).
 #   F. Apply per-item state ConfigMaps (labeled) для target buckets.
 #   G. Delete стейл per-item state ConfigMaps (bucket дропнут из target).
 #
@@ -133,7 +133,7 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute buckets_quotas_to_apply via filter (enriched with size_mib)"
+- name: "[{{ dto_label_name }}] Compute buckets_quotas_to_apply via filter (op + size_mib)"
   set_fact:
     "{{ _local_quotas_to_apply_key }}": >-
       {{ '' | seaweedfs_buckets_quotas_to_apply(
@@ -239,10 +239,10 @@
 - name: "[{{ dto_label_name }}] Phase E — Apply quotas via weed shell (size_mib pre-computed)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
-    dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op={{ 'set' if item.quota.enabled else 'disable' }}{% if item.quota.enabled %} -sizeMB={{ item.quota.size_mib }}{% endif %}"
+    dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op={{ item._quota_op }}{% if item._quota_op == 'set' %} -sizeMB={{ item._quota_size_mib }}{% endif %}"
   loop: "{{ lookup('vars', _local_quotas_to_apply_key) }}"
   loop_control:
-    label: "{{ item.name }} (quota: {{ item.quota }})"
+    label: "{{ item.name }} (quota: {{ item._quota_op }}{% if item._quota_op == 'set' %} {{ item._quota_size_mib }}MiB{% endif %})"
   run_once: true
   tags: [always]
 

@@ -231,7 +231,7 @@ all:
     #   2. CREATE new buckets: 's3.bucket.create -name=<n> -owner=<owner>' + fs.configure
     #      (-replication [-rack] [-dataCenter]).
     #   3. RECONCILE owner у kept buckets (owner changed vs state): 's3.bucket.owner -name=<n> -owner=<o>'.
-    #   4. APPLY quotas для target buckets с quota.defined: 's3.bucket.quota -op=set|disable -sizeMB=<X>'.
+    #   4. APPLY quotas всем target buckets: quota_size задан → -op=set -sizeMB=<X>; отсутствует → -op=remove (unlimited).
     #   5. UPDATE ConfigMap state с новым target snapshot.
     #
     # NOTE про bucket delete: в SeaweedFS shell command 's3.bucket.delete' нет
@@ -271,10 +271,14 @@ all:
     #                Sync code FAIL-FAST если ЛЮБОЕ из immutable полей changed vs state:
     #                assert после compute calls, до Phase A → sync aborts, cluster intact.
     #                To resolve: revert inventory к state values OR migrate data manually + align.
-    #   quota:       OPTIONAL {enabled, size}.
-    #     enabled: bool — true → apply size limit, false → disable (keep config).
-    #     size:    human-readable размер (e.g. "100GiB", "5TiB") — sync конвертирует
-    #              в MiB для weed shell.
+    #   quota_size:  OPTIONAL human-readable size string (e.g. "100GiB", "5TiB").
+    #                Задан + валиден → set quota (s3.bucket.quota -op=set -sizeMB=<X>).
+    #                Отсутствует     → remove quota (-op=remove → unlimited).
+    #                Невалиден (плохой суффикс / не целое / не положительное) → sync FAIL-FAST.
+    #                Поддерживаемые единицы: MiB / GiB / TiB.
+    #                NOTE: снятие квоты с бакета, уже переключённого в read-only прошлым
+    #                превышением, НЕ снимает read-only автоматически (SeaweedFS оставляет
+    #                вручную-запертый бакет запертым) — снимай вручную при необходимости.
     # ------
     seaweedfs_sync_buckets: []
     seaweedfs_sync_buckets_extra: []
@@ -285,9 +289,7 @@ all:
     #     replication: "001"   # +1 копия в том же тире
     #     rack: "workers-1"    # preferred tier (soft), IMMUTABLE
     #     dataCenter: "dc-1"   # preferred DC (soft), IMMUTABLE
-    #     quota:
-    #       enabled: true
-    #       size: "100GiB"
+    #     quota_size: "100GiB"
 
     # ------
     # --- Pre-built opt-in для GitLab + GitLab-Runner buckets ---

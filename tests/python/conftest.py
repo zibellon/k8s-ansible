@@ -36,13 +36,13 @@ def sample_target_identities():
 
 @pytest.fixture
 def sample_target_buckets():
-    """Default target buckets: b1 with quota, b2 without (both с replication + owner)."""
+    """Default target buckets: b1 with quota_size, b2 without (both с replication + owner)."""
     return [
         {
             'name': 'b1',
             'replication': '001',
             'owner': 'gitlab',
-            'quota': {'enabled': True, 'size': '1GiB'},
+            'quota_size': '1GiB',
         },
         {'name': 'b2', 'replication': '001', 'owner': 'loki'},
     ]

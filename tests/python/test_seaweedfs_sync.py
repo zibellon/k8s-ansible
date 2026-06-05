@@ -224,34 +224,47 @@ def test_buckets_to_create_all_kept():
     assert result == []
 
 
-def test_buckets_quotas_to_apply_enrich_size_mib(sample_target_buckets):
-    """Happy: b1 has quota=1GiB → returned with size_mib=1024 field."""
+def test_buckets_quotas_to_apply_all_buckets(sample_target_buckets):
+    """All target buckets returned: b1 (quota_size 1GiB) → set 1024; b2 (none) → remove."""
     result = sw.seaweedfs_buckets_quotas_to_apply('', sample_target_buckets, '')
+    by_name = {b['name']: b for b in result}
+    assert len(result) == 2
+    assert by_name['b1']['_quota_op'] == 'set'
+    assert by_name['b1']['_quota_size_mib'] == 1024
+    assert by_name['b2']['_quota_op'] == 'remove'
+
+
+def test_buckets_quotas_to_apply_remove_when_absent():
+    """Edge: bucket без quota_size → _quota_op 'remove', size_mib 0."""
+    result = sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001'}], '')
     assert len(result) == 1
-    assert result[0]['name'] == 'b1'
-    assert result[0]['quota']['size_mib'] == 1024
-    assert result[0]['quota']['size'] == '1GiB'  # original preserved
+    assert result[0]['_quota_op'] == 'remove'
+    assert result[0]['_quota_size_mib'] == 0
 
 
-def test_buckets_quotas_to_apply_disabled():
-    """Edge: quota.enabled=False → size_mib=0."""
-    target = [{'name': 'b1', 'replication': '001', 'quota': {'enabled': False}}]
-    result = sw.seaweedfs_buckets_quotas_to_apply('', target, '')
-    assert result[0]['quota']['size_mib'] == 0
+def test_buckets_quotas_to_apply_set_when_present():
+    """Edge: bucket с quota_size → _quota_op 'set' + size_mib."""
+    result = sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': '2GiB'}], '')
+    assert result[0]['_quota_op'] == 'set'
+    assert result[0]['_quota_size_mib'] == 2048
 
 
-def test_buckets_quotas_to_apply_no_quota():
-    """Edge: target без quota field → not in result."""
-    target = [{'name': 'b1', 'replication': '001'}]
-    result = sw.seaweedfs_buckets_quotas_to_apply('', target, '')
-    assert result == []
+def test_buckets_quotas_to_apply_invalid_unit_raises():
+    """Edge: bad unit → AnsibleFilterError."""
+    with pytest.raises(AnsibleFilterError, match='quota_size'):
+        sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': '100GB'}], '')
 
 
-def test_buckets_quotas_to_apply_invalid_size_raises():
-    """Edge: invalid quota.size unit → AnsibleFilterError."""
-    target = [{'name': 'b1', 'replication': '001', 'quota': {'enabled': True, 'size': '100GB'}}]
-    with pytest.raises(AnsibleFilterError, match='Unsupported'):
-        sw.seaweedfs_buckets_quotas_to_apply('', target, '')
+def test_buckets_quotas_to_apply_invalid_value_raises():
+    """Edge: non-integer numeric part → AnsibleFilterError."""
+    with pytest.raises(AnsibleFilterError, match='quota_size'):
+        sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': 'abcGiB'}], '')
+
+
+def test_buckets_quotas_to_apply_zero_raises():
+    """Edge: non-positive size → AnsibleFilterError."""
+    with pytest.raises(AnsibleFilterError, match='quota_size'):
+        sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': '0GiB'}], '')
 # =============================================================================
 # bucket-sync (Layer 2) — replication + rack + dataCenter immutable settings (v8)
 # =============================================================================
