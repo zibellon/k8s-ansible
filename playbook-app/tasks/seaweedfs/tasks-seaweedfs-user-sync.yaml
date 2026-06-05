@@ -39,8 +39,9 @@
 #   6. identities_changed = current missing OR current_json != new_json.
 #   7. When changed: vault-put new combined JSON (key-store update).
 #   8. Phase A: weed shell s3.configure -delete стейл identities (filer).
-#   9. Phase B: weed shell s3.configure -apply target identities (filer; skip
-#      anonymous — empty creds). actions → -actions, policy_names → -policies.
+#   9. Phase B: weed shell s3.configure -apply target identities (filer; cred flags
+#      only when present → anonymous with a managed policy is applied; identities
+#      granting nothing skipped). actions → -actions, policy_names → -policies.
 # =============================================================================
 - name: "[{{ dto_label_name }}] Assert dto_label_name provided"
   assert:
@@ -182,15 +183,18 @@
   tags: [always]
 
 # --- PHASE B: Apply target identities to filer (put-all from new combined JSON; live-reload) ---
-# anonymous (empty creds) skipped — s3.configure needs access_key/secret_key.
-# actions → -actions (admin), policy_names → -policies (identity-based consumers).
+# Apply each identity that grants something (creds OR actions OR policy_names).
+# Credential flags are emitted only when present, so anonymous (empty creds) WITH a
+# managed policy IS applied — s3.configure does not require creds for the reserved
+# 'anonymous' identity (sources/seaweedfs/weed/shell/command_s3_configure.go:222).
+# actions → -actions; policy_names → -policies (identity-based access).
 - name: "[{{ dto_label_name }}] Phase B — Apply target identities via weed shell s3.configure -apply"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
-    dto_weed_command: "s3.configure -user={{ item.name }} -access_key={{ item.credentials[0].accessKey }} -secret_key={{ item.credentials[0].secretKey }}{% if item.actions %} -actions={{ item.actions | join(',') }}{% endif %}{% if item.policy_names %} -policies={{ item.policy_names | join(',') }}{% endif %} -apply"
+    dto_weed_command: "s3.configure -user={{ item.name }}{% if item.credentials[0].accessKey | length > 0 %} -access_key={{ item.credentials[0].accessKey }} -secret_key={{ item.credentials[0].secretKey }}{% endif %}{% if item.actions %} -actions={{ item.actions | join(',') }}{% endif %}{% if item.policy_names %} -policies={{ item.policy_names | join(',') }}{% endif %} -apply"
   loop: "{{ (lookup('vars', _local_new_combined_json_key) | from_json).identities }}"
   loop_control:
     label: "{{ item.name }}"
-  when: item.credentials[0].accessKey | length > 0
+  when: (item.credentials[0].accessKey | length > 0) or (item.actions | length > 0) or (item.policy_names | length > 0)
   run_once: true
   tags: [always]
