@@ -113,6 +113,26 @@ def test_user_sync_full_randomness_without_mock(sample_target_identities, sample
     result1 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
     result2 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
     assert result1 != result2
+
+
+def test_combined_json_violations_valid_returns_empty():
+    raw = '{"identities": [{"name": "admin", "credentials": [{"accessKey": "AK", "secretKey": "SK"}]}]}'
+    assert sw.seaweedfs_combined_json_violations(raw) == []
+
+
+def test_combined_json_violations_greenfield_empty_returns_empty():
+    assert sw.seaweedfs_combined_json_violations('') == []
+    assert sw.seaweedfs_combined_json_violations(None) == []
+
+
+def test_combined_json_violations_malformed_returns_violation():
+    assert len(sw.seaweedfs_combined_json_violations('not json {')) == 1
+
+
+def test_combined_json_violations_wrong_shape_returns_violation():
+    assert len(sw.seaweedfs_combined_json_violations('{"foo": 1}')) == 1
+    assert len(sw.seaweedfs_combined_json_violations('[]')) == 1
+    assert len(sw.seaweedfs_combined_json_violations('{"identities": "x"}')) == 1
 # =============================================================================
 # identity-distribute (Layer 3) — seaweedfs_distribute_* (stateless)
 # =============================================================================

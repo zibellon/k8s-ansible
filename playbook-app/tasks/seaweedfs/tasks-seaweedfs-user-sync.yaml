@@ -62,6 +62,7 @@
     _local_identities_changed_key: "_local_identities_changed"
     _local_identities_put_data_key: "_local_identities_put_data"
     _local_identities_to_delete_key: "_local_identities_to_delete"
+    _local_combined_json_violations_key: "_local_combined_json_violations"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -73,6 +74,30 @@
     dto_vault_get_field: "{{ seaweedfs_s3_config_vault_field }}"
     dto_vault_get_res_fact_name: "{{ _local_combined_json_key }}"
     dto_vault_get_res_exists_fact_name: "{{ _local_combined_json_exists_key }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute combined JSON violations (malformed key-store guard)"
+  set_fact:
+    "{{ _local_combined_json_violations_key }}": >-
+      {{ lookup('vars', _local_combined_json_key) | seaweedfs_combined_json_violations }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert combined JSON is valid (refuse silent credential rotation)"
+  assert:
+    that:
+      - lookup('vars', _local_combined_json_violations_key) | length == 0
+    fail_msg: |
+      ERROR: Vault combined JSON key-store at {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }} (field {{ seaweedfs_s3_config_vault_field }}) is malformed.
+      Refusing to proceed — treating it as empty would silently re-create ALL identities with NEW credentials (rotating every consumer's S3 creds).
+      Violations:
+      {% for v in lookup('vars', _local_combined_json_violations_key) %}
+        - {{ v }}
+      {% endfor %}
+      To resolve: fix or delete the Vault path, then re-run.
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
   tags: [always]
 
 - name: "[{{ dto_label_name }}] Compute target identities (base + extra)"

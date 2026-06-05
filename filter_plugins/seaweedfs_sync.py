@@ -251,6 +251,38 @@ def seaweedfs_identities_to_delete(vault_raw_json, target_identities):
     combined = _parse_combined_json(vault_raw_json)
     diff = _compute_identity_diff(combined['identities'], target_identities)
     return [i['name'] for i in diff['to_delete']]
+
+
+def seaweedfs_combined_json_violations(raw):
+    """Validate the Vault combined-JSON key-store before user-sync/distribute consume it.
+
+    Returns a one-element violation list when `raw` is non-empty but does NOT parse
+    as a valid combined-JSON object ({"identities": [...]}). Returns [] for empty raw
+    (greenfield — vault-get returns '' for a missing path/field, which is legitimate).
+    Mirrors the *_immutable_violations pattern: filter returns a list, YAML asserts
+    length == 0.
+
+    Why: a malformed key-store, if silently treated as empty by _parse_combined_json,
+    would make user-sync re-create ALL identities with FRESH credentials — a silent
+    rotation of every consumer's S3 creds. This gate makes that loud instead.
+
+    Args:
+        raw: str — Vault combined-JSON field value (may be '', None, malformed).
+
+    Returns:
+        list — [] if valid or greenfield-empty, else a one-element [<message str>].
+    """
+    if raw is None or raw == '':
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return ['Vault combined JSON is not parseable as JSON']
+    if not isinstance(data, dict) or 'identities' not in data:
+        return ["Vault combined JSON is not an object with an 'identities' key"]
+    if not isinstance(data['identities'], list):
+        return ["Vault combined JSON 'identities' is not a list"]
+    return []
 # =============================================================================
 # Public Layer 3 filters — stateless identity-distribute orchestrators
 # =============================================================================
@@ -801,6 +833,7 @@ class FilterModule(object):
         return {
             'seaweedfs_user_sync_full': seaweedfs_user_sync_full,
             'seaweedfs_identities_to_delete': seaweedfs_identities_to_delete,
+            'seaweedfs_combined_json_violations': seaweedfs_combined_json_violations,
             'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,
             'seaweedfs_buckets_to_delete': seaweedfs_buckets_to_delete,
