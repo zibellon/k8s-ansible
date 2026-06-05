@@ -8,13 +8,21 @@
 #
 # v14 filer-driven IAM. Buckets get an owner (identity); data access is via the
 # consumers' managed policies (SECTION 1+2), NOT bucket policies (removed).
-# Stateless filter API: 6 public Python функций (seaweedfs_buckets_to_delete /
-# _to_create / _owners_to_set / _quotas_to_apply / _new_state_json /
-# _immutable_violations), signature (vault_raw_json, target_buckets,
-# configmap_raw_json). Каждая делает full validation (replication presence +
-# rack/dataCenter validation + replication format) + diff внутри. Ansible task
-# оркеструет только I/O: kubectl-get configmap, 6 compute calls, kubectl exec
-# (weed shell) per phase.
+#
+# State (v15 — per-item ConfigMaps): «последний applied target» хранится НЕ в одном
+# ConfigMap, а в наборе per-item ConfigMap'ов 'seaweedfs-sync-buckets-<bucket>'
+# (по одному на bucket), сгруппированных label'ом 'seaweedfs-sync-state: buckets'
+# (избегаем etcd per-object size limit). Чтение всей группы — одним
+# 'kubectl get cm -l seaweedfs-sync-state=buckets -o json'; reconstruction в
+# combined-array JSON (фильтр seaweedfs_state_configmaps_to_combined_json) кормит
+# diff-фильтры без изменений.
+#
+# Stateless filter API: seaweedfs_buckets_to_delete / _to_create / _owners_to_set /
+# _quotas_to_apply / _immutable_violations (diff; signature (vault_raw_json,
+# target_buckets, configmap_raw_json)), плюс seaweedfs_state_configmaps_to_combined_json
+# (read reconstruction), seaweedfs_buckets_configmaps_to_apply /
+# seaweedfs_state_configmaps_to_delete (write per-item + prune stale). Каждый diff-фильтр
+# делает full validation (replication presence + rack/dataCenter + format) + diff внутри.
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation.
 #
@@ -23,13 +31,14 @@
 #     Schema per bucket: {name, owner, replication, rack?, dataCenter?, quota?}.
 #   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
 #
-# Sync phases (6 loops + ConfigMap update):
+# Sync phases (5 resource loops + assert + 2 ConfigMap loops):
 #   A. Delete стейл buckets (weed shell s3.bucket.delete).
 #   B. Create new buckets (weed shell s3.bucket.create -owner=<owner>).
 #   C. Apply fs.configure для new buckets (replication + optional rack + dataCenter).
 #   D. Reconcile owner у kept buckets (weed shell s3.bucket.owner; owner mutable).
 #   E. Apply quotas всем target buckets с quota (weed shell s3.bucket.quota).
-#   F. Update ConfigMap state с new target snapshot.
+#   F. Apply per-item state ConfigMaps (labeled) для target buckets.
+#   G. Delete стейл per-item state ConfigMaps (bucket дропнут из target).
 #
 # Pre-phase ASSERT: после compute calls, до Phase A — fail-fast если ЛЮБОЕ
 # immutable поле (replication, rack или dataCenter) изменилось на kept bucket vs state.
@@ -59,7 +68,8 @@
     _local_to_create_buckets_key: "_local_to_create_buckets"
     _local_owners_to_set_key: "_local_owners_to_set"
     _local_quotas_to_apply_key: "_local_quotas_to_apply"
-    _local_new_state_json_key: "_local_new_state_json"
+    _local_configmaps_to_apply_key: "_local_configmaps_to_apply"
+    _local_configmaps_to_delete_key: "_local_configmaps_to_delete"
     _local_immutable_violations_key: "_local_immutable_violations"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -72,22 +82,20 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Read current ConfigMap state (may not exist)"
+- name: "[{{ dto_label_name }}] Read current state ConfigMaps (labeled, may be none)"
   command: >-
-    kubectl get configmap seaweedfs-sync-buckets-state -n {{ seaweedfs_namespace }} -o jsonpath={.data.state}
-  register: _local_configmap_raw_reg
-  failed_when: false
+    kubectl get configmap -n {{ seaweedfs_namespace }}
+    -l seaweedfs-sync-state=buckets -o json
+  register: _local_configmaplist_reg
   changed_when: false
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Capture ConfigMap raw stdout (empty if missing)"
+- name: "[{{ dto_label_name }}] Reconstruct combined state from labeled ConfigMaps"
   set_fact:
     "{{ _local_configmap_raw_key }}": >-
-      {{ _local_configmap_raw_reg.stdout
-         if (_local_configmap_raw_reg.rc == 0 and _local_configmap_raw_reg.stdout | length > 0)
-         else '' }}
+      {{ _local_configmaplist_reg.stdout | seaweedfs_state_configmaps_to_combined_json }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -136,12 +144,19 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute new ConfigMap state JSON via filter (Phase F input)"
+- name: "[{{ dto_label_name }}] Compute per-item state ConfigMaps to apply"
   set_fact:
-    "{{ _local_new_state_json_key }}": >-
-      {{ '' | seaweedfs_buckets_new_state_json(
-           lookup('vars', _local_target_buckets_key),
-           lookup('vars', _local_configmap_raw_key)
+    "{{ _local_configmaps_to_apply_key }}": >-
+      {{ lookup('vars', _local_target_buckets_key) | seaweedfs_buckets_configmaps_to_apply }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute stale state ConfigMaps to delete"
+  set_fact:
+    "{{ _local_configmaps_to_delete_key }}": >-
+      {{ _local_configmaplist_reg.stdout | seaweedfs_state_configmaps_to_delete(
+           lookup('vars', _local_configmaps_to_apply_key) | map(attribute='name') | list
          ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -241,12 +256,28 @@
   run_once: true
   tags: [always]
 
-# --- PHASE F: Update ConfigMap state с new target snapshot ---
-- name: "[{{ dto_label_name }}] Phase F — Update ConfigMap state с new target snapshot"
+# --- PHASE F: Apply per-item state ConfigMaps (labeled seaweedfs-sync-state=buckets) ---
+- name: "[{{ dto_label_name }}] Phase F — Apply per-item state ConfigMaps"
   shell: |
-    kubectl create configmap seaweedfs-sync-buckets-state -n {{ seaweedfs_namespace }} \
-      --from-literal=state='{{ lookup('vars', _local_new_state_json_key) }}' \
-      --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create configmap {{ item.name }} -n {{ seaweedfs_namespace }} \
+      --from-literal=state='{{ item.content }}' \
+      --dry-run=client -o yaml | \
+      kubectl label --local -f - -o yaml seaweedfs-sync-state=buckets | \
+      kubectl apply -f -
+  loop: "{{ lookup('vars', _local_configmaps_to_apply_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE G: Delete стейл per-item state ConfigMaps (bucket dropped from target) ---
+- name: "[{{ dto_label_name }}] Phase G — Delete стейл state ConfigMaps"
+  command: >-
+    kubectl delete configmap {{ item }} -n {{ seaweedfs_namespace }} --ignore-not-found
+  loop: "{{ lookup('vars', _local_configmaps_to_delete_key) }}"
+  loop_control:
+    label: "{{ item }}"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
