@@ -44,8 +44,9 @@ all:
     # (weed shell s3.policy -put/-delete → /etc/iam/policies/<n>.json). Прикрепляются к
     # identities через identity.policy_names (SECTION 2). Identity-based access model:
     # права на identity (через attached managed policy), НЕ на bucket (v14 — bucket policies
-    # удалены). Sync (--tags policy-sync) приводит filer к target (diff vs ConfigMap
-    # 'seaweedfs-sync-policies-state'): put-all target (idempotent overwrite) + delete стейл.
+    # удалены). Sync (--tags policy-sync) приводит filer к target (diff vs per-item state
+    # ConfigMaps 'seaweedfs-sync-policies-<policy>', label seaweedfs-sync-state=policies):
+    # put-all target (idempotent overwrite) + delete стейл.
     #
     # Granularity: одна policy на consumer (gitlab-rw покрывает все бакеты gitlab) —
     # см. .claude/rules/secrets-and-eso.md §11 (v14).
@@ -148,9 +149,10 @@ all:
     #              username   — identity name (например "alice")
     #              accessKey  — из combined JSON identities[].credentials[0].accessKey
     #              secretKey  — из combined JSON identities[].credentials[0].secretKey
-    #            Distribute идёт через ConfigMap state seaweedfs-sync-identity-distributions-state
-    #            в namespace seaweedfs (diff-based: removed paths → vault-delete;
-    #            target paths → vault-put full-replace).
+    #            Distribute идёт через per-item state ConfigMaps
+    #            seaweedfs-sync-identity-distributions-<identity> (по одному на identity,
+    #            label seaweedfs-sync-state=identity-distributions) в namespace seaweedfs
+    #            (diff-based: removed paths → vault-delete; target paths → vault-put full-replace).
     #            Anonymous identity с непустым extra_vault_paths → fail на sync
     #            (нет creds для distribute).
     #            Если поле отсутствует или [] — distribute для этой identity не выполняется.
@@ -219,8 +221,9 @@ all:
     # ------
     # S3 buckets + per-bucket SeaweedFS-native quotas + owner. Доступ к данным — через
     # managed policy на identity (SECTION 1+2), НЕ через bucket (v14 — bucket policies удалены).
-    # Sync (--tags bucket-sync) применяет diff vs K8s ConfigMap state
-    # 'seaweedfs-sync-buckets-state' (хранит target snapshot — [{name, owner, replication, ...}, ...]).
+    # Sync (--tags bucket-sync) применяет diff vs per-item state ConfigMaps
+    # 'seaweedfs-sync-buckets-<bucket>' (по одному на bucket, label seaweedfs-sync-state=buckets;
+    # каждый хранит target snapshot одного бакета — {name, owner, replication, ...}).
     #
     # Sync order (--tags bucket-sync; фактический порядок фаз — tasks-seaweedfs-bucket-sync.yaml,
     # immutable-assert до Phase A):
