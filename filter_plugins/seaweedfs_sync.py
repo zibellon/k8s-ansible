@@ -554,6 +554,13 @@ def _validate_managed_policies(target_policies):
                 "field (AWS IAM policy doc). See hosts-vars/seaweedfs-sync.yaml "
                 "seaweedfs_managed_policies schema documentation.".format(name)
             )
+        if "'" in json.dumps(document):
+            raise AnsibleFilterError(
+                "Managed policy '{0}' document contains a single quote (') — this "
+                "would break shell quoting in tasks-seaweedfs-policy-sync.yaml Phase B "
+                "(printf '%s' '<json>'). Remove single quotes from the policy "
+                "document.".format(name)
+            )
 
 
 def _compute_policy_diff(current_state, target_policies):

@@ -371,6 +371,13 @@ def test_policies_validation_raises_on_non_dict_document():
     target = [{'name': 'gitlab-rw', 'document': 'not-a-dict'}]
     with pytest.raises(AnsibleFilterError, match="missing required non-empty mapping 'document'"):
         sw.seaweedfs_policies_to_put('', target, '')
+
+
+def test_policies_validation_raises_on_single_quote_in_document():
+    """Edge: document containing a single quote → validation raise (shell-quoting guard)."""
+    target = [{'name': 'gitlab-rw', 'document': {'Statement': [{'Sid': "it's-bad"}]}}]
+    with pytest.raises(AnsibleFilterError, match='single quote'):
+        sw.seaweedfs_policies_to_put('', target, '')
 # =============================================================================
 # v14 additions — identity policy_names, identities_to_delete, bucket owners
 # =============================================================================
