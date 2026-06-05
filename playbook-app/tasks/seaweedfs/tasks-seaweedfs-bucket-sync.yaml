@@ -193,66 +193,56 @@
 
 # --- PHASE A: Delete стейл buckets ---
 - name: "[{{ dto_label_name }}] Phase A — Delete стейл buckets via weed shell"
-  shell: |
-    echo "s3.bucket.delete -name={{ item.name }}" | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.bucket.delete -name={{ item.name }}"
   loop: "{{ lookup('vars', _local_to_delete_buckets_key) }}"
   loop_control:
     label: "{{ item.name }}"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 # --- PHASE B: Create new buckets with owner ---
 - name: "[{{ dto_label_name }}] Phase B — Create new buckets via weed shell (-owner=<owner>)"
-  shell: |
-    echo "s3.bucket.create -name={{ item.name }} -owner={{ item.owner }}" | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.bucket.create -name={{ item.name }} -owner={{ item.owner }}"
   loop: "{{ lookup('vars', _local_to_create_buckets_key) }}"
   loop_control:
     label: "{{ item.name }} (owner={{ item.owner }})"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 # --- PHASE C: Apply immutable settings (replication + rack + dataCenter) for new buckets ---
 - name: "[{{ dto_label_name }}] Phase C — Apply fs.configure для new buckets (replication + rack + dataCenter)"
-  shell: |
-    echo "fs.configure -locationPrefix=/buckets/{{ item.name }} -replication={{ item.replication }}{% if item.rack is defined %} -rack={{ item.rack }}{% endif %}{% if item.dataCenter is defined %} -dataCenter={{ item.dataCenter }}{% endif %} -apply" | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "fs.configure -locationPrefix=/buckets/{{ item.name }} -replication={{ item.replication }}{% if item.rack is defined %} -rack={{ item.rack }}{% endif %}{% if item.dataCenter is defined %} -dataCenter={{ item.dataCenter }}{% endif %} -apply"
   loop: "{{ lookup('vars', _local_to_create_buckets_key) }}"
   loop_control:
     label: "{{ item.name }} → replication={{ item.replication }}{% if item.rack is defined %}, rack={{ item.rack }}{% endif %}{% if item.dataCenter is defined %}, dataCenter={{ item.dataCenter }}{% endif %}"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 # --- PHASE D: Reconcile owner у kept buckets (owner mutable) ---
 - name: "[{{ dto_label_name }}] Phase D — Reconcile owner у kept buckets via weed shell s3.bucket.owner"
-  shell: |
-    echo "s3.bucket.owner -name={{ item.name }} -owner={{ item.owner }}" | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.bucket.owner -name={{ item.name }} -owner={{ item.owner }}"
   loop: "{{ lookup('vars', _local_owners_to_set_key) }}"
   loop_control:
     label: "{{ item.name }} → owner={{ item.owner }}"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
 # --- PHASE E: Apply quotas (size_mib pre-computed in compute filter) ---
 - name: "[{{ dto_label_name }}] Phase E — Apply quotas via weed shell (size_mib pre-computed)"
-  shell: |
-    echo "s3.bucket.quota -name={{ item.name }} -op={{ 'set' if item.quota.enabled else 'disable' }}{% if item.quota.enabled %} -sizeMB={{ item.quota.size_mib }}{% endif %}" | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op={{ 'set' if item.quota.enabled else 'disable' }}{% if item.quota.enabled %} -sizeMB={{ item.quota.size_mib }}{% endif %}"
   loop: "{{ lookup('vars', _local_quotas_to_apply_key) }}"
   loop_control:
     label: "{{ item.name }} (quota: {{ item.quota }})"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 

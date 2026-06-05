@@ -136,14 +136,12 @@
 
 # --- PHASE A: Delete стейл policies (in state, not in target) ---
 - name: "[{{ dto_label_name }}] Phase A — Delete стейл managed policies via weed shell"
-  shell: |
-    echo "s3.policy -delete -name={{ item.name }}" | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.policy -delete -name={{ item.name }}"
   loop: "{{ lookup('vars', _local_to_delete_policies_key) }}"
   loop_control:
     label: "{{ item.name }}"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
@@ -151,14 +149,14 @@
 # Document -> stdin -> /tmp file -> weed shell -put -file, всё в одном kubectl exec
 # (single pod из многорепличного deploy/seaweedfs-s3 — файл доступен weed shell'у).
 - name: "[{{ dto_label_name }}] Phase B — Put target managed policies via weed shell s3.policy -put -file"
-  shell: |
-    printf '%s' '{{ item.document | to_json }}' | \
-      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
-        sh -c 'cat > /tmp/policy-sync.json && echo "s3.policy -put -name={{ item.name }} -file=/tmp/policy-sync.json" | weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888'
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.policy -put -name={{ item.name }} -file=/tmp/policy-sync.json"
+    dto_weed_stdin_payload: "{{ item.document | to_json }}"
+    dto_weed_stdin_path: "/tmp/policy-sync.json"
   loop: "{{ lookup('vars', _local_to_put_policies_key) }}"
   loop_control:
     label: "{{ item.name }}"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 

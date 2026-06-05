@@ -1,0 +1,60 @@
+# =============================================================================
+# SeaweedFS weed-shell exec — fail-fast wrapper around `kubectl exec | weed shell`
+# =============================================================================
+# Reusable task include. Runs ONE weed-shell command against the live cluster and
+# FAILS the task if the command errored.
+#
+# WHY: weed shell reading commands from a pipe ALWAYS exits 0, even on a command
+# error (sources/seaweedfs/weed/shell/shell_liner.go:144-151 prints "error: <msg>"
+# / "unknown command: <cmd>" to stderr and continues; weed/command/shell.go:71
+# always returns success). Without this wrapper a failed s3.*/fs.* operation looks
+# like success, and the sync's ConfigMap state then gets written over a no-op
+# (silent drift). This wrapper greps stderr for weed shell's stable error prefixes.
+#
+# Required vars:
+#   dto_label_name   — task label prefix (inherited from caller scope)
+#   dto_weed_command — weed-shell command line, e.g. "s3.bucket.create -name=x -owner=y"
+#
+# Optional vars (file-staging — s3.policy -put needs -file=<path>, no inline form).
+# Set BOTH together:
+#   dto_weed_stdin_payload — content written to a file inside the pod before the command
+#   dto_weed_stdin_path    — that file's path inside the pod (e.g. /tmp/policy-sync.json)
+#
+# INVOCATION CONTRACT: ALWAYS called via a LOOPED include with `run_once: true` ON
+# THE INCLUDE. Inner tasks carry `delegate_to` but DELIBERATELY NO `run_once` — an
+# inner run_once inside a looped dynamic include silently skips all iterations.
+#
+# Requires global vars: seaweedfs_namespace, master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert weed-shell params"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_weed_command is defined
+      - dto_weed_command | length > 0
+    fail_msg: >-
+      tasks-seaweedfs-weed-shell: dto_label_name + dto_weed_command required (non-empty).
+  delegate_to: "{{ master_manager_fact }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] weed shell: {{ dto_weed_command }}"
+  shell: |
+    {% if dto_weed_stdin_payload is defined %}
+    printf '%s' {{ dto_weed_stdin_payload | quote }} | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        sh -c 'cat > {{ dto_weed_stdin_path }} && echo "{{ dto_weed_command }}" | weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888'
+    {% else %}
+    echo "{{ dto_weed_command }}" | \
+      kubectl exec -i -n {{ seaweedfs_namespace }} deploy/seaweedfs-s3 -- \
+        weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888
+    {% endif %}
+  register: _local_weed_shell_result
+  failed_when: >-
+    _local_weed_shell_result.stderr is regex('(^|\n)error: ')
+    or _local_weed_shell_result.stderr is regex('(^|\n)unknown command: ')
+  changed_when: false
+  timeout: 120
+  delegate_to: "{{ master_manager_fact }}"
+  tags: [always]
