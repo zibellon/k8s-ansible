@@ -169,7 +169,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name`, `dto_vault_delete_path` (full KV path incl. mount, e.g. `eso-secret/seaweedfs/old-user`).
 - **Validates (assert).** `dto_label_name` defined + non-empty; `dto_vault_delete_path` defined + non-empty.
 - **Output.** Vault path removed. No facts exported.
-- **Callers.** None currently. Generic Vault primitive — usable by any future `<c>-sync.yaml` / `-rotate.yaml`.
+- **Callers.** `tasks-seaweedfs-identity-secret-distribute.yaml` (Phase B — vault-delete стейл distribution paths). Generic Vault primitive — usable by any `<c>-sync.yaml` / `-rotate.yaml`.
 - **Idempotent.** Yes — missing path treated as success. `failed_when` list accepts `rc != 0` only when stderr does NOT contain `'no value found'` or `'not found'` (case insensitive). `changed_when: rc == 0` so missing-path runs report unchanged.
 
 ### 1.14 `tasks-generate-secret.yaml`
