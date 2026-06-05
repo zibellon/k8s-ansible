@@ -166,32 +166,6 @@ def test_distribute_paths_to_add_raises_on_duplicate_paths(sample_vault_json):
     ]
     with pytest.raises(AnsibleFilterError, match='Duplicate'):
         sw.seaweedfs_distribute_paths_to_add(sample_vault_json, target, '')
-
-
-def test_distribute_new_state_json_happy(sample_target_identities):
-    """Happy: target with alice + extra_vault_paths → serialized state JSON contains alice entry."""
-    target = [{'name': 'alice', 'extra_vault_paths': ['p1', 'p2']}]
-    result = sw.seaweedfs_distribute_new_state_json('', target, '')
-    parsed = json.loads(result)
-    assert parsed == [{'identity_name': 'alice', 'vault_paths': ['p1', 'p2']}]
-
-
-def test_distribute_new_state_json_empty_target():
-    """Edge: empty target → '[]' string."""
-    result = sw.seaweedfs_distribute_new_state_json('', [], '')
-    assert json.loads(result) == []
-
-
-def test_distribute_new_state_json_skips_identities_without_paths():
-    """Edge: target with identity без extra_vault_paths → not included in state."""
-    target = [
-        {'name': 'admin', 'actions': ['Admin']},  # no extra_vault_paths
-        {'name': 'alice', 'extra_vault_paths': ['p1']},
-    ]
-    result = sw.seaweedfs_distribute_new_state_json('', target, '')
-    parsed = json.loads(result)
-    assert len(parsed) == 1
-    assert parsed[0]['identity_name'] == 'alice'
 # =============================================================================
 # bucket-sync (Layer 2) — seaweedfs_buckets_* (stateless)
 # =============================================================================
@@ -258,22 +232,6 @@ def test_buckets_quotas_to_apply_invalid_size_raises():
     target = [{'name': 'b1', 'replication': '001', 'quota': {'enabled': True, 'size': '100GB'}}]
     with pytest.raises(AnsibleFilterError, match='Unsupported'):
         sw.seaweedfs_buckets_quotas_to_apply('', target, '')
-
-
-def test_buckets_new_state_json_serializes_target(sample_target_buckets):
-    """Happy: target serialized to JSON string with sort_keys."""
-    result = sw.seaweedfs_buckets_new_state_json('', sample_target_buckets, '')
-    parsed = json.loads(result)
-    assert len(parsed) == 2
-    # determinism via sort_keys=True
-    result2 = sw.seaweedfs_buckets_new_state_json('', sample_target_buckets, '')
-    assert result == result2
-
-
-def test_buckets_new_state_json_empty_target():
-    """Edge: empty target → '[]' string."""
-    result = sw.seaweedfs_buckets_new_state_json('', [], '')
-    assert json.loads(result) == []
 # =============================================================================
 # bucket-sync (Layer 2) — replication + rack + dataCenter immutable settings (v8)
 # =============================================================================
@@ -392,21 +350,6 @@ def test_policies_to_delete_empty_state(sample_managed_policies):
     """Edge: no ConfigMap state → no deletes."""
     result = sw.seaweedfs_policies_to_delete('', sample_managed_policies, '')
     assert result == []
-
-
-def test_policies_new_state_json_serializes_target(sample_managed_policies):
-    """Happy: target serialized to JSON with sort_keys (deterministic)."""
-    result = sw.seaweedfs_policies_new_state_json('', sample_managed_policies, '')
-    parsed = json.loads(result)
-    assert len(parsed) == 2
-    result2 = sw.seaweedfs_policies_new_state_json('', sample_managed_policies, '')
-    assert result == result2
-
-
-def test_policies_new_state_json_empty_target():
-    """Edge: empty target → '[]' string."""
-    result = sw.seaweedfs_policies_new_state_json('', [], '')
-    assert json.loads(result) == []
 
 
 def test_policies_validation_raises_on_missing_name():

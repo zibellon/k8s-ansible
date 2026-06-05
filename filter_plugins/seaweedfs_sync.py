@@ -302,30 +302,6 @@ def seaweedfs_distribute_paths_to_add(vault_raw_json, target_identities, configm
     creds_by_name = _extract_creds_by_name(combined)
     _validate_creds_exist(target_identities, creds_by_name)
     return _compute_distribution_pairs(target_identities, creds_by_name)
-
-
-def seaweedfs_distribute_new_state_json(vault_raw_json, target_identities, configmap_raw_json):
-    """JSON-serialized new ConfigMap state for Phase C kubectl apply.
-
-    Stateless filter: full validation + state build + serialize inside.
-
-    Args:
-        vault_raw_json: ignored — kept for shape consistency.
-        target_identities: list — full target from inventory (base + extra).
-        configmap_raw_json: ignored — kept for shape consistency.
-
-    Returns:
-        str — JSON-serialized list of {identity_name, vault_paths} entries
-        (only identities with non-empty extra_vault_paths), sort_keys=True.
-
-    Raises:
-        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique.
-    """
-    _validate_anonymous_no_extra(target_identities)
-    target_paths = _flatten_target_paths(target_identities)
-    _validate_paths_unique(target_paths)
-    new_state = _build_new_distribution_state(target_identities)
-    return json.dumps(new_state, sort_keys=True)
 # =============================================================================
 # Private helpers (Layer 2 — bucket-sync)
 # =============================================================================
@@ -513,19 +489,6 @@ def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_
     return _enrich_quotas_with_size_mib(quota_buckets)
 
 
-def seaweedfs_buckets_new_state_json(vault_raw_json, target_buckets, configmap_raw_json):
-    """JSON-serialized target_buckets for ConfigMap state update (Phase F).
-
-    Args, Raises: same as seaweedfs_buckets_to_delete.
-
-    Returns:
-        str — json.dumps(target_buckets, sort_keys=True). Phase F kubectl apply
-        consumes this directly без |to_json.
-    """
-    _validate_buckets_have_replication(target_buckets)
-    return json.dumps(target_buckets, sort_keys=True)
-
-
 def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, configmap_raw_json):
     """Detect immutable settings (replication/rack/dataCenter) changes vs state.
 
@@ -658,27 +621,6 @@ def seaweedfs_policies_to_delete(vault_raw_json, target_policies, configmap_raw_
     state = _parse_configmap_state(configmap_raw_json)
     diff = _compute_policy_diff(state, target_policies)
     return diff['to_delete']
-
-
-def seaweedfs_policies_new_state_json(vault_raw_json, target_policies, configmap_raw_json):
-    """JSON-serialized target_policies for ConfigMap state update.
-
-    Stateless filter: validate + serialize target.
-
-    Args:
-        vault_raw_json: ignored — kept for shape consistency.
-        target_policies: list — full target from inventory (base + extra).
-        configmap_raw_json: ignored — kept for shape consistency.
-
-    Returns:
-        str — json.dumps(target_policies, sort_keys=True). ConfigMap kubectl apply
-        consumes this directly без |to_json.
-
-    Raises:
-        AnsibleFilterError if any policy missing name or document.
-    """
-    _validate_managed_policies(target_policies)
-    return json.dumps(target_policies, sort_keys=True)
 # =============================================================================
 # Private helpers (per-item ConfigMap state split)
 # =============================================================================
@@ -854,11 +796,9 @@ class FilterModule(object):
             'seaweedfs_identities_to_delete': seaweedfs_identities_to_delete,
             'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,
-            'seaweedfs_distribute_new_state_json': seaweedfs_distribute_new_state_json,
             'seaweedfs_buckets_to_delete': seaweedfs_buckets_to_delete,
             'seaweedfs_buckets_to_create': seaweedfs_buckets_to_create,
             'seaweedfs_buckets_quotas_to_apply': seaweedfs_buckets_quotas_to_apply,
-            'seaweedfs_buckets_new_state_json': seaweedfs_buckets_new_state_json,
             'seaweedfs_buckets_immutable_violations': seaweedfs_buckets_immutable_violations,
             'seaweedfs_buckets_owners_to_set': seaweedfs_buckets_owners_to_set,
             'seaweedfs_policies_to_put': seaweedfs_policies_to_put,
@@ -868,5 +808,4 @@ class FilterModule(object):
             'seaweedfs_buckets_configmaps_to_apply': seaweedfs_buckets_configmaps_to_apply,
             'seaweedfs_policies_configmaps_to_apply': seaweedfs_policies_configmaps_to_apply,
             'seaweedfs_distribute_configmaps_to_apply': seaweedfs_distribute_configmaps_to_apply,
-            'seaweedfs_policies_new_state_json': seaweedfs_policies_new_state_json,
         }
