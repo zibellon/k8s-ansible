@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (32 tasks)
+## 1. `playbook-app/tasks/` (33 tasks)
 
 The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
@@ -156,12 +156,12 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 
 ### 1.13 `tasks-vault-put.yaml`
 
-- **Purpose.** `vault kv put`, then annotate the target ExternalSecret to force ESO sync, then wait for the downstream K8s `Secret` to appear.
+- **Purpose.** `vault kv put` to a KV v2 path (full replace). Nothing else — ESO force-sync (`tasks-eso-force-sync.yaml`) and the downstream K8s `Secret` wait (`tasks-wait-secret.yaml`) are the caller's responsibility, as separate steps.
 - **Input.** `dto_label_name`, `dto_vault_put_path` (full KV path), `dto_vault_put_data` (non-empty dict of `{field: value}`).
 - **Validates (assert).** `dto_label_name` defined + non-empty; `dto_vault_put_path` defined + non-empty; `dto_vault_put_data` defined, is mapping, non-empty.
-- **Output.** Vault updated, K8s Secret updated.
-- **Callers.** Rotation flows (Postgres, Redis, MinIO, GitLab root, ArgoCD admin, Vault admin-token).
-- **Idempotent.** Re-running re-puts identical values — safe, just a noop in ESO (force-sync annotation bumps once more).
+- **Output.** Vault path written (full replace). Does NOT annotate any ExternalSecret or touch any K8s `Secret`.
+- **Callers.** Seed + rotation flows (Postgres, Redis, GitLab root, ArgoCD admin, Vault admin-token, seaweedfs identity/bucket/admin seeds).
+- **Idempotent.** Re-running re-puts identical values — safe (full replace, no side effects).
 
 ### 1.13a `tasks-vault-delete.yaml`
 
@@ -353,6 +353,15 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Output.** Managed policies put/deleted в filer `/etc/iam/policies/`; ConfigMap state updated.
 - **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 4 SYNC (tag `[policy-sync]`, **первый** в sync-блоке — ДО user-sync, после install; policy должна существовать до identity attach).
 - **Idempotent.** Yes — diff vs ConfigMap state; `s3.policy -put` idempotent overwrite (put-all каждый run, self-healing).
+
+### 1.33 `tasks-seaweedfs-weed-shell.yaml`
+
+- **Purpose.** Fail-fast обёртка вокруг одного `kubectl exec -i deploy/seaweedfs-s3 -- weed shell` вызова. `weed shell` из pipe ВСЕГДА завершается с exit 0 даже при ошибке команды (пишет строку `error: ` / `unknown command: ` в stderr и возвращает success — `sources/seaweedfs/weed/shell/shell_liner.go:144-151`), поэтому обёртка инспектирует stderr и валит таск на этих маркерах — упавшая `s3.*`/`fs.*` операция больше не выглядит успехом (защита от тихого дрейфа state).
+- **Input.** `dto_label_name` (log prefix, наследуется из scope caller'а), `dto_weed_command` (строка команды weed shell). **Optional** (file-staging — для `s3.policy -put`, которому нужен `-file=<path>`, set BOTH): `dto_weed_stdin_payload` (контент, пишется в файл в pod'е перед командой) + `dto_weed_stdin_path` (путь этого файла в pod'е).
+- **Validates (assert).** `dto_label_name`, `dto_weed_command` — defined + non-empty.
+- **Output.** Команда выполняется в живом filer. `register` + `failed_when` валят таск, если stderr matches `(^|\n)error: ` или `(^|\n)unknown command: `. `changed_when: false`; `timeout: 120` (защита от документированного connect-hang при недоступном master).
+- **Callers.** `tasks-seaweedfs-policy-sync.yaml` (Phase A/B), `tasks-seaweedfs-user-sync.yaml` (Phase A/B), `tasks-seaweedfs-bucket-sync.yaml` (Phase A-E) — все через looped `include_tasks` с `run_once: true` на include.
+- **Idempotent.** N/A — выполняет переданную команду. **Invocation contract:** ВСЕГДА вызывается через looped include с `run_once` на include; inner-таски обёртки несут `delegate_to`, но НЕ `run_once` (inner `run_once` внутри looped dynamic include молча скипает все итерации).
 
 ---
 
