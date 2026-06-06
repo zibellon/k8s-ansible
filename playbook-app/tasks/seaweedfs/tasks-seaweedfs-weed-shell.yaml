@@ -20,9 +20,19 @@
 #   dto_weed_stdin_payload — content written to a file inside the pod before the command
 #   dto_weed_stdin_path    — that file's path inside the pod (e.g. /tmp/policy-sync.json)
 #
-# INVOCATION CONTRACT: ALWAYS called via a LOOPED include with `run_once: true` ON
-# THE INCLUDE. Inner tasks carry `delegate_to` but DELIBERATELY NO `run_once` — an
-# inner run_once inside a looped dynamic include silently skips all iterations.
+# Optional vars (READ mode — capture stdout for the caller):
+#   dto_weed_capture_fact — name of a caller fact to publish this command's stdout into
+#       (filer reads: s3.configure / s3.policy -list / fs.configure / s3.bucket.list). The
+#       caller reads it via lookup('vars', <name>). Use a NON-looped include for reads.
+#   dto_weed_no_log       — bool (default false). When true → no_log on the exec + capture
+#       (s3.configure stdout + apply '-secret_key=' carry plaintext secrets) AND the task
+#       name is redacted (no_log does NOT hide the name on its own).
+#
+# INVOCATION CONTRACT: invoked either (a) APPLY mode — a LOOPED include with `run_once: true`
+# ON THE INCLUDE (dto_weed_command built per item); or (b) READ mode — a NON-looped include
+# with `run_once: true` ON THE INCLUDE + dto_weed_capture_fact. In BOTH modes run_once lives
+# on the include; the wrapper's inner tasks carry `delegate_to` but DELIBERATELY NO `run_once`
+# (an inner run_once inside a looped dynamic include silently skips all iterations).
 #
 # Requires global vars: seaweedfs_namespace, master_manager_fact
 # =============================================================================
@@ -39,7 +49,7 @@
   delegate_to: "{{ master_manager_fact }}"
   tags: [always]
 
-- name: "[{{ dto_label_name }}] weed shell: {{ dto_weed_command }}"
+- name: "[{{ dto_label_name }}] weed shell: {{ dto_weed_command if not (dto_weed_no_log | default(false)) else '(redacted — no_log)' }}"
   shell: |
     {% if dto_weed_stdin_payload is defined %}
     printf '%s' {{ dto_weed_stdin_payload | quote }} | \
@@ -55,6 +65,15 @@
     _local_weed_shell_result.stderr is regex('(^|\n)error: ')
     or _local_weed_shell_result.stderr is regex('(^|\n)unknown command: ')
   changed_when: false
+  no_log: "{{ dto_weed_no_log | default(false) }}"
   timeout: 120
+  delegate_to: "{{ master_manager_fact }}"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Capture weed-shell stdout to caller fact"
+  set_fact:
+    "{{ dto_weed_capture_fact }}": "{{ _local_weed_shell_result.stdout }}"
+  when: dto_weed_capture_fact is defined
+  no_log: "{{ dto_weed_no_log | default(false) }}"
   delegate_to: "{{ master_manager_fact }}"
   tags: [always]
