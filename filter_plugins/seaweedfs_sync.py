@@ -104,6 +104,12 @@ def _parse_s3_configure_identities(raw):
             'policyNames': list(ident.get('policyNames') or []),
         })
     return result
+
+
+def _creds_by_name_from_identities(parsed):
+    """{name: {'accessKey','secretKey'}} from _parse_s3_configure_identities output.
+    Used by identity-distribute (Layer 3) to read identity credentials from the filer."""
+    return {i['name']: {'accessKey': i['accessKey'], 'secretKey': i['secretKey']} for i in parsed}
 # =============================================================================
 # Private helpers (Layer 3 — identity-distribute)
 # =============================================================================
@@ -164,8 +170,8 @@ def _validate_creds_exist(target_identities, creds_by_name):
         name = identity['name']
         if name not in creds_by_name:
             raise AnsibleFilterError(
-                "Identity '{0}' has extra_vault_paths but missing in Vault "
-                "combined JSON. Run 'ansible-playbook playbook-app/seaweedfs-install.yaml "
+                "Identity '{0}' has extra_vault_paths but is missing from the filer "
+                "s3.configure dump. Run 'ansible-playbook playbook-app/seaweedfs-install.yaml "
                 "--tags user-sync' first.".format(name)
             )
 
@@ -379,13 +385,13 @@ def seaweedfs_combined_json_violations(raw):
 # =============================================================================
 # Public Layer 3 filters — stateless identity-distribute orchestrators
 # =============================================================================
-def seaweedfs_distribute_paths_to_delete(vault_raw_json, target_identities, configmap_raw_json):
+def seaweedfs_distribute_paths_to_delete(s3configure_raw, target_identities, configmap_raw_json):
     """List of state paths to vault-delete (Phase B iteration list).
 
     Stateless filter: full validation + diff computation inside.
 
     Args:
-        vault_raw_json: ignored — kept for shape consistency with other Layer 3 filters.
+        s3configure_raw: ignored — kept for shape consistency with other Layer 3 filters.
         target_identities: list — full target from inventory (base + extra).
         configmap_raw_json: str — ConfigMap state raw stdout (may be '', None, malformed).
 
@@ -402,29 +408,28 @@ def seaweedfs_distribute_paths_to_delete(vault_raw_json, target_identities, conf
     return _compute_state_paths_to_delete(state, target_paths)
 
 
-def seaweedfs_distribute_paths_to_add(vault_raw_json, target_identities, configmap_raw_json):
-    """List of (path, name, accessKey, secretKey) pairs for Phase A vault-put.
+def seaweedfs_distribute_paths_to_add(s3configure_raw, target_identities, configmap_raw_json):
+    """List of {path, name, accessKey, secretKey} pairs for the Phase A vault-put loop.
 
-    Stateless filter: full validation + creds extraction + pairs computation inside.
+    Stateless filter: validation + creds extraction + pairs computation inside.
+    (v17: credentials read from the filer `s3.configure` dump, not the Vault combined JSON.)
 
     Args:
-        vault_raw_json: str — Vault combined JSON (source of identity credentials).
+        s3configure_raw: str — `s3.configure` dump (source of identity credentials).
         target_identities: list — full target from inventory (base + extra).
         configmap_raw_json: ignored — kept for shape consistency.
 
     Returns:
-        list of {path, name, accessKey, secretKey} dicts — (identity, path) pairs
-        with embedded credentials for Ansible vault-put loop.
+        list of {path, name, accessKey, secretKey} dicts.
 
     Raises:
-        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique
-            OR any identity (with extra_vault_paths) missing in combined JSON.
-    """
+        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique OR any
+        identity (with extra_vault_paths) missing from the filer dump."""
     _validate_anonymous_no_extra(target_identities)
     target_paths = _flatten_target_paths(target_identities)
     _validate_paths_unique(target_paths)
-    combined = _parse_combined_json(vault_raw_json)
-    creds_by_name = _extract_creds_by_name(combined)
+    parsed = _parse_s3_configure_identities(s3configure_raw)
+    creds_by_name = _creds_by_name_from_identities(parsed)
     _validate_creds_exist(target_identities, creds_by_name)
     return _compute_distribution_pairs(target_identities, creds_by_name)
 # =============================================================================

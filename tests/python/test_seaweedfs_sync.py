@@ -137,18 +137,18 @@ def test_combined_json_violations_wrong_shape_returns_violation():
 # identity-distribute (Layer 3) — seaweedfs_distribute_* (stateless)
 # =============================================================================
 
-def test_distribute_paths_to_delete_orphan_path(sample_vault_json, sample_configmap_state_distribute):
+def test_distribute_paths_to_delete_orphan_path(sample_s3configure_raw, sample_configmap_state_distribute):
     """Happy: state has stale path 'eso-secret/team/alice/old', target has new path — old returned for delete."""
     target = [{'name': 'alice', 'extra_vault_paths': ['eso-secret/team/alice/new']}]
     result = sw.seaweedfs_distribute_paths_to_delete(
-        sample_vault_json, target, sample_configmap_state_distribute)
+        sample_s3configure_raw, target, sample_configmap_state_distribute)
     assert result == [{'path': 'eso-secret/team/alice/old', 'identity_name': 'alice'}]
 
 
-def test_distribute_paths_to_delete_empty_state(sample_vault_json):
+def test_distribute_paths_to_delete_empty_state(sample_s3configure_raw):
     """Edge: empty state (no ConfigMap yet) → empty deletes list."""
     target = [{'name': 'alice', 'extra_vault_paths': ['p1']}]
-    result = sw.seaweedfs_distribute_paths_to_delete(sample_vault_json, target, '')
+    result = sw.seaweedfs_distribute_paths_to_delete(sample_s3configure_raw, target, '')
     assert result == []
 
 
@@ -159,10 +159,10 @@ def test_distribute_paths_to_delete_raises_on_anonymous_with_extra():
         sw.seaweedfs_distribute_paths_to_delete('', target, '')
 
 
-def test_distribute_paths_to_add_happy(sample_vault_json):
+def test_distribute_paths_to_add_happy(sample_s3configure_raw):
     """Happy: alice with one path → returns one pair with embedded creds."""
     target = [{'name': 'alice', 'extra_vault_paths': ['eso-secret/team/alice/new']}]
-    result = sw.seaweedfs_distribute_paths_to_add(sample_vault_json, target, '')
+    result = sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
     assert result == [{
         'path': 'eso-secret/team/alice/new',
         'name': 'alice',
@@ -171,21 +171,21 @@ def test_distribute_paths_to_add_happy(sample_vault_json):
     }]
 
 
-def test_distribute_paths_to_add_raises_on_missing_creds(sample_vault_json):
+def test_distribute_paths_to_add_raises_on_missing_creds(sample_s3configure_raw):
     """Edge: identity 'orphan' not in combined JSON → validation raise."""
     target = [{'name': 'orphan', 'extra_vault_paths': ['p1']}]
-    with pytest.raises(AnsibleFilterError, match='missing in Vault'):
-        sw.seaweedfs_distribute_paths_to_add(sample_vault_json, target, '')
+    with pytest.raises(AnsibleFilterError, match='missing from the filer'):
+        sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
 
 
-def test_distribute_paths_to_add_raises_on_duplicate_paths(sample_vault_json):
+def test_distribute_paths_to_add_raises_on_duplicate_paths(sample_s3configure_raw):
     """Edge: two identities sharing same path → paths-unique validation raise."""
     target = [
         {'name': 'admin', 'extra_vault_paths': ['shared/path']},
         {'name': 'alice', 'extra_vault_paths': ['shared/path']},
     ]
     with pytest.raises(AnsibleFilterError, match='Duplicate'):
-        sw.seaweedfs_distribute_paths_to_add(sample_vault_json, target, '')
+        sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
 # =============================================================================
 # bucket-sync (Layer 2) — seaweedfs_buckets_* (stateless)
 # =============================================================================
