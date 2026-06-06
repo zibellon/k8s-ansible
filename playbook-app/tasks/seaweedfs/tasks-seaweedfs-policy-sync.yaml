@@ -6,24 +6,21 @@
 #     vars:
 #       dto_label_name: "<caller-prefix>"
 #
-# v14 filer-driven IAM. Managed policies (named AWS-style documents) применяются
+# v17 filer-driven IAM. Managed policies (named AWS-style documents) применяются
 # в filer через weed shell s3.policy -put/-delete → /etc/iam/policies/<n>.json.
 # Прикрепляются к identities через identity.policy_names (user-sync, s3.configure
 # -policies). Этот task должен выполняться ДО user-sync (policy должна существовать
 # до attach).
 #
-# State (v15 — per-item ConfigMaps): «последний applied target» хранится НЕ в одном
-# ConfigMap, а в наборе per-item ConfigMap'ов 'seaweedfs-sync-policies-<policy>'
-# (по одному на policy), сгруппированных label'ом 'seaweedfs-sync-state: policies'
-# (избегаем etcd per-object size limit). Чтение всей группы — одним
-# 'kubectl get cm -l seaweedfs-sync-state=policies -o json'; reconstruction в
-# combined-array JSON (фильтр seaweedfs_state_configmaps_to_combined_json) кормит
-# diff-фильтры без изменений.
+# State (v17 — filer = единственный источник истины): текущее состояние читается
+# напрямую из живого filer командой `s3.policy -list` (имена + JSON-документы), а не
+# из внешнего ConfigMap-стора. diff vs inventory target → put changed/new + delete
+# стейл. Внешний state-стор (бывшие per-item ConfigMap'ы) устранён.
 #
-# Stateless filter API: seaweedfs_policies_to_put / _to_delete (diff), плюс
-# seaweedfs_state_configmaps_to_combined_json (read reconstruction),
-# seaweedfs_policies_configmaps_to_apply / seaweedfs_state_configmaps_to_delete
-# (write per-item + prune stale).
+# Stateless filter API (signature: s3policy_list_raw | filter(target_policies)):
+#   seaweedfs_policies_to_put    — put где документ новый ИЛИ изменился (semantic
+#                                  dict ==, order-insensitive); только changed/new.
+#   seaweedfs_policies_to_delete — filer-policy не в target → delete.
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation.
 #
@@ -32,18 +29,19 @@
 #     Schema per policy: {name, document} where document is AWS IAM policy doc.
 #   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
 #
-# Sync phases (2 resource loops + 2 ConfigMap loops):
-#   A. Delete стейл policies (in state, not in target): weed shell s3.policy -delete.
-#   B. Put target policies (put-all, idempotent overwrite): weed shell s3.policy -put -file.
-#   C. Apply per-item state ConfigMaps (labeled) для target policies.
-#   D. Delete стейл per-item state ConfigMaps (policy дропнута из target).
+# Sync flow (1 read + 2 resource loops):
+#   READ. s3.policy -list (live filer) → capture stdout (weed-shell wrapper, READ-
+#         режим: NON-looped include + run_once НА include + dto_weed_capture_fact;
+#         s3.policy -list секретов не содержит → dto_weed_no_log не нужен).
+#   A.    Delete стейл policies (filer, not in target): weed shell s3.policy -delete.
+#   B.    Put changed/new target policies: weed shell s3.policy -put -file.
 #
 # Phase B detail: s3.policy -put требует -file=<path> (нет inline варианта). Document
 # передаётся через stdin (printf | kubectl exec -i) в pod и пишется в /tmp файл,
 # затем weed shell -put -file — ОБА в одном kubectl exec (sh -c 'cat > f && weed shell'),
 # т.к. deploy/seaweedfs-s3 многорепличный (один exec = один pod = файл доступен).
 # Document передаётся в single-quoted printf (managed policy documents не содержат
-# одинарных кавычек — only JSON double-quotes).
+# одинарных кавычек — guard в _validate_managed_policies).
 # =============================================================================
 
 - name: "[{{ dto_label_name }}] Assert dto_label_name provided"
@@ -60,11 +58,9 @@
 - name: "[{{ dto_label_name }}] Declare local fact keys"
   set_fact:
     _local_target_policies_key: "_local_target_policies"
-    _local_configmap_raw_key: "_local_configmap_raw"
+    _local_s3policy_raw_key: "_local_s3policy_raw"
     _local_to_put_policies_key: "_local_to_put_policies"
     _local_to_delete_policies_key: "_local_to_delete_policies"
-    _local_configmaps_to_apply_key: "_local_configmaps_to_apply"
-    _local_configmaps_to_delete_key: "_local_configmaps_to_delete"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -76,65 +72,36 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Read current state ConfigMaps (labeled, may be none)"
-  command: >-
-    kubectl get configmap -n {{ seaweedfs_namespace }}
-    -l seaweedfs-sync-state=policies -o json
-  register: _local_configmaplist_reg
-  changed_when: false
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Reconstruct combined state from labeled ConfigMaps"
-  set_fact:
-    "{{ _local_configmap_raw_key }}": >-
-      {{ _local_configmaplist_reg.stdout | seaweedfs_state_configmaps_to_combined_json }}
-  delegate_to: "{{ master_manager_fact }}"
+# --- READ: current managed policies from the live filer (s3.policy -list) ---
+- name: "[{{ dto_label_name }}] Read current managed policies from filer (s3.policy -list)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.policy -list"
+    dto_weed_capture_fact: "{{ _local_s3policy_raw_key }}"
   run_once: true
   tags: [always]
 
 - name: "[{{ dto_label_name }}] Compute policies_to_delete via filter"
   set_fact:
     "{{ _local_to_delete_policies_key }}": >-
-      {{ '' | seaweedfs_policies_to_delete(
-           lookup('vars', _local_target_policies_key),
-           lookup('vars', _local_configmap_raw_key)
+      {{ lookup('vars', _local_s3policy_raw_key) | seaweedfs_policies_to_delete(
+           lookup('vars', _local_target_policies_key)
          ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute policies_to_put via filter (put-all target)"
+- name: "[{{ dto_label_name }}] Compute policies_to_put via filter (changed/new only)"
   set_fact:
     "{{ _local_to_put_policies_key }}": >-
-      {{ '' | seaweedfs_policies_to_put(
-           lookup('vars', _local_target_policies_key),
-           lookup('vars', _local_configmap_raw_key)
+      {{ lookup('vars', _local_s3policy_raw_key) | seaweedfs_policies_to_put(
+           lookup('vars', _local_target_policies_key)
          ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute per-item state ConfigMaps to apply"
-  set_fact:
-    "{{ _local_configmaps_to_apply_key }}": >-
-      {{ lookup('vars', _local_target_policies_key) | seaweedfs_policies_configmaps_to_apply }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Compute stale state ConfigMaps to delete"
-  set_fact:
-    "{{ _local_configmaps_to_delete_key }}": >-
-      {{ _local_configmaplist_reg.stdout | seaweedfs_state_configmaps_to_delete(
-           lookup('vars', _local_configmaps_to_apply_key) | map(attribute='name') | list
-         ) }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# --- PHASE A: Delete стейл policies (in state, not in target) ---
+# --- PHASE A: Delete стейл policies (filer, not in target) ---
 - name: "[{{ dto_label_name }}] Phase A — Delete стейл managed policies via weed shell"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
@@ -145,7 +112,7 @@
   run_once: true
   tags: [always]
 
-# --- PHASE B: Put target policies (put-all, idempotent overwrite) ---
+# --- PHASE B: Put changed/new target policies ---
 # Document -> stdin -> /tmp file -> weed shell -put -file, всё в одном kubectl exec
 # (single pod из многорепличного deploy/seaweedfs-s3 — файл доступен weed shell'у).
 - name: "[{{ dto_label_name }}] Phase B — Put target managed policies via weed shell s3.policy -put -file"
@@ -157,31 +124,5 @@
   loop: "{{ lookup('vars', _local_to_put_policies_key) }}"
   loop_control:
     label: "{{ item.name }}"
-  run_once: true
-  tags: [always]
-
-# --- PHASE C: Apply per-item state ConfigMaps (labeled seaweedfs-sync-state=policies) ---
-- name: "[{{ dto_label_name }}] Phase C — Apply per-item state ConfigMaps"
-  shell: |
-    kubectl create configmap {{ item.name }} -n {{ seaweedfs_namespace }} \
-      --from-literal=state='{{ item.content }}' \
-      --dry-run=client -o yaml | \
-      kubectl label --local -f - -o yaml seaweedfs-sync-state=policies | \
-      kubectl apply -f -
-  loop: "{{ lookup('vars', _local_configmaps_to_apply_key) }}"
-  loop_control:
-    label: "{{ item.name }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# --- PHASE D: Delete стейл per-item state ConfigMaps (policy dropped from target) ---
-- name: "[{{ dto_label_name }}] Phase D — Delete стейл state ConfigMaps"
-  command: >-
-    kubectl delete configmap {{ item }} -n {{ seaweedfs_namespace }} --ignore-not-found
-  loop: "{{ lookup('vars', _local_configmaps_to_delete_key) }}"
-  loop_control:
-    label: "{{ item }}"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
