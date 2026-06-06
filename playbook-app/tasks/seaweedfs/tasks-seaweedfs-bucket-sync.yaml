@@ -6,40 +6,43 @@
 #     vars:
 #       dto_label_name: "<caller-prefix>"
 #
-# v17 filer-driven IAM. Buckets get an owner (identity); data access is via the
-# consumers' managed policies (SECTION 1+2), NOT bucket policies (removed).
+# v18 filer-driven IAM. Buckets get an owner (identity); data access is via the
+# consumers' managed policies, NOT bucket policies (removed). Фильтры в
+# filter_plugins/seaweedfs_bucket.py (split из монолита seaweedfs_sync.py).
 #
-# State (v17 — filer = единственный источник истины): текущее состояние читается
-# напрямую из живого filer двумя командами — fs.configure (location config:
-# replication/rack/dataCenter) + s3.bucket.list (existence + owner). diff vs inventory
-# target → delete стейл + create new + reconcile owner + apply quotas. Внешний
-# ConfigMap-стор (бывшие per-item ConfigMap'ы) устранён.
+# v18 changes: owner mutable→IMMUTABLE (owner-reconcile фаза удалена; owner в
+# immutable_violations); rack + dataCenter REQUIRED (fs.configure всегда с
+# -rack -dataCenter); quotas split на quota_to_upsert (-op=set) + quota_to_delete
+# (-op=remove). Read-once (×2) → focused-фильтры вызываются последовательно.
 #
-# Stateless filter API:
-#   seaweedfs_buckets_to_delete / _to_create / _owners_to_set / _immutable_violations
-#     — signature (fs_configure_raw, bucket_list_raw, target_buckets); each does full
-#       validation (replication presence + rack/dataCenter + format) + diff internally.
-#   seaweedfs_buckets_quotas_to_apply — signature (target_buckets); annotates every target
-#     bucket with _quota_op + _quota_size_mib (quota applied idempotently, no filer read).
+# State (filer = единственный источник истины): текущее состояние читается напрямую
+# из живого filer двумя командами — fs.configure (replication/rack/dataCenter) +
+# s3.bucket.list (existence + owner). diff vs inventory target.
+#
+# Stateless filter API (signature: (fs_configure_raw, bucket_list_raw, target_buckets)):
+#   seaweedfs_buckets_to_delete         — filer-bucket не в target → delete.
+#   seaweedfs_buckets_to_create         — target не в filer → create + fs.configure.
+#   seaweedfs_buckets_immutable_violations — kept-bucket с изменённым owner/replication/
+#                                         rack/dataCenter → fail-fast assert.
+#   seaweedfs_buckets_quota_to_upsert   — target с quota_size → -op=set -sizeMB.
+#   seaweedfs_buckets_quota_to_delete   — target без quota_size → -op=remove.
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation.
 #
 # Reads inventory:
 #   - seaweedfs_sync_buckets + _extra (from hosts-vars/seaweedfs-sync.yaml).
-#     Schema per bucket: {name, owner, replication, rack?, dataCenter?, quota_size?}.
+#     Schema per bucket: {name, owner, replication, rack, dataCenter, quota_size?}
+#     (owner/replication/rack/dataCenter REQUIRED; quota_size optional).
 #   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
 #
-# Sync flow (2 reads + 5 resource loops + immutable assert):
+# Sync flow (2 reads + immutable assert + 5 resource loops):
 #   READ. fs.configure + s3.bucket.list (live filer) → capture stdout (x2).
-#   A. Delete стейл buckets (weed shell s3.bucket.delete).
-#   B. Create new buckets (weed shell s3.bucket.create -owner=<owner>).
-#   C. Apply fs.configure для new buckets (replication + optional rack + dataCenter).
-#   D. Reconcile owner у kept buckets (weed shell s3.bucket.owner; owner mutable).
-#   E. Apply quotas всем target buckets (quota_size задан → -op=set; иначе -op=remove).
-#
-# Pre-phase ASSERT: после compute calls, до Phase A — fail-fast если ЛЮБОЕ
-# immutable поле (replication, rack или dataCenter) изменилось на kept bucket vs filer.
-# Sync aborts с detailed message, cluster intact.
+#   ASSERT. immutable (owner/replication/rack/dataCenter) на kept buckets → fail-fast.
+#   A. Delete стейл buckets (s3.bucket.delete).
+#   B. Create new buckets (s3.bucket.create -owner).
+#   C. fs.configure для new buckets (-replication -rack -dataCenter -apply, всегда).
+#   D. Quota upsert (s3.bucket.quota -op=set -sizeMB).
+#   E. Quota delete (s3.bucket.quota -op=remove).
 #
 # NOTE про bucket delete: 's3.bucket.delete' в SeaweedFS shell не имеет флага
 # -force, но команда сама делает hard delete — CollectionDelete sweeps все
@@ -64,8 +67,8 @@
     _local_bucket_list_raw_key: "_local_bucket_list_raw"
     _local_to_delete_buckets_key: "_local_to_delete_buckets"
     _local_to_create_buckets_key: "_local_to_create_buckets"
-    _local_owners_to_set_key: "_local_owners_to_set"
-    _local_quotas_to_apply_key: "_local_quotas_to_apply"
+    _local_quota_to_upsert_key: "_local_quota_to_upsert"
+    _local_quota_to_delete_key: "_local_quota_to_delete"
     _local_immutable_violations_key: "_local_immutable_violations"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -118,10 +121,10 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute owners_to_set via filter (kept buckets с changed owner)"
+- name: "[{{ dto_label_name }}] Compute quota_to_upsert via filter (buckets with quota_size)"
   set_fact:
-    "{{ _local_owners_to_set_key }}": >-
-      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_owners_to_set(
+    "{{ _local_quota_to_upsert_key }}": >-
+      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_quota_to_upsert(
            lookup('vars', _local_bucket_list_raw_key),
            lookup('vars', _local_target_buckets_key)
          ) }}
@@ -129,15 +132,18 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute buckets_quotas_to_apply via filter (op + size_mib)"
+- name: "[{{ dto_label_name }}] Compute quota_to_delete via filter (buckets without quota_size)"
   set_fact:
-    "{{ _local_quotas_to_apply_key }}": >-
-      {{ lookup('vars', _local_target_buckets_key) | seaweedfs_buckets_quotas_to_apply }}
+    "{{ _local_quota_to_delete_key }}": >-
+      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_quota_to_delete(
+           lookup('vars', _local_bucket_list_raw_key),
+           lookup('vars', _local_target_buckets_key)
+         ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute bucket immutable_violations via filter (replication + rack + dataCenter)"
+- name: "[{{ dto_label_name }}] Compute bucket immutable_violations via filter (owner + replication + rack + dataCenter)"
   set_fact:
     "{{ _local_immutable_violations_key }}": >-
       {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_immutable_violations(
@@ -148,20 +154,20 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Assert no immutable settings changes (replication/rack/dataCenter) — fail-fast"
+- name: "[{{ dto_label_name }}] Assert no immutable settings changes (owner/replication/rack/dataCenter) — fail-fast"
   assert:
     that:
       - lookup('vars', _local_immutable_violations_key) | length == 0
     fail_msg: |
-      ERROR: bucket immutable settings (replication/rack/dataCenter) change attempts detected.
+      ERROR: bucket immutable settings (owner/replication/rack/dataCenter) change attempts detected.
       Immutable settings changes post-creation cause data fragmentation in SeaweedFS — sync aborted.
 
       Violations ({{ lookup('vars', _local_immutable_violations_key) | length }} buckets):
       {% for v in lookup('vars', _local_immutable_violations_key) %}
-        - {{ v.name }}: replication '{{ v.state_replication }}' → '{{ v.target_replication }}', rack '{{ v.state_rack }}' → '{{ v.target_rack }}', dataCenter '{{ v.state_dataCenter }}' → '{{ v.target_dataCenter }}'
+        - {{ v.name }}: owner '{{ v.state_owner }}' → '{{ v.target_owner }}', replication '{{ v.state_replication }}' → '{{ v.target_replication }}', rack '{{ v.state_rack }}' → '{{ v.target_rack }}', dataCenter '{{ v.state_dataCenter }}' → '{{ v.target_dataCenter }}'
       {% endfor %}
 
-      To resolve: revert inventory target к state values OR migrate data manually + align inventory.
+      To resolve: revert inventory target к state values OR delete+recreate the bucket manually.
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -188,35 +194,35 @@
   run_once: true
   tags: [always]
 
-# --- PHASE C: Apply immutable settings (replication + rack + dataCenter) for new buckets ---
+# --- PHASE C: Apply immutable settings (replication + rack + dataCenter, all required) for new buckets ---
 - name: "[{{ dto_label_name }}] Phase C — Apply fs.configure для new buckets (replication + rack + dataCenter)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
-    dto_weed_command: "fs.configure -locationPrefix=/buckets/{{ item.name }} -replication={{ item.replication }}{% if item.rack is defined %} -rack={{ item.rack }}{% endif %}{% if item.dataCenter is defined %} -dataCenter={{ item.dataCenter }}{% endif %} -apply"
+    dto_weed_command: "fs.configure -locationPrefix=/buckets/{{ item.name }} -replication={{ item.replication }} -rack={{ item.rack }} -dataCenter={{ item.dataCenter }} -apply"
   loop: "{{ lookup('vars', _local_to_create_buckets_key) }}"
   loop_control:
-    label: "{{ item.name }} → replication={{ item.replication }}{% if item.rack is defined %}, rack={{ item.rack }}{% endif %}{% if item.dataCenter is defined %}, dataCenter={{ item.dataCenter }}{% endif %}"
+    label: "{{ item.name }} → replication={{ item.replication }}, rack={{ item.rack }}, dataCenter={{ item.dataCenter }}"
   run_once: true
   tags: [always]
 
-# --- PHASE D: Reconcile owner у kept buckets (owner mutable) ---
-- name: "[{{ dto_label_name }}] Phase D — Reconcile owner у kept buckets via weed shell s3.bucket.owner"
+# --- PHASE D: Quota upsert (buckets with quota_size) ---
+- name: "[{{ dto_label_name }}] Phase D — Quota upsert via weed shell (s3.bucket.quota -op=set)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
-    dto_weed_command: "s3.bucket.owner -name={{ item.name }} -owner={{ item.owner }}"
-  loop: "{{ lookup('vars', _local_owners_to_set_key) }}"
+    dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op=set -sizeMB={{ item._quota_size_mib }}"
+  loop: "{{ lookup('vars', _local_quota_to_upsert_key) }}"
   loop_control:
-    label: "{{ item.name }} → owner={{ item.owner }}"
+    label: "{{ item.name }} ({{ item._quota_size_mib }}MiB)"
   run_once: true
   tags: [always]
 
-# --- PHASE E: Apply quotas (size_mib pre-computed in compute filter) ---
-- name: "[{{ dto_label_name }}] Phase E — Apply quotas via weed shell (size_mib pre-computed)"
+# --- PHASE E: Quota delete (buckets without quota_size → unlimited) ---
+- name: "[{{ dto_label_name }}] Phase E — Quota delete via weed shell (s3.bucket.quota -op=remove)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
-    dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op={{ item._quota_op }}{% if item._quota_op == 'set' %} -sizeMB={{ item._quota_size_mib }}{% endif %}"
-  loop: "{{ lookup('vars', _local_quotas_to_apply_key) }}"
+    dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op=remove"
+  loop: "{{ lookup('vars', _local_quota_to_delete_key) }}"
   loop_control:
-    label: "{{ item.name }} (quota: {{ item._quota_op }}{% if item._quota_op == 'set' %} {{ item._quota_size_mib }}MiB{% endif %})"
+    label: "{{ item.name }}"
   run_once: true
   tags: [always]

@@ -14,15 +14,17 @@ import pytest
 
 @pytest.fixture
 def sample_target_buckets():
-    """Default target buckets: b1 with quota_size, b2 without (both с replication + owner)."""
+    """Default target buckets: b1 with quota_size, b2 without (both с replication + rack + dataCenter + owner)."""
     return [
         {
             'name': 'b1',
             'replication': '001',
+            'rack': 'workers-1',
+            'dataCenter': 'dc-1',
             'owner': 'gitlab',
             'quota_size': '1GiB',
         },
-        {'name': 'b2', 'replication': '001', 'owner': 'loki'},
+        {'name': 'b2', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'loki'},
     ]
 
 
