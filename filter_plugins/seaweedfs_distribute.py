@@ -1,14 +1,13 @@
 """
-SeaweedFS sync compute layer — pure Python filter plugin.
-Used by playbook-app/tasks/seaweedfs/tasks-seaweedfs-{user-sync,
-identity-secret-distribute,bucket-sync}.yaml. All compute (diff,
-JSON building, validation) lives here; Ansible task'и используют
-filters через {{ x | seaweedfs_<filter>(y) }} syntax, оставляя
-себе только orchestration (vault-get/put/delete, kubectl, loops).
-Lives in repo-root filter_plugins/ directory. Discovered by Ansible
-via ansible.cfg [defaults] filter_plugins = filter_plugins setting
-(ansible.cfg in repo root; ansible-playbook always invoked with
-cwd=repo root per project convention).
+SeaweedFS identity-distribute sync — pure Python filter plugin (Layer 3).
+Used by playbook-app/tasks/seaweedfs/tasks-seaweedfs-identity-secret-distribute.yaml.
+Distributes identity credentials (read from the live filer s3.configure dump) into
+operator-configured extra Vault paths; diffs target vs per-item state ConfigMaps.
+Self-contained (no cross-file imports — v18 split из монолита seaweedfs_sync.py;
+private helper _parse_s3_configure_identities дублируется с seaweedfs_user.py намеренно,
+см. plan §Shared helper).
+Lives in repo-root filter_plugins/; discovered via ansible.cfg
+[defaults] filter_plugins = filter_plugins.
 """
 import json
 import re
@@ -212,8 +211,6 @@ def seaweedfs_distribute_paths_to_add(s3configure_raw, target_identities, config
 # =============================================================================
 # Private helpers (per-item ConfigMap state split)
 # =============================================================================
-_CM_PREFIX_BUCKETS = 'seaweedfs-sync-buckets-'
-_CM_PREFIX_POLICIES = 'seaweedfs-sync-policies-'
 _CM_PREFIX_DISTRIBUTIONS = 'seaweedfs-sync-identity-distributions-'
 
 _CONFIGMAP_NAME_RE = re.compile(r'^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')

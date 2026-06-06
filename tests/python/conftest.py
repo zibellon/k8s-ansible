@@ -1,7 +1,7 @@
-"""Pytest shared fixtures + path setup for filter_plugins/seaweedfs_sync.py tests.
+"""Pytest shared fixtures + path setup for the filter_plugins/ unit tests.
 
-Path setup: prepends repo-root filter_plugins/ to sys.path so seaweedfs_sync
-module is importable from any cwd. Auto-loaded by pytest для всех test files
+Path setup: prepends repo-root filter_plugins/ to sys.path so the filter
+modules are importable from any cwd. Auto-loaded by pytest для всех test files
 in tests/python/.
 """
 import sys

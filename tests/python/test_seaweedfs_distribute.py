@@ -1,4 +1,4 @@
-"""Pytest unit tests for filter_plugins/seaweedfs_sync.py.
+"""Pytest unit tests for filter_plugins/seaweedfs_distribute.py.
 
 Layer 3 of make test runner — catches runtime Jinja2 issues that
 syntax-check / ansible-lint / helm-validate don't see. Lives in
@@ -8,7 +8,7 @@ Shared fixtures + path setup — in tests/python/conftest.py.
 """
 import json
 import pytest
-import seaweedfs_sync as sw
+import seaweedfs_distribute as sw
 from ansible.errors import AnsibleFilterError
 # =============================================================================
 # identity-distribute (Layer 3) — seaweedfs_distribute_* (stateless)
