@@ -113,6 +113,24 @@ def sample_configmap_state_policies():
 
 
 @pytest.fixture
+def sample_s3configure_raw():
+    """`s3.configure` (no-arg) protojson dump: admin (Admin+creds), alice (policyNames+creds),
+    anonymous (empty creds), plus a static identity the parser must IGNORE."""
+    return json.dumps({
+        'identities': [
+            {'name': 'admin', 'credentials': [{'accessKey': 'ADMIN_AK', 'secretKey': 'ADMIN_SK', 'status': 'Active'}],
+             'actions': ['Admin'], 'policyNames': [], 'isStatic': False},
+            {'name': 'alice', 'credentials': [{'accessKey': 'ALICE_AK', 'secretKey': 'ALICE_SK', 'status': 'Active'}],
+             'actions': [], 'policyNames': ['team-alpha-rw'], 'isStatic': False},
+            {'name': 'anonymous', 'credentials': [], 'actions': [], 'policyNames': [], 'isStatic': False},
+            {'name': 'static-id', 'credentials': [{'accessKey': 'S_AK', 'secretKey': 'S_SK'}],
+             'actions': ['Admin'], 'policyNames': [], 'isStatic': True},
+        ],
+        'accounts': [], 'serviceAccounts': [], 'policies': [], 'groups': [],
+    })
+
+
+@pytest.fixture
 def sample_configmaplist_raw():
     """Sample `kubectl get cm -l <label> -o json` stdout: List with 2 per-item
     state ConfigMaps (each .data.state = single-item JSON object string).

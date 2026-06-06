@@ -70,6 +70,40 @@ def _gen_secret(length, charset):
     Cryptographically secure. Mock-friendly: secrets module imported globally.
     """
     return ''.join(secrets.choice(charset) for _ in range(length))
+
+
+def _parse_s3_configure_identities(raw):
+    """Parse `s3.configure` (no-arg) protojson dump → list of normalized identity dicts.
+    Returns [] for ''/None/malformed/missing 'identities'. Never raises. Skips isStatic
+    identities (managed externally — v17 must not touch them).
+
+    Each entry: {'name', 'accessKey', 'secretKey', 'actions': [..], 'policyNames': [..]}.
+    credentials[0] → AK/SK ('' when credentials empty, e.g. anonymous)."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    result = []
+    for ident in data.get('identities') or []:
+        if not isinstance(ident, dict) or ident.get('isStatic'):
+            continue
+        name = ident.get('name')
+        if not name:
+            continue
+        creds = ident.get('credentials') or []
+        first = creds[0] if creds else {}
+        result.append({
+            'name': name,
+            'accessKey': first.get('accessKey', '') or '',
+            'secretKey': first.get('secretKey', '') or '',
+            'actions': list(ident.get('actions') or []),
+            'policyNames': list(ident.get('policyNames') or []),
+        })
+    return result
 # =============================================================================
 # Private helpers (Layer 3 — identity-distribute)
 # =============================================================================
@@ -235,22 +269,81 @@ def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
     return json.dumps({'identities': result}, sort_keys=True)
 
 
-def seaweedfs_identities_to_delete(vault_raw_json, target_identities):
-    """Names of identities present in Vault combined JSON but absent from target.
+def seaweedfs_identities_to_delete(s3configure_raw, target_identities):
+    """Identity names present in the filer (s3.configure dump) but absent from target →
+    delete via `s3.configure -user=<name> -delete -apply`.
+    (v17: reads the live filer dump, not the Vault combined JSON.)"""
+    current = _parse_s3_configure_identities(s3configure_raw)
+    target_names = {t['name'] for t in target_identities}
+    return [c['name'] for c in current if c['name'] not in target_names]
 
-    Stateless filter: parse current Vault combined JSON, diff vs target by name,
-    return names to delete via weed shell s3.configure -user=<n> -delete -apply.
 
-    Args:
-        vault_raw_json: str — current Vault combined JSON (may be '', None, malformed).
-        target_identities: list — full target from inventory (base + extra).
+def seaweedfs_identity_actions_to_apply(s3configure_raw, target_identities, *,
+                                        access_key_length, secret_key_length,
+                                        access_key_charset, secret_key_charset):
+    """Per target identity: the ADDITIVE apply payload (creds + actions/policies to add).
 
-    Returns:
-        list of str — identity names present in Vault but not in target (to delete).
-    """
-    combined = _parse_combined_json(vault_raw_json)
-    diff = _compute_identity_diff(combined['identities'], target_identities)
-    return [i['name'] for i in diff['to_delete']]
+    NEW (not in filer) → fresh AK/SK (anonymous → empty), actions_add = target actions,
+    policies_attach = target policy_names. EXISTING → creds preserved from the filer dump,
+    actions_add = target.actions - filer.actions, policies_attach = target.policy_names - filer.policyNames.
+
+    Returns [{name, accessKey, secretKey, actions_add, policies_attach}] for every target
+    identity. The YAML Phase B emits cred/-actions/-policies flags conditionally + a
+    'grants-something' when-guard, so a no-op entry is harmless. Removals are a separate
+    filter (seaweedfs_identity_actions_to_remove)."""
+    current = {i['name']: i for i in _parse_s3_configure_identities(s3configure_raw)}
+    result = []
+    for t in target_identities:
+        name = t['name']
+        t_actions = list(t.get('actions') or [])
+        t_policies = list(t.get('policy_names') or [])
+        cur = current.get(name)
+        if cur is None:
+            if name == 'anonymous':
+                ak, sk = '', ''
+            else:
+                ak = _gen_secret(access_key_length, access_key_charset)
+                sk = _gen_secret(secret_key_length, secret_key_charset)
+            actions_add = t_actions
+            policies_attach = t_policies
+        else:
+            ak, sk = cur['accessKey'], cur['secretKey']
+            actions_add = [a for a in t_actions if a not in cur['actions']]
+            policies_attach = [p for p in t_policies if p not in cur['policyNames']]
+        result.append({
+            'name': name,
+            'accessKey': ak,
+            'secretKey': sk,
+            'actions_add': actions_add,
+            'policies_attach': policies_attach,
+        })
+    return result
+
+
+def seaweedfs_identity_actions_to_remove(s3configure_raw, target_identities):
+    """Per identity present in BOTH filer and target: filer-extra actions/policies to remove
+    via `s3.configure -user=X [-policies=csv][-actions=csv] -delete -apply`.
+
+    Returns [{name, actions_remove, policies_detach}] ONLY where at least one list is
+    non-empty (a bare `s3.configure -user=X -delete` would delete the whole user — guard).
+    This is the v17 bugfix: removed policies/actions now reach the filer."""
+    target_by_name = {t['name']: t for t in target_identities}
+    result = []
+    for cur in _parse_s3_configure_identities(s3configure_raw):
+        t = target_by_name.get(cur['name'])
+        if t is None:
+            continue
+        t_actions = set(t.get('actions') or [])
+        t_policies = set(t.get('policy_names') or [])
+        actions_remove = [a for a in cur['actions'] if a not in t_actions]
+        policies_detach = [p for p in cur['policyNames'] if p not in t_policies]
+        if actions_remove or policies_detach:
+            result.append({
+                'name': cur['name'],
+                'actions_remove': actions_remove,
+                'policies_detach': policies_detach,
+            })
+    return result
 
 
 def seaweedfs_combined_json_violations(raw):
@@ -850,6 +943,8 @@ class FilterModule(object):
         return {
             'seaweedfs_user_sync_full': seaweedfs_user_sync_full,
             'seaweedfs_identities_to_delete': seaweedfs_identities_to_delete,
+            'seaweedfs_identity_actions_to_apply': seaweedfs_identity_actions_to_apply,
+            'seaweedfs_identity_actions_to_remove': seaweedfs_identity_actions_to_remove,
             'seaweedfs_combined_json_violations': seaweedfs_combined_json_violations,
             'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,

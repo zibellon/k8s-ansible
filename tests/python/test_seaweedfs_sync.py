@@ -428,17 +428,83 @@ def test_user_sync_full_includes_policy_names(sample_generate_params):
     assert by_name['noattach']['policy_names'] == []
 
 
-def test_identities_to_delete_orphans(sample_vault_json):
-    """Vault has admin/alice/anonymous; target = [admin] → alice + anonymous to delete."""
+def test_parse_s3_configure_identities_happy(sample_s3configure_raw):
+    parsed = sw._parse_s3_configure_identities(sample_s3configure_raw)
+    assert [i['name'] for i in parsed] == ['admin', 'alice', 'anonymous']  # static-id filtered
+    alice = next(i for i in parsed if i['name'] == 'alice')
+    assert alice['policyNames'] == ['team-alpha-rw'] and alice['accessKey'] == 'ALICE_AK'
+
+
+def test_parse_s3_configure_identities_empty_and_malformed():
+    assert sw._parse_s3_configure_identities('') == []
+    assert sw._parse_s3_configure_identities(None) == []
+    assert sw._parse_s3_configure_identities('garbage {') == []
+    assert sw._parse_s3_configure_identities('[]') == []
+
+
+def test_parse_s3_configure_identities_anonymous_empty_creds(sample_s3configure_raw):
+    anon = next(i for i in sw._parse_s3_configure_identities(sample_s3configure_raw) if i['name'] == 'anonymous')
+    assert anon['accessKey'] == '' and anon['secretKey'] == ''
+
+
+_GEN = dict(access_key_length=20, secret_key_length=40,
+            access_key_charset='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+            secret_key_charset='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')
+
+
+def test_identity_actions_to_apply_new_generates_creds(sample_s3configure_raw):
+    target = [{'name': 'bob', 'actions': [], 'policy_names': ['team-alpha-rw']}]
+    r = sw.seaweedfs_identity_actions_to_apply(sample_s3configure_raw, target, **_GEN)
+    assert len(r[0]['accessKey']) == 20 and len(r[0]['secretKey']) == 40
+    assert r[0]['policies_attach'] == ['team-alpha-rw']
+
+
+def test_identity_actions_to_apply_existing_preserves_and_diffs(sample_s3configure_raw):
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw', 'extra-rw']}]
+    r = sw.seaweedfs_identity_actions_to_apply(sample_s3configure_raw, target, **_GEN)
+    assert r[0]['accessKey'] == 'ALICE_AK'              # preserved
+    assert r[0]['policies_attach'] == ['extra-rw']      # only the new one
+
+
+def test_identity_actions_to_apply_anonymous_no_creds(sample_s3configure_raw):
+    target = [{'name': 'anonymous', 'actions': [], 'policy_names': ['pub-read']}]
+    r = sw.seaweedfs_identity_actions_to_apply(sample_s3configure_raw, target, **_GEN)
+    assert r[0]['accessKey'] == '' and r[0]['secretKey'] == ''
+    assert r[0]['policies_attach'] == ['pub-read']
+
+
+def test_identity_actions_to_apply_idempotent(sample_s3configure_raw):
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw']}]
+    r = sw.seaweedfs_identity_actions_to_apply(sample_s3configure_raw, target, **_GEN)
+    assert r[0]['actions_add'] == [] and r[0]['policies_attach'] == [] and r[0]['accessKey'] == 'ALICE_AK'
+
+
+def test_identity_actions_to_remove_detaches_policy(sample_s3configure_raw):
+    """The v17 bugfix: alice had team-alpha-rw, target removes it → policies_detach."""
+    target = [{'name': 'alice', 'actions': [], 'policy_names': []}]
+    r = sw.seaweedfs_identity_actions_to_remove(sample_s3configure_raw, target)
+    assert r == [{'name': 'alice', 'actions_remove': [], 'policies_detach': ['team-alpha-rw']}]
+
+
+def test_identity_actions_to_remove_idempotent(sample_s3configure_raw):
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw']}]
+    assert sw.seaweedfs_identity_actions_to_remove(sample_s3configure_raw, target) == []
+
+
+def test_identity_actions_to_remove_omits_empty(sample_s3configure_raw):
+    """admin (no removals) must NOT appear (bare -delete would delete the user)."""
+    target = [{'name': 'admin', 'actions': ['Admin'], 'policy_names': []}]
+    r = sw.seaweedfs_identity_actions_to_remove(sample_s3configure_raw, target)
+    assert all(e['name'] != 'admin' for e in r)
+
+
+def test_identities_to_delete_orphans(sample_s3configure_raw):
     target = [{'name': 'admin', 'actions': ['Admin']}]
-    result = sw.seaweedfs_identities_to_delete(sample_vault_json, target)
-    assert set(result) == {'alice', 'anonymous'}
+    assert set(sw.seaweedfs_identities_to_delete(sample_s3configure_raw, target)) == {'alice', 'anonymous'}
 
 
-def test_identities_to_delete_empty_vault():
-    """Edge: empty Vault → nothing to delete."""
-    result = sw.seaweedfs_identities_to_delete('', [{'name': 'admin', 'actions': ['Admin']}])
-    assert result == []
+def test_identities_to_delete_empty():
+    assert sw.seaweedfs_identities_to_delete('', [{'name': 'admin', 'actions': ['Admin']}]) == []
 
 
 def test_buckets_owners_to_set_changed():
