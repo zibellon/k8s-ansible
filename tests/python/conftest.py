@@ -144,6 +144,25 @@ def sample_s3policy_list_raw():
 
 
 @pytest.fixture
+def sample_fs_configure_raw():
+    """`fs.configure` protojson: bare /buckets/ (skipped) + b1 (full rep/rack/dc) +
+    b2 (empty rack/dc via EmitUnpopulated → parser drops to absent)."""
+    return json.dumps({'version': 0, 'locations': [
+        {'locationPrefix': '/buckets/', 'replication': '000', 'rack': '', 'dataCenter': ''},
+        {'locationPrefix': '/buckets/b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'readOnly': False},
+        {'locationPrefix': '/buckets/b2', 'replication': '001', 'rack': '', 'dataCenter': '', 'readOnly': False},
+    ]})
+
+
+@pytest.fixture
+def sample_bucket_list_raw():
+    """`s3.bucket.list` plain text: b1 (owner gitlab), b2 (owner loki), b_stale (owner admin)."""
+    return ('  b1\tsize:0\tchunk:0\towner:"gitlab"\n'
+            '  b2\tsize:0\tchunk:0\towner:"loki"\n'
+            '  b_stale\tsize:0\tchunk:0\towner:"admin"\n')
+
+
+@pytest.fixture
 def sample_configmaplist_raw():
     """Sample `kubectl get cm -l <label> -o json` stdout: List with 2 per-item
     state ConfigMaps (each .data.state = single-item JSON object string).

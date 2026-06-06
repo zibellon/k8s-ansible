@@ -190,171 +190,154 @@ def test_distribute_paths_to_add_raises_on_duplicate_paths(sample_vault_json):
 # bucket-sync (Layer 2) — seaweedfs_buckets_* (stateless)
 # =============================================================================
 
-def test_buckets_to_delete_orphan(sample_target_buckets, sample_configmap_state_buckets):
-    """Happy: state has 'b_stale' not in target → returned for delete."""
-    result = sw.seaweedfs_buckets_to_delete('', sample_target_buckets, sample_configmap_state_buckets)
-    assert len(result) == 1
-    assert result[0]['name'] == 'b_stale'
+def _mk_filer(current):
+    """Build (fs_configure_raw, bucket_list_raw) from current bucket dicts for v17 bucket tests.
+    A bucket with no replication/rack/dataCenter gets NO fs.configure location (s3.bucket.list only)."""
+    locs = []
+    lines = []
+    for b in current:
+        loc = {'locationPrefix': '/buckets/' + b['name']}
+        for k in ('replication', 'rack', 'dataCenter'):
+            if k in b:
+                loc[k] = b[k]
+        if len(loc) > 1:
+            locs.append(loc)
+        owner = ('\towner:"' + b['owner'] + '"') if 'owner' in b else ''
+        lines.append('  ' + b['name'] + '\tsize:0\tchunk:0' + owner)
+    return json.dumps({'locations': locs}), '\n'.join(lines) + '\n'
 
 
-def test_buckets_to_delete_empty_state(sample_target_buckets):
-    """Edge: no ConfigMap state → no deletes."""
-    result = sw.seaweedfs_buckets_to_delete('', sample_target_buckets, '')
-    assert result == []
+def test_parse_fs_configure_locations_happy(sample_fs_configure_raw):
+    locs = sw._parse_fs_configure_locations(sample_fs_configure_raw)
+    assert set(locs.keys()) == {'b1', 'b2'}  # bare /buckets/ skipped
+    assert locs['b1'] == {'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1'}
+    assert 'rack' not in locs['b2'] and 'dataCenter' not in locs['b2']  # empty → absent
 
 
-def test_buckets_to_create_new(sample_target_buckets, sample_configmap_state_buckets):
-    """Happy: target has 'b2' not in state → returned for create."""
-    result = sw.seaweedfs_buckets_to_create('', sample_target_buckets, sample_configmap_state_buckets)
-    names = [b['name'] for b in result]
-    assert 'b2' in names
+def test_parse_fs_configure_locations_empty_and_malformed():
+    assert sw._parse_fs_configure_locations('') == {}
+    assert sw._parse_fs_configure_locations(None) == {}
+    assert sw._parse_fs_configure_locations('x{') == {}
+
+
+def test_parse_s3_bucket_list_happy(sample_bucket_list_raw):
+    bl = sw._parse_s3_bucket_list(sample_bucket_list_raw)
+    assert bl['b1']['owner'] == 'gitlab' and bl['b_stale']['owner'] == 'admin'
+
+
+def test_parse_s3_bucket_list_empty():
+    assert sw._parse_s3_bucket_list('') == {} and sw._parse_s3_bucket_list(None) == {}
+
+
+def test_merge_bucket_state(sample_fs_configure_raw, sample_bucket_list_raw):
+    cur = sw._merge_bucket_state(sw._parse_fs_configure_locations(sample_fs_configure_raw),
+                                 sw._parse_s3_bucket_list(sample_bucket_list_raw))
+    by = {b['name']: b for b in cur}
+    assert set(by) == {'b1', 'b2', 'b_stale'}            # existence = s3.bucket.list
+    assert by['b1']['replication'] == '001' and by['b1']['owner'] == 'gitlab'
+    assert 'replication' not in by['b_stale']             # in bucket.list, no fs.configure
+
+
+def test_buckets_to_delete_orphan(sample_fs_configure_raw, sample_bucket_list_raw, sample_target_buckets):
+    r = sw.seaweedfs_buckets_to_delete(sample_fs_configure_raw, sample_bucket_list_raw, sample_target_buckets)
+    assert [b['name'] for b in r] == ['b_stale']
+
+
+def test_buckets_to_delete_empty_filer(sample_target_buckets):
+    assert sw.seaweedfs_buckets_to_delete('', '', sample_target_buckets) == []
+
+
+def test_buckets_to_create_new(sample_target_buckets):
+    fs, bl = _mk_filer([{'name': 'b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'gitlab'}])
+    r = sw.seaweedfs_buckets_to_create(fs, bl, sample_target_buckets)
+    assert [b['name'] for b in r] == ['b2']
 
 
 def test_buckets_to_create_empty_target():
-    """Edge: empty target → no creates."""
-    result = sw.seaweedfs_buckets_to_create('', [], '')
-    assert result == []
-
-
-def test_buckets_to_create_all_kept():
-    """Edge: all target in state → no creates."""
-    state = '[{"name": "b1", "replication": "001"}]'
-    target = [{'name': 'b1', 'replication': '001'}]
-    result = sw.seaweedfs_buckets_to_create('', target, state)
-    assert result == []
+    assert sw.seaweedfs_buckets_to_create('', '', []) == []
 
 
 def test_buckets_quotas_to_apply_all_buckets(sample_target_buckets):
-    """All target buckets returned: b1 (quota_size 1GiB) → set 1024; b2 (none) → remove."""
-    result = sw.seaweedfs_buckets_quotas_to_apply('', sample_target_buckets, '')
-    by_name = {b['name']: b for b in result}
-    assert len(result) == 2
-    assert by_name['b1']['_quota_op'] == 'set'
-    assert by_name['b1']['_quota_size_mib'] == 1024
-    assert by_name['b2']['_quota_op'] == 'remove'
+    by = {b['name']: b for b in sw.seaweedfs_buckets_quotas_to_apply(sample_target_buckets)}
+    assert by['b1']['_quota_op'] == 'set' and by['b1']['_quota_size_mib'] == 1024
+    assert by['b2']['_quota_op'] == 'remove'
 
 
 def test_buckets_quotas_to_apply_remove_when_absent():
-    """Edge: bucket без quota_size → _quota_op 'remove', size_mib 0."""
-    result = sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001'}], '')
-    assert len(result) == 1
-    assert result[0]['_quota_op'] == 'remove'
-    assert result[0]['_quota_size_mib'] == 0
+    r = sw.seaweedfs_buckets_quotas_to_apply([{'name': 'b1', 'replication': '001'}])
+    assert r[0]['_quota_op'] == 'remove' and r[0]['_quota_size_mib'] == 0
 
 
 def test_buckets_quotas_to_apply_set_when_present():
-    """Edge: bucket с quota_size → _quota_op 'set' + size_mib."""
-    result = sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': '2GiB'}], '')
-    assert result[0]['_quota_op'] == 'set'
-    assert result[0]['_quota_size_mib'] == 2048
+    r = sw.seaweedfs_buckets_quotas_to_apply([{'name': 'b1', 'replication': '001', 'quota_size': '2GiB'}])
+    assert r[0]['_quota_op'] == 'set' and r[0]['_quota_size_mib'] == 2048
 
 
 def test_buckets_quotas_to_apply_invalid_unit_raises():
-    """Edge: bad unit → AnsibleFilterError."""
     with pytest.raises(AnsibleFilterError, match='quota_size'):
-        sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': '100GB'}], '')
+        sw.seaweedfs_buckets_quotas_to_apply([{'name': 'b1', 'replication': '001', 'quota_size': '100GB'}])
 
 
 def test_buckets_quotas_to_apply_invalid_value_raises():
-    """Edge: non-integer numeric part → AnsibleFilterError."""
     with pytest.raises(AnsibleFilterError, match='quota_size'):
-        sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': 'abcGiB'}], '')
+        sw.seaweedfs_buckets_quotas_to_apply([{'name': 'b1', 'replication': '001', 'quota_size': 'abcGiB'}])
 
 
 def test_buckets_quotas_to_apply_zero_raises():
-    """Edge: non-positive size → AnsibleFilterError."""
     with pytest.raises(AnsibleFilterError, match='quota_size'):
-        sw.seaweedfs_buckets_quotas_to_apply('', [{'name': 'b1', 'replication': '001', 'quota_size': '0GiB'}], '')
+        sw.seaweedfs_buckets_quotas_to_apply([{'name': 'b1', 'replication': '001', 'quota_size': '0GiB'}])
 # =============================================================================
 # bucket-sync (Layer 2) — replication + rack + dataCenter immutable settings (v8)
 # =============================================================================
 
 def test_buckets_validation_raises_on_missing_replication():
-    """Edge: bucket без replication field → validation raise."""
-    target = [{'name': 'b1'}]
     with pytest.raises(AnsibleFilterError, match='missing required .replication'):
-        sw.seaweedfs_buckets_to_delete('', target, '')
+        sw.seaweedfs_buckets_to_delete('', '', [{'name': 'b1'}])
 
 
 def test_buckets_validation_raises_on_invalid_replication_format():
-    """Edge: replication invalid format ("01", "abc", int 1) → validation raise."""
     for invalid in ['01', 'abc', '1', 1, '0011', '']:
-        target = [{'name': 'b1', 'replication': invalid}]
         with pytest.raises(AnsibleFilterError, match='Invalid replication format'):
-            sw.seaweedfs_buckets_to_delete('', target, '')
+            sw.seaweedfs_buckets_to_delete('', '', [{'name': 'b1', 'replication': invalid}])
 
 
 def test_buckets_validation_raises_on_non_string_rack():
-    """Edge: rack present but not a non-empty string → validation raise."""
     for invalid in [123, '', None, ['workers']]:
-        target = [{'name': 'b1', 'replication': '001', 'rack': invalid}]
         with pytest.raises(AnsibleFilterError, match="field 'rack' must be a non-empty string"):
-            sw.seaweedfs_buckets_to_delete('', target, '')
+            sw.seaweedfs_buckets_to_delete('', '', [{'name': 'b1', 'replication': '001', 'rack': invalid}])
 
 
 def test_buckets_validation_raises_on_non_string_datacenter():
-    """Edge: dataCenter present but not a non-empty string → validation raise."""
-    target = [{'name': 'b1', 'replication': '001', 'dataCenter': 42}]
     with pytest.raises(AnsibleFilterError, match="field 'dataCenter' must be a non-empty string"):
-        sw.seaweedfs_buckets_to_delete('', target, '')
+        sw.seaweedfs_buckets_to_delete('', '', [{'name': 'b1', 'replication': '001', 'dataCenter': 42}])
 
 
-def test_buckets_immutable_violations_rack_only():
-    """Kept bucket с changed rack → 1 violation entry."""
-    state = '[{"name": "b1", "replication": "001", "rack": "workers"}]'
-    target = [{'name': 'b1', 'replication': '001', 'rack': 'managers'}]
-    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
-    assert len(result) == 1
-    assert result[0]['name'] == 'b1'
-    assert result[0]['state_rack'] == 'workers'
-    assert result[0]['target_rack'] == 'managers'
+def test_buckets_immutable_violations_rack_changed():
+    fs, bl = _mk_filer([{'name': 'b1', 'replication': '001', 'rack': 'workers-1'}])
+    r = sw.seaweedfs_buckets_immutable_violations(fs, bl, [{'name': 'b1', 'replication': '001', 'rack': 'managers-1'}])
+    assert len(r) == 1 and r[0]['name'] == 'b1'
 
 
-def test_buckets_immutable_violations_datacenter_only():
-    """Kept bucket с changed dataCenter → 1 violation entry."""
-    state = '[{"name": "b1", "replication": "001", "dataCenter": "dc1"}]'
-    target = [{'name': 'b1', 'replication': '001', 'dataCenter': 'dc2'}]
-    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
-    assert len(result) == 1
-    assert result[0]['state_dataCenter'] == 'dc1'
-    assert result[0]['target_dataCenter'] == 'dc2'
-
-
-def test_buckets_immutable_violations_replication_only():
-    """Happy: kept bucket с changed replication → 1 violation entry."""
-    state = '[{"name": "b1", "replication": "001"}]'
-    target = [{'name': 'b1', 'replication': '100'}]
-    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
-    assert len(result) == 1
-    assert result[0]['state_replication'] == '001'
-    assert result[0]['target_replication'] == '100'
-
-
-def test_buckets_immutable_violations_all_changed():
-    """Kept bucket с replication+rack+dataCenter changed → single unified violation."""
-    state = '[{"name": "b1", "replication": "001", "rack": "workers", "dataCenter": "dc1"}]'
-    target = [{'name': 'b1', 'replication': '100', 'rack': 'managers', 'dataCenter': 'dc2'}]
-    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
-    assert len(result) == 1
-    assert result[0]['target_replication'] == '100'
-    assert result[0]['target_rack'] == 'managers'
-    assert result[0]['target_dataCenter'] == 'dc2'
+def test_buckets_immutable_violations_replication_changed():
+    fs, bl = _mk_filer([{'name': 'b1', 'replication': '001'}])
+    r = sw.seaweedfs_buckets_immutable_violations(fs, bl, [{'name': 'b1', 'replication': '100'}])
+    assert len(r) == 1 and r[0]['state_replication'] == '001' and r[0]['target_replication'] == '100'
 
 
 def test_buckets_immutable_violations_no_change():
-    """Edge: оба unchanged → empty list."""
-    state = '[{"name": "b1", "replication": "001"}]'
-    target = [{'name': 'b1', 'replication': '001'}]
-    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
-    assert result == []
+    fs, bl = _mk_filer([{'name': 'b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1'}])
+    assert sw.seaweedfs_buckets_immutable_violations(fs, bl, [{'name': 'b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1'}]) == []
 
 
 def test_buckets_immutable_violations_new_bucket_no_violation():
-    """Edge: new bucket (not in state) → не в violations list. Идёт через Phase C2."""
-    state = '[]'
-    target = [{'name': 'b1', 'replication': '001'}]
-    result = sw.seaweedfs_buckets_immutable_violations('', target, state)
-    assert result == []
+    assert sw.seaweedfs_buckets_immutable_violations('', '', [{'name': 'b1', 'replication': '001'}]) == []
+
+
+def test_buckets_immutable_violations_no_fs_location_skipped():
+    """v17 nuance: bucket in s3.bucket.list but no fs.configure location → replication absent →
+    immutable check skipped (not false-flagged)."""
+    fs, bl = _mk_filer([{'name': 'b1', 'owner': 'gitlab'}])  # no replication → no fs location
+    assert sw.seaweedfs_buckets_immutable_violations(fs, bl, [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]) == []
 # =============================================================================
 # managed policy sync (Layer P) — seaweedfs_policies_* (stateless)
 # =============================================================================
@@ -515,28 +498,18 @@ def test_identities_to_delete_empty():
 
 
 def test_buckets_owners_to_set_changed():
-    """Kept bucket with changed owner → returned for s3.bucket.owner reconcile."""
-    state = '[{"name": "b1", "replication": "001", "owner": "admin"}]'
-    target = [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]
-    result = sw.seaweedfs_buckets_owners_to_set('', target, state)
-    assert len(result) == 1
-    assert result[0]['name'] == 'b1'
-    assert result[0]['owner'] == 'gitlab'
+    fs, bl = _mk_filer([{'name': 'b1', 'replication': '001', 'owner': 'admin'}])
+    r = sw.seaweedfs_buckets_owners_to_set(fs, bl, [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}])
+    assert len(r) == 1 and r[0]['name'] == 'b1' and r[0]['owner'] == 'gitlab'
 
 
 def test_buckets_owners_to_set_unchanged():
-    """Kept bucket with same owner → not returned."""
-    state = '[{"name": "b1", "replication": "001", "owner": "gitlab"}]'
-    target = [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]
-    result = sw.seaweedfs_buckets_owners_to_set('', target, state)
-    assert result == []
+    fs, bl = _mk_filer([{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}])
+    assert sw.seaweedfs_buckets_owners_to_set(fs, bl, [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]) == []
 
 
 def test_buckets_owners_to_set_new_bucket_excluded():
-    """New bucket (not in state) → not in owners_to_set (gets owner at create)."""
-    target = [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]
-    result = sw.seaweedfs_buckets_owners_to_set('', target, '')
-    assert result == []
+    assert sw.seaweedfs_buckets_owners_to_set('', '', [{'name': 'b1', 'replication': '001', 'owner': 'gitlab'}]) == []
 # =============================================================================
 # per-item ConfigMap state split — helpers
 # =============================================================================

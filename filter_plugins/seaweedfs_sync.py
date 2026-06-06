@@ -434,8 +434,8 @@ def _compute_bucket_diff(current_state, target_buckets):
     """Compute unified bucket+owner+immutable-violations sync diff.
 
     Args:
-        current_state: list [{name, replication, rack?, dataCenter?, owner?, quota_size?}, ...] from parsed ConfigMap.
-        target_buckets: target list [{name, replication, rack?, dataCenter?, owner?, quota_size?}, ...].
+        current_state: list [{name, replication?, rack?, dataCenter?, owner?}, ...] — merged live filer state (fs.configure + s3.bucket.list).
+        target_buckets: target list [{name, owner, replication, rack?, dataCenter?, quota_size?}, ...] from inventory.
 
     Returns:
         {
@@ -461,6 +461,88 @@ def _compute_bucket_diff(current_state, target_buckets):
         'to_create_buckets': [target_by_name[n] for n in target_names - state_names],
         'immutable_violations': _compute_bucket_immutable_violations(current_state, target_buckets),
     }
+
+def _parse_fs_configure_locations(raw):
+    """Parse `fs.configure` (no-arg) protojson → {bucket_name: {'replication', 'rack'?, 'dataCenter'?}}.
+    Only locationPrefix under '/buckets/'; name = suffix (skip bare '/buckets/'). Empty rack/
+    dataCenter (protojson EmitUnpopulated) → key absent. {} for ''/None/malformed. Never raises."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result = {}
+    prefix = '/buckets/'
+    for loc in data.get('locations') or []:
+        if not isinstance(loc, dict):
+            continue
+        lp = loc.get('locationPrefix', '')
+        if not lp.startswith(prefix):
+            continue
+        name = lp[len(prefix):]
+        if not name:
+            continue
+        entry = {'replication': loc.get('replication', '') or ''}
+        if loc.get('rack'):
+            entry['rack'] = loc['rack']
+        if loc.get('dataCenter'):
+            entry['dataCenter'] = loc['dataCenter']
+        result[name] = entry
+    return result
+
+
+def _parse_s3_bucket_list(raw):
+    """Parse `s3.bucket.list` plain-text stdout → {name: {'owner'?}}. Per line: strip leading
+    spaces, split on tab; field 0 = bucket name; owner from the owner:"X" field. (Existence +
+    owner only; quota is applied idempotently, not diffed.) {} for ''/None. Never raises."""
+    if not raw:
+        return {}
+    result = {}
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        fields = stripped.split('\t')
+        name = fields[0].strip()
+        if not name:
+            continue
+        entry = {}
+        for f in fields[1:]:
+            f = f.strip()
+            if f.startswith('owner:'):
+                entry['owner'] = f[len('owner:'):].strip().strip('"')
+        result[name] = entry
+    return result
+
+
+def _merge_bucket_state(fs_locs, bucket_list):
+    """Merge fs.configure (replication/rack/dc) + s3.bucket.list (existence/owner) → current
+    bucket list. Existence = s3.bucket.list (the real /buckets/<n> dirs); each entry enriched
+    with replication/rack/dataCenter from fs.configure (absent if no location config)."""
+    result = []
+    for name, meta in bucket_list.items():
+        entry = {'name': name}
+        if meta.get('owner') is not None:
+            entry['owner'] = meta['owner']
+        loc = fs_locs.get(name)
+        if loc:
+            entry['replication'] = loc.get('replication', '')
+            if loc.get('rack'):
+                entry['rack'] = loc['rack']
+            if loc.get('dataCenter'):
+                entry['dataCenter'] = loc['dataCenter']
+        result.append(entry)
+    return result
+
+
+def _current_buckets(fs_configure_raw, bucket_list_raw):
+    """Merged live filer bucket state from the two filer reads."""
+    return _merge_bucket_state(_parse_fs_configure_locations(fs_configure_raw),
+                               _parse_s3_bucket_list(bucket_list_raw))
+
 
 def _quota_size_to_mib(size_str):
     """Convert human-readable size (e.g. '100GiB') to a positive MiB int.
@@ -540,6 +622,8 @@ def _compute_bucket_immutable_violations(current_state, target_buckets):
         state_entry = state_by_name[name]
         target_entry = target_by_name[name]
         state_replication = state_entry.get('replication')
+        if not state_replication:
+            continue
         target_replication = target_entry.get('replication')
         state_rack = state_entry.get('rack')
         target_rack = target_entry.get('rack')
@@ -561,62 +645,41 @@ def _compute_bucket_immutable_violations(current_state, target_buckets):
 # =============================================================================
 # Public Layer 2 filters — stateless bucket-sync orchestrators
 # =============================================================================
-def seaweedfs_buckets_to_delete(vault_raw_json, target_buckets, configmap_raw_json):
-    """State entries not in target → list to delete via weed shell s3.bucket.delete.
-
-    Args:
-        vault_raw_json: ignored — kept for shape consistency.
-        target_buckets: list — full target from inventory (base + extra).
-        configmap_raw_json: str — ConfigMap state raw stdout.
-
-    Returns:
-        list of state {name, owner?, quota?} entries (state - target).
-
-    Raises:
-        AnsibleFilterError if any target bucket missing/invalid replication.
-    """
+def seaweedfs_buckets_to_delete(fs_configure_raw, bucket_list_raw, target_buckets):
+    """Filer buckets (s3.bucket.list) not in target → delete via `s3.bucket.delete`.
+    (v17: diffs the live filer.)"""
     _validate_buckets_have_replication(target_buckets)
-    state = _parse_configmap_state(configmap_raw_json)
-    diff = _compute_bucket_diff(state, target_buckets)
-    return diff['to_delete_buckets']
+    return _compute_bucket_diff(_current_buckets(fs_configure_raw, bucket_list_raw),
+                                target_buckets)['to_delete_buckets']
 
 
-def seaweedfs_buckets_to_create(vault_raw_json, target_buckets, configmap_raw_json):
-    """New target entries not in state → list to create via weed shell s3.bucket.create.
-
-    Args, Raises: same as seaweedfs_buckets_to_delete.
-
-    Returns:
-        list of target {name, owner?, quota?} entries (target - state).
-    """
+def seaweedfs_buckets_to_create(fs_configure_raw, bucket_list_raw, target_buckets):
+    """Target buckets not in the filer → create via `s3.bucket.create -owner`. (v17.)"""
     _validate_buckets_have_replication(target_buckets)
-    state = _parse_configmap_state(configmap_raw_json)
-    diff = _compute_bucket_diff(state, target_buckets)
-    return diff['to_create_buckets']
+    return _compute_bucket_diff(_current_buckets(fs_configure_raw, bucket_list_raw),
+                                target_buckets)['to_create_buckets']
 
 
-def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_raw_json):
-    """All target buckets annotated with the quota operation to apply.
+def seaweedfs_buckets_owners_to_set(fs_configure_raw, bucket_list_raw, target_buckets):
+    """Kept buckets whose target owner differs from the filer owner → reconcile via
+    `s3.bucket.owner`. (v17: owner read from s3.bucket.list.)"""
+    _validate_buckets_have_replication(target_buckets)
+    return _compute_bucket_diff(_current_buckets(fs_configure_raw, bucket_list_raw),
+                                target_buckets)['owners_to_set']
 
-    Each returned entry adds:
-      _quota_op:       'set' if the bucket has a (valid) quota_size, else 'remove'.
-      _quota_size_mib: size in MiB (int) when _quota_op == 'set'; 0 for 'remove'.
 
-    Emitting 'remove' for buckets WITHOUT quota_size every run is idempotent
-    (s3.bucket.quota -op=remove zeroes the quota = unlimited) and is what lets a
-    dropped quota_size actually lift the limit.
+def seaweedfs_buckets_immutable_violations(fs_configure_raw, bucket_list_raw, target_buckets):
+    """Kept buckets whose immutable replication/rack/dataCenter changed vs the filer
+    (fs.configure) → fail-fast list for the YAML assert. Buckets with no fs.configure
+    location (replication absent) are skipped. (v17.)"""
+    _validate_buckets_have_replication(target_buckets)
+    return _compute_bucket_immutable_violations(
+        _current_buckets(fs_configure_raw, bucket_list_raw), target_buckets)
 
-    Args:
-        vault_raw_json: ignored — kept for shape consistency.
-        target_buckets: list — full target from inventory (base + extra).
-        configmap_raw_json: ignored — quotas applied to all target buckets every run.
 
-    Returns:
-        list of target buckets, each with _quota_op + _quota_size_mib added.
-
-    Raises:
-        AnsibleFilterError on invalid replication OR invalid quota_size.
-    """
+def seaweedfs_buckets_quotas_to_apply(target_buckets):
+    """All target buckets annotated with _quota_op ('set' if valid quota_size, else 'remove')
+    + _quota_size_mib. (v17: quota is applied idempotently every run, no filer read needed.)"""
     _validate_buckets_have_replication(target_buckets)
     result = []
     for b in target_buckets:
@@ -629,52 +692,6 @@ def seaweedfs_buckets_quotas_to_apply(vault_raw_json, target_buckets, configmap_
             new_bucket['_quota_size_mib'] = 0
         result.append(new_bucket)
     return result
-
-
-def seaweedfs_buckets_immutable_violations(vault_raw_json, target_buckets, configmap_raw_json):
-    """Detect immutable settings (replication/rack/dataCenter) changes vs state.
-
-    Stateless filter: full validation + diff computation inside. Used by YAML
-    assert для fail-fast ERROR + abort if non-empty list returned.
-
-    Args:
-        vault_raw_json: ignored — kept for shape consistency.
-        target_buckets: list — full target from inventory (base + extra).
-        configmap_raw_json: str — ConfigMap state raw stdout.
-
-    Returns:
-        list of {name, state_replication, target_replication, state_rack,
-        target_rack, state_dataCenter, target_dataCenter} dicts — kept buckets
-        с changed replication, rack, OR dataCenter. Empty = no violations.
-
-    Raises:
-        AnsibleFilterError if validation fails (missing replication field,
-        invalid replication format, or invalid rack/dataCenter).
-    """
-    _validate_buckets_have_replication(target_buckets)
-    state = _parse_configmap_state(configmap_raw_json)
-    return _compute_bucket_immutable_violations(state, target_buckets)
-
-
-def seaweedfs_buckets_owners_to_set(vault_raw_json, target_buckets, configmap_raw_json):
-    """Kept buckets where target owner differs from state owner → reconcile list.
-
-    Stateless filter: validate + diff + return kept buckets needing s3.bucket.owner.
-    New buckets get owner at create time (s3.bucket.create -owner); this covers
-    owner changes on already-existing buckets (owner is mutable).
-
-    Args:
-        vault_raw_json: ignored — kept for shape consistency.
-        target_buckets: list — full target from inventory (base + extra).
-        configmap_raw_json: str — ConfigMap state raw stdout.
-
-    Returns:
-        list of target {name, owner, ...} entries (kept buckets with changed owner).
-    """
-    _validate_buckets_have_replication(target_buckets)
-    state = _parse_configmap_state(configmap_raw_json)
-    diff = _compute_bucket_diff(state, target_buckets)
-    return diff['owners_to_set']
 # =============================================================================
 # Private helpers (Layer P — managed policy sync)
 # =============================================================================
