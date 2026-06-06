@@ -21,50 +21,6 @@ except ImportError:
 # =============================================================================
 # Private helpers (NOT registered as public filters)
 # =============================================================================
-def _parse_combined_json(s):
-    """Parse Vault combined JSON string to dict with 'identities' key.
-    Returns {'identities': []} for None/empty/malformed input or when
-    'identities' key is missing. Never raises.
-    """
-    if not s:
-        return {'identities': []}
-    try:
-        data = json.loads(s)
-    except (ValueError, TypeError):
-        return {'identities': []}
-    if not isinstance(data, dict) or 'identities' not in data:
-        return {'identities': []}
-    return data
-def _extract_creds_by_name(combined):
-    """Build {name: {accessKey, secretKey}} mapping from combined dict.
-    Reads combined['identities'][*].credentials[0]. Missing fields
-    default to empty string.
-    """
-    result = {}
-    for entry in combined.get('identities', []):
-        name = entry.get('name')
-        creds_list = entry.get('credentials') or [{}]
-        first = creds_list[0] if creds_list else {}
-        result[name] = {
-            'accessKey': first.get('accessKey', ''),
-            'secretKey': first.get('secretKey', ''),
-        }
-    return result
-def _compute_identity_diff(current, target):
-    """Compute identity sync diff by name primary key.
-    Args:
-        current: list of identity dicts (from combined JSON parse).
-        target: list of identity dicts (from inventory).
-    Returns:
-        {'to_create': [...], 'to_update': [...], 'to_delete': [...]}
-    """
-    target_names = {i['name'] for i in target}
-    current_names = {i['name'] for i in current}
-    return {
-        'to_create': [i for i in target if i['name'] not in current_names],
-        'to_update': [i for i in target if i['name'] in current_names],
-        'to_delete': [i for i in current if i['name'] not in target_names],
-    }
 def _gen_secret(length, charset):
     """Generate random string of `length` chars from `charset` via secrets.choice.
     Cryptographically secure. Mock-friendly: secrets module imported globally.
@@ -213,67 +169,6 @@ def _build_new_distribution_state(target_identities):
 # =============================================================================
 # Public Layer 1 filter — stateless user-sync orchestrator
 # =============================================================================
-def seaweedfs_user_sync_full(vault_raw_json, target_identities, *,
-                              access_key_length, secret_key_length,
-                              access_key_charset, secret_key_charset):
-    """Финальный combined JSON для записи в Vault.
-
-    Stateless filter: принимает raw Vault JSON string + target identities list,
-    возвращает str — финальный combined JSON {"identities": [...]} c sort_keys=True
-    для записи через vault kv put.
-
-    Внутренняя логика (не часть public контракта):
-        1. Parse vault → current identities list.
-        2. Compute diff vs target (to_create, to_update, to_delete) by name.
-        3. Generate fresh AK + SK для каждого to_create non-anonymous через
-           secrets.choice(charset) цикл length раз. Anonymous получает пустые creds.
-        4. Build new identities list:
-           - to_create: {name, credentials: [{accessKey, secretKey}], actions, policy_names}.
-           - to_update: {name, credentials: preserved from current, actions: target's, policy_names: target's}.
-           - to_delete: skip.
-        5. Serialize {"identities": [...]} через json.dumps(... sort_keys=True).
-
-    Args:
-        vault_raw_json: str — current Vault combined JSON (may be '', None, malformed).
-        target_identities: list — target identities from inventory.
-        access_key_length: int — length of generated access_key.
-        secret_key_length: int — length of generated secret_key.
-        access_key_charset: str — charset for access_key generation.
-        secret_key_charset: str — charset for secret_key generation.
-
-    Returns:
-        str — finalized combined JSON, ready for vault kv put.
-    """
-    combined = _parse_combined_json(vault_raw_json)
-    current = combined['identities']
-    diff = _compute_identity_diff(current, target_identities)
-    current_by_name = {i['name']: i for i in current}
-    result = []
-    for item in diff['to_create']:
-        name = item['name']
-        if name == 'anonymous':
-            ak, sk = '', ''
-        else:
-            ak = _gen_secret(access_key_length, access_key_charset)
-            sk = _gen_secret(secret_key_length, secret_key_charset)
-        result.append({
-            'name': name,
-            'credentials': [{'accessKey': ak, 'secretKey': sk}],
-            'actions': item.get('actions', []),
-            'policy_names': item.get('policy_names', []),
-        })
-    for item in diff['to_update']:
-        name = item['name']
-        current_entry = current_by_name.get(name, {})
-        existing_creds = current_entry.get('credentials') or [{'accessKey': '', 'secretKey': ''}]
-        result.append({
-            'name': name,
-            'credentials': existing_creds,
-            'actions': item.get('actions', []),
-            'policy_names': item.get('policy_names', []),
-        })
-    return json.dumps({'identities': result}, sort_keys=True)
-
 
 def seaweedfs_identities_to_delete(s3configure_raw, target_identities):
     """Identity names present in the filer (s3.configure dump) but absent from target →
@@ -352,36 +247,6 @@ def seaweedfs_identity_actions_to_remove(s3configure_raw, target_identities):
     return result
 
 
-def seaweedfs_combined_json_violations(raw):
-    """Validate the Vault combined-JSON key-store before user-sync/distribute consume it.
-
-    Returns a one-element violation list when `raw` is non-empty but does NOT parse
-    as a valid combined-JSON object ({"identities": [...]}). Returns [] for empty raw
-    (greenfield — vault-get returns '' for a missing path/field, which is legitimate).
-    Mirrors the *_immutable_violations pattern: filter returns a list, YAML asserts
-    length == 0.
-
-    Why: a malformed key-store, if silently treated as empty by _parse_combined_json,
-    would make user-sync re-create ALL identities with FRESH credentials — a silent
-    rotation of every consumer's S3 creds. This gate makes that loud instead.
-
-    Args:
-        raw: str — Vault combined-JSON field value (may be '', None, malformed).
-
-    Returns:
-        list — [] if valid or greenfield-empty, else a one-element [<message str>].
-    """
-    if raw is None or raw == '':
-        return []
-    try:
-        data = json.loads(raw)
-    except (ValueError, TypeError):
-        return ['Vault combined JSON is not parseable as JSON']
-    if not isinstance(data, dict) or 'identities' not in data:
-        return ["Vault combined JSON is not an object with an 'identities' key"]
-    if not isinstance(data['identities'], list):
-        return ["Vault combined JSON 'identities' is not a list"]
-    return []
 # =============================================================================
 # Public Layer 3 filters — stateless identity-distribute orchestrators
 # =============================================================================
@@ -871,45 +736,6 @@ def seaweedfs_state_configmaps_to_delete(configmaplist_raw, target_cm_names):
     return result
 
 
-def seaweedfs_buckets_configmaps_to_apply(target_buckets):
-    """Per-item state ConfigMap descriptors for buckets.
-
-    Stateless filter: validate (replication presence/format + rack/dataCenter),
-    then one {name, content} per target bucket. content = full bucket dict
-    (sort_keys=True), stored verbatim.
-
-    Args:
-        target_buckets: list — full target from inventory (base + extra).
-
-    Returns:
-        list of {name, content} — name='seaweedfs-sync-buckets-<bucket>'.
-
-    Raises:
-        AnsibleFilterError on invalid replication or non-DNS bucket name.
-    """
-    _validate_buckets_have_replication(target_buckets)
-    return [_item_configmap_entry(_CM_PREFIX_BUCKETS, b['name'], b) for b in target_buckets]
-
-
-def seaweedfs_policies_configmaps_to_apply(target_policies):
-    """Per-item state ConfigMap descriptors for managed policies.
-
-    Stateless filter: validate (name + document), then one {name, content} per
-    target policy. content = full policy dict (sort_keys=True).
-
-    Args:
-        target_policies: list — full target from inventory (base + extra).
-
-    Returns:
-        list of {name, content} — name='seaweedfs-sync-policies-<policy>'.
-
-    Raises:
-        AnsibleFilterError on missing name/document or non-DNS policy name.
-    """
-    _validate_managed_policies(target_policies)
-    return [_item_configmap_entry(_CM_PREFIX_POLICIES, p['name'], p) for p in target_policies]
-
-
 def seaweedfs_distribute_configmaps_to_apply(target_identities):
     """Per-item state ConfigMap descriptors for identity-distribution.
 
@@ -945,11 +771,9 @@ class FilterModule(object):
     """Ansible filter plugin entry point — registers all seaweedfs_* filters."""
     def filters(self):
         return {
-            'seaweedfs_user_sync_full': seaweedfs_user_sync_full,
             'seaweedfs_identities_to_delete': seaweedfs_identities_to_delete,
             'seaweedfs_identity_actions_to_apply': seaweedfs_identity_actions_to_apply,
             'seaweedfs_identity_actions_to_remove': seaweedfs_identity_actions_to_remove,
-            'seaweedfs_combined_json_violations': seaweedfs_combined_json_violations,
             'seaweedfs_distribute_paths_to_delete': seaweedfs_distribute_paths_to_delete,
             'seaweedfs_distribute_paths_to_add': seaweedfs_distribute_paths_to_add,
             'seaweedfs_buckets_to_delete': seaweedfs_buckets_to_delete,
@@ -961,7 +785,5 @@ class FilterModule(object):
             'seaweedfs_policies_to_delete': seaweedfs_policies_to_delete,
             'seaweedfs_state_configmaps_to_combined_json': seaweedfs_state_configmaps_to_combined_json,
             'seaweedfs_state_configmaps_to_delete': seaweedfs_state_configmaps_to_delete,
-            'seaweedfs_buckets_configmaps_to_apply': seaweedfs_buckets_configmaps_to_apply,
-            'seaweedfs_policies_configmaps_to_apply': seaweedfs_policies_configmaps_to_apply,
             'seaweedfs_distribute_configmaps_to_apply': seaweedfs_distribute_configmaps_to_apply,
         }

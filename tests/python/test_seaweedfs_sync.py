@@ -11,129 +11,6 @@ import pytest
 import seaweedfs_sync as sw
 from ansible.errors import AnsibleFilterError
 # =============================================================================
-# Shared utilities
-# =============================================================================
-def test_parse_combined_json_empty_returns_empty_default():
-    assert sw._parse_combined_json('') == {'identities': []}
-    assert sw._parse_combined_json(None) == {'identities': []}
-def test_parse_combined_json_valid_returns_dict():
-    s = '{"identities": [{"name": "alice", "credentials": [{"accessKey": "AK", "secretKey": "SK"}]}]}'
-    result = sw._parse_combined_json(s)
-    assert result['identities'][0]['name'] == 'alice'
-def test_parse_combined_json_malformed_returns_empty_default():
-    assert sw._parse_combined_json('not valid json {') == {'identities': []}
-    assert sw._parse_combined_json('{}') == {'identities': []}
-def test_extract_creds_by_name_builds_mapping():
-    combined = {
-        'identities': [
-            {'name': 'alice', 'credentials': [{'accessKey': 'AK_A', 'secretKey': 'SK_A'}]},
-            {'name': 'bob',   'credentials': [{'accessKey': 'AK_B', 'secretKey': 'SK_B'}]},
-        ]
-    }
-    result = sw._extract_creds_by_name(combined)
-    assert result['alice'] == {'accessKey': 'AK_A', 'secretKey': 'SK_A'}
-    assert result['bob']['accessKey'] == 'AK_B'
-def test_extract_creds_by_name_empty_combined():
-    assert sw._extract_creds_by_name({'identities': []}) == {}
-    assert sw._extract_creds_by_name({}) == {}
-def test_extract_creds_by_name_handles_missing_credentials():
-    combined = {'identities': [{'name': 'alice'}]}
-    result = sw._extract_creds_by_name(combined)
-    assert result['alice'] == {'accessKey': '', 'secretKey': ''}
-# =============================================================================
-# user-sync (Layer 1) — seaweedfs_user_sync_full (stateless)
-# =============================================================================
-
-def _patch_secrets_deterministic(monkeypatch):
-    """Mock secrets.choice to always return first char of alphabet — determinism."""
-    monkeypatch.setattr(sw.secrets, 'choice', lambda alphabet: alphabet[0])
-
-
-def test_user_sync_full_happy_with_mock(monkeypatch, sample_vault_json, sample_generate_params):
-    """Happy path: target = [alice], current has alice — update path, preserve creds."""
-    _patch_secrets_deterministic(monkeypatch)
-    target = [{'name': 'alice', 'actions': ['NewAction']}]
-    result = sw.seaweedfs_user_sync_full(sample_vault_json, target, **sample_generate_params)
-    parsed = json.loads(result)
-    assert len(parsed['identities']) == 1
-    assert parsed['identities'][0]['name'] == 'alice'
-    # preserved existing creds
-    assert parsed['identities'][0]['credentials'][0]['accessKey'] == 'ALICE_AK'
-    assert parsed['identities'][0]['actions'] == ['NewAction']
-
-
-def test_user_sync_full_empty_vault(monkeypatch, sample_target_identities, sample_generate_params):
-    """Edge: empty vault → all target identities to_create."""
-    _patch_secrets_deterministic(monkeypatch)
-    result = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
-    parsed = json.loads(result)
-    names = [i['name'] for i in parsed['identities']]
-    assert set(names) == {'admin', 'alice', 'anonymous'}
-    # Mocked: first char × length
-    admin = next(i for i in parsed['identities'] if i['name'] == 'admin')
-    assert admin['credentials'][0]['accessKey'] == 'A' * 20
-    # anonymous gets empty creds
-    anon = next(i for i in parsed['identities'] if i['name'] == 'anonymous')
-    assert anon['credentials'][0]['accessKey'] == ''
-    assert anon['credentials'][0]['secretKey'] == ''
-
-
-def test_user_sync_full_only_anonymous(monkeypatch, sample_generate_params):
-    """Edge: target = [anonymous] only → no AK/SK generation, empty creds."""
-    _patch_secrets_deterministic(monkeypatch)
-    target = [{'name': 'anonymous', 'actions': []}]
-    result = sw.seaweedfs_user_sync_full('', target, **sample_generate_params)
-    parsed = json.loads(result)
-    assert len(parsed['identities']) == 1
-    assert parsed['identities'][0]['credentials'][0]['accessKey'] == ''
-
-
-def test_user_sync_full_purity_length_charset(sample_generate_params):
-    """Purity (no mock): real secrets.choice — verify length + charset compliance."""
-    target = [{'name': 'alice', 'actions': []}]
-    result = sw.seaweedfs_user_sync_full('', target, **sample_generate_params)
-    parsed = json.loads(result)
-    creds = parsed['identities'][0]['credentials'][0]
-    assert len(creds['accessKey']) == 20
-    assert len(creds['secretKey']) == 40
-    assert all(c in sample_generate_params['access_key_charset'] for c in creds['accessKey'])
-    assert all(c in sample_generate_params['secret_key_charset'] for c in creds['secretKey'])
-
-
-def test_user_sync_full_determinism_with_mock(monkeypatch, sample_target_identities, sample_generate_params):
-    """Determinism: two calls with same mock → identical output string."""
-    _patch_secrets_deterministic(monkeypatch)
-    result1 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
-    result2 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
-    assert result1 == result2
-
-
-def test_user_sync_full_randomness_without_mock(sample_target_identities, sample_generate_params):
-    """Non-mocked: two calls produce different AK/SK (verify real randomness)."""
-    result1 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
-    result2 = sw.seaweedfs_user_sync_full('', sample_target_identities, **sample_generate_params)
-    assert result1 != result2
-
-
-def test_combined_json_violations_valid_returns_empty():
-    raw = '{"identities": [{"name": "admin", "credentials": [{"accessKey": "AK", "secretKey": "SK"}]}]}'
-    assert sw.seaweedfs_combined_json_violations(raw) == []
-
-
-def test_combined_json_violations_greenfield_empty_returns_empty():
-    assert sw.seaweedfs_combined_json_violations('') == []
-    assert sw.seaweedfs_combined_json_violations(None) == []
-
-
-def test_combined_json_violations_malformed_returns_violation():
-    assert len(sw.seaweedfs_combined_json_violations('not json {')) == 1
-
-
-def test_combined_json_violations_wrong_shape_returns_violation():
-    assert len(sw.seaweedfs_combined_json_violations('{"foo": 1}')) == 1
-    assert len(sw.seaweedfs_combined_json_violations('[]')) == 1
-    assert len(sw.seaweedfs_combined_json_violations('{"identities": "x"}')) == 1
-# =============================================================================
 # identity-distribute (Layer 3) — seaweedfs_distribute_* (stateless)
 # =============================================================================
 
@@ -405,19 +282,6 @@ def test_policies_validation_raises_on_single_quote_in_document():
 # v14 additions — identity policy_names, identities_to_delete, bucket owners
 # =============================================================================
 
-def test_user_sync_full_includes_policy_names(sample_generate_params):
-    """to_create + to_update identities carry policy_names (default [] if absent)."""
-    target = [
-        {'name': 'gitlab', 'actions': [], 'policy_names': ['gitlab-rw']},
-        {'name': 'noattach', 'actions': []},
-    ]
-    result = sw.seaweedfs_user_sync_full('', target, **sample_generate_params)
-    parsed = json.loads(result)
-    by_name = {i['name']: i for i in parsed['identities']}
-    assert by_name['gitlab']['policy_names'] == ['gitlab-rw']
-    assert by_name['noattach']['policy_names'] == []
-
-
 def test_parse_s3_configure_identities_happy(sample_s3configure_raw):
     parsed = sw._parse_s3_configure_identities(sample_s3configure_raw)
     assert [i['name'] for i in parsed] == ['admin', 'alice', 'anonymous']  # static-id filtered
@@ -603,43 +467,6 @@ def test_state_configmaps_to_delete_empty_target(sample_configmaplist_raw):
 # =============================================================================
 # per-item ConfigMap state split — per-group apply
 # =============================================================================
-def test_buckets_configmaps_to_apply_happy(sample_target_buckets):
-    result = sw.seaweedfs_buckets_configmaps_to_apply(sample_target_buckets)
-    assert [e['name'] for e in result] == ['seaweedfs-sync-buckets-b1', 'seaweedfs-sync-buckets-b2']
-    b1 = json.loads(result[0]['content'])
-    assert b1['name'] == 'b1' and b1['owner'] == 'gitlab'
-
-
-def test_buckets_configmaps_to_apply_empty():
-    assert sw.seaweedfs_buckets_configmaps_to_apply([]) == []
-
-
-def test_buckets_configmaps_to_apply_invalid_replication_raises():
-    with pytest.raises(AnsibleFilterError, match='Invalid replication format'):
-        sw.seaweedfs_buckets_configmaps_to_apply([{'name': 'b1', 'replication': 'xx'}])
-
-
-def test_buckets_configmaps_to_apply_invalid_name_raises():
-    with pytest.raises(AnsibleFilterError, match='not a valid RFC 1123'):
-        sw.seaweedfs_buckets_configmaps_to_apply([{'name': 'Bad_Name', 'replication': '001'}])
-
-
-def test_policies_configmaps_to_apply_happy(sample_managed_policies):
-    result = sw.seaweedfs_policies_configmaps_to_apply(sample_managed_policies)
-    assert [e['name'] for e in result] == ['seaweedfs-sync-policies-gitlab-rw', 'seaweedfs-sync-policies-loki-rw']
-    p = json.loads(result[0]['content'])
-    assert p['name'] == 'gitlab-rw' and 'document' in p
-
-
-def test_policies_configmaps_to_apply_empty():
-    assert sw.seaweedfs_policies_configmaps_to_apply([]) == []
-
-
-def test_policies_configmaps_to_apply_missing_document_raises():
-    with pytest.raises(AnsibleFilterError, match="missing required non-empty mapping 'document'"):
-        sw.seaweedfs_policies_configmaps_to_apply([{'name': 'gitlab-rw'}])
-
-
 def test_distribute_configmaps_to_apply_happy():
     target = [
         {'name': 'admin', 'actions': ['Admin']},
