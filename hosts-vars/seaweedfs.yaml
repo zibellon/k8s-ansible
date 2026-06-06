@@ -133,13 +133,11 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
-    # Combined identity JSON key-store (Vault path /seaweedfs/s3-config/all, field 'config').
-    # Source-of-truth для всех identity credentials (admin + users). Пишется user-sync,
-    # читается user-sync (diff) + identity-distribute (creds extraction). Доступ — plain-var
-    # (НЕ ESO secret): в SeaweedFS НЕ монтируется (v14 filer-driven). НЕ путать с bootstrap
-    # empty-config (seaweedfs_secret_s3_bootstrap) который монтируется через existingConfigSecret.
-    seaweedfs_s3_config_vault_path: "/seaweedfs/s3-config/all"
-    seaweedfs_s3_config_vault_field: "config"
+    # Vault field name for the bootstrap empty-config (seaweedfs_secret_s3_bootstrap, path
+    # /seaweedfs/s3-config/bootstrap). Used by seaweedfs-install.yaml bootstrap-get/put.
+    # (v17: identities live only in the filer — read/written via weed shell s3.configure;
+    # there is no Vault identity key-store anymore.)
+    seaweedfs_s3_bootstrap_vault_field: "config"
 
     # Named secret 1: PostgreSQL creds (simple dataFrom.extract)
     seaweedfs_secret_postgresql_creds:
@@ -157,8 +155,7 @@ all:
     # Содержимое — empty static config '{"identities":[]}': форсит S3-gateway в filer-driven
     # (Replace) режим (staticIdentityNames=0 → hasStaticConfig=false), identity/policy приходят
     # в живой filer через weed shell (НЕ static mount). Vault path /seaweedfs/s3-config/bootstrap;
-    # seed (seed-if-not-exists) от seaweedfs-install.yaml (--tags install). НЕ путать с
-    # /seaweedfs/s3-config/all (combined JSON key-store, plain-var выше, в K8s не материализуется).
+    # seed (seed-if-not-exists) от seaweedfs-install.yaml (--tags install).
     seaweedfs_secret_s3_bootstrap:
       external_secret_name: "eso-seaweedfs-s3-bootstrap"
       vault_path: "/seaweedfs/s3-config/bootstrap"
@@ -396,7 +393,7 @@ all:
         # (eso-seaweedfs-s3-bootstrap, '{"identities":[]}') — форсит S3-gateway в Replace-режим
         # (staticIdentityNames=0 → hasStaticConfig=false → чистый filer-driven, без anvAdmin/anvReadOnly).
         # Identities/policies применяются в живой filer через weed shell (policy-sync/user-sync),
-        # live-reload подхватывает без рестарта. Combined JSON key-store — /seaweedfs/s3-config/all (plain-var).
+        # live-reload подхватывает без рестарта.
         enableAuth: true
         existingConfigSecret: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
 

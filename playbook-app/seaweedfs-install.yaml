@@ -8,7 +8,7 @@
 #      (seaweedfs/seaweedfs 4.31.0). Cluster стартует с empty static config (filer-driven).
 #   4. SYNC (в живой filer, после install — weed shell live-reload):
 #      4a. policy-sync: managed IAM policies (s3.policy)
-#      4b. user-sync: identities (s3.configure -apply) + Vault combined JSON key-store
+#      4b. user-sync: identities в живой filer (s3.configure -apply)
 #      4c. identity-distribute: identity creds → extra Vault paths
 #      4d. bucket-sync: buckets + owner + quotas (s3.bucket.*)
 #   5. seaweedfs/post: Certificate + IngressRoute + ServiceMonitor
@@ -283,7 +283,7 @@
       vars:
         dto_label_name: "seaweedfs-bootstrap-secrets"
         dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_s3_bootstrap.vault_path }}"
-        dto_vault_get_field: "{{ seaweedfs_s3_config_vault_field }}"
+        dto_vault_get_field: "{{ seaweedfs_s3_bootstrap_vault_field }}"
         dto_vault_get_res_fact_name: "{{ _local_seaweedfs_bootstrap_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_seaweedfs_bootstrap_vault_exists_key }}"
       tags: [install]
@@ -291,7 +291,7 @@
     - name: "[seaweedfs-bootstrap-secrets] Prepare bootstrap Vault put data (empty static config)"
       set_fact:
         "{{ _local_seaweedfs_bootstrap_put_data_key }}": >-
-          {{ {seaweedfs_s3_config_vault_field: '{"identities":[]}'} }}
+          {{ {seaweedfs_s3_bootstrap_vault_field: '{"identities":[]}'} }}
       when: not lookup('vars', _local_seaweedfs_bootstrap_vault_exists_key)
       tags: [install]
 
@@ -445,7 +445,7 @@
       tags: [policy-sync]
 
     # ----- User sync (admin + users + anonymous) via tasks-seaweedfs-user-sync -----
-    # Vault combined JSON key-store update + weed shell s3.configure -apply (live filer).
+    # weed shell s3.configure -apply в живой filer (filer = source-of-truth, без Vault key-store).
     - name: "[seaweedfs-install-user-sync] Sync identities (admin + users + anonymous)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-user-sync.yaml"
       vars:
@@ -455,7 +455,7 @@
     # ----- Identity secret distribution via tasks-seaweedfs-identity-secret-distribute -----
     # Distribute identity credentials (fixed keys: username, accessKey, secretKey)
     # в каждый дополнительный Vault path из identity.extra_vault_paths (inventory).
-    # Source-of-truth для creds — Vault combined JSON (записанный user-sync above).
+    # Source-of-truth для creds — живой filer (s3.configure), читается этим таском напрямую.
     - name: "[seaweedfs-install-identity-distribute] Distribute identity creds to extra Vault paths"
       include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-identity-secret-distribute.yaml"
       vars:
@@ -557,11 +557,10 @@
           - ""
           - "Credentials stored in Vault:"
           - "  PostgreSQL:    {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_postgresql_creds.vault_path }}"
-          - "  S3 identities: {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }} (combined JSON key-store)"
           - "  Admin UI:      {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_secret_admin_ui_creds.vault_path }}"
           - ""
-          - "IMPORTANT: Admin identity is bootstrapped on first install."
-          - "  Back it up from Vault immediately."
+          - "IMPORTANT: S3 identities (incl. admin AK/SK) live ONLY in the filer (/etc/iam/), NOT in Vault."
+          - "  Back up admin creds via 'weed shell s3.configure' or distribute via identity.extra_vault_paths."
           - "  Policies + users + buckets — manage via --tags policy-sync/user-sync/identity-distribute/bucket-sync."
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
