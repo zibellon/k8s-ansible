@@ -131,6 +131,19 @@ def sample_s3configure_raw():
 
 
 @pytest.fixture
+def sample_s3policy_list_raw():
+    """`s3.policy -list` plain text: gitlab-rw (document IDENTICAL to sample_managed_policies'
+    gitlab-rw → diff skips it) + p_stale (not in target → diff deletes it)."""
+    gitlab_doc = {'Version': '2012-10-17', 'Statement': [
+        {'Effect': 'Allow', 'Action': ['s3:*'],
+         'Resource': ['arn:aws:s3:::gitlab-registry', 'arn:aws:s3:::gitlab-registry/*']}]}
+    stale_doc = {'Version': '2012-10-17', 'Statement': [
+        {'Effect': 'Allow', 'Action': ['s3:GetObject'], 'Resource': ['arn:aws:s3:::old']}]}
+    return ('Name: gitlab-rw\nContent: ' + json.dumps(gitlab_doc) + '\n---\n'
+            + 'Name: p_stale\nContent: ' + json.dumps(stale_doc) + '\n---\n')
+
+
+@pytest.fixture
 def sample_configmaplist_raw():
     """Sample `kubectl get cm -l <label> -o json` stdout: List with 2 per-item
     state ConfigMaps (each .data.state = single-item JSON object string).
