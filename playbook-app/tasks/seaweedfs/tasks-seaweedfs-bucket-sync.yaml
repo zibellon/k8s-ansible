@@ -6,43 +6,40 @@
 #     vars:
 #       dto_label_name: "<caller-prefix>"
 #
-# v14 filer-driven IAM. Buckets get an owner (identity); data access is via the
+# v17 filer-driven IAM. Buckets get an owner (identity); data access is via the
 # consumers' managed policies (SECTION 1+2), NOT bucket policies (removed).
 #
-# State (v15 — per-item ConfigMaps): «последний applied target» хранится НЕ в одном
-# ConfigMap, а в наборе per-item ConfigMap'ов 'seaweedfs-sync-buckets-<bucket>'
-# (по одному на bucket), сгруппированных label'ом 'seaweedfs-sync-state: buckets'
-# (избегаем etcd per-object size limit). Чтение всей группы — одним
-# 'kubectl get cm -l seaweedfs-sync-state=buckets -o json'; reconstruction в
-# combined-array JSON (фильтр seaweedfs_state_configmaps_to_combined_json) кормит
-# diff-фильтры без изменений.
+# State (v17 — filer = единственный источник истины): текущее состояние читается
+# напрямую из живого filer двумя командами — fs.configure (location config:
+# replication/rack/dataCenter) + s3.bucket.list (existence + owner). diff vs inventory
+# target → delete стейл + create new + reconcile owner + apply quotas. Внешний
+# ConfigMap-стор (бывшие per-item ConfigMap'ы) устранён.
 #
-# Stateless filter API: seaweedfs_buckets_to_delete / _to_create / _owners_to_set /
-# _quotas_to_apply / _immutable_violations (diff; signature (vault_raw_json,
-# target_buckets, configmap_raw_json)), плюс seaweedfs_state_configmaps_to_combined_json
-# (read reconstruction), seaweedfs_buckets_configmaps_to_apply /
-# seaweedfs_state_configmaps_to_delete (write per-item + prune stale). Каждый diff-фильтр
-# делает full validation (replication presence + rack/dataCenter + format) + diff внутри.
+# Stateless filter API:
+#   seaweedfs_buckets_to_delete / _to_create / _owners_to_set / _immutable_violations
+#     — signature (fs_configure_raw, bucket_list_raw, target_buckets); each does full
+#       validation (replication presence + rack/dataCenter + format) + diff internally.
+#   seaweedfs_buckets_quotas_to_apply — signature (target_buckets); annotates every target
+#     bucket with _quota_op + _quota_size_mib (quota applied idempotently, no filer read).
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation.
 #
 # Reads inventory:
 #   - seaweedfs_sync_buckets + _extra (from hosts-vars/seaweedfs-sync.yaml).
-#     Schema per bucket: {name, owner, replication, rack?, dataCenter?, quota?}.
+#     Schema per bucket: {name, owner, replication, rack?, dataCenter?, quota_size?}.
 #   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
 #
-# Sync phases (5 resource loops + assert + 2 ConfigMap loops):
+# Sync flow (2 reads + 5 resource loops + immutable assert):
+#   READ. fs.configure + s3.bucket.list (live filer) → capture stdout (x2).
 #   A. Delete стейл buckets (weed shell s3.bucket.delete).
 #   B. Create new buckets (weed shell s3.bucket.create -owner=<owner>).
 #   C. Apply fs.configure для new buckets (replication + optional rack + dataCenter).
 #   D. Reconcile owner у kept buckets (weed shell s3.bucket.owner; owner mutable).
-#   E. Apply quotas всем target buckets (quota_size задан → -op=set; иначе -op=remove; weed shell s3.bucket.quota).
-#   F. Apply per-item state ConfigMaps (labeled) для target buckets.
-#   G. Delete стейл per-item state ConfigMaps (bucket дропнут из target).
+#   E. Apply quotas всем target buckets (quota_size задан → -op=set; иначе -op=remove).
 #
 # Pre-phase ASSERT: после compute calls, до Phase A — fail-fast если ЛЮБОЕ
-# immutable поле (replication, rack или dataCenter) изменилось на kept bucket vs state.
-# Sync aborts с detailed message, cluster intact, state не updated.
+# immutable поле (replication, rack или dataCenter) изменилось на kept bucket vs filer.
+# Sync aborts с detailed message, cluster intact.
 #
 # NOTE про bucket delete: 's3.bucket.delete' в SeaweedFS shell не имеет флага
 # -force, но команда сама делает hard delete — CollectionDelete sweeps все
@@ -63,13 +60,12 @@
 - name: "[{{ dto_label_name }}] Declare local fact keys"
   set_fact:
     _local_target_buckets_key: "_local_target_buckets"
-    _local_configmap_raw_key: "_local_configmap_raw"
+    _local_fs_configure_raw_key: "_local_fs_configure_raw"
+    _local_bucket_list_raw_key: "_local_bucket_list_raw"
     _local_to_delete_buckets_key: "_local_to_delete_buckets"
     _local_to_create_buckets_key: "_local_to_create_buckets"
     _local_owners_to_set_key: "_local_owners_to_set"
     _local_quotas_to_apply_key: "_local_quotas_to_apply"
-    _local_configmaps_to_apply_key: "_local_configmaps_to_apply"
-    _local_configmaps_to_delete_key: "_local_configmaps_to_delete"
     _local_immutable_violations_key: "_local_immutable_violations"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -82,30 +78,30 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Read current state ConfigMaps (labeled, may be none)"
-  command: >-
-    kubectl get configmap -n {{ seaweedfs_namespace }}
-    -l seaweedfs-sync-state=buckets -o json
-  register: _local_configmaplist_reg
-  changed_when: false
-  delegate_to: "{{ master_manager_fact }}"
+# --- READ 1: current bucket location config from the live filer (fs.configure) ---
+- name: "[{{ dto_label_name }}] Read current bucket locations from filer (fs.configure)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "fs.configure"
+    dto_weed_capture_fact: "{{ _local_fs_configure_raw_key }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Reconstruct combined state from labeled ConfigMaps"
-  set_fact:
-    "{{ _local_configmap_raw_key }}": >-
-      {{ _local_configmaplist_reg.stdout | seaweedfs_state_configmaps_to_combined_json }}
-  delegate_to: "{{ master_manager_fact }}"
+# --- READ 2: current buckets (existence + owner) from the live filer (s3.bucket.list) ---
+- name: "[{{ dto_label_name }}] Read current buckets from filer (s3.bucket.list)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.bucket.list"
+    dto_weed_capture_fact: "{{ _local_bucket_list_raw_key }}"
   run_once: true
   tags: [always]
 
 - name: "[{{ dto_label_name }}] Compute to_delete_buckets via filter"
   set_fact:
     "{{ _local_to_delete_buckets_key }}": >-
-      {{ '' | seaweedfs_buckets_to_delete(
-           lookup('vars', _local_target_buckets_key),
-           lookup('vars', _local_configmap_raw_key)
+      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_to_delete(
+           lookup('vars', _local_bucket_list_raw_key),
+           lookup('vars', _local_target_buckets_key)
          ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -114,9 +110,9 @@
 - name: "[{{ dto_label_name }}] Compute to_create_buckets via filter"
   set_fact:
     "{{ _local_to_create_buckets_key }}": >-
-      {{ '' | seaweedfs_buckets_to_create(
-           lookup('vars', _local_target_buckets_key),
-           lookup('vars', _local_configmap_raw_key)
+      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_to_create(
+           lookup('vars', _local_bucket_list_raw_key),
+           lookup('vars', _local_target_buckets_key)
          ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -125,9 +121,9 @@
 - name: "[{{ dto_label_name }}] Compute owners_to_set via filter (kept buckets с changed owner)"
   set_fact:
     "{{ _local_owners_to_set_key }}": >-
-      {{ '' | seaweedfs_buckets_owners_to_set(
-           lookup('vars', _local_target_buckets_key),
-           lookup('vars', _local_configmap_raw_key)
+      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_owners_to_set(
+           lookup('vars', _local_bucket_list_raw_key),
+           lookup('vars', _local_target_buckets_key)
          ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -136,28 +132,7 @@
 - name: "[{{ dto_label_name }}] Compute buckets_quotas_to_apply via filter (op + size_mib)"
   set_fact:
     "{{ _local_quotas_to_apply_key }}": >-
-      {{ '' | seaweedfs_buckets_quotas_to_apply(
-           lookup('vars', _local_target_buckets_key),
-           lookup('vars', _local_configmap_raw_key)
-         ) }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Compute per-item state ConfigMaps to apply"
-  set_fact:
-    "{{ _local_configmaps_to_apply_key }}": >-
-      {{ lookup('vars', _local_target_buckets_key) | seaweedfs_buckets_configmaps_to_apply }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Compute stale state ConfigMaps to delete"
-  set_fact:
-    "{{ _local_configmaps_to_delete_key }}": >-
-      {{ _local_configmaplist_reg.stdout | seaweedfs_state_configmaps_to_delete(
-           lookup('vars', _local_configmaps_to_apply_key) | map(attribute='name') | list
-         ) }}
+      {{ lookup('vars', _local_target_buckets_key) | seaweedfs_buckets_quotas_to_apply }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -165,9 +140,9 @@
 - name: "[{{ dto_label_name }}] Compute bucket immutable_violations via filter (replication + rack + dataCenter)"
   set_fact:
     "{{ _local_immutable_violations_key }}": >-
-      {{ '' | seaweedfs_buckets_immutable_violations(
-           lookup('vars', _local_target_buckets_key),
-           lookup('vars', _local_configmap_raw_key)
+      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_immutable_violations(
+           lookup('vars', _local_bucket_list_raw_key),
+           lookup('vars', _local_target_buckets_key)
          ) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -243,31 +218,5 @@
   loop: "{{ lookup('vars', _local_quotas_to_apply_key) }}"
   loop_control:
     label: "{{ item.name }} (quota: {{ item._quota_op }}{% if item._quota_op == 'set' %} {{ item._quota_size_mib }}MiB{% endif %})"
-  run_once: true
-  tags: [always]
-
-# --- PHASE F: Apply per-item state ConfigMaps (labeled seaweedfs-sync-state=buckets) ---
-- name: "[{{ dto_label_name }}] Phase F — Apply per-item state ConfigMaps"
-  shell: |
-    kubectl create configmap {{ item.name }} -n {{ seaweedfs_namespace }} \
-      --from-literal=state='{{ item.content }}' \
-      --dry-run=client -o yaml | \
-      kubectl label --local -f - -o yaml seaweedfs-sync-state=buckets | \
-      kubectl apply -f -
-  loop: "{{ lookup('vars', _local_configmaps_to_apply_key) }}"
-  loop_control:
-    label: "{{ item.name }}"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-# --- PHASE G: Delete стейл per-item state ConfigMaps (bucket dropped from target) ---
-- name: "[{{ dto_label_name }}] Phase G — Delete стейл state ConfigMaps"
-  command: >-
-    kubectl delete configmap {{ item }} -n {{ seaweedfs_namespace }} --ignore-not-found
-  loop: "{{ lookup('vars', _local_configmaps_to_delete_key) }}"
-  loop_control:
-    label: "{{ item }}"
-  delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
