@@ -1,24 +1,32 @@
 # =============================================================================
-# SeaweedFS User Sync (Layer 1) — declarative identity sync (Vault key-store + filer apply)
+# SeaweedFS User Sync (Layer 1) — declarative identity sync (filer as source of truth)
 # =============================================================================
 # Reusable task include. Invoked from playbook with:
 #   - include_tasks: tasks-seaweedfs-user-sync.yaml
 #     vars:
 #       dto_label_name: "<caller-prefix>"
 #
-# v14 filer-driven IAM. Identities live in two places:
-#   1. Vault combined JSON key-store (/seaweedfs/s3-config/all, field 'config') —
-#      source-of-truth для credentials (AK/SK). Written here (when changed).
-#   2. filer /etc/iam/identities/<n>.json — applied via weed shell s3.configure
-#      -apply (live-reload, без рестарта S3). Access model: actions=[] +
-#      policy_names=[<p>] (managed policy attached, identity-based).
+# v17 filer-driven IAM. Identities live ONLY in the filer (/etc/iam/identities/<n>.json),
+# applied via weed shell s3.configure -apply (live-reload, без рестарта S3). The filer is
+# the single source of truth — there is NO Vault combined JSON key-store anymore (removed
+# in v17). Access model: actions=[] + policy_names=[<p>] (managed policy attached,
+# identity-based). NO ESO/K8s-Secret/rollout-restart for identities.
 #
-# NO ESO/K8s-Secret/rollout-restart for identities (combined JSON НЕ монтируется
-# в S3 — bootstrap empty-config это отдельный ESO secret). Identities применяются
-# в живой filer через weed shell.
+# v17 bugfix: s3.configure -apply is ADDITIVE (addUniqueToSlice) — dropping a policy/action
+# from inventory never reached the filer. v17 reads the live filer (s3.configure), diffs vs
+# inventory target, and reconciles BOTH directions: Phase B adds, Phase C removes.
 #
-# Stateless filter API: seaweedfs_user_sync_full (combined JSON build incl.
-# policy_names) + seaweedfs_identities_to_delete (стейл names).
+# Stateless filter API (signature: s3configure_raw | filter(target_identities)):
+#   seaweedfs_identity_actions_to_apply  — per target: creds (preserved from filer / fresh
+#                                          AK/SK for new) + actions/policies to ADD (set-diff
+#                                          vs filer). kwargs: key length/charset for new creds.
+#   seaweedfs_identity_actions_to_remove — per kept identity: filer-extra actions/policies to
+#                                          REMOVE (the bugfix); only entries with >=1 non-empty
+#                                          list (bare-delete guard).
+#   seaweedfs_identities_to_delete       — filer identity names not in target → delete.
+#
+# SECURITY: s3.configure dump carries plaintext secretKey → the READ task, the
+# _actions_to_apply compute, and Phase B apply все under no_log.
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation;
 # nested include_tasks inherit via Ansible variable scope.
@@ -26,23 +34,17 @@
 # Reads inventory:
 #   - seaweedfs_identities + _extra, seaweedfs_sync_{access,secret}_key_{length,charset}
 #     (from hosts-vars/seaweedfs-sync.yaml).
-#   - seaweedfs_s3_config_vault_path / _field, eso_vault_integration_seaweedfs,
-#     seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
+#   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
 #
-# Logic:
-#   1. Get current combined JSON from Vault (may not exist on greenfield).
-#   2. Compute target = inventory base + extra.
-#   3. Admin safety warning if no Admin actions in target.
-#   4. Compute new combined JSON via filter (parse, diff, generate AK/SK для new
-#      non-anonymous, build incl. policy_names, serialize).
-#   5. Compute identities_to_delete (in Vault, not in target).
-#   6. identities_changed = current missing OR current_json != new_json.
-#   7. When changed: vault-put new combined JSON (key-store update).
-#   8. Phase A: weed shell s3.configure -delete стейл identities (filer).
-#   9. Phase B: weed shell s3.configure -apply target identities (filer; cred flags
-#      only when present → anonymous with a managed policy is applied; identities
-#      granting nothing skipped). actions → -actions, policy_names → -policies.
+# Sync flow (1 read + 3 resource loops):
+#   READ. s3.configure (live filer, no_log) → capture stdout.
+#   A.    Delete стейл identities (filer, not in target): s3.configure -user=X -delete -apply.
+#   B.    Additive apply (creds + added actions/policies, no_log): s3.configure -user=X
+#         [-access_key -secret_key][-actions][-policies] -apply — only when granting something.
+#   C.    Removal (the bugfix): s3.configure -user=X [-policies=csv][-actions=csv] -delete -apply
+#         — removes filer-extra policies/actions; NEVER a bare -delete (filter + when guard).
 # =============================================================================
+
 - name: "[{{ dto_label_name }}] Assert dto_label_name provided"
   assert:
     that:
@@ -56,47 +58,11 @@
 
 - name: "[{{ dto_label_name }}] Declare local fact keys"
   set_fact:
-    _local_combined_json_key: "_local_combined_json"
-    _local_combined_json_exists_key: "_local_combined_json_exists"
     _local_target_identities_key: "_local_target_identities"
-    _local_new_combined_json_key: "_local_new_combined_json"
-    _local_identities_changed_key: "_local_identities_changed"
-    _local_identities_put_data_key: "_local_identities_put_data"
+    _local_s3configure_raw_key: "_local_s3configure_raw"
+    _local_actions_to_apply_key: "_local_actions_to_apply"
+    _local_actions_to_remove_key: "_local_actions_to_remove"
     _local_identities_to_delete_key: "_local_identities_to_delete"
-    _local_combined_json_violations_key: "_local_combined_json_violations"
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Get current combined JSON from Vault"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
-  vars:
-    dto_vault_get_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }}"
-    dto_vault_get_field: "{{ seaweedfs_s3_config_vault_field }}"
-    dto_vault_get_res_fact_name: "{{ _local_combined_json_key }}"
-    dto_vault_get_res_exists_fact_name: "{{ _local_combined_json_exists_key }}"
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Compute combined JSON violations (malformed key-store guard)"
-  set_fact:
-    "{{ _local_combined_json_violations_key }}": >-
-      {{ lookup('vars', _local_combined_json_key) | seaweedfs_combined_json_violations }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Assert combined JSON is valid (refuse silent credential rotation)"
-  assert:
-    that:
-      - lookup('vars', _local_combined_json_violations_key) | length == 0
-    fail_msg: |
-      ERROR: Vault combined JSON key-store at {{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }} (field {{ seaweedfs_s3_config_vault_field }}) is malformed.
-      Refusing to proceed — treating it as empty would silently re-create ALL identities with NEW credentials (rotating every consumer's S3 creds).
-      Violations:
-      {% for v in lookup('vars', _local_combined_json_violations_key) %}
-        - {{ v }}
-      {% endfor %}
-      To resolve: fix or delete the Vault path, then re-run.
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -121,57 +87,53 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute new combined JSON via filter (parse + diff + generate + build + serialize)"
+# --- READ: current identities from the live filer (s3.configure; no_log — plaintext secretKey) ---
+- name: "[{{ dto_label_name }}] Read current identities from filer (s3.configure)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.configure"
+    dto_weed_capture_fact: "{{ _local_s3configure_raw_key }}"
+    dto_weed_no_log: true
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute identity apply payload via filter (creds + actions/policies to add)"
   set_fact:
-    "{{ _local_new_combined_json_key }}": >-
-      {{ lookup('vars', _local_combined_json_key)
-         | seaweedfs_user_sync_full(
+    "{{ _local_actions_to_apply_key }}": >-
+      {{ lookup('vars', _local_s3configure_raw_key)
+         | seaweedfs_identity_actions_to_apply(
              lookup('vars', _local_target_identities_key),
              access_key_length=seaweedfs_sync_access_key_length,
              secret_key_length=seaweedfs_sync_secret_key_length,
              access_key_charset=seaweedfs_sync_access_key_charset,
              secret_key_charset=seaweedfs_sync_secret_key_charset
            ) }}
+  no_log: true
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Compute identities_to_delete via filter (in Vault, not in target)"
+- name: "[{{ dto_label_name }}] Compute identity removal payload via filter (filer-extra actions/policies)"
+  set_fact:
+    "{{ _local_actions_to_remove_key }}": >-
+      {{ lookup('vars', _local_s3configure_raw_key)
+         | seaweedfs_identity_actions_to_remove(lookup('vars', _local_target_identities_key)) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute identities_to_delete via filter (in filer, not in target)"
   set_fact:
     "{{ _local_identities_to_delete_key }}": >-
-      {{ lookup('vars', _local_combined_json_key)
+      {{ lookup('vars', _local_s3configure_raw_key)
          | seaweedfs_identities_to_delete(lookup('vars', _local_target_identities_key)) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Determine if identities changed (compare JSON strings)"
-  set_fact:
-    "{{ _local_identities_changed_key }}": >-
-      {{ (not lookup('vars', _local_combined_json_exists_key))
-         or (lookup('vars', _local_combined_json_key) != lookup('vars', _local_new_combined_json_key)) }}
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Build Vault put data dict"
-  set_fact:
-    "{{ _local_identities_put_data_key }}": >-
-      {{ {seaweedfs_s3_config_vault_field: lookup('vars', _local_new_combined_json_key)} }}
-  when: lookup('vars', _local_identities_changed_key)
-  delegate_to: "{{ master_manager_fact }}"
-  run_once: true
-  tags: [always]
-
-- name: "[{{ dto_label_name }}] Store new combined JSON in Vault (key-store update, when changed)"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
-  vars:
-    dto_vault_put_path: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}{{ seaweedfs_s3_config_vault_path }}"
-    dto_vault_put_data: "{{ lookup('vars', _local_identities_put_data_key) }}"
-  when: lookup('vars', _local_identities_changed_key)
-  tags: [always]
-
-# --- PHASE A: Delete стейл identities from filer (in Vault, not in target) ---
+# --- PHASE A: Delete стейл identities from filer (in filer, not in target) ---
+# Bare -delete (no -policies/-actions) removes the WHOLE identity — correct here:
+# these names are absent from target entirely.
 - name: "[{{ dto_label_name }}] Phase A — Delete стейл identities via weed shell s3.configure -delete"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
@@ -182,19 +144,36 @@
   run_once: true
   tags: [always]
 
-# --- PHASE B: Apply target identities to filer (put-all from new combined JSON; live-reload) ---
-# Apply each identity that grants something (creds OR actions OR policy_names).
-# Credential flags are emitted only when present, so anonymous (empty creds) WITH a
-# managed policy IS applied — s3.configure does not require creds for the reserved
-# 'anonymous' identity (sources/seaweedfs/weed/shell/command_s3_configure.go:222).
-# actions → -actions; policy_names → -policies (identity-based access).
+# --- PHASE B: Additive apply target identities to filer (creds + added grants; live-reload) ---
+# Credential flags emitted only when present, so anonymous (empty creds) WITH a managed
+# policy IS applied — s3.configure does not require creds for the reserved 'anonymous'
+# identity (sources/seaweedfs/weed/shell/command_s3_configure.go:222). actions_add →
+# -actions; policies_attach → -policies (apply is additive — addUniqueToSlice). no_log:
+# the command renders -secret_key=... (plaintext).
 - name: "[{{ dto_label_name }}] Phase B — Apply target identities via weed shell s3.configure -apply"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
-    dto_weed_command: "s3.configure -user={{ item.name }}{% if item.credentials[0].accessKey | length > 0 %} -access_key={{ item.credentials[0].accessKey }} -secret_key={{ item.credentials[0].secretKey }}{% endif %}{% if item.actions %} -actions={{ item.actions | join(',') }}{% endif %}{% if item.policy_names %} -policies={{ item.policy_names | join(',') }}{% endif %} -apply"
-  loop: "{{ (lookup('vars', _local_new_combined_json_key) | from_json).identities }}"
+    dto_weed_command: "s3.configure -user={{ item.name }}{% if item.accessKey | length > 0 %} -access_key={{ item.accessKey }} -secret_key={{ item.secretKey }}{% endif %}{% if item.actions_add %} -actions={{ item.actions_add | join(',') }}{% endif %}{% if item.policies_attach %} -policies={{ item.policies_attach | join(',') }}{% endif %} -apply"
+    dto_weed_no_log: true
+  loop: "{{ lookup('vars', _local_actions_to_apply_key) }}"
   loop_control:
     label: "{{ item.name }}"
-  when: (item.credentials[0].accessKey | length > 0) or (item.actions | length > 0) or (item.policy_names | length > 0)
+  when: (item.accessKey | length > 0) or (item.actions_add | length > 0) or (item.policies_attach | length > 0)
+  run_once: true
+  tags: [always]
+
+# --- PHASE C: Remove filer-extra actions/policies (the v17 bugfix; live-reload) ---
+# s3.configure with -delete + -policies/-actions removes ONLY those entries (removeFromSlice,
+# idempotent). The filter returns only entries with >=1 non-empty list, and the `when` is a
+# defense-in-depth guard, so a bare -delete (which would remove the whole identity) is never
+# emitted. No creds in this command → no no_log.
+- name: "[{{ dto_label_name }}] Phase C — Remove filer-extra grants via weed shell s3.configure -delete"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "s3.configure -user={{ item.name }}{% if item.policies_detach %} -policies={{ item.policies_detach | join(',') }}{% endif %}{% if item.actions_remove %} -actions={{ item.actions_remove | join(',') }}{% endif %} -delete -apply"
+  loop: "{{ lookup('vars', _local_actions_to_remove_key) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: (item.actions_remove | length > 0) or (item.policies_detach | length > 0)
   run_once: true
   tags: [always]
