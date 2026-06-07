@@ -2,7 +2,8 @@
 SeaweedFS user (identity) sync — pure Python filter plugin (Layer 1).
 Used by playbook-app/tasks/seaweedfs/tasks-seaweedfs-user-sync.yaml.
 Diffs the live filer `s3.configure` dump against the inventory target
-(seaweedfs_identities + _extra) → delete / create / grant / revoke deltas.
+(seaweedfs_identities + _extra) → delete / create / grant / revoke / keys-add /
+keys-delete deltas.
 Self-contained (no cross-file imports — v18 split из монолита seaweedfs_sync.py;
 _parse_s3_configure_identities дублируется в seaweedfs_distribute.py, но в v20 return
 shape расходится per-file: здесь {name, access_keys:[...]} — Layer 1 секрет не нужен).
@@ -140,6 +141,63 @@ def seaweedfs_identities_to_create(s3configure_raw, target_identities, *,
     return result
 
 
+def seaweedfs_keys_to_add(s3configure_raw, target_identities, *,
+                          secret_key_length, secret_key_charset):
+    """Per identity: inventory access_keys NOT yet in the filer → add via
+    `s3.configure -user=X -access_key=AK -secret_key=<gen> -apply` (append credential,
+    multi-cred OK). For a BRAND-NEW identity (absent from the filer) the FIRST key is
+    excluded by index — it is created by seaweedfs_identities_to_create; only keys[1:]
+    are added here. anonymous is skipped (no creds). Returns [{name, accessKey, secretKey}]
+    with a freshly generated secret_key per added key.
+    NO-ROTATION INVARIANT: an access_key already present in the filer is never re-applied
+    (re-applying with a secret would overwrite/rotate it — command_s3_configure.go).
+    Raises (via _validate_target_keys) on schema violations."""
+    _validate_target_keys(target_identities)
+    current = _parse_s3_configure_identities(s3configure_raw)
+    filer_aks_by_name = {c['name']: set(c['access_keys']) for c in current}
+    result = []
+    for t in target_identities:
+        name = t['name']
+        if name == 'anonymous':
+            continue
+        keys = t.get('keys') or []
+        # brand-new identity (not in filer) → its keys[0] is handled by to_create
+        candidate_keys = keys if name in filer_aks_by_name else keys[1:]
+        existing_aks = filer_aks_by_name.get(name, set())
+        for k in candidate_keys:
+            ak = k['access_key']
+            if ak in existing_aks:
+                continue  # no-rotation: already in the filer
+            result.append({
+                'name': name,
+                'accessKey': ak,
+                'secretKey': _gen_secret(secret_key_length, secret_key_charset),
+            })
+    return result
+
+
+def seaweedfs_keys_to_delete(s3configure_raw, target_identities):
+    """Per identity present in BOTH filer and target: filer access_keys NOT in the inventory
+    target → delete that single credential via `s3.configure -user=X -access_key=AK -delete
+    -apply` (removes ONLY that credential — identity survives). Identities absent from target
+    are removed wholesale by seaweedfs_identities_to_delete (gate: name in target_names — not
+    duplicated here). Returns [{name, accessKey}]. (v20: per-key pruning of filer-extra creds.)
+    Raises (via _validate_target_keys) on schema violations."""
+    _validate_target_keys(target_identities)
+    target_by_name = {t['name']: t for t in target_identities}
+    result = []
+    for cur in _parse_s3_configure_identities(s3configure_raw):
+        name = cur['name']
+        t = target_by_name.get(name)
+        if t is None:
+            continue  # whole-identity delete handled by seaweedfs_identities_to_delete
+        target_aks = {k['access_key'] for k in (t.get('keys') or [])}
+        for ak in cur['access_keys']:
+            if ak not in target_aks:
+                result.append({'name': name, 'accessKey': ak})
+    return result
+
+
 def seaweedfs_identities_to_grant(s3configure_raw, target_identities):
     """Per identity present in BOTH filer and target: grants to ADD (target − filer).
     Returns [{name, actions_add, policies_add}] ONLY where at least one list is non-empty
@@ -197,6 +255,8 @@ class FilterModule(object):
         return {
             'seaweedfs_identities_to_delete': seaweedfs_identities_to_delete,
             'seaweedfs_identities_to_create': seaweedfs_identities_to_create,
+            'seaweedfs_keys_to_add': seaweedfs_keys_to_add,
+            'seaweedfs_keys_to_delete': seaweedfs_keys_to_delete,
             'seaweedfs_identities_to_grant': seaweedfs_identities_to_grant,
             'seaweedfs_identities_to_revoke': seaweedfs_identities_to_revoke,
         }

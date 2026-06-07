@@ -68,6 +68,75 @@ def test_identities_to_create_named_no_keys_raises():
         sw.seaweedfs_identities_to_create('', target, **_SK)
 
 
+# --- keys_to_add (append new keys; no-rotation; brand-new excludes keys[0]) ---
+
+def test_keys_to_add_existing_identity_adds_new_key(sample_s3configure_raw):
+    """alice in filer with [ALICE_AK, ALICE_AK2]; target adds ALICE_AK3 → only AK3 added."""
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw'],
+               'keys': [{'access_key': 'ALICE_AK'}, {'access_key': 'ALICE_AK2'},
+                        {'access_key': 'ALICE_AK3'}]}]
+    r = sw.seaweedfs_keys_to_add(sample_s3configure_raw, target, **_SK)
+    assert len(r) == 1 and r[0]['name'] == 'alice' and r[0]['accessKey'] == 'ALICE_AK3'
+    assert len(r[0]['secretKey']) == 40
+
+
+def test_keys_to_add_new_identity_excludes_first_key():
+    """bob brand-new (empty filer), 2 keys → keys[0] excluded (to_create makes it), keys[1] added."""
+    target = [{'name': 'bob', 'actions': [], 'policy_names': [],
+               'keys': [{'access_key': 'bob-1'}, {'access_key': 'bob-2'}]}]
+    r = sw.seaweedfs_keys_to_add('', target, **_SK)
+    assert len(r) == 1 and r[0]['name'] == 'bob' and r[0]['accessKey'] == 'bob-2'
+
+
+def test_keys_to_add_already_in_filer_skips(sample_s3configure_raw):
+    """target == filer keys → nothing added (no-rotation)."""
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw'],
+               'keys': [{'access_key': 'ALICE_AK'}, {'access_key': 'ALICE_AK2'}]}]
+    assert sw.seaweedfs_keys_to_add(sample_s3configure_raw, target, **_SK) == []
+
+
+def test_keys_to_add_anonymous_skipped():
+    target = [{'name': 'anonymous', 'actions': []}]
+    assert sw.seaweedfs_keys_to_add('', target, **_SK) == []
+
+
+def test_keys_to_add_global_dup_ak_raises():
+    target = [{'name': 'bob', 'keys': [{'access_key': 'shared'}]},
+              {'name': 'carol', 'keys': [{'access_key': 'shared'}]}]
+    with pytest.raises(AnsibleFilterError, match='Duplicate access_key'):
+        sw.seaweedfs_keys_to_add('', target, **_SK)
+
+
+def test_keys_to_add_dup_ak_within_identity_raises():
+    target = [{'name': 'bob', 'keys': [{'access_key': 'x'}, {'access_key': 'x'}]}]
+    with pytest.raises(AnsibleFilterError, match='Duplicate access_key'):
+        sw.seaweedfs_keys_to_add('', target, **_SK)
+
+
+# --- keys_to_delete (prune filer-extra creds; identity-not-in-target handled elsewhere) ---
+
+def test_keys_to_delete_filer_extra_key(sample_s3configure_raw):
+    """filer alice [ALICE_AK, ALICE_AK2]; target keeps only ALICE_AK → ALICE_AK2 deleted."""
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw'],
+               'keys': [{'access_key': 'ALICE_AK'}]}]
+    r = sw.seaweedfs_keys_to_delete(sample_s3configure_raw, target)
+    assert r == [{'name': 'alice', 'accessKey': 'ALICE_AK2'}]
+
+
+def test_keys_to_delete_identity_not_in_target_skipped(sample_s3configure_raw):
+    """admin in filer but not in target → NOT pruned here (whole-identity delete handles it)."""
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw'],
+               'keys': [{'access_key': 'ALICE_AK'}, {'access_key': 'ALICE_AK2'}]}]
+    r = sw.seaweedfs_keys_to_delete(sample_s3configure_raw, target)
+    assert all(e['name'] != 'admin' for e in r) and r == []
+
+
+def test_keys_to_delete_all_present_empty(sample_s3configure_raw):
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw'],
+               'keys': [{'access_key': 'ALICE_AK'}, {'access_key': 'ALICE_AK2'}]}]
+    assert sw.seaweedfs_keys_to_delete(sample_s3configure_raw, target) == []
+
+
 def test_identities_to_grant_adds_delta(sample_s3configure_raw):
     target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw', 'extra-rw']}]
     r = sw.seaweedfs_identities_to_grant(sample_s3configure_raw, target)
