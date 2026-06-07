@@ -16,7 +16,15 @@ def test_parse_s3_configure_identities_happy(sample_s3configure_raw):
     parsed = sw._parse_s3_configure_identities(sample_s3configure_raw)
     assert [i['name'] for i in parsed] == ['admin', 'alice', 'anonymous']  # static-id filtered
     alice = next(i for i in parsed if i['name'] == 'alice')
-    assert alice['policyNames'] == ['team-alpha-rw'] and alice['accessKey'] == 'ALICE_AK'
+    assert alice['access_keys'] == ['ALICE_AK', 'ALICE_AK2']  # ALL creds, order preserved
+    assert alice['policyNames'] == ['team-alpha-rw']
+    assert 'secretKey' not in alice  # Layer 1 never needs the secret
+
+
+def test_parse_s3_configure_identities_single_key(sample_s3configure_raw):
+    admin = next(i for i in sw._parse_s3_configure_identities(sample_s3configure_raw)
+                 if i['name'] == 'admin')
+    assert admin['access_keys'] == ['ADMIN_AK'] and admin['actions'] == ['Admin']
 
 
 def test_parse_s3_configure_identities_empty_and_malformed():
@@ -27,8 +35,9 @@ def test_parse_s3_configure_identities_empty_and_malformed():
 
 
 def test_parse_s3_configure_identities_anonymous_empty_creds(sample_s3configure_raw):
-    anon = next(i for i in sw._parse_s3_configure_identities(sample_s3configure_raw) if i['name'] == 'anonymous')
-    assert anon['accessKey'] == '' and anon['secretKey'] == ''
+    anon = next(i for i in sw._parse_s3_configure_identities(sample_s3configure_raw)
+                if i['name'] == 'anonymous')
+    assert anon['access_keys'] == []
 
 
 def test_identities_to_create_new_generates_creds(sample_s3configure_raw):

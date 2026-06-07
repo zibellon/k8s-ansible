@@ -65,13 +65,18 @@ def sample_managed_policies():
 
 @pytest.fixture
 def sample_s3configure_raw():
-    """`s3.configure` (no-arg) protojson dump: admin (Admin+creds), alice (policyNames+creds),
-    anonymous (empty creds), plus a static identity the parser must IGNORE."""
+    """`s3.configure` (no-arg) protojson dump: admin (Admin + 1 cred), alice (policyNames +
+    2 creds — multi-key), anonymous (empty creds), plus a static identity the parser must
+    IGNORE. Shared by test_seaweedfs_user.py (parses ALL creds → access_keys) and
+    test_seaweedfs_distribute.py (reads credentials[0]). alice's FIRST credential stays
+    ALICE_AK/ALICE_SK so the distribute filter (unchanged in this SUB) keeps passing."""
     return json.dumps({
         'identities': [
             {'name': 'admin', 'credentials': [{'accessKey': 'ADMIN_AK', 'secretKey': 'ADMIN_SK', 'status': 'Active'}],
              'actions': ['Admin'], 'policyNames': [], 'isStatic': False},
-            {'name': 'alice', 'credentials': [{'accessKey': 'ALICE_AK', 'secretKey': 'ALICE_SK', 'status': 'Active'}],
+            {'name': 'alice', 'credentials': [
+                {'accessKey': 'ALICE_AK', 'secretKey': 'ALICE_SK', 'status': 'Active'},
+                {'accessKey': 'ALICE_AK2', 'secretKey': 'ALICE_SK2', 'status': 'Active'}],
              'actions': [], 'policyNames': ['team-alpha-rw'], 'isStatic': False},
             {'name': 'anonymous', 'credentials': [], 'actions': [], 'policyNames': [], 'isStatic': False},
             {'name': 'static-id', 'credentials': [{'accessKey': 'S_AK', 'secretKey': 'S_SK'}],

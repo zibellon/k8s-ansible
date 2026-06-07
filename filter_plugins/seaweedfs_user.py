@@ -4,7 +4,8 @@ Used by playbook-app/tasks/seaweedfs/tasks-seaweedfs-user-sync.yaml.
 Diffs the live filer `s3.configure` dump against the inventory target
 (seaweedfs_identities + _extra) → delete / create / grant / revoke deltas.
 Self-contained (no cross-file imports — v18 split из монолита seaweedfs_sync.py;
-_parse_s3_configure_identities дублируется в seaweedfs_distribute.py — намеренно).
+_parse_s3_configure_identities дублируется в seaweedfs_distribute.py, но в v20 return
+shape расходится per-file: здесь {name, access_keys:[...]} — Layer 1 секрет не нужен).
 Lives in repo-root filter_plugins/; discovered via ansible.cfg
 [defaults] filter_plugins = filter_plugins.
 """
@@ -29,9 +30,11 @@ def _parse_s3_configure_identities(raw):
     Returns [] for ''/None/malformed/missing 'identities'. Never raises. Skips isStatic
     identities (managed externally — must not touch them).
 
-    Each entry: {'name', 'accessKey', 'secretKey', 'actions': [..], 'policyNames': [..]}.
-    credentials[0] → AK/SK ('' when credentials empty, e.g. anonymous).
-    (v18: duplicated verbatim in seaweedfs_distribute.py — intentional, see план «Shared helper».)"""
+    Each entry: {'name', 'access_keys': [ak, ...], 'actions': [..], 'policyNames': [..]}.
+    access_keys = every credential's accessKey (order preserved; [] when no credentials,
+    e.g. anonymous). The secret is NOT returned — Layer 1 never needs it.
+    (v20: reads ALL credentials, not just credentials[0]. Helper дублируется в
+    seaweedfs_distribute.py с per-file return shape — намеренно, см. план.)"""
     if not raw:
         return []
     try:
@@ -48,11 +51,11 @@ def _parse_s3_configure_identities(raw):
         if not name:
             continue
         creds = ident.get('credentials') or []
-        first = creds[0] if creds else {}
+        access_keys = [c.get('accessKey') for c in creds
+                       if isinstance(c, dict) and c.get('accessKey')]
         result.append({
             'name': name,
-            'accessKey': first.get('accessKey', '') or '',
-            'secretKey': first.get('secretKey', '') or '',
+            'access_keys': access_keys,
             'actions': list(ident.get('actions') or []),
             'policyNames': list(ident.get('policyNames') or []),
         })
