@@ -221,18 +221,18 @@ all:
     # ------
     # S3 buckets + per-bucket SeaweedFS-native quotas + owner. Доступ к данным — через
     # managed policy на identity (SECTION 1+2), НЕ через bucket (v14 — bucket policies удалены).
-    # Sync (--tags bucket-sync) применяет diff vs per-item state ConfigMaps
-    # 'seaweedfs-sync-buckets-<bucket>' (по одному на bucket, label seaweedfs-sync-state=buckets;
-    # каждый хранит target snapshot одного бакета — {name, owner, replication, ...}).
+    # Sync (--tags bucket-sync) читает текущее состояние напрямую из живого filer
+    # (fs.configure + s3.bucket.list) и diff'ит vs target (seaweedfs_sync_buckets + _extra).
+    # filer = единственный источник истины; ConfigMap-state для bucket не используется (v17+).
     #
-    # Sync order (--tags bucket-sync; фактический порядок фаз — tasks-seaweedfs-bucket-sync.yaml,
-    # immutable-assert до Phase A):
-    #   1. DELETE стейл buckets (in state, not in target): weed shell 's3.bucket.delete -name=<n>'.
-    #   2. CREATE new buckets: 's3.bucket.create -name=<n> -owner=<owner>' + fs.configure
-    #      (-replication [-rack] [-dataCenter]).
-    #   3. RECONCILE owner у kept buckets (owner changed vs state): 's3.bucket.owner -name=<n> -owner=<o>'.
-    #   4. APPLY quotas всем target buckets: quota_size задан → -op=set -sizeMB=<X>; отсутствует → -op=remove (unlimited).
-    #   5. UPDATE ConfigMap state с новым target snapshot.
+    # Sync flow (--tags bucket-sync; фактический порядок — tasks-seaweedfs-bucket-sync.yaml):
+    #   READ. fs.configure + s3.bucket.list (живой filer) → текущее состояние.
+    #   ASSERT. immutable (owner/replication/rack/dataCenter) на kept buckets → fail-fast до Phase A.
+    #   A. DELETE стейл buckets (filer не в target): 's3.bucket.delete -name=<n>'.
+    #   B. CREATE new buckets (target не в filer): 's3.bucket.create -name=<n> -owner=<owner>'.
+    #   C. fs.configure для new buckets: '-replication=<r> -rack=<rk> -dataCenter=<dc> -apply' (все три всегда).
+    #   D. QUOTA upsert (target с quota_size): 's3.bucket.quota -op=set -sizeMB=<X>'.
+    #   E. QUOTA delete (target без quota_size): 's3.bucket.quota -op=remove' (unlimited).
     #
     # NOTE про bucket delete: в SeaweedFS shell command 's3.bucket.delete' нет
     # флага -force. Команда сама по себе делает hard delete — CollectionDelete
@@ -243,20 +243,20 @@ all:
     # Quota enforcement: нативный в SeaweedFS 4.31+ — s3-gateway сам переключает bucket
     # read-only в обе стороны (~раз в минуту, leader-locked на одной из реплик), без
     # внешнего крона. Источник: weed/s3api/bucket_size_metrics.go (enforceBucketQuotas).
-    # bucket-sync Phase 4 только ЗАДАЁТ квоты (s3.bucket.quota -op=set); энфорсит gateway.
+    # bucket-sync Phase D/E только ЗАДАЁТ/снимает квоты (s3.bucket.quota -op=set / -op=remove); энфорсит gateway.
     #
     # Schema per bucket:
     #   name:        bucket name (DNS-compatible, lower-case) — required.
     #   owner:       SeaweedFS identity name — owner бакета (s3.bucket.create -owner) — REQUIRED.
     #                Owner видит бакет в ListBuckets + владеет объектами. Доступ к данным —
-    #                через managed policy identity (owner НЕ влияет на policy-check). Mutable:
-    #                смена owner reconcile'ится через s3.bucket.owner (kept buckets).
-    #   rack:        OPTIONAL string — preferred volume tier (SeaweedFS rack axis).
+    #                через managed policy identity (owner НЕ влияет на policy-check).
+    #                IMMUTABLE post-creation (см. блок IMMUTABLE ниже): смена owner на
+    #                существующем бакете → sync fail-fast.
+    #   rack:        REQUIRED string — preferred volume tier (SeaweedFS rack axis).
     #                Допустимые = rack-метки volume-групп из hosts-vars/seaweedfs.yaml
     #                (по конвенции 'managers-1' / 'workers-1'). SOFT preference: при заполнении
-    #                тира SeaweedFS спилит на другой (altRequest fallback). Пусто = без
-    #                преференса (weighted-by-free-space). IMMUTABLE post-creation.
-    #   dataCenter:  OPTIONAL string — preferred DC (SeaweedFS dataCenter axis). Сейчас
+    #                тира SeaweedFS спилит на другой (altRequest fallback). IMMUTABLE post-creation.
+    #   dataCenter:  REQUIRED string — preferred DC (SeaweedFS dataCenter axis). Сейчас
     #                кластер одно-DC ('dc-1'). SOFT preference. IMMUTABLE post-creation.
     #   replication: SeaweedFS replication code — REQUIRED 3-digit string '^[0-9]{3}$'.
     #                Format XYZ: X=other DCs, Y=other racks (same DC), Z=other servers (same rack).
@@ -265,12 +265,12 @@ all:
     #                ВНИМАНИЕ при rack-преференсе: используй формат 00Z (реплики в том же
     #                тире, e.g. '001'), НЕ 0Y0 ('010') — иначе копия форсится в другой тир,
     #                ломая rack-преференс. Лимиты: workers до '004' (5 нод), managers до '002' (3).
-    #   IMPORTANT — replication, rack, dataCenter immutable post-creation:
+    #   IMPORTANT — owner, replication, rack, dataCenter immutable post-creation:
     #                Change post-create технически работает (fs.configure applies к новым writes),
     #                НО existing data остаётся в old configuration → data fragmentation.
-    #                Sync code FAIL-FAST если ЛЮБОЕ из immutable полей changed vs state:
+    #                Sync code FAIL-FAST если ЛЮБОЕ из immutable полей changed vs filer:
     #                assert после compute calls, до Phase A → sync aborts, cluster intact.
-    #                To resolve: revert inventory к state values OR migrate data manually + align.
+    #                To resolve: revert inventory к filer values OR delete+recreate bucket manually.
     #   quota_size:  OPTIONAL human-readable size string (e.g. "100GiB", "5TiB").
     #                Задан + валиден → set quota (s3.bucket.quota -op=set -sizeMB=<X>).
     #                Отсутствует     → remove quota (-op=remove → unlimited).
@@ -285,7 +285,7 @@ all:
     # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
     # seaweedfs_sync_buckets_extra:
     #   - name: bucket-1
-    #     owner: "alice"       # SeaweedFS identity (REQUIRED), access через её managed policy
+    #     owner: "alice"       # SeaweedFS identity (REQUIRED, IMMUTABLE), access через её managed policy
     #     replication: "001"   # +1 копия в том же тире
     #     rack: "workers-1"    # preferred tier (soft), IMMUTABLE
     #     dataCenter: "dc-1"   # preferred DC (soft), IMMUTABLE
