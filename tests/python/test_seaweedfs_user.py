@@ -7,9 +7,8 @@ import pytest
 import seaweedfs_user as sw
 from ansible.errors import AnsibleFilterError
 
-_GEN = dict(access_key_length=20, secret_key_length=40,
-            access_key_charset='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-            secret_key_charset='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')
+_SK = dict(secret_key_length=40,
+           secret_key_charset='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')
 
 
 def test_parse_s3_configure_identities_happy(sample_s3configure_raw):
@@ -40,24 +39,33 @@ def test_parse_s3_configure_identities_anonymous_empty_creds(sample_s3configure_
     assert anon['access_keys'] == []
 
 
-def test_identities_to_create_new_generates_creds(sample_s3configure_raw):
-    target = [{'name': 'bob', 'actions': [], 'policy_names': ['team-alpha-rw']}]
-    r = sw.seaweedfs_identities_to_create(sample_s3configure_raw, target, **_GEN)
+def test_identities_to_create_new_uses_first_key(sample_s3configure_raw):
+    target = [{'name': 'bob', 'actions': [], 'policy_names': ['team-alpha-rw'],
+               'keys': [{'access_key': 'bob-key-1'}, {'access_key': 'bob-key-2'}]}]
+    r = sw.seaweedfs_identities_to_create(sample_s3configure_raw, target, **_SK)
     assert [c['name'] for c in r] == ['bob']
-    assert len(r[0]['accessKey']) == 20 and len(r[0]['secretKey']) == 40
+    assert r[0]['accessKey'] == 'bob-key-1'  # keys[0], operator-chosen (NOT random)
+    assert len(r[0]['secretKey']) == 40
     assert r[0]['policy_names'] == ['team-alpha-rw'] and r[0]['actions'] == []
 
 
 def test_identities_to_create_skips_existing(sample_s3configure_raw):
-    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw']}]
-    assert sw.seaweedfs_identities_to_create(sample_s3configure_raw, target, **_GEN) == []
+    target = [{'name': 'alice', 'actions': [], 'policy_names': ['team-alpha-rw'],
+               'keys': [{'access_key': 'ALICE_AK'}]}]
+    assert sw.seaweedfs_identities_to_create(sample_s3configure_raw, target, **_SK) == []
 
 
 def test_identities_to_create_anonymous_no_creds():
     target = [{'name': 'anonymous', 'actions': [], 'policy_names': ['pub-read']}]
-    r = sw.seaweedfs_identities_to_create('', target, **_GEN)  # empty filer → anonymous is new
+    r = sw.seaweedfs_identities_to_create('', target, **_SK)  # empty filer → anonymous is new
     assert r[0]['name'] == 'anonymous' and r[0]['accessKey'] == '' and r[0]['secretKey'] == ''
     assert r[0]['policy_names'] == ['pub-read']
+
+
+def test_identities_to_create_named_no_keys_raises():
+    target = [{'name': 'bob', 'actions': [], 'policy_names': []}]
+    with pytest.raises(AnsibleFilterError, match='no keys'):
+        sw.seaweedfs_identities_to_create('', target, **_SK)
 
 
 def test_identities_to_grant_adds_delta(sample_s3configure_raw):

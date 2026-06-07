@@ -62,6 +62,45 @@ def _parse_s3_configure_identities(raw):
     return result
 
 
+def _validate_target_keys(target_identities):
+    """Fail-fast validation of the v20 per-key inventory schema. Raises AnsibleFilterError on:
+      - a named (non-anonymous) identity with no keys (a credential-less identity is useless —
+        SeaweedFS never auto-generates keys);
+      - a key with an empty / non-string access_key;
+      - a duplicate access_key across ALL identities (global uniqueness — the S3 gateway maps
+        accessKey→identity flat, so a dup is an auth collision);
+      - the anonymous identity carrying keys (anonymous has empty credentials).
+    Pure / idempotent — every keys-consuming filter calls it first."""
+    seen = {}
+    for ident in target_identities:
+        name = ident.get('name')
+        keys = ident.get('keys') or []
+        if name == 'anonymous':
+            if keys:
+                raise AnsibleFilterError(
+                    "Anonymous identity must not have keys (anonymous has empty "
+                    "credentials). Remove 'keys' from the anonymous identity in inventory.")
+            continue
+        if not keys:
+            raise AnsibleFilterError(
+                "Identity '{0}' has no keys. Every named identity must declare at least one "
+                "key {{access_key, vault_paths?}} — a credential-less identity is useless "
+                "(SeaweedFS never auto-generates keys).".format(name))
+        for k in keys:
+            ak = k.get('access_key')
+            if not ak or not isinstance(ak, str):
+                raise AnsibleFilterError(
+                    "Identity '{0}' has a key with an empty / non-string access_key. "
+                    "access_key is a REQUIRED non-empty operator-chosen identifier.".format(name))
+            if ak in seen:
+                raise AnsibleFilterError(
+                    "Duplicate access_key '{0}' across identities '{1}' and '{2}'. "
+                    "access_key must be globally unique (the S3 gateway maps "
+                    "accessKey→identity flat — a dup is an auth collision).".format(
+                        ak, seen[ak], name))
+            seen[ak] = name
+
+
 def seaweedfs_identities_to_delete(s3configure_raw, target_identities):
     """Identity names present in the filer (s3.configure dump) but absent from target →
     delete via `s3.configure -user=<name> -delete -apply` (bare delete = whole identity).
@@ -72,14 +111,14 @@ def seaweedfs_identities_to_delete(s3configure_raw, target_identities):
 
 
 def seaweedfs_identities_to_create(s3configure_raw, target_identities, *,
-                                   access_key_length, secret_key_length,
-                                   access_key_charset, secret_key_charset):
-    """Target identities NOT present in the filer → create with full grants.
-    Generates fresh AK/SK (anonymous → empty creds). Returns
-    [{name, accessKey, secretKey, actions, policy_names}] — applied via
-    `s3.configure -user=X [-access_key -secret_key][-actions][-policies] -apply`.
-    (v18: the 'create' slice — new identities only; existing creds are preserved by
-    not being touched here.)"""
+                                   secret_key_length, secret_key_charset):
+    """Target identities NOT present in the filer → create with their FIRST key + full grants.
+    anonymous → empty creds; a named identity → keys[0].access_key (operator-chosen) plus a
+    freshly generated secret_key. Returns [{name, accessKey, secretKey, actions, policy_names}]
+    — applied via `s3.configure -user=X [-access_key -secret_key][-actions][-policies] -apply`.
+    (v20: per-key. keys[1:] are added by seaweedfs_keys_to_add, not here.)
+    Raises (via _validate_target_keys) on a named identity with no keys / dup AK / etc."""
+    _validate_target_keys(target_identities)
     current_names = {i['name'] for i in _parse_s3_configure_identities(s3configure_raw)}
     result = []
     for t in target_identities:
@@ -89,7 +128,7 @@ def seaweedfs_identities_to_create(s3configure_raw, target_identities, *,
         if name == 'anonymous':
             ak, sk = '', ''
         else:
-            ak = _gen_secret(access_key_length, access_key_charset)
+            ak = t['keys'][0]['access_key']
             sk = _gen_secret(secret_key_length, secret_key_charset)
         result.append({
             'name': name,
