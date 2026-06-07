@@ -21,8 +21,9 @@ def _mk_filer(current):
                 loc[k] = b[k]
         if len(loc) > 1:
             locs.append(loc)
+        quota = ('\tquota:%d\tusage:0.00%%' % b['quota_bytes']) if b.get('quota_bytes') else ''
         owner = ('\towner:"' + b['owner'] + '"') if 'owner' in b else ''
-        lines.append('  ' + b['name'] + '\tsize:0\tchunk:0' + owner)
+        lines.append('  ' + b['name'] + '\tsize:0\tchunk:0' + quota + owner)
     return json.dumps({'locations': locs}), '\n'.join(lines) + '\n'
 
 
@@ -84,9 +85,9 @@ def test_buckets_quota_to_upsert(sample_target_buckets):
     assert r == [{'name': 'b1', '_quota_size_mib': 1024}]  # only b1 has quota_size
 
 
-def test_buckets_quota_to_delete(sample_target_buckets):
-    r = sw.seaweedfs_buckets_quota_to_delete('', '', sample_target_buckets)
-    assert [b['name'] for b in r] == ['b2']  # b2 has no quota_size
+def test_buckets_quota_to_delete_empty_filer(sample_target_buckets):
+    # '' filer => no current quotas => nothing to remove (b2 has no quota_size AND no filer quota)
+    assert sw.seaweedfs_buckets_quota_to_delete('', '', sample_target_buckets) == []
 
 
 def test_buckets_quota_to_upsert_size_conversion():
@@ -104,6 +105,61 @@ def test_buckets_quota_to_upsert_zero_raises():
     target = [{'name': 'b1', 'replication': '001', 'rack': 'r', 'dataCenter': 'd', 'owner': 'o', 'quota_size': '0GiB'}]
     with pytest.raises(AnsibleFilterError, match='quota_size'):
         sw.seaweedfs_buckets_quota_to_upsert('', '', target)
+
+
+def test_buckets_quota_to_upsert_unchanged_skipped(sample_target_buckets):
+    # filer already has b1 with 1GiB == target b1 quota_size '1GiB' => no-op (skipped)
+    fs, bl = _mk_filer([
+        {'name': 'b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'gitlab',
+         'quota_bytes': 1024 * 1024 * 1024},
+        {'name': 'b2', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'loki'},
+    ])
+    assert sw.seaweedfs_buckets_quota_to_upsert(fs, bl, sample_target_buckets) == []
+
+
+def test_buckets_quota_to_upsert_changed_emitted():
+    # filer has b1 with 1GiB, target wants 2GiB => upsert b1 with new size
+    fs, bl = _mk_filer([
+        {'name': 'b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'gitlab',
+         'quota_bytes': 1024 * 1024 * 1024},
+    ])
+    target = [{'name': 'b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'gitlab',
+               'quota_size': '2GiB'}]
+    assert sw.seaweedfs_buckets_quota_to_upsert(fs, bl, target) == [{'name': 'b1', '_quota_size_mib': 2048}]
+
+
+def test_buckets_quota_to_delete_filer_has_quota():
+    # b2 currently has a quota in filer, target b2 has NO quota_size => remove
+    fs, bl = _mk_filer([
+        {'name': 'b2', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'loki',
+         'quota_bytes': 1024 * 1024 * 1024},
+    ])
+    target = [{'name': 'b2', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'loki'}]
+    assert [b['name'] for b in sw.seaweedfs_buckets_quota_to_delete(fs, bl, target)] == ['b2']
+
+
+def test_buckets_quota_to_delete_filer_no_quota_skipped():
+    # b2 has NO quota in filer, target b2 has NO quota_size => no-op (skipped)
+    fs, bl = _mk_filer([
+        {'name': 'b2', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'loki'},
+    ])
+    target = [{'name': 'b2', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1', 'owner': 'loki'}]
+    assert sw.seaweedfs_buckets_quota_to_delete(fs, bl, target) == []
+
+
+def test_parse_s3_bucket_list_quota():
+    # real s3.bucket.list line with quota field (bytes), quota before owner
+    bl = sw._parse_s3_bucket_list('  test-bucket-1\tsize:0\tchunk:0\tquota:10485760\tusage:0.00%\towner:"test-user-1"\n')
+    assert bl['test-bucket-1']['quota_bytes'] == 10485760
+    assert bl['test-bucket-1']['owner'] == 'test-user-1'
+
+
+def test_merge_bucket_state_carries_quota():
+    fs, bl = _mk_filer([{'name': 'b1', 'replication': '001', 'rack': 'workers-1', 'dataCenter': 'dc-1',
+                         'owner': 'gitlab', 'quota_bytes': 10485760}])
+    cur = sw._merge_bucket_state(sw._parse_fs_configure_locations(fs), sw._parse_s3_bucket_list(bl))
+    by = {b['name']: b for b in cur}
+    assert by['b1']['quota_bytes'] == 10485760
 
 
 # --- validation (v18: replication + rack + dataCenter + owner all required) ---

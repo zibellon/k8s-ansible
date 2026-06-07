@@ -50,9 +50,10 @@ def _parse_fs_configure_locations(raw):
 
 
 def _parse_s3_bucket_list(raw):
-    """Parse `s3.bucket.list` plain-text stdout → {name: {'owner'?}}. Per line: strip leading
-    spaces, split on tab; field 0 = bucket name; owner from the owner:"X" field. (Existence +
-    owner only; quota is applied idempotently, not diffed.) {} for ''/None. Never raises."""
+    """Parse `s3.bucket.list` plain-text stdout → {name: {'owner'?, 'quota_bytes'?}}. Per line:
+    strip leading spaces, split on tab; field 0 = bucket name; owner from the owner:"X" field;
+    quota from the quota:<bytes> field (present only when the bucket quota > 0). {} for ''/None.
+    Never raises."""
     if not raw:
         return {}
     result = {}
@@ -69,19 +70,27 @@ def _parse_s3_bucket_list(raw):
             f = f.strip()
             if f.startswith('owner:'):
                 entry['owner'] = f[len('owner:'):].strip().strip('"')
+            elif f.startswith('quota:'):
+                try:
+                    entry['quota_bytes'] = int(f[len('quota:'):].strip())
+                except (ValueError, TypeError):
+                    pass
         result[name] = entry
     return result
 
 
 def _merge_bucket_state(fs_locs, bucket_list):
-    """Merge fs.configure (replication/rack/dc) + s3.bucket.list (existence/owner) → current
+    """Merge fs.configure (replication/rack/dc) + s3.bucket.list (existence/owner/quota) → current
     bucket list. Existence = s3.bucket.list (the real /buckets/<n> dirs); each entry enriched
-    with replication/rack/dataCenter from fs.configure (absent if no location config)."""
+    with replication/rack/dataCenter from fs.configure (absent if no location config) and
+    quota_bytes from s3.bucket.list (absent if no quota set)."""
     result = []
     for name, meta in bucket_list.items():
         entry = {'name': name}
         if meta.get('owner') is not None:
             entry['owner'] = meta['owner']
+        if meta.get('quota_bytes') is not None:
+            entry['quota_bytes'] = meta['quota_bytes']
         loc = fs_locs.get(name)
         if loc:
             entry['replication'] = loc.get('replication', '')
@@ -234,20 +243,35 @@ def seaweedfs_buckets_immutable_violations(fs_configure_raw, bucket_list_raw, ta
 
 
 def seaweedfs_buckets_quota_to_upsert(fs_configure_raw, bucket_list_raw, target_buckets):
-    """Target buckets WITH quota_size → [{name, _quota_size_mib}] (s3.bucket.quota -op=set).
-    fs/bucket raws accepted for signature uniformity; quota is target-driven, applied
-    idempotently every run (no filer read needed). (v18: split from quotas_to_apply.)"""
+    """Target buckets WITH quota_size whose quota DIFFERS from the live filer →
+    [{name, _quota_size_mib}] (s3.bucket.quota -op=set). Current quota read from the filer
+    (s3.bucket.list 'quota:<bytes>'; absent → 0); buckets whose quota already matches the
+    target are skipped (no-op). New buckets (absent in filer → 0) always differ → emitted.
+    (diff-based: only changed/new quotas are re-set.)"""
     _validate_buckets(target_buckets)
-    return [{'name': b['name'], '_quota_size_mib': _quota_size_to_mib(b['quota_size'])}
-            for b in target_buckets if 'quota_size' in b]
+    current = {b['name']: b.get('quota_bytes', 0)
+               for b in _current_buckets(fs_configure_raw, bucket_list_raw)}
+    result = []
+    for b in target_buckets:
+        if 'quota_size' not in b:
+            continue
+        target_mib = _quota_size_to_mib(b['quota_size'])
+        if current.get(b['name'], 0) != target_mib * 1024 * 1024:
+            result.append({'name': b['name'], '_quota_size_mib': target_mib})
+    return result
 
 
 def seaweedfs_buckets_quota_to_delete(fs_configure_raw, bucket_list_raw, target_buckets):
-    """Target buckets WITHOUT quota_size → [{name}] (s3.bucket.quota -op=remove → unlimited).
-    Operates on target → buckets being deleted (filer-not-target) are naturally excluded.
-    (v18: split from quotas_to_apply.)"""
+    """Target buckets WITHOUT quota_size that currently HAVE a quota in the live filer →
+    [{name}] (s3.bucket.quota -op=remove → unlimited). Current quota read from the filer
+    (s3.bucket.list 'quota:<bytes>'); buckets already quota-less are skipped (no-op). Operates
+    on target → buckets being deleted (filer-not-target) are naturally excluded.
+    (diff-based: only buckets that actually have a quota to drop are emitted.)"""
     _validate_buckets(target_buckets)
-    return [{'name': b['name']} for b in target_buckets if 'quota_size' not in b]
+    current = {b['name']: b.get('quota_bytes', 0)
+               for b in _current_buckets(fs_configure_raw, bucket_list_raw)}
+    return [{'name': b['name']} for b in target_buckets
+            if 'quota_size' not in b and current.get(b['name'], 0) > 0]
 
 
 # =============================================================================
