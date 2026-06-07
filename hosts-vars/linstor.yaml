@@ -276,6 +276,34 @@ all:
           - name: DrbdOptions/auto-add-quorum-tiebreaker
             value: "True"
 
+          # --- Auto-evict (автопереезд реплик при ВНЕЗАПНОМ отказе ноды) ---
+          # Авто-фича LINSTOR (раздел 3.26): если сателлит offline дольше таймера,
+          # контроллер помечает ноду EVICTED и переназначает её diskful-реплики на
+          # живые ноды (auto-place + full-sync с уцелевшей копии). Работает ТОЛЬКО
+          # для replica>=2 (нужен источник для синка); для replica-1 бесполезен.
+          # Эти свойства НЕ влияют на ручную `linstor node evacuate` (отдельный механизм).
+          #
+          # Сколько МИНУТ нода offline до пометки EVICTED. 60 — дефолт; фиксируем явно.
+          - name: DrbdOptions/AutoEvictAfterTime
+            value: "60"
+          # Тормоз против массовой эвакуации: если одновременно offline БОЛЬШЕ этого %
+          # нод — auto-evict не срабатывает ни для одной (LINSTOR считает это сетевой
+          # аварией контроллера, а не отказом железа). 34 — дефолт; фиксируем явно.
+          # Для 5 нод: отказ 1 (20%) -> эвикт; отказ 2 (40%) -> подавляется (ждёт человека).
+          - name: DrbdOptions/AutoEvictMaxDisconnectedNodes
+            value: "34"
+          # Глобальное разрешение авто-эвикта. true — дефолт; фиксируем явно.
+          # Per-node false (label + LinstorSatelliteConfiguration) НЕ используем.
+          - name: DrbdOptions/AutoEvictAllowEviction
+            value: "true"
+          # AutoEvictMinReplicaCount — НАМЕРЕННО не задаём (пустой дефолт = адаптивный).
+          # Пустое = берётся place-count соответствующей resource-group (1 для -local,
+          # 2 для -multi-sync) — подстраивается под каждый класс сам. Хардкод значения
+          # сломал бы это для будущих replica-3+ классов. Раскомментировать ТОЛЬКО если
+          # нужен единый floor для всех ресурсов.
+          # - name: DrbdOptions/AutoEvictMinReplicaCount
+          #   value: "2"
+
           # --- Auto-diskful (memo, закомментировано — функция под вопросом) ---
           # Оставлено напоминанием: при необходимости раскомментировать парой.
           # auto-diskful (value — минуты): diskless-узел, державший ресурс Primary
@@ -375,6 +403,14 @@ all:
         dashboard:
           enabled: false
 
+      # --- Storage-политика (выбор класса под приложение) ---
+      # replica-1 + local (классы `*-local`, autoPlace=1, allowRemoteVolumeAccess=false):
+      #   ТОЛЬКО для приложений, которые сами обеспечивают HA своими механизмами на
+      #   нескольких нодах (app-managed redundancy). У таких PVC нулевая отказоустойчивость
+      #   на уровне хранилища и нет защиты от потери ноды — auto-evict для replica-1
+      #   бесполезен (нет уцелевшей копии для синка).
+      # Все остальные приложения — replica-2 + Protocol C (классы `*-multi-sync`,
+      #   autoPlace=2): отказоустойчивость на уровне хранилища + работающий auto-evict.
       # === storageClasses — 6 SC (3 tier × 2 modes) ===
       storageClasses:
         # === tier: lnstr-manager (only managers) ===
