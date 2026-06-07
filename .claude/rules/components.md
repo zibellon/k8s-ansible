@@ -206,7 +206,7 @@ Template fields:
 
 - **Chart path.** `charts/linstor/{pre,install-operator,install-cluster,post}/`.
 - **Install playbook.** `linstor-install.yaml`.
-- **Namespace.** `piraeus-datastore` (upstream Piraeus convention — не переименовываем).
+- **Namespace.** `linstor` (configurable via `linstor_namespace`).
 - **Releases.** `linstor-pre`, `piraeus-operator`, `linstor-cluster`, `linstor-post`.
 - **External Helm repos.** **Два OCI chart'a:**
   - `oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus`, version `piraeus_operator_helm_chart_version` (default `2.10.6`) — Piraeus operator (управляющий).
@@ -341,7 +341,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `zitadel` | zitadel | no |
 | `teleport` | teleport | no |
 | `kube-system` | metrics-server (exceptional) | upstream |
-| `piraeus-datastore` | linstor (Piraeus operator + LinstorCluster + satellites + CSI + HA controller + affinity controller + NFS server) | **yes** — upstream Piraeus convention |
+| `linstor` | linstor (Piraeus operator + LinstorCluster + satellites + CSI + HA controller + affinity controller + NFS server) | no (configurable via `linstor_namespace`) |
 | `seaweedfs` | seaweedfs (central S3 storage: master, volume, filer, s3 gateway + filer's PostgreSQL backend) | no |
 | `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
 
