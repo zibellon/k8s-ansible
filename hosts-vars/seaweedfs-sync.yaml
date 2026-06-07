@@ -9,29 +9,29 @@ all:
     #   - playbook-app/seaweedfs-install.yaml — sync через
     #     --tags policy-sync/user-sync/identity-distribute/bucket-sync.
     #
-    # Архитектура v14 — filer-driven IAM (см. .claude/rules/components.md §17.5):
+    # Архитектура filer-driven IAM (v14→v18; см. .claude/rules/components.md §17.5):
     #   Layer P: Managed policies (seaweedfs_managed_policies) → weed shell s3.policy
     #            -put/-delete → filer /etc/iam/policies/<n>.json. Прикрепляются к
     #            identities через identity.policy_names (identity-based access).
-    #   Layer 1: Identities → Vault combined JSON key-store /seaweedfs/s3-config/all (creds)
-    #            + weed shell s3.configure -apply → filer /etc/iam/identities/<n>.json
-    #            (live-reload, без рестарта S3). Доступ: actions=[] + policy_names=[<p>].
+    #   Layer 1: Identities → weed shell s3.configure -apply → filer /etc/iam/identities/<n>.json
+    #            (live-reload, без рестарта S3; filer = источник истины, нет Vault key-store).
+    #            Доступ: actions=[] + policy_names=[<p>].
     #   Layer 3: Identity credentials distribution → произвольные дополнительные
     #            Vault paths (через identity.extra_vault_paths, SECTION 2 schema),
     #            ConfigMap-tracked diff sync.
     #   Layer 2: Buckets + quotas + owner → filer Postgres metadata (weed shell
-    #            s3.bucket.create -owner / s3.bucket.quota / s3.bucket.owner / fs.configure).
+    #            s3.bucket.create -owner / s3.bucket.quota / fs.configure; owner immutable).
     #
     # base arrays — committed (admin + anonymous identities в seaweedfs_identities).
     # _extra arrays — для hosts-vars-override/, merged at runtime через `+ (var | default([]))`.
     # =============================================================================
 
     # ------
-    # S3 identity credentials generation (consumed by seaweedfs_user_sync_full)
+    # S3 identity credentials generation (consumed by seaweedfs_identities_to_create)
     # ------
-    # AK/SK длины и charset'ы для generation новых identity credentials в Vault
-    # combined JSON. Используются ТОЛЬКО при CREATE новой identity (in target,
-    # not in Vault yet). Для existing identities — preserve existing creds.
+    # AK/SK длины и charset'ы для generation новых identity credentials. Используются
+    # ТОЛЬКО при CREATE новой identity (in target, not in filer yet). Для existing
+    # identities — creds preserved в filer (не трогаются).
     seaweedfs_sync_access_key_length: 20
     seaweedfs_sync_secret_key_length: 40
     seaweedfs_sync_access_key_charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -44,9 +44,9 @@ all:
     # (weed shell s3.policy -put/-delete → /etc/iam/policies/<n>.json). Прикрепляются к
     # identities через identity.policy_names (SECTION 2). Identity-based access model:
     # права на identity (через attached managed policy), НЕ на bucket (v14 — bucket policies
-    # удалены). Sync (--tags policy-sync) приводит filer к target (diff vs per-item state
-    # ConfigMaps 'seaweedfs-sync-policies-<policy>', label seaweedfs-sync-state=policies):
-    # put-all target (idempotent overwrite) + delete стейл.
+    # удалены). Sync (--tags policy-sync) читает текущее состояние из живого filer
+    # (`s3.policy -list`) и приводит к target: put changed/new (semantic doc-compare,
+    # order-insensitive — только changed/new) + delete стейл. ConfigMap-state не используется (v17+).
     #
     # Granularity: одна policy на consumer (gitlab-rw покрывает все бакеты gitlab) —
     # см. .claude/rules/secrets-and-eso.md §11 (v14).
@@ -122,12 +122,12 @@ all:
     # SECTION 2: Identities
     # ------
     # SeaweedFS S3 IAM identities — admin + per-user named principals + anonymous.
-    # Sync (--tags user-sync) приводит Vault combined JSON к target state:
-    #   CREATE (in target, not in Vault): generate fresh access_key (20 chars
-    #     uppercase+digits) + secret_key (40 chars letters+digits); store в Vault
-    #     combined JSON.
-    #   UPDATE (in both, actions differ): keep existing keys, refresh actions.
-    #   DELETE (in Vault, not in target): remove from combined JSON.
+    # Sync (--tags user-sync) читает live filer (`s3.configure`) и приводит его к target
+    # 4 фазами (filer = источник истины, нет Vault key-store): DELETE (in filer, not in
+    # target → bare `-delete`, whole identity); CREATE (in target, not in filer → fresh
+    # access_key 20 chars uppercase+digits + secret_key 40 chars letters+digits + full
+    # actions/policies); GRANT (existing, add-delta target−filer); REVOKE (existing,
+    # remove-delta filer−target, НИКОГДА bare -delete).
     #
     # Schema per identity:
     #   name:    SeaweedFS identity name. Используется в bucket.owner (SECTION 3) и как
@@ -144,11 +144,11 @@ all:
     #   extra_vault_paths: OPTIONAL list of full Vault paths (с mount engine prefix,
     #            например "eso-secret/gitlab/s3-storage" или "secret/team-alpha/creds").
     #            Sync (--tags identity-distribute) дополнительно доставляет identity
-    #            credentials в каждый указанный путь поверх mandatory combined JSON.
+    #            credentials (читая из live filer s3.configure) в каждый указанный путь.
     #            Fixed Vault field keys (HARD-CODED, изменить нельзя):
     #              username   — identity name (например "alice")
-    #              accessKey  — из combined JSON identities[].credentials[0].accessKey
-    #              secretKey  — из combined JSON identities[].credentials[0].secretKey
+    #              accessKey  — из filer s3.configure identities[].credentials[0].accessKey
+    #              secretKey  — из filer s3.configure identities[].credentials[0].secretKey
     #            Distribute идёт через per-item state ConfigMaps
     #            seaweedfs-sync-identity-distributions-<identity> (по одному на identity,
     #            label seaweedfs-sync-state=identity-distributions) в namespace seaweedfs
