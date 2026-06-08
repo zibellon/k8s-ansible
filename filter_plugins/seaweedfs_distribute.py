@@ -4,8 +4,9 @@ Used by playbook-app/tasks/seaweedfs/tasks-seaweedfs-identity-secret-distribute.
 Distributes identity credentials (read from the live filer s3.configure dump) into
 operator-configured extra Vault paths; diffs target vs per-item state ConfigMaps.
 Self-contained (no cross-file imports — v18 split из монолита seaweedfs_sync.py;
-private helper _parse_s3_configure_identities дублируется с seaweedfs_user.py намеренно,
-см. plan §Shared helper).
+private helper _parse_s3_configure_identities дублируется с seaweedfs_user.py, но в v20
+return shape расходится per-file: здесь {name, creds: {access_key: secret_key}} — Layer 3
+нужны секреты per key).
 Lives in repo-root filter_plugins/; discovered via ansible.cfg
 [defaults] filter_plugins = filter_plugins.
 """
@@ -24,8 +25,11 @@ def _parse_s3_configure_identities(raw):
     Returns [] for ''/None/malformed/missing 'identities'. Never raises. Skips isStatic
     identities (managed externally — v17 must not touch them).
 
-    Each entry: {'name', 'accessKey', 'secretKey', 'actions': [..], 'policyNames': [..]}.
-    credentials[0] → AK/SK ('' when credentials empty, e.g. anonymous)."""
+    Each entry: {'name', 'creds': {access_key: secret_key, ...}, 'actions': [..],
+    'policyNames': [..]}. creds maps EVERY credential's accessKey → secretKey ({} when no
+    credentials, e.g. anonymous).
+    (v20: reads ALL credentials into a per-key creds map. Helper дублируется в
+    seaweedfs_user.py с per-file return shape — намеренно, см. план.)"""
     if not raw:
         return []
     try:
@@ -41,12 +45,13 @@ def _parse_s3_configure_identities(raw):
         name = ident.get('name')
         if not name:
             continue
-        creds = ident.get('credentials') or []
-        first = creds[0] if creds else {}
+        creds = {}
+        for c in ident.get('credentials') or []:
+            if isinstance(c, dict) and c.get('accessKey'):
+                creds[c['accessKey']] = c.get('secretKey', '') or ''
         result.append({
             'name': name,
-            'accessKey': first.get('accessKey', '') or '',
-            'secretKey': first.get('secretKey', '') or '',
+            'creds': creds,
             'actions': list(ident.get('actions') or []),
             'policyNames': list(ident.get('policyNames') or []),
         })
@@ -54,9 +59,9 @@ def _parse_s3_configure_identities(raw):
 
 
 def _creds_by_name_from_identities(parsed):
-    """{name: {'accessKey','secretKey'}} from _parse_s3_configure_identities output.
+    """{name: {access_key: secret_key, ...}} from _parse_s3_configure_identities output.
     Used by identity-distribute (Layer 3) to read identity credentials from the filer."""
-    return {i['name']: {'accessKey': i['accessKey'], 'secretKey': i['secretKey']} for i in parsed}
+    return {i['name']: i['creds'] for i in parsed}
 # =============================================================================
 # Private helpers (Layer 3 — identity-distribute)
 # =============================================================================
@@ -74,23 +79,27 @@ def _parse_configmap_state(s):
     return data
 
 def _flatten_target_paths(identities):
-    """Flatten all extra_vault_paths across identities (preserve order, allow dupes
+    """Flatten all keys[].vault_paths across identities (preserve order, allow dupes
     — dupes detected by _validate_paths_unique downstream)."""
     paths = []
     for i in identities:
-        paths.extend(i.get('extra_vault_paths', []))
+        for k in i.get('keys', []):
+            paths.extend(k.get('vault_paths', []))
     return paths
 
-def _validate_anonymous_no_extra(identities):
-    """Raise AnsibleFilterError if anonymous identity has non-empty extra_vault_paths.
-    Anonymous has empty credentials in combined JSON — distribute meaningless."""
+def _validate_anonymous_no_keys_with_paths(identities):
+    """Raise AnsibleFilterError if the anonymous identity has any key with vault_paths.
+    Anonymous has empty credentials — distribute meaningless."""
     for identity in identities:
-        if identity.get('name') == 'anonymous' and identity.get('extra_vault_paths'):
-            raise AnsibleFilterError(
-                "Anonymous identity has non-empty extra_vault_paths — distribute "
-                "impossible (anonymous has empty credentials in combined JSON). "
-                "Remove extra_vault_paths from anonymous identity in inventory."
-            )
+        if identity.get('name') != 'anonymous':
+            continue
+        for k in identity.get('keys', []):
+            if k.get('vault_paths'):
+                raise AnsibleFilterError(
+                    "Anonymous identity has a key with vault_paths — distribute "
+                    "impossible (anonymous has empty credentials). Remove vault_paths "
+                    "from the anonymous identity's keys in inventory."
+                )
 
 def _validate_paths_unique(paths):
     """Raise AnsibleFilterError if duplicate paths in flattened target paths list."""
@@ -103,65 +112,67 @@ def _validate_paths_unique(paths):
                 dups.append(p)
             seen.add(p)
         raise AnsibleFilterError(
-            "Duplicate Vault paths in identity.extra_vault_paths "
+            "Duplicate Vault paths in identity keys[].vault_paths "
             "across identities: {0}. Each Vault path must be unique "
             "(no race-like inventory bug).".format(dups)
         )
 
 def _validate_creds_exist(target_identities, creds_by_name):
-    """Raise AnsibleFilterError if any target identity (with extra_vault_paths)
-    is missing in combined JSON creds_by_name dict."""
+    """Raise AnsibleFilterError if any target key (with vault_paths) refers to an
+    (identity, access_key) absent from the filer s3.configure dump."""
     for identity in target_identities:
-        if not identity.get('extra_vault_paths'):
-            continue
         name = identity['name']
-        if name not in creds_by_name:
-            raise AnsibleFilterError(
-                "Identity '{0}' has extra_vault_paths but is missing from the filer "
-                "s3.configure dump. Run 'ansible-playbook playbook-app/seaweedfs-install.yaml "
-                "--tags user-sync' first.".format(name)
-            )
+        for k in identity.get('keys', []):
+            if not k.get('vault_paths'):
+                continue
+            ak = k.get('access_key')
+            if name not in creds_by_name or ak not in creds_by_name[name]:
+                raise AnsibleFilterError(
+                    "Identity '{0}' key '{1}' has vault_paths but is missing from the filer "
+                    "s3.configure dump. Run 'ansible-playbook playbook-app/seaweedfs-install.yaml "
+                    "--tags user-sync' first.".format(name, ak)
+                )
 
 def _compute_distribution_pairs(target_identities, creds_by_name):
-    """Build (path, name, accessKey, secretKey) pairs for Phase A vault-put loop.
-    Identities без extra_vault_paths skipped automatically (empty inner loop)."""
+    """Build (path, name, accessKey, secretKey) pairs for the Phase A vault-put loop —
+    one per (identity, key-with-vault_paths, path). Keys без vault_paths skipped."""
     pairs = []
     for identity in target_identities:
         name = identity['name']
         creds = creds_by_name.get(name, {})
-        for path in identity.get('extra_vault_paths', []):
-            pairs.append({
-                'path': path,
-                'name': name,
-                'accessKey': creds.get('accessKey', ''),
-                'secretKey': creds.get('secretKey', ''),
-            })
+        for k in identity.get('keys', []):
+            ak = k.get('access_key')
+            for path in k.get('vault_paths', []):
+                pairs.append({
+                    'path': path,
+                    'name': name,
+                    'accessKey': ak,
+                    'secretKey': creds.get(ak, ''),
+                })
     return pairs
 
 def _compute_state_paths_to_delete(state, target_paths):
-    """Build list of state paths to vault-delete (not in target paths set)."""
+    """Build list of state paths to vault-delete (not in target paths set). State is the
+    per-identity distribution state: [{identity_name, keys: [{access_key, vault_paths}]}]."""
     target_set = set(target_paths)
     deletes = []
     for entry in state:
         identity_name = entry.get('identity_name')
-        for path in entry.get('vault_paths', []):
-            if path not in target_set:
-                deletes.append({'path': path, 'identity_name': identity_name})
+        for k in entry.get('keys', []):
+            access_key = k.get('access_key')
+            for path in k.get('vault_paths', []):
+                if path not in target_set:
+                    deletes.append({
+                        'path': path,
+                        'identity_name': identity_name,
+                        'access_key': access_key,
+                    })
     return deletes
-
-def _build_new_distribution_state(target_identities):
-    """Build new state list — only identities with non-empty extra_vault_paths.
-    Preserves backward compat with current YAML behavior (selectattr-filtered list)."""
-    return [
-        {'identity_name': i['name'], 'vault_paths': i.get('extra_vault_paths', [])}
-        for i in target_identities
-        if i.get('extra_vault_paths')
-    ]
 # =============================================================================
 # Public Layer 3 filters — stateless identity-distribute orchestrators
 # =============================================================================
 def seaweedfs_distribute_paths_to_delete(s3configure_raw, target_identities, configmap_raw_json):
-    """List of state paths to vault-delete (Phase B iteration list).
+    """List of {path, identity_name, access_key} state paths to vault-delete (Phase B list).
 
     Stateless filter: full validation + diff computation inside.
 
@@ -171,12 +182,12 @@ def seaweedfs_distribute_paths_to_delete(s3configure_raw, target_identities, con
         configmap_raw_json: str — ConfigMap state raw stdout (may be '', None, malformed).
 
     Returns:
-        list of {path, identity_name} dicts — state paths to vault-delete.
+        list of {path, identity_name, access_key} dicts — state paths to vault-delete.
 
     Raises:
-        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique.
+        AnsibleFilterError if anonymous has a key with vault_paths OR paths not unique.
     """
-    _validate_anonymous_no_extra(target_identities)
+    _validate_anonymous_no_keys_with_paths(target_identities)
     target_paths = _flatten_target_paths(target_identities)
     _validate_paths_unique(target_paths)
     state = _parse_configmap_state(configmap_raw_json)
@@ -184,10 +195,12 @@ def seaweedfs_distribute_paths_to_delete(s3configure_raw, target_identities, con
 
 
 def seaweedfs_distribute_paths_to_add(s3configure_raw, target_identities, configmap_raw_json):
-    """List of {path, name, accessKey, secretKey} pairs for the Phase A vault-put loop.
+    """List of {path, name, accessKey, secretKey} pairs for the Phase A vault-put loop —
+    one per (identity, key-with-vault_paths, path).
 
     Stateless filter: validation + creds extraction + pairs computation inside.
-    (v17: credentials read from the filer `s3.configure` dump, not the Vault combined JSON.)
+    (v20: per-key — each key carries its own access_key + vault_paths; the secret comes
+    from the filer s3.configure dump, not the Vault combined JSON.)
 
     Args:
         s3configure_raw: str — `s3.configure` dump (source of identity credentials).
@@ -198,9 +211,9 @@ def seaweedfs_distribute_paths_to_add(s3configure_raw, target_identities, config
         list of {path, name, accessKey, secretKey} dicts.
 
     Raises:
-        AnsibleFilterError if anonymous has extra_vault_paths OR paths not unique OR any
-        identity (with extra_vault_paths) missing from the filer dump."""
-    _validate_anonymous_no_extra(target_identities)
+        AnsibleFilterError if anonymous has a key with vault_paths OR paths not unique OR any
+        (identity, access_key) with vault_paths missing from the filer dump."""
+    _validate_anonymous_no_keys_with_paths(target_identities)
     target_paths = _flatten_target_paths(target_identities)
     _validate_paths_unique(target_paths)
     parsed = _parse_s3_configure_identities(s3configure_raw)
@@ -306,31 +319,37 @@ def seaweedfs_state_configmaps_to_delete(configmaplist_raw, target_cm_names):
 def seaweedfs_distribute_configmaps_to_apply(target_identities):
     """Per-item state ConfigMap descriptors for identity-distribution.
 
-    Stateless filter: validate (anonymous-no-extra + paths-unique), then one
-    {name, content} per identity WITH non-empty extra_vault_paths. content =
-    {identity_name, vault_paths} (sort_keys=True) — same shape as one element of
-    the distribution state array consumed by seaweedfs_distribute_paths_to_delete.
+    Stateless filter: validate (anonymous-no-keys-with-paths + paths-unique), then one
+    {name, content} per identity WITH at least one key carrying vault_paths. content =
+    {identity_name, keys: [{access_key, vault_paths}]} (only keys with non-empty vault_paths;
+    sort_keys=True) — same shape as one element of the distribution state array consumed by
+    seaweedfs_distribute_paths_to_delete.
 
     Args:
         target_identities: list — full target from inventory (base + extra).
 
     Returns:
         list of {name, content} — name='seaweedfs-sync-identity-distributions-<identity>'.
-        Identities without extra_vault_paths are skipped.
+        Identities without any key-with-vault_paths are skipped.
 
     Raises:
-        AnsibleFilterError if anonymous has extra_vault_paths, paths not unique,
+        AnsibleFilterError if anonymous has a key with vault_paths, paths not unique,
         or non-DNS identity name.
     """
-    _validate_anonymous_no_extra(target_identities)
+    _validate_anonymous_no_keys_with_paths(target_identities)
     _validate_paths_unique(_flatten_target_paths(target_identities))
-    return [
-        _item_configmap_entry(
-            _CM_PREFIX_DISTRIBUTIONS, i['name'],
-            {'identity_name': i['name'], 'vault_paths': i.get('extra_vault_paths', [])},
-        )
-        for i in target_identities if i.get('extra_vault_paths')
-    ]
+    result = []
+    for i in target_identities:
+        keys_with_paths = [
+            {'access_key': k.get('access_key'), 'vault_paths': k.get('vault_paths', [])}
+            for k in i.get('keys', []) if k.get('vault_paths')
+        ]
+        if keys_with_paths:
+            result.append(_item_configmap_entry(
+                _CM_PREFIX_DISTRIBUTIONS, i['name'],
+                {'identity_name': i['name'], 'keys': keys_with_paths},
+            ))
+    return result
 # =============================================================================
 # Ansible FilterModule registration
 # =============================================================================

@@ -30,9 +30,11 @@ def sample_target_buckets():
 
 @pytest.fixture
 def sample_configmap_state_distribute():
-    """Sample ConfigMap state for identity-distribute (Layer 3) tests."""
+    """Sample reconstructed ConfigMap state for identity-distribute (Layer 3) tests —
+    per-key shape: [{identity_name, keys: [{access_key, vault_paths}]}]."""
     return json.dumps([
-        {'identity_name': 'alice', 'vault_paths': ['eso-secret/team/alice/old']},
+        {'identity_name': 'alice',
+         'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['eso-secret/team/alice/old']}]},
     ])
 
 

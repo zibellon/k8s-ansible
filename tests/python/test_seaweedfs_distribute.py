@@ -15,30 +15,33 @@ from ansible.errors import AnsibleFilterError
 # =============================================================================
 
 def test_distribute_paths_to_delete_orphan_path(sample_s3configure_raw, sample_configmap_state_distribute):
-    """Happy: state has stale path 'eso-secret/team/alice/old', target has new path — old returned for delete."""
-    target = [{'name': 'alice', 'extra_vault_paths': ['eso-secret/team/alice/new']}]
+    """Happy: state key has stale path '.../old', target key has new path — old returned for delete."""
+    target = [{'name': 'alice',
+               'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['eso-secret/team/alice/new']}]}]
     result = sw.seaweedfs_distribute_paths_to_delete(
         sample_s3configure_raw, target, sample_configmap_state_distribute)
-    assert result == [{'path': 'eso-secret/team/alice/old', 'identity_name': 'alice'}]
+    assert result == [{'path': 'eso-secret/team/alice/old',
+                       'identity_name': 'alice', 'access_key': 'ALICE_AK'}]
 
 
 def test_distribute_paths_to_delete_empty_state(sample_s3configure_raw):
     """Edge: empty state (no ConfigMap yet) → empty deletes list."""
-    target = [{'name': 'alice', 'extra_vault_paths': ['p1']}]
+    target = [{'name': 'alice', 'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['p1']}]}]
     result = sw.seaweedfs_distribute_paths_to_delete(sample_s3configure_raw, target, '')
     assert result == []
 
 
-def test_distribute_paths_to_delete_raises_on_anonymous_with_extra():
-    """Edge: anonymous identity with extra_vault_paths → validation raise."""
-    target = [{'name': 'anonymous', 'extra_vault_paths': ['p1']}]
+def test_distribute_paths_to_delete_raises_on_anonymous_with_paths():
+    """Edge: anonymous key with vault_paths → validation raise."""
+    target = [{'name': 'anonymous', 'keys': [{'access_key': 'x', 'vault_paths': ['p1']}]}]
     with pytest.raises(AnsibleFilterError, match='Anonymous'):
         sw.seaweedfs_distribute_paths_to_delete('', target, '')
 
 
 def test_distribute_paths_to_add_happy(sample_s3configure_raw):
-    """Happy: alice with one path → returns one pair with embedded creds."""
-    target = [{'name': 'alice', 'extra_vault_paths': ['eso-secret/team/alice/new']}]
+    """Happy: alice key ALICE_AK with one path → one pair with that key's creds."""
+    target = [{'name': 'alice',
+               'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['eso-secret/team/alice/new']}]}]
     result = sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
     assert result == [{
         'path': 'eso-secret/team/alice/new',
@@ -48,19 +51,29 @@ def test_distribute_paths_to_add_happy(sample_s3configure_raw):
     }]
 
 
+def test_distribute_paths_to_add_multi_key(sample_s3configure_raw):
+    """alice distributes BOTH keys → two pairs, distinct AK/SK, same name."""
+    target = [{'name': 'alice', 'keys': [
+        {'access_key': 'ALICE_AK', 'vault_paths': ['p/ak1']},
+        {'access_key': 'ALICE_AK2', 'vault_paths': ['p/ak2']}]}]
+    result = sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
+    assert result == [
+        {'path': 'p/ak1', 'name': 'alice', 'accessKey': 'ALICE_AK', 'secretKey': 'ALICE_SK'},
+        {'path': 'p/ak2', 'name': 'alice', 'accessKey': 'ALICE_AK2', 'secretKey': 'ALICE_SK2'},
+    ]
+
+
 def test_distribute_paths_to_add_raises_on_missing_creds(sample_s3configure_raw):
-    """Edge: identity 'orphan' not in combined JSON → validation raise."""
-    target = [{'name': 'orphan', 'extra_vault_paths': ['p1']}]
+    """Edge: key access_key not in the filer creds → validation raise."""
+    target = [{'name': 'alice', 'keys': [{'access_key': 'NOPE_AK', 'vault_paths': ['p1']}]}]
     with pytest.raises(AnsibleFilterError, match='missing from the filer'):
         sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
 
 
 def test_distribute_paths_to_add_raises_on_duplicate_paths(sample_s3configure_raw):
-    """Edge: two identities sharing same path → paths-unique validation raise."""
-    target = [
-        {'name': 'admin', 'extra_vault_paths': ['shared/path']},
-        {'name': 'alice', 'extra_vault_paths': ['shared/path']},
-    ]
+    """Edge: two keys sharing same path → paths-unique validation raise."""
+    target = [{'name': 'admin', 'keys': [{'access_key': 'ADMIN_AK', 'vault_paths': ['shared/path']}]},
+              {'name': 'alice', 'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['shared/path']}]}]
     with pytest.raises(AnsibleFilterError, match='Duplicate'):
         sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
 
@@ -159,30 +172,35 @@ def test_state_configmaps_to_delete_empty_target(sample_configmaplist_raw):
 # =============================================================================
 def test_distribute_configmaps_to_apply_happy():
     target = [
-        {'name': 'admin', 'actions': ['Admin']},
-        {'name': 'gitlab', 'extra_vault_paths': ['eso-secret/gitlab/s3', 'secret/x/y']},
+        {'name': 'admin', 'actions': ['Admin'], 'keys': [{'access_key': 'a'}]},
+        {'name': 'gitlab', 'keys': [
+            {'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3', 'secret/x/y']},
+            {'access_key': 'gl-2'}]},
     ]
     result = sw.seaweedfs_distribute_configmaps_to_apply(target)
     assert len(result) == 1
     assert result[0]['name'] == 'seaweedfs-sync-identity-distributions-gitlab'
     assert json.loads(result[0]['content']) == {
-        'identity_name': 'gitlab', 'vault_paths': ['eso-secret/gitlab/s3', 'secret/x/y']}
+        'identity_name': 'gitlab',
+        'keys': [{'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3', 'secret/x/y']}]}
 
 
 def test_distribute_configmaps_to_apply_empty_and_no_paths():
     assert sw.seaweedfs_distribute_configmaps_to_apply([]) == []
-    assert sw.seaweedfs_distribute_configmaps_to_apply([{'name': 'bob', 'actions': []}]) == []
+    assert sw.seaweedfs_distribute_configmaps_to_apply(
+        [{'name': 'bob', 'keys': [{'access_key': 'b'}]}]) == []
 
 
 def test_distribute_configmaps_to_apply_anonymous_with_paths_raises():
     with pytest.raises(AnsibleFilterError, match='Anonymous'):
-        sw.seaweedfs_distribute_configmaps_to_apply([{'name': 'anonymous', 'extra_vault_paths': ['p1']}])
+        sw.seaweedfs_distribute_configmaps_to_apply(
+            [{'name': 'anonymous', 'keys': [{'access_key': 'x', 'vault_paths': ['p1']}]}])
 
 
 def test_distribute_configmaps_to_apply_duplicate_paths_raises():
     target = [
-        {'name': 'a', 'extra_vault_paths': ['shared/p']},
-        {'name': 'b', 'extra_vault_paths': ['shared/p']},
+        {'name': 'a', 'keys': [{'access_key': 'a1', 'vault_paths': ['shared/p']}]},
+        {'name': 'b', 'keys': [{'access_key': 'b1', 'vault_paths': ['shared/p']}]},
     ]
     with pytest.raises(AnsibleFilterError, match='Duplicate'):
         sw.seaweedfs_distribute_configmaps_to_apply(target)
