@@ -465,20 +465,24 @@ all:
               Action: ["s3:ListBucket"]
               Resource: ["arn:aws:s3:::assets-public"]
 
-    # SeaweedFS sync — дополнительные identities + extra Vault paths для distribute.
-    # extra_vault_paths — OPTIONAL list of full Vault paths (с mount prefix). Sync
-    # (--tags identity-distribute) дополнительно кладёт identity creds (fixed keys:
-    # username, accessKey, secretKey) в каждый указанный путь, поверх mandatory
-    # combined JSON в /seaweedfs/s3-config/all. Anonymous + extra_vault_paths → fail.
-    # Пример (alice раздаётся в gitlab и team-alpha; bob — только combined JSON):
+    # SeaweedFS sync — дополнительные identities (per-key) для distribute.
+    # keys[].vault_paths — OPTIONAL list of full Vault paths (с mount prefix). Sync
+    # (--tags identity-distribute) кладёт creds ЭТОГО ключа (fixed keys: username,
+    # accessKey, secretKey) в каждый указанный путь. access_key — operator-chosen plaintext
+    # идентификатор (globally unique). Anonymous с ключом, несущим vault_paths → fail.
+    # Пример (alice раздаётся в gitlab и team-alpha; bob — без distribute):
     seaweedfs_identities_extra:
       - name: alice
         actions: []
-        extra_vault_paths:
-          - "eso-secret/gitlab/s3-storage"
-          - "secret/team-alpha/s3-creds"
+        keys:
+          - access_key: "alice"
+            vault_paths:
+              - "eso-secret/gitlab/s3-storage"
+              - "secret/team-alpha/s3-creds"
       - name: bob
         actions: []
+        keys:
+          - access_key: "bob"
 
     # Дополнительные ExternalSecrets для zitadel (custom IdP/SAML connectors creds и др.)
     # Пример:
