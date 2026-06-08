@@ -69,9 +69,8 @@ def sample_managed_policies():
 def sample_s3configure_raw():
     """`s3.configure` (no-arg) protojson dump: admin (Admin + 1 cred), alice (policyNames +
     2 creds — multi-key), anonymous (empty creds), plus a static identity the parser must
-    IGNORE. Shared by test_seaweedfs_user.py (parses ALL creds → access_keys) and
-    test_seaweedfs_distribute.py (reads credentials[0]). alice's FIRST credential stays
-    ALICE_AK/ALICE_SK so the distribute filter (unchanged in this SUB) keeps passing."""
+    IGNORE. Shared by test_seaweedfs_user.py (parses ALL creds → access_keys list) and
+    test_seaweedfs_distribute.py (parses ALL creds → {access_key: secret_key} map)."""
     return json.dumps({
         'identities': [
             {'name': 'admin', 'credentials': [{'accessKey': 'ADMIN_AK', 'secretKey': 'ADMIN_SK', 'status': 'Active'}],
