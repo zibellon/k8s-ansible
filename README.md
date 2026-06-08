@@ -240,8 +240,6 @@
 ## 2. VPD/VDS + 1 диск с OS + N диск RAW = sparse-file (fileThinPool / filePool) + lvmThinPool / lvmPool (для RAW устройств)
 ## 3. BareMetal + N диск RAW = lvmThinPool / lvmPool
 ## ---
-
-## ---
 ## `--tags pre, install-operator, install-cluster, post`
 ## ---
 ##
@@ -308,7 +306,7 @@
 ## Для их синхронизации с Vaul-instance, надо вызвать `... playbook-app/vault-install.yaml --tags vault-cr`
 ## ---
 ## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-## Есть volume -> требуется Longhorn
+## Есть volume -> требуется работа с СХД (dynamic PVC)
 ## Ожидание готовности deployment/daemonset
 ## ---
 ## `--tags pre, operator, vault-cr, post`
@@ -336,6 +334,30 @@
 ## 3. Уже отдельно (ArgoCD или как-то иначе) загрузить в kubernetes: Namespace, ServiceAccount, SecretStore (CRD), ExternalSecret (CRD)
 ## ВАЖНО: синхронизация полностью синхронизирует структуру в VAULT (добавить, обновить, удалить)
 ## ---
+
+## ---
+## SeaweedFS (S3). Официальный helm-chart
+## ---
+## В файле `hosts-vars/` + `hosts-vars-override/` есть отдельная структуры для управления SeaweedFS-S3-API
+## Есть web-ui (очень странный и неинтересный), который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть s3-api, доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть volume -> требуется работа с СХД
+## Ожидание готовности deployment/daemonset
+## ---
+## Важно_1. Отдельна работа с: policy, user, bucket, identity-distribute
+##   все описывается и синхронизируется полностью декларативно
+##   переменные: `seaweedfs_managed_policies_extra`, `seaweedfs_identities_extra`, `seaweedfs_sync_buckets_extra`
+##   вызвать playbook: `... playbook-app/seaweedfs-install.yaml --tags policy-sync,user-sync,bucket-sync,identity-distribute`
+##   Результат: политики созданы, Creds созданы в S3-api, доставлены в указнные vault-path, бакеты созданы
+## ---
+## `--tags pre, postgresql, install, policy-sync, user-sync, identity-distribute, bucket-sync, post`
+## ---
+##
+- установка + обновление (версия + конфиг)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-install.yaml`
+  - Установится: ...
+- Есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-restart.yaml`
 
 ## ---
 ## Teleport. Официальный helm-chart
