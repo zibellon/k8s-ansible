@@ -17,7 +17,7 @@ all:
     #            (live-reload, без рестарта S3; filer = источник истины, нет Vault key-store).
     #            Доступ: actions=[] + policy_names=[<p>].
     #   Layer 3: Identity credentials distribution → произвольные дополнительные
-    #            Vault paths (через identity.extra_vault_paths, SECTION 2 schema),
+    #            Vault paths (через identity.keys[].vault_paths, SECTION 2 schema),
     #            ConfigMap-tracked diff sync.
     #   Layer 2: Buckets + quotas + owner → filer Postgres metadata (weed shell
     #            s3.bucket.create -owner / s3.bucket.quota / fs.configure; owner immutable).
@@ -27,14 +27,14 @@ all:
     # =============================================================================
 
     # ------
-    # S3 identity credentials generation (consumed by seaweedfs_identities_to_create)
+    # S3 identity secret_key generation (consumed by user-sync create + keys-add)
     # ------
-    # AK/SK длины и charset'ы для generation новых identity credentials. Используются
-    # ТОЛЬКО при CREATE новой identity (in target, not in filer yet). Для existing
-    # identities — creds preserved в filer (не трогаются).
-    seaweedfs_sync_access_key_length: 20
+    # secret_key длина + charset для generation новых identity credentials. v20 per-key:
+    # access_key КАЖДОГО ключа задаёт оператор в inventory (keys[].access_key — plaintext
+    # идентификатор, как username); генерится ТОЛЬКО secret_key (40 chars) — при CREATE
+    # новой identity (keys[0]) и при добавлении нового ключа (keys-add). Existing creds в
+    # filer не трогаются (no-rotation).
     seaweedfs_sync_secret_key_length: 40
-    seaweedfs_sync_access_key_charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     seaweedfs_sync_secret_key_charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
     # ------
@@ -119,15 +119,18 @@ all:
     #             - "arn:aws:s3:::loki-logs/*"
 
     # ------
-    # SECTION 2: Identities
+    # SECTION 2: Identities (v20 per-key)
     # ------
     # SeaweedFS S3 IAM identities — admin + per-user named principals + anonymous.
     # Sync (--tags user-sync) читает live filer (`s3.configure`) и приводит его к target
-    # 4 фазами (filer = источник истины, нет Vault key-store): DELETE (in filer, not in
-    # target → bare `-delete`, whole identity); CREATE (in target, not in filer → fresh
-    # access_key 20 chars uppercase+digits + secret_key 40 chars letters+digits + full
-    # actions/policies); GRANT (existing, add-delta target−filer); REVOKE (existing,
-    # remove-delta filer−target, НИКОГДА bare -delete).
+    # 6 фазами (filer = источник истины, нет Vault key-store): DELETE (in filer, not in
+    # target → bare `-delete`, whole identity); CREATE (in target, not in filer → keys[0]
+    # operator-chosen access_key + сгенерированный secret_key 40 chars + full actions/policies);
+    # GRANT (existing, add-delta target−filer); REVOKE (existing, remove-delta filer−target,
+    # НИКОГДА bare -delete); KEYS-ADD (inventory access_key не в filer → append credential +
+    # сгенерированный secret_key; для brand-new identity keys[0] исключается — его делает CREATE);
+    # KEYS-DELETE (filer access_key не в target, identity kept → удаляется только этот credential).
+    # Ключи НЕ ротируются: access_key уже в filer никогда не re-apply'ится (= перезапись секрета).
     #
     # Schema per identity:
     #   name:    SeaweedFS identity name. Используется в bucket.owner (SECTION 3) и как
@@ -141,33 +144,39 @@ all:
     #            SECTION 1) прикрепляемых к identity (weed shell s3.configure -policies=<csv>).
     #            Identity с actions=[] + policy_names=[<p>] = identity-based access. Пусто/
     #            отсутствует — без attached policies (нет доступа кроме admin bypass).
-    #   extra_vault_paths: OPTIONAL list of full Vault paths (с mount engine prefix,
-    #            например "eso-secret/gitlab/s3-storage" или "secret/team-alpha/creds").
-    #            Sync (--tags identity-distribute) дополнительно доставляет identity
-    #            credentials (читая из live filer s3.configure) в каждый указанный путь.
-    #            Fixed Vault field keys (HARD-CODED, изменить нельзя):
-    #              username   — identity name (например "alice")
-    #              accessKey  — из filer s3.configure identities[].credentials[0].accessKey
-    #              secretKey  — из filer s3.configure identities[].credentials[0].secretKey
+    #   keys:    list credential-объектов. REQUIRED непустой для каждой НАЗВАННОЙ identity
+    #            (admin + users). ОТСУТСТВУЕТ/пуст для 'anonymous' (нет credentials).
+    #            access_key уникален ГЛОБАЛЬНО (по всем identities — S3 gateway мапит
+    #            accessKey→identity плоско, дубль = auth-коллизия; sync fail-fast).
+    #     - access_key:  REQUIRED непустая строка, operator-generated plaintext (идентификатор,
+    #                    как username — НЕ секрет). secret_key генерится sync'ом per key.
+    #       vault_paths: OPTIONAL list of full Vault paths (с mount engine prefix, например
+    #                    "eso-secret/gitlab/s3-storage" или "secret/team-alpha/creds"). Sync
+    #                    (--tags identity-distribute) доставляет creds ЭТОГО ключа (access_key +
+    #                    его secret_key из live filer) в каждый путь. Fixed Vault field keys
+    #                    (HARD-CODED): username (identity name) / accessKey (key.access_key) /
+    #                    secretKey (filer creds для (identity, access_key)). Пусто/нет → ключ
+    #                    не distribute'ится (и не хранится в state ConfigMap).
     #            Distribute идёт через per-item state ConfigMaps
     #            seaweedfs-sync-identity-distributions-<identity> (по одному на identity,
     #            label seaweedfs-sync-state=identity-distributions) в namespace seaweedfs
     #            (diff-based: removed paths → vault-delete; target paths → vault-put full-replace).
-    #            Anonymous identity с непустым extra_vault_paths → fail на sync
-    #            (нет creds для distribute).
-    #            Если поле отсутствует или [] — distribute для этой identity не выполняется.
+    #            Anonymous identity с ключом, несущим vault_paths → fail на sync (нет creds).
     #
     # Admin safety guard в sync playbook: warning если в target identities нет
     # ни одной entry с actions=['Admin'] (защита от accidental lockout).
     # ------
-    # Admin identity — отдельная переменная для устранения hardcoded 'admin' в коде.
-    # Operator может переопределить name через hosts-vars-override/seaweedfs-sync.yaml.
-    seaweedfs_identity_admin:
-      name: admin
+    # S3 admin identity — отдельная переменная для устранения hardcoded 's3-admin' в коде.
+    # Operator может переопределить name/keys через hosts-vars-override/seaweedfs-sync.yaml.
+    # (НЕ путать с admin-UI login seaweedfs_admin_ui_* в hosts-vars/seaweedfs.yaml — другой admin.)
+    seaweedfs_identity_s3_admin:
+      name: s3-admin
       actions: ["Admin"]
+      keys:
+        - access_key: "s3-admin"
 
     seaweedfs_identities:
-      - "{{ seaweedfs_identity_admin }}"
+      - "{{ seaweedfs_identity_s3_admin }}"
       - name: anonymous
         actions: []
     seaweedfs_identities_extra: []
@@ -176,12 +185,16 @@ all:
     #   - name: alice
     #     actions: []
     #     policy_names: ["team-alpha-rw"]   # attached managed policy (SECTION 1)
-    #     extra_vault_paths:
-    #       - "eso-secret/gitlab/s3-storage"
-    #       - "secret/team-alpha/s3-creds"
+    #     keys:
+    #       - access_key: "alice"           # operator-chosen plaintext id (globally unique)
+    #         vault_paths:                   # distribute creds этого ключа в эти Vault paths
+    #           - "eso-secret/gitlab/s3-storage"
+    #           - "secret/team-alpha/s3-creds"
     #   - name: bob
     #     actions: []
-    #     # без policy_names — нет доступа; без extra_vault_paths — distribute не выполняется
+    #     keys:
+    #       - access_key: "bob"             # без vault_paths — distribute не выполняется
+    #     # без policy_names — нет доступа кроме admin bypass
 
     # ------
     # --- Pre-built opt-in для GitLab + GitLab-Runner identities ---
@@ -195,13 +208,17 @@ all:
     #   - name: gitlab
     #     actions: []                       # identity-based: доступ через managed policy
     #     policy_names: ["gitlab-rw"]       # attach managed policy (SECTION 1 opt-in)
-    #     extra_vault_paths:
-    #       - "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
+    #     keys:
+    #       - access_key: "gitlab"
+    #         vault_paths:
+    #           - "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
     #   - name: gitlab-runner
     #     actions: []
     #     policy_names: ["gitlab-runner-rw"]
-    #     extra_vault_paths:
-    #       - "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}"
+    #     keys:
+    #       - access_key: "gitlab-runner"
+    #         vault_paths:
+    #           - "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}"
     # ------
     # --- Pre-built opt-in для Loki (mon-system) identity ---
     # Если используете SeaweedFS как S3 backend для Loki — раскомментируйте этот блок
@@ -213,8 +230,10 @@ all:
     #   - name: loki
     #     actions: []                       # identity-based: доступ через managed policy
     #     policy_names: ["loki-rw"]         # attach managed policy (SECTION 1 opt-in)
-    #     extra_vault_paths:
-    #       - "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }}"
+    #     keys:
+    #       - access_key: "loki"
+    #         vault_paths:
+    #           - "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }}"
 
     # ------
     # SECTION 3: Buckets + quotas + owner
