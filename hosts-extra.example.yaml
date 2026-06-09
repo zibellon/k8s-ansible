@@ -416,6 +416,25 @@ all:
             - extract:
                 key: "{{ eso_vault_integration_seaweedfs.kv_engine_path }}/data/seaweedfs/custom/creds"
 
+    # SeaweedFS sync — managed IAM policies (Layer P / SECTION 1). Одна policy на consumer;
+    # прикрепляется к identity через identity.policy_names (SECTION 2 ниже). Schema:
+    #   name     — policy name (ссылается из identity.policy_names).
+    #   document — AWS IAM doc {Version, Statement: [{Sid?, Effect: "Allow", Action, Resource}]}.
+    #              Только Allow (explicit Deny блокирует и admin); Principal НЕ нужен (policy = на
+    #              identity); Resource — bucket ARN(s) "arn:aws:s3:::<bucket>" + "arn:aws:s3:::<bucket>/*".
+    # Пример (team-alpha-rw — full-access на bucket-1, прикрепляется к alice ниже):
+    seaweedfs_managed_policies_extra:
+      - name: team-alpha-rw
+        document:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "TeamAlphaFullAccess"
+              Effect: "Allow"
+              Action: ["s3:*"]
+              Resource:
+                - "arn:aws:s3:::bucket-1"
+                - "arn:aws:s3:::bucket-1/*"
+
     # SeaweedFS sync — дополнительные buckets с owner + replication/rack/dataCenter + optional quota.
     # Schema per bucket: {name, owner, replication, rack, dataCenter, quota_size?}.
     #   owner       — SeaweedFS identity (SECTION 2), REQUIRED, IMMUTABLE. Доступ к данным — через
@@ -454,6 +473,7 @@ all:
     seaweedfs_identities_extra:
       - name: alice
         actions: []
+        policy_names: ["team-alpha-rw"]   # attached managed policy (SECTION 1 выше)
         keys:
           - access_key: "alice"
             vault_paths:
