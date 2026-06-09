@@ -230,26 +230,29 @@ Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + clu
 
 ### 4.9 SeaweedFS sync operations
 
-Declarative sync invoked through `seaweedfs-install.yaml` tags (architecture v4). No standalone `seaweedfs-sync.yaml` playbook — все sync logic в task includes под `playbook-app/tasks/seaweedfs/`.
+Declarative sync invoked through `seaweedfs-install.yaml` tags (filer-driven IAM, v14→v20; см. [`components.md`](components.md) §17.5). No standalone `seaweedfs-sync.yaml` playbook — все sync logic в task includes под `playbook-app/tasks/seaweedfs/`. Порядок: policy-sync (Layer P) → user-sync (L1) → identity-distribute (L3) → bucket-sync (L2), все **после** helm install (`weed shell` требует running filer, live-reload).
 
 ```bash
 # Full install (all phases including sync):
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-install.yaml
 
-# Re-sync identities only (Layer 1 — Vault combined JSON + ESO + K8s Secret + conditional rollout restart):
+# Re-sync managed policies only (Layer P — weed shell s3.policy, filer-driven diff):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags policy-sync
+
+# Re-sync identities only (Layer 1 — filer-driven, weed shell s3.configure live-reload, 6 phases):
 ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync
 
-# Re-sync identity credentials distribution (Layer 3 — distribute identity creds в extra Vault paths из identity.extra_vault_paths):
+# Re-sync identity credentials distribution (Layer 3 — distribute creds per-key из identity.keys[].vault_paths):
 ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags identity-distribute
 
-# Re-sync buckets + quotas + per-bucket policies (Layer 2 — merged: weed shell + aws s3api, K8s ConfigMap state diff):
+# Re-sync buckets + quotas + owner (Layer 2 — weed shell, filer-driven diff):
 ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags bucket-sync
 
-# Re-sync everything (identities + identity-distribute + buckets in order):
-ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags user-sync,identity-distribute,bucket-sync
+# Re-sync everything (policy → identities → identity-distribute → buckets in order):
+ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags policy-sync,user-sync,identity-distribute,bucket-sync
 ```
 
-**Quota enforcement** — нативный в SeaweedFS 4.31+: s3-gateway сам переключает bucket read-only в обе стороны (~раз в минуту, leader-locked на одной из реплик). Отдельного крона / ручного `s3.bucket.quota.enforce` не требуется — квоты задаёт `bucket-sync` (Phase E `s3.bucket.quota -op=set`), энфорсит gateway.
+**Quota enforcement** — нативный в SeaweedFS 4.31+: s3-gateway сам переключает bucket read-only в обе стороны (~раз в минуту, leader-locked на одной из реплик). Отдельного крона / ручного `s3.bucket.quota.enforce` не требуется — квоты задаёт `bucket-sync` (Phase D `s3.bucket.quota -op=set`), энфорсит gateway.
 
 ---
 
