@@ -1,8 +1,8 @@
-# Testing — Layer 1 (Docker-based)
+# Testing — Layers 1–3 (Docker-based)
 
 Local-only test runner for the k8s-ansible repo. Every test executes inside a single Docker image (`k8s-ansible-test:local`) so the environment is identical on any host. The user's machine needs only `docker` and `make`.
 
-This is **Layer 1** of a planned multi-layer test stack. Helm template, variable resolution, snapshot/assertion tests are deferred to later layers.
+This is a multi-layer test stack — **Layers 1–3** (lint + syntax-check, helm template + kubeconform, pytest) are implemented; later layers are deferred (see §6).
 
 For per-rule rationale and how DevOps/DevOps-docs/TeamLead are required to use the runner, see [`playbook-conventions.md`](playbook-conventions.md) and [`team-workflow.md`](team-workflow.md).
 
@@ -79,14 +79,14 @@ Bumping a version means editing `tests/Dockerfile` and rebuilding (`make docker-
 
 ## 6. Out of scope (deferred to later layers)
 
-Layer 1 + Layer 2 deliberately stop short of:
+Layer 1 + Layer 2 + Layer 3 deliberately stop short of:
 
 - **Local chart wrappers** (наши `<c>/pre/`, `<c>/post/`, `<c>/gitlab/postgresql/`, и т.п.) — тестируется только upstream-часть. Local templates содержат самописанную логику; их валидация — потенциальный future Layer.
 - **CRD-bundle validation** — `kubeconform` сейчас skip'ает CRD-типы (`CiliumNetworkPolicy`, `ExternalSecret`, `ServiceMonitor`, `IngressRoute`, и т.п.) через `--ignore-missing-schemas`. Полная валидация требует bundle JSON-schemas (например через `datreeio/CRDs-catalog` + per-project schemas) — отдельный future Layer.
 - **Variable resolution** — Jinja-time `{{ … }}` resolution against full inventory выходит за рамки текущих syntactic + render checks. Future Layer для playbook'ов.
 - **helm-unittest snapshot tests** + **assertion tests** — точечные проверки на конкретные labels/values/structure внутри rendered chart'a. Planned later.
 
-These layers are tracked separately. Adding them must not loosen Layer 1 or Layer 2.
+These layers are tracked separately. Adding them must not loosen Layer 1, Layer 2 or Layer 3.
 
 ## 7. Debugging common failures
 
