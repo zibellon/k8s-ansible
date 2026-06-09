@@ -16,7 +16,7 @@ Layer 1 + Layer 2 + Layer 3 run five tools, gated by a single `make test` target
 - **ansible-lint** (profile: `moderate`) — every playbook in `playbook-system/` and `playbook-app/`.
 - **ansible-playbook --syntax-check** — every playbook in `playbook-system/` and `playbook-app/`, plus every task-file in their `tasks/` subdirectories (wrapped in a temporary `import_tasks` playbook because bare task-files are not valid Plays). With both `-i hosts-vars/` and `-i hosts-vars-test/`.
 - **helm template + kubeconform** — для каждого upstream Helm release (`<repo>/<chart>` или `oci://...`), который мы устанавливаем в production. Render values from `hosts-vars/` через ansible (production tasks `tasks-vault-config-verify.yaml` + `tasks-add-helm-repo.yaml` reused; `tasks-eso-verify.yaml` не вызывается из test driver — нет component scope), затем `helm template` → файл на диск → `kubeconform -strict --ignore-missing-schemas`. Render и validation разделены на отдельные шаги (см. `tests/helm-validate.yaml` STEP 4 и STEP 5). **Не** тестируются local wrappers (`pre/`, `post/`, `gitlab/postgresql/`, и т.п.) — там нет сторонней логики.
-- **pytest** — unit-тесты для filter plugins (Python compute functions: `filter_plugins/seaweedfs_sync.py`, `filter_plugins/vault_config_verify.py`, `filter_plugins/eso_verify.py`). Tests live in `tests/python/test_*.py`. Catches runtime Jinja2/Python issues которые предыдущие 4 stages не видят (syntax check ≠ runtime evaluation).
+- **pytest** — unit-тесты для filter plugins (Python compute functions: `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py`, `filter_plugins/vault_config_verify.py`, `filter_plugins/eso_verify.py`). Tests live in `tests/python/test_*.py`. Catches runtime Jinja2/Python issues которые предыдущие 4 stages не видят (syntax check ≠ runtime evaluation).
 
 All five must pass for `make test` to exit 0. Targets are independent and re-runnable individually.
 
@@ -33,7 +33,7 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 |---|---|
 | `make help` | List available targets |
 | `make docker-build` | Build the test image (`k8s-ansible-test:local`) |
-| `make test` | Run all four checks (yamllint + ansible-lint + syntax + helm) |
+| `make test` | Run all five checks (yamllint + ansible-lint + syntax + helm + pytest) |
 | `make test-yamllint` | yamllint only |
 | `make test-ansible-lint` | ansible-lint only |
 | `make test-syntax` | ansible-playbook --syntax-check only |
@@ -53,7 +53,7 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 | `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list — keeps build context small. |
 | `tests/run-syntax-check.sh` | Bash iterator running `ansible-playbook --syntax-check` over every playbook, then over every task-file (each wrapped in a temporary `import_tasks` playbook). |
 | `tests/helm-validate.yaml` | Ansible-playbook driver for Layer 2. PRE phase: mock `master_manager_fact` + ESO secret lookups for chart values. STEP 1–7: per-chart Helm repo add (через `tasks-add-helm-repo.yaml`) → render values → `helm template` → `kubeconform` → aggregate. Reports per-chart OK/FAIL. |
-| `tests/python/test_seaweedfs_sync.py` | Pytest unit tests for `filter_plugins/seaweedfs_sync.py` (Layer 3). Covers all 10 public + ~12 private helpers: parse/extract/diff/build/validate. Path setup via `sys.path.insert` to repo-root `filter_plugins/`. |
+| `tests/python/test_seaweedfs_{policy,user,bucket,distribute}.py` | Pytest unit tests for the 4 SeaweedFS filter plugins `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py` (18 public filters). 91 cases (policy 11 / user 24 / bucket 32 / distribute 24). Shared fixtures + `sys.path.insert` to repo-root `filter_plugins/` в `tests/python/conftest.py`. |
 | `tests/python/test_vault_config_verify.py` | Pytest unit tests for `filter_plugins/vault_config_verify.py` (Layer 3). 13 cases — happy + G1/G2/G3 violations + multi + `_find_duplicates`. |
 | `tests/python/test_eso_verify.py` | Pytest unit tests for `filter_plugins/eso_verify.py` (Layer 3). 23 cases — happy + B1/B2/B3/C1/C2/D + malformed + multi + private helpers. |
 | `hosts-vars-test/upstream-charts.yaml` | Inventory-format vars-файл для Layer 2 (auto-loaded через `-i hosts-vars-test/`). Unified schema `upstream_charts` list для всех upstream charts (`is_oci`, `helm_url`, `helm_repo_name`, `helm_chart_name`, `helm_chart_version`, `namespace`, `values`). |
@@ -100,8 +100,8 @@ These layers are tracked separately. Adding them must not loosen Layer 1 or Laye
 | `make test-helm` falls render task with `'<var>' is undefined` | Production playbook sets this fact via `tasks-pre-check.yaml` / `set_fact` / direct inventory variable reference; test playbook hasn't been wired to do the same | Either (a) update `tests/helm-validate.yaml` to call the appropriate production task via `include_tasks: "{{ playbook_dir }}/../playbook-app/tasks/<task>.yaml"`, or (b) hardcode a mock in `hosts-vars-test/` |
 | `make test-helm` falls helm template with `Error: chart pull failed` | `<c>_chart_version` in inventory does not exist in upstream repo (yanked or typo'd) | Verify version exists at the published repo (e.g. `helm search repo <repo>/<chart> --versions`); update inventory if intentional |
 | `make test-helm` falls kubeconform with `key "<X>" already set in map` | Upstream chart bug — duplicate key produced by `toYaml` of merged values dict; K8s API server last-wins masks it in production | See §9 Known upstream issues; if new chart hits this, comment out the entry in `hosts-vars-test/upstream-charts.yaml` with explanation (как сделано для traefik) |
-| `make test-pytest` fails with `ModuleNotFoundError: seaweedfs_sync` | Path setup в test file не находит filter plugin (e.g. moved location) | Verify `sys.path.insert` в `tests/python/test_seaweedfs_sync.py` correctly resolves repo-root `filter_plugins/` |
-| `make test-pytest` fails with assertion mismatch | Python logic в filter plugin не matches expected behavior | Read pytest output (-v shows each test name); fix `filter_plugins/seaweedfs_sync.py` или update test if expectation outdated |
+| `make test-pytest` fails with `ModuleNotFoundError: seaweedfs_user` (или `_policy`/`_bucket`/`_distribute`) | Path setup не находит filter plugin (e.g. moved location) | Verify `sys.path.insert` в `tests/python/conftest.py` correctly resolves repo-root `filter_plugins/` |
+| `make test-pytest` fails with assertion mismatch | Python logic в filter plugin не matches expected behavior | Read pytest output (-v shows each test name); fix the relevant `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py` или update test if expectation outdated |
 
 ## 8. Verification idiom for SUB DONE reports
 
