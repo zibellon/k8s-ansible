@@ -232,12 +232,14 @@ all:
     seaweedfs_postgresql_image: "docker.io/postgres:16-alpine"
     seaweedfs_postgresql_storage_class: "lnstr-major-multi-sync"
     seaweedfs_postgresql_storage_size: "2Gi"
-    # Filer metadata schema (apply via kubectl exec после postgres rollout, ДО filer start).
-    # Bootstrap SQL — официальная docs sources/seaweedfs/weed/filer/postgres/README.txt.
-    # CREATE TABLE IF NOT EXISTS — idempotent (no-op на existing table).
-    # Single-line SQL (psql -c принимает single-line; multi-line через -f /tmp/file.sql).
-    seaweedfs_postgresql_filemeta_schema_sql: >-
-      CREATE TABLE IF NOT EXISTS filemeta (
+    # Filer createTable-шаблон для postgres2 store. filer применяет его сам:
+    # CreateTable(filemeta) в Initialize + per-bucket таблицы лениво при создании bucket'а
+    # (ручной psql-bootstrap больше не нужен). "%s" — placeholder имени таблицы/bucket'а
+    # (Go fmt.Sprintf внутри filer; postgres2 quoted identifier, дефисы в именах ОК).
+    # Folded >- → single-line. Значение уходит в env WEED_POSTGRES2_CREATETABLE и рендерится
+    # upstream chart'ом через Helm `tpl | quote` — поэтому БЕЗ `{{`/`}}` в значении.
+    seaweedfs_postgresql_create_table_template: >-
+      CREATE TABLE IF NOT EXISTS "%s" (
         dirhash BIGINT,
         name VARCHAR(65535),
         directory VARCHAR(65535),
@@ -363,24 +365,28 @@ all:
         replicas: 1
         # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
         logs: {}
-        # PostgreSQL backend через env vars — отключаем leveldb, включаем postgres
+        # PostgreSQL backend (postgres2, table-per-bucket) через env vars — отключаем leveldb,
+        # включаем postgres2. WEED_POSTGRES2_CREATETABLE → filer создаёт filemeta + per-bucket
+        # таблицы сам. WEED_LEVELDB2_ENABLED:"false" обязателен (иначе два enabled-стора →
+        # filer glog.Fatalf). postgres.enabled выключен неявно (ключей WEED_POSTGRES_* больше нет).
         extraEnvironmentVars:
           WEED_LEVELDB2_ENABLED: "false"
-          WEED_POSTGRES_ENABLED: "true"
-          WEED_POSTGRES_HOSTNAME: "seaweedfs-postgresql"
-          WEED_POSTGRES_PORT: "5432"
-          WEED_POSTGRES_DATABASE: "{{ seaweedfs_postgresql_database_name }}"
-          WEED_POSTGRES_CONNECTION_MAX_IDLE: "5"
-          WEED_POSTGRES_CONNECTION_MAX_OPEN: "75"
-          WEED_POSTGRES_CONNECTION_MAX_LIFETIME_SECONDS: "600"
+          WEED_POSTGRES2_ENABLED: "true"
+          WEED_POSTGRES2_HOSTNAME: "seaweedfs-postgresql"
+          WEED_POSTGRES2_PORT: "5432"
+          WEED_POSTGRES2_DATABASE: "{{ seaweedfs_postgresql_database_name }}"
+          WEED_POSTGRES2_CREATETABLE: "{{ seaweedfs_postgresql_create_table_template }}"
+          WEED_POSTGRES2_CONNECTION_MAX_IDLE: "5"
+          WEED_POSTGRES2_CONNECTION_MAX_OPEN: "75"
+          WEED_POSTGRES2_CONNECTION_MAX_LIFETIME_SECONDS: "600"
           WEED_FILER_BUCKETS_FOLDER: "/buckets"
         # Credentials из ESO-materialised Secret eso-seaweedfs-postgresql-creds
         secretExtraEnvironmentVars:
-          WEED_POSTGRES_USERNAME:
+          WEED_POSTGRES2_USERNAME:
             secretKeyRef:
               name: "{{ seaweedfs_secret_postgresql_creds.body.target.name }}"
               key: "{{ seaweedfs_postgresql_secret_key_username }}"
-          WEED_POSTGRES_PASSWORD:
+          WEED_POSTGRES2_PASSWORD:
             secretKeyRef:
               name: "{{ seaweedfs_secret_postgresql_creds.body.target.name }}"
               key: "{{ seaweedfs_postgresql_secret_key_password }}"
