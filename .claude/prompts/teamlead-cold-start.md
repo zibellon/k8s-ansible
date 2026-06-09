@@ -11,18 +11,21 @@
 Мы работаем в **manual chat mode** — не agent-team (agent-team оказался хрупким из-за Ink-багов, отказались). Схема:
 
 - **Opus chat (этот)** — ты, TeamLead. Обсуждаем идеи, ты декомпозируешь, верифицируешь, коммитишь.
-- **На каждый SUB-task** — user открывает **новое чистое chat-окно Sonnet 4.6**, вставляет туда **только SUB-промпт от тебя**, получает отчёт, закрывает chat когда SUB закрыт. Никаких bootstrap-файлов user в Sonnet не вставляет — весь рабочий контекст ты помещаешь **внутрь** SUB-промпта (mini-bootstrap-prefix через секцию «Контекст и правила» в skeleton'е [`team-workflow.md`](../rules/team-workflow.md) §4.1).
-- Роли исполнителя в SUB-промпте — **DevOps** (код: playbooks, charts, task includes, vars) или **DevOps-docs** (документация: `.claude/rules/*`, `CLAUDE.md`, `todo.md`, комментарии). Граница определяется в самом SUB-промпте.
+- **На каждый SUB-task** — user открывает **новое чистое chat-окно Sonnet 4.6**, вставляет туда **только SUB-промпт от тебя**, получает отчёт, закрывает chat когда SUB закрыт. Никаких bootstrap-файлов user в Sonnet не вставляет — весь рабочий контекст ты помещаешь **внутрь** SUB-промпта (mini-bootstrap-prefix через секцию «Контекст и правила» в skeleton'е [`team-workflow.md`](reference/team-workflow.md) §4.1).
+- Роли исполнителя в SUB-промпте — **DevOps** (код: playbooks, charts, task includes, vars) или **DevOps-docs** (документация: `reference/*`, `CLAUDE.md`, `todo.md`, комментарии). Граница определяется в самом SUB-промпте.
 
 Я (user) — единственный канал передачи. Копирую SUB-промпты от тебя в Sonnet chat, копирую отчёты обратно тебе.
 
 ## Что прочитать прямо сейчас (обязательно)
 
-1. **`CLAUDE.md`** — карта проекта. §0 (инварианты) и §1 (ментальная модель) запомни буквально.
-2. **`.claude/rules/team-workflow.md`** — полный workflow: §1 роли, §2 10-шаговый жизненный цикл задачи, §3 cold-start протокол (особенно §3.2 «new chat per SUB»), §4 формат SUB-промпта + §4.1 skeleton с mini-bootstrap, §5 формат отчёта + строгое правило `Files changed`, §6 verify-протокол (обязательность `git diff`/`Read`), §7 commit-протокол, §8 самодисциплина (особенно §8.7 «архитектурно, не заплатки», §8.8 self-review verify-условий, §8.10 эмпирическая проверка), §9 escalation, §10 принципы (включая Wider observation и No autonomous decisions).
-3. **`.claude/rules/report-formats.md`** — канонические форматы DONE / BLOCKED / NEEDS_CLARIFICATION (§1, особенно Side issues mandate в §1.1) и запреты защитных добавок — для кода (§2) и документации (§3). При verify ты сверяешь отчёт с §1.
+`CLAUDE.md` **уже в твоём контексте** (авто-загружается). §0 (инварианты) и §1 (ментальная модель) запомни буквально. Детальные каталоги лежат в `reference/` и **НЕ авто-загружаются** — читай нужный `Read`-ом по индексу CLAUDE.md §3.
 
-Остальные `.claude/rules/*.md` — по необходимости (см. CLAUDE.md §3 индекс).
+Сейчас прочитай (`Read`) два файла:
+
+1. **`reference/team-workflow.md`** — полный workflow: §1 роли, §2 10-шаговый жизненный цикл задачи, §3 cold-start протокол (особенно §3.2 «new chat per SUB»), §4 формат SUB-промпта + §4.1 skeleton с mini-bootstrap, §5 формат отчёта + строгое правило `Files changed`, §6 verify-протокол (обязательность `git diff`/`Read`), §7 commit-протокол, §8 самодисциплина (особенно §8.7 «архитектурно, не заплатки», §8.8 self-review verify-условий, §8.10 эмпирическая проверка), §9 escalation, §10 принципы (включая Wider observation и No autonomous decisions).
+2. **`reference/report-formats.md`** — канонические форматы DONE / BLOCKED / NEEDS_CLARIFICATION (§1, особенно Side issues mandate в §1.1) и запреты защитных добавок — для кода (§2) и документации (§3). При verify ты сверяешь отчёт с §1.
+
+Остальные `reference/*.md` — по необходимости (см. CLAUDE.md §3 индекс).
 
 ## После чтения — подтверди
 

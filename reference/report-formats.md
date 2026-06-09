@@ -44,7 +44,7 @@
 
 Это часть принципа Wider observation из [`team-workflow.md`](team-workflow.md) §10.5.
 
-**Строгое правило — `make test`:** если SUB-task изменяет playbook, chart, task include, inventory, `.yamllint.yaml`, `.ansible-lint.yml`, `Makefile`, `tests/` — секция `Verification` **обязана** содержать строку с результатом `make test`. Формат: `make test → exit 0` (или `make test → exit N` с описанием fail). Если SUB трогает только документацию (`.claude/rules/*.md`, `CLAUDE.md`, `todo.md`) — достаточно `make test → exit 0 (sanity)` или явного «не запускал, правки только текстовые». Документация runner'а — [`testing.md`](testing.md). Контракт TeamLead'а на запуск — [`team-workflow.md`](team-workflow.md) §6 + §8.11.
+**Строгое правило — `make test`:** если SUB-task изменяет playbook, chart, task include, inventory, `.yamllint.yaml`, `.ansible-lint.yml`, `Makefile`, `tests/` — секция `Verification` **обязана** содержать строку с результатом `make test`. Формат: `make test → exit 0` (или `make test → exit N` с описанием fail). Если SUB трогает только документацию (`reference/*.md`, `CLAUDE.md`, `todo.md`) — достаточно `make test → exit 0 (sanity)` или явного «не запускал, правки только текстовые». Документация runner'а — [`testing.md`](testing.md). Контракт TeamLead'а на запуск — [`team-workflow.md`](team-workflow.md) §6 + §8.11.
 
 **Canonical idiom:** `make test 2>&1 | tail -5` (см. [`testing.md`](testing.md) §8). Финальный success-блок Makefile содержит точную подстроку `make test → exit 0` — копируй её в отчёт верботим. Отсутствие блока в `tail -5` после ~5 минут wall-clock = fail (последние 5 строк покажут где упало).
 
@@ -131,7 +131,7 @@ STOP → отчёт `NEEDS_CLARIFICATION` с конкретным предлож
 
 ## 3. Запрет защитных добавок — для документации
 
-Применимо к DevOps-docs при работе над `.claude/rules/*.md`, `CLAUDE.md`, `todo.md`, комментариями в коде.
+Применимо к DevOps-docs при работе над `reference/*.md`, `CLAUDE.md`, `todo.md`, комментариями в коде.
 
 ### 3.1 Запрещено без явного указания в SUB-спеке
 
@@ -153,7 +153,7 @@ STOP → отчёт `NEEDS_CLARIFICATION` с конкретным предлож
 1. **Формат совпадает с соседями.** Если в файле записи оформлены `### X.Y <название>` с bullets `- **Purpose.**`, `- **Input.**` — новая запись точно в том же формате, в правильной позиции по нумерации.
 2. **Язык** — как в соседних записях того же файла. Русский в пояснениях, английский в формальных таблицах — оба встречаются. Не меняй язык соседей.
 3. **Краткость.** Документация — справочник, не учебник. Не дублируй содержимое других файлов — ставь ссылку.
-4. **Ссылки на файлы.** Относительные пути в бэктиках: `` `playbook-app/tasks/tasks-foo.yaml` ``. Для файлов в `.claude/rules/` — markdown-ссылка: `[имя](имя.md)`.
+4. **Ссылки на файлы.** Относительные пути в бэктиках: `` `playbook-app/tasks/tasks-foo.yaml` ``. Для файлов в `reference/` — markdown-ссылка: `[имя](имя.md)`.
 5. **Счётчики.** Если в документе есть числовой счётчик элементов (`(20 tasks)`, `20 reusable task includes`), при добавлении/удалении элемента обновить счётчик.
 
 ### 3.4 Zero-scope additions запрещены (дополнение к §3.1)
