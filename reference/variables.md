@@ -370,7 +370,7 @@ all:
 Notes:
 - **Opt-in.** If `bastion_host` / `bastion_user` are absent from overrides, the inventory operates in classic public-IP mode — the global `ansible_ssh_common_args` from `hosts-vars/ansible.yaml` applies, no `ProxyJump`.
 - **Multi-cluster.** Each `hosts-vars-override-<cluster>/` directory selects its own scheme independently — no global state in the repo.
-- **Skeleton example.** See the commented-out template at the end of [`hosts-vars/hosts.yaml`](../../hosts-vars/hosts.yaml).
+- **Skeleton example.** See the commented-out template at the end of [`hosts-vars/hosts.yaml`](../hosts-vars/hosts.yaml).
 
 ### 2.14.1 On-node bastion (когда bastion — один из узлов кластера)
 

@@ -366,6 +366,6 @@ extraObjects: []
 - Все остальные upstream install phases (cilium/install, cert-manager/install, vault/install bank-vaults operator, и т.д.) — мы не авторим эти charts. Если upstream chart поддерживает `.Values.extraObjects` — можно прокинуть через `<c>_helm_values.extraObjects` точечно (как сделано в traefik), но это не часть унифицированного pattern.
 
 22.7 Канонические примеры:
-- Обычная phase: [`hosts-vars/cilium.yaml`](../../hosts-vars/cilium.yaml) (`cilium_pre_extra_objects`, `cilium_post_extra_objects` + wiring в `cilium_pre_helm_values.extraObjects` / `cilium_post_helm_values.extraObjects`).
-- KUSTOMIZE_WRAPPER: [`hosts-vars/argocd.yaml`](../../hosts-vars/argocd.yaml) (`argocd_install_helm_values` — мини-dict с одним key `extraObjects`) + [`playbook-app/argocd-install.yaml`](../../playbook-app/argocd-install.yaml) (install phase: `dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"`).
+- Обычная phase: [`hosts-vars/cilium.yaml`](../hosts-vars/cilium.yaml) (`cilium_pre_extra_objects`, `cilium_post_extra_objects` + wiring в `cilium_pre_helm_values.extraObjects` / `cilium_post_helm_values.extraObjects`).
+- KUSTOMIZE_WRAPPER: [`hosts-vars/argocd.yaml`](../hosts-vars/argocd.yaml) (`argocd_install_helm_values` — мини-dict с одним key `extraObjects`) + [`playbook-app/argocd-install.yaml`](../playbook-app/argocd-install.yaml) (install phase: `dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"`).
 

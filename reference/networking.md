@@ -193,7 +193,7 @@ toPorts:
 
 ### 7.3 Reference
 
-Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../../playbook-app/charts/teleport/pre/values.yaml) (component-grouped + common buckets, all NP literals templated). Anti-pattern: hard-coded numeric port inside any NP (see [`playbook-conventions.md`](playbook-conventions.md) §17.9).
+Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../playbook-app/charts/teleport/pre/values.yaml) (component-grouped + common buckets, all NP literals templated). Anti-pattern: hard-coded numeric port inside any NP (see [`playbook-conventions.md`](playbook-conventions.md) §17.9).
 
 ### 7.4 Out of scope
 

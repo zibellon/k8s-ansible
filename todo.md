@@ -198,7 +198,7 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 
 ### NetworkPolicy ports refactor
 
-- `playbook-app/charts/argocd/install/templates/argocd.yaml` — это vendored upstream ArgoCD chart с встроенными NP, в которых порты захардкожены (8080, 8082-8084, 5556-5558, 9001, 6379, 5557, 7000 и др.). При общем рефакторинге NP-портов в `values.yaml` (см. `.claude/rules/networking.md` §7) этот файл намеренно пропущен — модификация upstream-чарта сломала бы синхронизацию с upstream при следующем обновлении ArgoCD. Отдельная задача (если будет): fork-aware retrofit либо ожидание upstream-параметризации этих портов.
+- `playbook-app/charts/argocd/install/templates/argocd.yaml` — это vendored upstream ArgoCD chart с встроенными NP, в которых порты захардкожены (8080, 8082-8084, 5556-5558, 9001, 6379, 5557, 7000 и др.). При общем рефакторинге NP-портов в `values.yaml` (см. `reference/networking.md` §7) этот файл намеренно пропущен — модификация upstream-чарта сломала бы синхронизацию с upstream при следующем обновлении ArgoCD. Отдельная задача (если будет): fork-aware retrofit либо ожидание upstream-параметризации этих портов.
 - Перенос новых port-ключей из chart-овых `values.yaml` в `hosts-vars/<c>.yaml` (чтобы operator мог override per environment) — отдельная задача, в текущем рефакторинге не сделана.
 
 ------
