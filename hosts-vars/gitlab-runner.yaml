@@ -166,30 +166,36 @@ all:
     # Replica count + job concurrency (SCALE / capacity).
     gitlab_runner_helm_values_replica_count: 3
     gitlab_runner_helm_values_concurrent: 10
+    # --- round-3 blocks (extracted from gitlab_runner_helm_values) ---
+    gitlab_runner_helm_values_check_interval: 30
+    gitlab_runner_helm_values_runners:
+      secret: "{{ gitlab_runner_secret_auth_token.body.target.name }}"
+      cache:
+        secretName: "{{ gitlab_runner_secret_s3_creds.body.target.name }}"
+      config: "{{ gitlab_runner_config }}"
+    gitlab_runner_helm_values_rbac:
+      create: true
+      clusterWideAccess: false
+    gitlab_runner_helm_values_service_account:
+      create: true
+      name: gitlab-runner
+    gitlab_runner_helm_values_pod_labels:
+      app.kubernetes.io/name: gitlab-runner
+      app.kubernetes.io/component: runner
+      app.kubernetes.io/part-of: gitlab
+      app.kubernetes.io/managed-by: helm
     # ---------
     # Helm chart values
     gitlab_runner_helm_values:
       gitlabUrl: "{{ gitlab_runner_gitlab_url }}"
       replicas: "{{ gitlab_runner_helm_values_replica_count }}"
       concurrent: "{{ gitlab_runner_helm_values_concurrent }}"
-      checkInterval: 30
+      checkInterval: "{{ gitlab_runner_helm_values_check_interval }}"
       unregisterRunners: false
-      runners:
-        secret: "{{ gitlab_runner_secret_auth_token.body.target.name }}"
-        cache:
-          secretName: "{{ gitlab_runner_secret_s3_creds.body.target.name }}"
-        config: "{{ gitlab_runner_config }}"
-      rbac:
-        create: true
-        clusterWideAccess: false
-      serviceAccount:
-        create: true
-        name: gitlab-runner
-      podLabels:
-        app.kubernetes.io/name: gitlab-runner
-        app.kubernetes.io/component: runner
-        app.kubernetes.io/part-of: gitlab
-        app.kubernetes.io/managed-by: helm
+      runners: "{{ gitlab_runner_helm_values_runners }}"
+      rbac: "{{ gitlab_runner_helm_values_rbac }}"
+      serviceAccount: "{{ gitlab_runner_helm_values_service_account }}"
+      podLabels: "{{ gitlab_runner_helm_values_pod_labels }}"
       tolerations: []
       nodeSelector: {}
       affinity: {}
