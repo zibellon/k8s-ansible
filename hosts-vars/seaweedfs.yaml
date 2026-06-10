@@ -292,6 +292,116 @@ all:
     seaweedfs_master_data_storage_class: "lnstr-major-local"
     seaweedfs_admin_data_storage_size: "2Gi"
     seaweedfs_admin_data_storage_class: "lnstr-major-multi-sync"
+    # --- Operator-overridable blocks (extracted from seaweedfs_helm_values) ---
+    seaweedfs_volumes:
+      # 3 control-plane (диск 100GB, делят с OS/etcd/containerd/LINSTOR/Vault).
+      # rack 'managers-1' в DC 'dc-1' (имя группы кодирует rack+DC).
+      managers-1-dc-1:
+        enabled: true
+        replicas: 1
+        dataCenter: "dc-1"
+        rack: "managers-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "4Gi"
+            storageClass: "lnstr-manager-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          node-role.kubernetes.io/control-plane: ""
+        tolerations: |
+          - operator: Exists
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+      # 5 worker (диск 300GB).
+      # rack 'workers-1' в DC 'dc-1'.
+      workers-1-dc-1:
+        enabled: true
+        replicas: 2
+        dataCenter: "dc-1"
+        rack: "workers-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "4Gi"
+            storageClass: "lnstr-worker-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          node-role.kubernetes.io/worker: ""
+    seaweedfs_filer:
+      enabled: true
+      replicas: "{{ seaweedfs_filer_replica_count }}"
+      # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
+      logs: {}
+      # PostgreSQL backend (postgres2, table-per-bucket) через env vars — отключаем leveldb,
+      # включаем postgres2. WEED_POSTGRES2_CREATETABLE → filer создаёт filemeta + per-bucket
+      # таблицы сам. WEED_LEVELDB2_ENABLED:"false" обязателен (иначе два enabled-стора →
+      # filer glog.Fatalf). postgres.enabled выключен неявно (ключей WEED_POSTGRES_* больше нет).
+      extraEnvironmentVars:
+        WEED_LEVELDB2_ENABLED: "false"
+        WEED_POSTGRES2_ENABLED: "true"
+        WEED_POSTGRES2_HOSTNAME: "seaweedfs-postgresql"
+        WEED_POSTGRES2_PORT: "5432"
+        WEED_POSTGRES2_DATABASE: "{{ seaweedfs_postgresql_database_name }}"
+        WEED_POSTGRES2_CREATETABLE: "{{ seaweedfs_postgresql_create_table_template }}"
+        WEED_POSTGRES2_CONNECTION_MAX_IDLE: "5"
+        WEED_POSTGRES2_CONNECTION_MAX_OPEN: "75"
+        WEED_POSTGRES2_CONNECTION_MAX_LIFETIME_SECONDS: "600"
+        WEED_FILER_BUCKETS_FOLDER: "/buckets"
+      # Credentials из ESO-materialised Secret eso-seaweedfs-postgresql-creds
+      secretExtraEnvironmentVars:
+        WEED_POSTGRES2_USERNAME:
+          secretKeyRef:
+            name: "{{ seaweedfs_secret_postgresql_creds.body.target.name }}"
+            key: "{{ seaweedfs_postgresql_secret_key_username }}"
+        WEED_POSTGRES2_PASSWORD:
+          secretKeyRef:
+            name: "{{ seaweedfs_secret_postgresql_creds.body.target.name }}"
+            key: "{{ seaweedfs_postgresql_secret_key_password }}"
+    seaweedfs_s3:
+      enabled: true
+      replicas: "{{ seaweedfs_s3_replica_count }}"
+      # HA: 3 replicas + Kubernetes Deployment default RollingUpdate strategy.
+      # IAM auth: filer-driven (v17). existingConfigSecret указывает на empty-config
+      # (eso-seaweedfs-s3-bootstrap, '{"identities":[]}') — форсит S3-gateway в Replace-режим
+      # (staticIdentityNames=0 → hasStaticConfig=false → чистый filer-driven, без anvAdmin/anvReadOnly).
+      # Identities/policies применяются в живой filer через weed shell (policy-sync/user-sync),
+      # live-reload подхватывает без рестарта.
+      enableAuth: true
+      existingConfigSecret: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
+    seaweedfs_admin:
+      enabled: true
+      replicas: "{{ seaweedfs_admin_replica_count }}"
+      # Креды admin UI — через ESO (existingSecret)
+      secret:
+        existingSecret: "{{ seaweedfs_secret_admin_ui_creds.body.target.name }}"
+        userKey: "{{ seaweedfs_admin_ui_secret_key_user }}"
+        pwKey: "{{ seaweedfs_admin_ui_secret_key_password }}"
+      # Persistence: admin хранит session keys + maintenance/task config + историю задач
+      data:
+        type: "persistentVolumeClaim"
+        size: "{{ seaweedfs_admin_data_storage_size }}"
+        storageClass: "{{ seaweedfs_admin_data_storage_class }}"
+      # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
+      logs:
+        type: ""
+    seaweedfs_worker:
+      enabled: true
+      replicas: "{{ seaweedfs_worker_replica_count }}"
+      # jobType "all" — default (vacuum/volume_balance/ec_balance/admin_script)
+      # + heavy (erasure_coding/iceberg_maintenance). Фиксируем явно (= upstream default).
+      jobType: "all"
+      # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
+      logs:
+        type: ""
+    # ---------
     # Helm chart values — структура соответствует upstream chart 4.32.0
     seaweedfs_helm_values:
       # Включить upstream Prometheus ServiceMonitor для всех компонентов
@@ -332,122 +442,19 @@ all:
       # (hosts-vars/seaweedfs-sync.yaml: bucket.rack → fs.configure -rack).
       # dataCenter 'dc-1' (одно-DC). replication '001' держит реплики в том же rack (00Z).
       # storageClass *-local (НЕ *-multi-sync) — реплику делает SeaweedFS, не LINSTOR. maxVolumes:0 = auto-size.
-      volumes:
-        # 3 control-plane (диск 100GB, делят с OS/etcd/containerd/LINSTOR/Vault).
-        # rack 'managers-1' в DC 'dc-1' (имя группы кодирует rack+DC).
-        managers-1-dc-1:
-          enabled: true
-          replicas: 1
-          dataCenter: "dc-1"
-          rack: "managers-1"
-          dataDirs:
-            - name: data1
-              type: "persistentVolumeClaim"
-              size: "4Gi"
-              storageClass: "lnstr-manager-local"
-              maxVolumes: 0
-          logs: {}
-          nodeSelector: |
-            node-role.kubernetes.io/control-plane: ""
-          tolerations: |
-            - operator: Exists
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "1"
-              memory: "1Gi"
-        # 5 worker (диск 300GB).
-        # rack 'workers-1' в DC 'dc-1'.
-        workers-1-dc-1:
-          enabled: true
-          replicas: 2
-          dataCenter: "dc-1"
-          rack: "workers-1"
-          dataDirs:
-            - name: data1
-              type: "persistentVolumeClaim"
-              size: "4Gi"
-              storageClass: "lnstr-worker-local"
-              maxVolumes: 0
-          logs: {}
-          nodeSelector: |
-            node-role.kubernetes.io/worker: ""
+      volumes: "{{ seaweedfs_volumes }}"
 
-      filer:
-        enabled: true
-        replicas: "{{ seaweedfs_filer_replica_count }}"
-        # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
-        logs: {}
-        # PostgreSQL backend (postgres2, table-per-bucket) через env vars — отключаем leveldb,
-        # включаем postgres2. WEED_POSTGRES2_CREATETABLE → filer создаёт filemeta + per-bucket
-        # таблицы сам. WEED_LEVELDB2_ENABLED:"false" обязателен (иначе два enabled-стора →
-        # filer glog.Fatalf). postgres.enabled выключен неявно (ключей WEED_POSTGRES_* больше нет).
-        extraEnvironmentVars:
-          WEED_LEVELDB2_ENABLED: "false"
-          WEED_POSTGRES2_ENABLED: "true"
-          WEED_POSTGRES2_HOSTNAME: "seaweedfs-postgresql"
-          WEED_POSTGRES2_PORT: "5432"
-          WEED_POSTGRES2_DATABASE: "{{ seaweedfs_postgresql_database_name }}"
-          WEED_POSTGRES2_CREATETABLE: "{{ seaweedfs_postgresql_create_table_template }}"
-          WEED_POSTGRES2_CONNECTION_MAX_IDLE: "5"
-          WEED_POSTGRES2_CONNECTION_MAX_OPEN: "75"
-          WEED_POSTGRES2_CONNECTION_MAX_LIFETIME_SECONDS: "600"
-          WEED_FILER_BUCKETS_FOLDER: "/buckets"
-        # Credentials из ESO-materialised Secret eso-seaweedfs-postgresql-creds
-        secretExtraEnvironmentVars:
-          WEED_POSTGRES2_USERNAME:
-            secretKeyRef:
-              name: "{{ seaweedfs_secret_postgresql_creds.body.target.name }}"
-              key: "{{ seaweedfs_postgresql_secret_key_username }}"
-          WEED_POSTGRES2_PASSWORD:
-            secretKeyRef:
-              name: "{{ seaweedfs_secret_postgresql_creds.body.target.name }}"
-              key: "{{ seaweedfs_postgresql_secret_key_password }}"
+      filer: "{{ seaweedfs_filer }}"
 
-      s3:
-        enabled: true
-        replicas: "{{ seaweedfs_s3_replica_count }}"
-        # HA: 3 replicas + Kubernetes Deployment default RollingUpdate strategy.
-        # IAM auth: filer-driven (v17). existingConfigSecret указывает на empty-config
-        # (eso-seaweedfs-s3-bootstrap, '{"identities":[]}') — форсит S3-gateway в Replace-режим
-        # (staticIdentityNames=0 → hasStaticConfig=false → чистый filer-driven, без anvAdmin/anvReadOnly).
-        # Identities/policies применяются в живой filer через weed shell (policy-sync/user-sync),
-        # live-reload подхватывает без рестарта.
-        enableAuth: true
-        existingConfigSecret: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
+      s3: "{{ seaweedfs_s3 }}"
 
       # Admin компонент (StatefulSet) — панель управления + координатор worker'ов.
-      admin:
-        enabled: true
-        replicas: "{{ seaweedfs_admin_replica_count }}"
-        # Креды admin UI — через ESO (existingSecret)
-        secret:
-          existingSecret: "{{ seaweedfs_secret_admin_ui_creds.body.target.name }}"
-          userKey: "{{ seaweedfs_admin_ui_secret_key_user }}"
-          pwKey: "{{ seaweedfs_admin_ui_secret_key_password }}"
-        # Persistence: admin хранит session keys + maintenance/task config + историю задач
-        data:
-          type: "persistentVolumeClaim"
-          size: "{{ seaweedfs_admin_data_storage_size }}"
-          storageClass: "{{ seaweedfs_admin_data_storage_class }}"
-        # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
-        logs:
-          type: ""
+      admin: "{{ seaweedfs_admin }}"
 
       # Worker компонент (Deployment) — background-job runner (vacuum/balance/EC/...).
       # Требует admin (чарт hard-fail'ит без admin.enabled); adminServer не задаём —
       # чарт авто-указывает на in-cluster admin gRPC.
-      worker:
-        enabled: true
-        replicas: "{{ seaweedfs_worker_replica_count }}"
-        # jobType "all" — default (vacuum/volume_balance/ec_balance/admin_script)
-        # + heavy (erasure_coding/iceberg_maintenance). Фиксируем явно (= upstream default).
-        jobType: "all"
-        # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
-        logs:
-          type: ""
+      worker: "{{ seaweedfs_worker }}"
 
     # --- PHASE: post ---
     seaweedfs_post_helm_timeout: "5m"
