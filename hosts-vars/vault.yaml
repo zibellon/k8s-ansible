@@ -346,49 +346,54 @@ all:
     vault_spec_volume_mounts:
       - name: vault-data
         mountPath: /vault/data
+    # --- round-4 blocks (extracted from vault_spec) ---
+    vault_spec_unseal_config:
+      options:
+        secretShares: "{{ vault_key_shares }}"
+        secretThreshold: "{{ vault_key_threshold }}"
+      kubernetes:
+        secretNamespace: "{{ vault_namespace }}"
+        secretName: "{{ vault_unsealer_secret_name }}"
+    vault_spec_config:
+      api_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
+      cluster_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8201"
+      storage:
+        raft:
+          path: /vault/data
+      listener:
+        tcp:
+          address: "[::]:8200"
+          cluster_address: "[::]:8201"
+          tls_disable: true
+          telemetry:
+            unauthenticated_metrics_access: "true"
+      ui: true
+      disable_mlock: true
+      telemetry:
+        prometheus_retention_time: "120s"
+        disable_hostname: true
+    vault_spec_vault_envs_config:
+      - name: VAULT_ADDR
+        value: "http://127.0.0.1:8200"
+    vault_spec_external_config:
+      purgeUnmanagedConfig:
+        enabled: true
+        exclude:
+          auth: true
+      policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
+      auth: "{{ vault_spec_auth }}"
+      secrets: "{{ vault_spec_secrets }}"
     # ---------
     vault_spec:
       size: 1
       serviceAccount: vault
       image: "{{ vault_image }}"
-      unsealConfig:
-        options:
-          secretShares: "{{ vault_key_shares }}"
-          secretThreshold: "{{ vault_key_threshold }}"
-        kubernetes:
-          secretNamespace: "{{ vault_namespace }}"
-          secretName: "{{ vault_unsealer_secret_name }}"
-      config:
-        api_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8200"
-        cluster_addr: "http://vault.{{ vault_namespace }}.svc.{{ cluster_dns_domain }}:8201"
-        storage:
-          raft:
-            path: /vault/data
-        listener:
-          tcp:
-            address: "[::]:8200"
-            cluster_address: "[::]:8201"
-            tls_disable: true
-            telemetry:
-              unauthenticated_metrics_access: "true"
-        ui: true
-        disable_mlock: true
-        telemetry:
-          prometheus_retention_time: "120s"
-          disable_hostname: true
+      unsealConfig: "{{ vault_spec_unseal_config }}"
+      config: "{{ vault_spec_config }}"
       # Добавляем переменные окружения здесь
-      vaultEnvsConfig:
-        - name: VAULT_ADDR
-          value: "http://127.0.0.1:8200"
+      vaultEnvsConfig: "{{ vault_spec_vault_envs_config }}"
       # ---
-      externalConfig:
-        purgeUnmanagedConfig:
-          enabled: true
-          exclude:
-            auth: true
-        policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
-        auth: "{{ vault_spec_auth }}"
-        secrets: "{{ vault_spec_secrets }}"
+      externalConfig: "{{ vault_spec_external_config }}"
       volumeClaimTemplates: "{{ vault_spec_volume_claim_templates }}"
       volumeMounts: "{{ vault_spec_volume_mounts }}"
       resources:
