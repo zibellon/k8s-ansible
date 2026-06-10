@@ -317,6 +317,35 @@ all:
     # VAULT SPEC
     # Full Vault CR spec — edit here to change image, storage, unseal params, etc.
     # Dynamic refs kept only for values that differ per environment.
+    # --- Operator-overridable sub-blocks (extracted from vault_spec) ---
+    vault_auth:
+      - type: kubernetes
+        config:
+          kubernetes_host: "{{ vault_kubernetes_host }}"
+        roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
+    vault_secrets:
+      - path: secret
+        type: kv
+        description: General secrets
+        options:
+          version: 2
+      - path: eso-secret
+        type: kv
+        description: ESO secrets
+        options:
+          version: 2
+    vault_volume_claim_templates:
+      - metadata:
+          name: vault-data
+        spec:
+          accessModes: [ReadWriteOnce]
+          storageClassName: lnstr-major-local
+          resources:
+            requests:
+              storage: 2Gi
+    vault_volume_mounts:
+      - name: vault-data
+        mountPath: /vault/data
     # ---------
     vault_spec:
       size: 1
@@ -358,34 +387,10 @@ all:
           exclude:
             auth: true
         policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
-        auth:
-          - type: kubernetes
-            config:
-              kubernetes_host: "{{ vault_kubernetes_host }}"
-            roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
-        secrets:
-          - path: secret
-            type: kv
-            description: General secrets
-            options:
-              version: 2
-          - path: eso-secret
-            type: kv
-            description: ESO secrets
-            options:
-              version: 2
-      volumeClaimTemplates:
-        - metadata:
-            name: vault-data
-          spec:
-            accessModes: [ReadWriteOnce]
-            storageClassName: lnstr-major-local
-            resources:
-              requests:
-                storage: 2Gi
-      volumeMounts:
-        - name: vault-data
-          mountPath: /vault/data
+        auth: "{{ vault_auth }}"
+        secrets: "{{ vault_secrets }}"
+      volumeClaimTemplates: "{{ vault_volume_claim_templates }}"
+      volumeMounts: "{{ vault_volume_mounts }}"
       resources:
         vault: {}
         bankVaults: {}
