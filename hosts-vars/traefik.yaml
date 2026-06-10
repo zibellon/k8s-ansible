@@ -119,6 +119,43 @@ all:
     traefik_helm_chart_name: "traefik"
     traefik_helm_chart_version: "39.0.9"
     # Helm chart values
+    # --- Operator-overridable blocks (extracted from traefik_helm_values) ---
+    traefik_providers:
+      kubernetesCRD:
+        enabled: true
+        ingressClass: "{{ traefik_ingress_class }}"
+        allowCrossNamespace: true
+      kubernetesIngress:
+        enabled: true
+        ingressClass: "{{ traefik_ingress_class }}"
+        publishedService:
+          enabled: false
+    traefik_logs:
+      general:
+        level: DEBUG
+        format: json
+      access:
+        enabled: true
+        format: json
+    traefik_extra_objects:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          name: "traefik-dashboard"
+          labels:
+            app.kubernetes.io/name: traefik
+            app.kubernetes.io/instance: "traefik-{{ traefik_namespace }}"
+        spec:
+          type: ClusterIP
+          selector:
+            app.kubernetes.io/name: traefik
+            app.kubernetes.io/instance: "traefik-{{ traefik_namespace }}"
+          ports:
+            - name: dashboard
+              protocol: TCP
+              port: 8080
+              targetPort: 8080
+    # ---------
     traefik_helm_values:
       fullnameOverride: "{{ traefik_daemonset_name }}"
       tolerations:
@@ -188,23 +225,8 @@ all:
           exposedPort: 9200
           expose:
             default: false
-      providers:
-        kubernetesCRD:
-          enabled: true
-          ingressClass: "{{ traefik_ingress_class }}"
-          allowCrossNamespace: true
-        kubernetesIngress:
-          enabled: true
-          ingressClass: "{{ traefik_ingress_class }}"
-          publishedService:
-            enabled: false
-      logs:
-        general:
-          level: DEBUG
-          format: json
-        access:
-          enabled: true
-          format: json
+      providers: "{{ traefik_providers }}"
+      logs: "{{ traefik_logs }}"
       gateway:
         enabled: false
       gatewayClass:
@@ -239,24 +261,7 @@ all:
         runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
-      extraObjects:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: "traefik-dashboard"
-            labels:
-              app.kubernetes.io/name: traefik
-              app.kubernetes.io/instance: "traefik-{{ traefik_namespace }}"
-          spec:
-            type: ClusterIP
-            selector:
-              app.kubernetes.io/name: traefik
-              app.kubernetes.io/instance: "traefik-{{ traefik_namespace }}"
-            ports:
-              - name: dashboard
-                protocol: TCP
-                port: 8080
-                targetPort: 8080
+      extraObjects: "{{ traefik_extra_objects }}"
     # ---
     # --- PHASE: post ---
     traefik_post_helm_timeout: "5m"
