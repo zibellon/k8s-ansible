@@ -160,6 +160,48 @@ all:
     zitadel_helm_chart_version: "9.30.0"
     # Replica count (SCALE).
     zitadel_helm_values_replica_count: 1
+    # --- round-4 blocks (extracted from zitadel_helm_values) ---
+    zitadel_helm_values_zitadel:
+      masterkeySecretName: "{{ zitadel_secret_masterkey.body.target.name }}"
+      # masterkeySecretKeyName удалён — в chart 9.x ключ в secret hardcoded: "masterkey"
+      configmapConfig:
+        ExternalDomain: "{{ zitadel_domain }}"
+        ExternalPort: 443
+        ExternalSecure: true
+        TLS:
+          Enabled: false
+        Database:
+          Postgres:
+            Host: zitadel-postgresql
+            Port: 5432
+            Database: "{{ zitadel_postgresql_database_name }}"
+            MaxOpenConns: 20
+            MaxIdleConns: 10
+            ConnMaxLifetime: "30m"
+            Admin:
+              Username: "{{ zitadel_postgresql_username }}"
+              SSL:
+                Mode: disable
+            User:
+              Username: "{{ zitadel_postgresql_username }}"
+              SSL:
+                Mode: disable
+    zitadel_helm_values_env:
+      - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
+            key: "{{ zitadel_postgresql_secret_key_password }}"
+      - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
+            key: "{{ zitadel_postgresql_secret_key_password }}"
+    zitadel_helm_values_service:
+      type: ClusterIP
+      port: 8080
+      annotations:
+        traefik.ingress.kubernetes.io/service.serversscheme: h2c
     # ---------
     # Helm chart values
     zitadel_helm_values:
@@ -168,47 +210,9 @@ all:
       nodeSelector: {}
       tolerations: []
       affinity: {}
-      zitadel:
-        masterkeySecretName: "{{ zitadel_secret_masterkey.body.target.name }}"
-        # masterkeySecretKeyName удалён — в chart 9.x ключ в secret hardcoded: "masterkey"
-        configmapConfig:
-          ExternalDomain: "{{ zitadel_domain }}"
-          ExternalPort: 443
-          ExternalSecure: true
-          TLS:
-            Enabled: false
-          Database:
-            Postgres:
-              Host: zitadel-postgresql
-              Port: 5432
-              Database: "{{ zitadel_postgresql_database_name }}"
-              MaxOpenConns: 20
-              MaxIdleConns: 10
-              ConnMaxLifetime: "30m"
-              Admin:
-                Username: "{{ zitadel_postgresql_username }}"
-                SSL:
-                  Mode: disable
-              User:
-                Username: "{{ zitadel_postgresql_username }}"
-                SSL:
-                  Mode: disable
-      env:
-        - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
-              key: "{{ zitadel_postgresql_secret_key_password }}"
-        - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
-              key: "{{ zitadel_postgresql_secret_key_password }}"
-      service:
-        type: ClusterIP
-        port: 8080
-        annotations:
-          traefik.ingress.kubernetes.io/service.serversscheme: h2c
+      zitadel: "{{ zitadel_helm_values_zitadel }}"
+      env: "{{ zitadel_helm_values_env }}"
+      service: "{{ zitadel_helm_values_service }}"
       ingress:
         enabled: false
       autoscaling:
