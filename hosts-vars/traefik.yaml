@@ -155,6 +155,60 @@ all:
               protocol: TCP
               port: 8080
               targetPort: 8080
+    # --- round-4 blocks (extracted from traefik_helm_values) ---
+    traefik_helm_values_service:
+      # type: NodePort # говорит что не используется
+      annotations:
+        app.kubernetes.io/component: ingress-controller
+      spec:
+        type: NodePort
+        externalTrafficPolicy: Local
+    traefik_helm_values_ports:
+      traefik:
+        port: 8080
+        exposedPort: 8080
+        expose:
+          default: false
+      web:
+        asDefault: true
+        port: 80
+        nodePort: 80
+        expose:
+          default: true
+        exposedPort: 80
+        forwardedHeaders:
+          insecure: true
+        proxyProtocol:
+          insecure: true
+        transport:
+          respondingTimeouts:
+            idleTimeout: 600
+            writeTimeout: 600
+            readTimeout: 600
+      websecure:
+        asDefault: true
+        port: 443
+        nodePort: 443
+        expose:
+          default: true
+        exposedPort: 443
+        http:
+          tls:
+            enabled: true
+        forwardedHeaders:
+          insecure: true
+        proxyProtocol:
+          insecure: true
+        transport:
+          respondingTimeouts:
+            idleTimeout: 600
+            writeTimeout: 600
+            readTimeout: 600
+      metrics:
+        port: 9200
+        exposedPort: 9200
+        expose:
+          default: false
     # ---------
     traefik_helm_values:
       fullnameOverride: "{{ traefik_daemonset_name }}"
@@ -172,59 +226,8 @@ all:
         enabled: true
         name: "{{ traefik_ingress_class }}"
         isDefaultClass: false
-      service:
-        # type: NodePort # говорит что не используется
-        annotations:
-          app.kubernetes.io/component: ingress-controller
-        spec:
-          type: NodePort
-          externalTrafficPolicy: Local
-      ports:
-        traefik:
-          port: 8080
-          exposedPort: 8080
-          expose:
-            default: false
-        web:
-          asDefault: true
-          port: 80
-          nodePort: 80
-          expose:
-            default: true
-          exposedPort: 80
-          forwardedHeaders:
-            insecure: true
-          proxyProtocol:
-            insecure: true
-          transport:
-            respondingTimeouts:
-              idleTimeout: 600
-              writeTimeout: 600
-              readTimeout: 600
-        websecure:
-          asDefault: true
-          port: 443
-          nodePort: 443
-          expose:
-            default: true
-          exposedPort: 443
-          http:
-            tls:
-              enabled: true
-          forwardedHeaders:
-            insecure: true
-          proxyProtocol:
-            insecure: true
-          transport:
-            respondingTimeouts:
-              idleTimeout: 600
-              writeTimeout: 600
-              readTimeout: 600
-        metrics:
-          port: 9200
-          exposedPort: 9200
-          expose:
-            default: false
+      service: "{{ traefik_helm_values_service }}"
+      ports: "{{ traefik_helm_values_ports }}"
       providers: "{{ traefik_helm_values_providers }}"
       logs: "{{ traefik_helm_values_logs }}"
       gateway:
