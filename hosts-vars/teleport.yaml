@@ -108,37 +108,43 @@ all:
     # teleport-cluster chart автоматически подставляет appVersion (= teleport_helm_chart_version)
     # через helper {{ include "teleport-cluster.version" . }}.
     # Т.е. обновление версии Teleport = bump teleport_helm_chart_version.
+    # --- Operator-overridable blocks (extracted from teleport_helm_values) ---
+    teleport_chart_mode: standalone
+    teleport_proxy_listener_mode: separate
+    teleport_auth:
+      teleportConfig:
+        teleport:
+          storage:
+            type: sqlite
+            sync: NORMAL
+            journal: WAL
+    teleport_proxy:
+      teleportConfig:
+        proxy_service:
+          public_addr: "{{ teleport_web_public_addr }}"
+          web_listen_addr: "{{ teleport_web_listen_addr }}"
+          listen_addr: "{{ teleport_ssh_listen_addr }}"
+          tunnel_listen_addr: "{{ teleport_reverse_tunnel_listen_addr }}"
+          kube_listen_addr: "{{ teleport_kube_listen_addr }}"
+          kube_public_addr: "{{ teleport_kube_public_addr }}"
+    teleport_operator:
+      enabled: true
+      tolerations: []
+      nodeSelector: {}
+      affinity: {}
+      resources: {}
     teleport_helm_values:
       clusterName: "{{ teleport_cluster_name }}"
       kubeClusterName: "{{ teleport_kube_cluster_name }}"
-      chartMode: standalone
-      proxyListenerMode: separate
+      chartMode: "{{ teleport_chart_mode }}"
+      proxyListenerMode: "{{ teleport_proxy_listener_mode }}"
       persistence:
         enabled: true
         storageClassName: "{{ teleport_data_storage_class }}"
         volumeSize: "{{ teleport_data_storage_size }}"
-      auth:
-        teleportConfig:
-          teleport:
-            storage:
-              type: sqlite
-              sync: NORMAL
-              journal: WAL
-      proxy:
-        teleportConfig:
-          proxy_service:
-            public_addr: "{{ teleport_web_public_addr }}"
-            web_listen_addr: "{{ teleport_web_listen_addr }}"
-            listen_addr: "{{ teleport_ssh_listen_addr }}"
-            tunnel_listen_addr: "{{ teleport_reverse_tunnel_listen_addr }}"
-            kube_listen_addr: "{{ teleport_kube_listen_addr }}"
-            kube_public_addr: "{{ teleport_kube_public_addr }}"
-      operator:
-        enabled: true
-        tolerations: []
-        nodeSelector: {}
-        affinity: {}
-        resources: {}
+      auth: "{{ teleport_auth }}"
+      proxy: "{{ teleport_proxy }}"
+      operator: "{{ teleport_operator }}"
       log:
         format: json
       service:
