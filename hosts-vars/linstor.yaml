@@ -66,259 +66,397 @@ all:
 
     # Affinity-controller replica count (SCALE)
     linstor_affinity_controller_replica_count: 1
+    # --- Operator-overridable blocks (extracted from linstor_cluster_helm_values) ---
+    linstor_cluster_spec:
+      nodeSelector: {}
+      tolerations:
+        - operator: Exists
+      # ---
+      # ---
+      # ---
+      controller:
+        enabled: true
+        # DEFAULT: nodeSelector/affinity — пустые {}
+        # tolerations НАМЕРЕННО опущено — пустой [] в podTemplate REPLACE'ит operator-defaults
+        # (LinstorControllerTolerations + HAControllerTolerations + cluster-wide
+        # `[{operator: Exists}]`); operator override через hosts-vars-override/ добавляет поле когда нужно
+        # ---
+        # resources = per-container
+        # container name = linstor-controller
+        # ---
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-controller
+                resources: {}
+      csiController:
+        enabled: true
+        # DEFAULT: nodeSelector/affinity — пустые {}
+        # sidecars csi-provisioner/csi-attacher не перечислены — operator override добавляет когда нужно
+        # ---
+        # container name = linstor-csi
+        # ---
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-csi
+                resources: {}
+      csiNode:
+        enabled: true
+        # DEFAULT: nodeSelector/affinity — пустые {}
+        # ---
+        # container name = linstor-csi
+        # ---
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-csi
+                resources: {}
+      # === High Availability Controller (DaemonSet) ===
+      # Ускоряет failover stateful-подов при отказе узла: на каждом узле мониторит DRBD и эвакуирует поды с узла, потерявшего доступ к данным
+      # Конфигурируется полями LinstorCluster.spec.highAvailabilityController:
+      #   enabled      — разворачивать ли DaemonSet
+      #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
+      #
+      # ВАЖНО! per-workload, НЕ настраивается здесь
+      #   аннотация drbd.linbit.com/ignore-fail-over на Pod исключает этот Pod из управления HA-controller
+      #   kubectl annotate pod <name> drbd.linbit.com/ignore-fail-over=""
+      highAvailabilityController:
+        enabled: true
+        podTemplate:
+          spec:
+            # --- Размещение пода ---
+            # nodeSelector/affinity: empty {}
+            # tolerations НАМЕРЕННО опущено — empty [] REPLACE'ит operator-defaults
+            # (HAControllerTolerations + cluster-wide)
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: ha-controller
+                # ---
+                # resources: per-container placeholder. Шаблон
+                # ---
+                resources: {}
+                # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1]. /agent и --v=1 ниже продублированы
+                args:
+                  - /agent
+                  # --v: уровень логирования. 1 — DEFAULT
+                  - --v=1
+                  # пауза перед эвакуацией подов с "мёртвого" узла. 6m — осознанный backstop
+                  # Kubernetes сам эвакуирует поды ~через 5 мин (tolerationSeconds=300)
+                  # HA-controller добивает на 6 минуте
+                  # DEFAULT: 5s
+                  - --fail-over-timeout=6m
+                  # --- Прочие флаги (upstream-дефолты) ---
+                  # ---
+                  # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из genericclioptions.ConfigFlags
+                  # (--request-timeout, --namespace, --server, --kubeconfig, --context, --token, --certificate-authority).
+                  # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через cfgflags.ToRESTConfig()
+                  # внутри — clientcmd DeferredLoadingClientConfig, in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен bare-дефолту
+                  # Любой ConfigFlags-override (например --request-timeout выставляет overrides.Timeout) → детект отключается
+                  # → клиент уходит на http://localhost:8080 → DaemonSet не Ready.
+                  # ---
+                  # Все перечисленные ниже флаги — кастомные (cmd.Flags), override не трогают, добавлять безопасно.
+                  # - --grace-period-seconds=10    # grace-period при force-delete пода (сек)
+                  # - --drbd-status-interval=5s    # период опроса статуса DRBD на узле
+                  # - --reconcile-interval=10s     # макс. интервал цикла reconcile
+                  # - --resync-interval=15m        # период пересинхронизации внутр. кэша
+                  # - --operations-timeout=30s     # таймаут отдельной операции
+                  # - --disable-node-taints=false  # true → не ставить taint'ы на узел
+                  # --node-name оператор задаёт из env NODE_NAME — здесь не указывать
+                  # ---
+      # === Affinity Controller (Deployment) ===
+      # Держит nodeAffinity у PersistentVolume в синхроне с реальным размещением реплик в LINSTOR
+      # нужно при миграции томов и на эфемерных узлах
+      # Конфигурируется полями LinstorCluster.spec.affinityController:
+      #   enabled      — разворачивать ли Deployment
+      #   replicas     — кол-во подов (между ними leader-election)
+      #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
+      #
+      # ВАЖНО! per-workload, НЕ настраивается здесь:
+      #   аннотация piraeus.io/skip-affinity-controller на PV запрещает контроллеру трогать (пересоздавать) этот PV
+      #   Ставится на потребительский PV:
+      #     kubectl annotate pv <name> piraeus.io/skip-affinity-controller=true
+      #
+      # Поведенческие флаги (НЕ меняем — memo). Оператор задаёт v / leader-election / property-namespace
+      # через env-переменные контейнера linstor-affinity-controller:
+      #   --v                   лог-уровень. Дефолт 1 (env VERBOSE)
+      #   --leader-election     leader-election между репликами. Дефолт true (env LEADER_ELECTION)
+      #   --property-namespace  LINSTOR property namespace для node-меток. Оператор: Aux/topology (env PROPERTY_NAMESPACE)
+      #   --reconcile-rate      как часто сверять affinity PV vs LINSTOR. Дефолт 15s (оператором НЕ задаётся — дефолт бинаря)
+      #   --resync-rate         период пересинхронизации кэша K8s-ресурсов. Дефолт 15m (оператором НЕ задаётся — дефолт бинаря)
+      affinityController:
+        enabled: true
+        replicas: "{{ linstor_affinity_controller_replica_count }}"
+        # DEFAULT: nodeSelector/affinity — пустые {}
+        # tolerations НАМЕРЕННО опущено (см. highAvailabilityController).
+        # ---
+        # Container name: linstor-affinity-controller
+        # ---
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-affinity-controller
+                resources: {}
+      nfsServer:
+        enabled: true
+        # DEFAULT: nodeSelector/affinity — пустые {}
+        # ---
+        # Container name
+        # - для NFS server: nfs-server (DaemonSet называется linstor-csi-nfs-server).
+        # - но main container — nfs-server
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: nfs-server
+                resources: {}
+      # === Active cluster-wide DRBD properties (controller-level) ===
+      # Property keys verified через `linstor controller drbd-options --<flag>` на кластере.
+      # Defaults для sync rate слишком консервативны (c-min-rate=250 KB/s, c-fill-target=50 KiB);
+      # 2 из quorum-properties (on-no-quorum, auto-add-quorum-tiebreaker) уже задаются Piraeus
+      # operator'ом по умолчанию — фиксируем явно для защиты от изменения upstream-default'ов.
+      properties:
+        # --- Sync rate tuning (DrbdOptions/PeerDevice) ---
+        # На VPS network эти tuned values дают ~120× ускорение sync.
+        # Values normalized — CLI `drbd-options --c-<X> 10M` парсит unit и кладёт
+        # числовое значение в LINSTOR API. Piraeus operator передаёт values из Helm
+        # as-is без unit translation, поэтому используем уже-нормализованные числа:
+        #   - c-min-rate/c-max-rate: KiB/s (CLI: 10M → 10240, 100M → 102400)
+        #   - c-fill-target: sectors=512B (CLI: 10M → 20480)
+        #   - c-plan-ahead: 1/10 seconds (no unit)
+        - name: DrbdOptions/PeerDevice/c-min-rate
+          value: "10240"
+        - name: DrbdOptions/PeerDevice/c-max-rate
+          value: "102400"
+        - name: DrbdOptions/PeerDevice/c-fill-target
+          value: "20480"
+        - name: DrbdOptions/PeerDevice/c-plan-ahead
+          value: "20"
+
+        # --- DRBD durability + split-brain protection ---
+        # End-to-end CRC за реплицируемый блок — защита от silent network bit-flip.
+        # crc32c — HW-accelerated, overhead <1%.
+        - name: DrbdOptions/Net/data-integrity-alg
+          value: "crc32c"
+
+        # Alg для on-demand scrubbing (`linstor resource verify <rd>`) — детектит bit rot.
+        - name: DrbdOptions/Net/verify-alg
+          value: "crc32c"
+
+        # Quorum policy — primary без quorum блокирует I/O (split-brain protection).
+        # КРИТИЧНО: без этого on-no-quorum: suspend-io не активен.
+        - name: DrbdOptions/Resource/quorum
+          value: "majority"
+
+        # Поведение при потере quorum — заморозить I/O, не возвращать I/O-error приложению.
+        # Piraeus default'ом задано `suspend-io`; фиксируем явно.
+        - name: DrbdOptions/Resource/on-no-quorum
+          value: "suspend-io"
+
+        # Авто-восстановление после failover: бывший Primary, потерявший quorum и
+        # замороженный (on-no-quorum: suspend-io), при возврате узнаёт что устарел —
+        # сам демотируется в Secondary и ресинкается. DRBD default: disconnect.
+        - name: DrbdOptions/Resource/on-suspended-primary-outdated
+          value: "force-secondary"
+
+        # Нет доступа к данным ни локально, ни через peer — заморозить I/O, а не
+        # отдавать I/O-error приложению (философия как у on-no-quorum). DRBD default: io-error.
+        - name: DrbdOptions/Resource/on-no-data-accessible
+          value: "suspend-io"
+
+        # Авто-создание diskless tiebreaker для replica=2 RD (нужно для majority quorum математически).
+        # Piraeus default'ом задано `True`; фиксируем явно.
+        - name: DrbdOptions/auto-add-quorum-tiebreaker
+          value: "True"
+
+        # --- Auto-evict (автопереезд реплик при ВНЕЗАПНОМ отказе ноды) ---
+        # Авто-фича LINSTOR (раздел 3.26): если сателлит offline дольше таймера,
+        # контроллер помечает ноду EVICTED и переназначает её diskful-реплики на
+        # живые ноды (auto-place + full-sync с уцелевшей копии). Работает ТОЛЬКО
+        # для replica>=2 (нужен источник для синка); для replica-1 бесполезен.
+        # Эти свойства НЕ влияют на ручную `linstor node evacuate` (отдельный механизм).
+        #
+        # Сколько МИНУТ нода offline до пометки EVICTED. 60 — дефолт; фиксируем явно.
+        - name: DrbdOptions/AutoEvictAfterTime
+          value: "60"
+        # Тормоз против массовой эвакуации: если одновременно offline БОЛЬШЕ этого %
+        # нод — auto-evict не срабатывает ни для одной (LINSTOR считает это сетевой
+        # аварией контроллера, а не отказом железа). 34 — дефолт; фиксируем явно.
+        # Для 5 нод: отказ 1 (20%) -> эвикт; отказ 2 (40%) -> подавляется (ждёт человека).
+        - name: DrbdOptions/AutoEvictMaxDisconnectedNodes
+          value: "34"
+        # Глобальное разрешение авто-эвикта. true — дефолт; фиксируем явно.
+        # Per-node false (label + LinstorSatelliteConfiguration) НЕ используем.
+        - name: DrbdOptions/AutoEvictAllowEviction
+          value: "true"
+        # AutoEvictMinReplicaCount — НАМЕРЕННО не задаём (пустой дефолт = адаптивный).
+        # Пустое = берётся place-count соответствующей resource-group (1 для -local,
+        # 2 для -multi-sync) — подстраивается под каждый класс сам. Хардкод значения
+        # сломал бы это для будущих replica-3+ классов. Раскомментировать ТОЛЬКО если
+        # нужен единый floor для всех ресурсов.
+        # - name: DrbdOptions/AutoEvictMinReplicaCount
+        #   value: "2"
+
+        # --- Auto-diskful (memo, закомментировано — функция под вопросом) ---
+        # Оставлено напоминанием: при необходимости раскомментировать парой.
+        # auto-diskful (value — минуты): diskless-узел, державший ресурс Primary
+        #   дольше N минут, автоматически получает локальную реплику (toggle-disk
+        #   + ресинк) — активно используемый том хранится локально, без round-trip.
+        # auto-diskful-allow-cleanup: после конвертации убирает лишнюю (старую)
+        #   реплику, возвращая число реплик к place-count. Без auto-diskful инертно.
+        # - name: DrbdOptions/auto-diskful
+        #   value: "60"
+        # - name: DrbdOptions/auto-diskful-allow-cleanup
+        #   value: "True"
+    linstor_satellite_configurations:
+      - name: manager
+        nodeSelector:
+          node-role.kubernetes.io/control-plane: ""
+        # podTemplate: scheduling/resources placeholder'ы для DaemonSet pod'ов
+        # satellite на узлах выбранных через `nodeSelector:` выше.
+        # ВАЖНО — два разных nodeSelector в этом config'е:
+        #   spec.nodeSelector (выше)              = на каких узлах вообще запускать
+        #                                           satellite DaemonSet (config применяется
+        #                                           только к узлам, проходящим селектор).
+        #   spec.podTemplate.spec.nodeSelector    = pod scheduling override на DaemonSet
+        #                                           (обычно redundant для DaemonSet, ставит
+        #                                           дополнительные требования к node).
+        # tolerations НАМЕРЕННО опущено — empty []
+        # ---
+        # Container name: linstor-satellite.
+        # ---
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-satellite
+                resources: {}
+        storagePools:
+          - name: lnstr-file-thin-manager
+            fileThinPool:
+              directory: /var/lib/linstor-pools/lnstr-file-thin-manager
+
+          # - name: lnstr-lvm-thin-manager
+          #   lvmThinPool:
+          #     volumeGroup: lnstr-lvm-thin-manager
+          #   source:
+          #     hostDevices:
+          #       - /dev/sdb
+          #       - /dev/sdc
+
+      - name: worker
+        nodeSelector:
+          node-role.kubernetes.io/worker: ""
+        # podTemplate: scheduling/resources placeholder'ы, см. memo у manager выше.
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-satellite
+                resources: {}
+        storagePools:
+          - name: lnstr-file-thin-worker
+            fileThinPool:
+              directory: /var/lib/linstor-pools/lnstr-file-thin-worker
+
+          # - name: lnstr-lvm-thin-worker
+          #   lvmThinPool:
+          #     volumeGroup: lnstr-lvm-thin-worker
+          #   source:
+          #     hostDevices:
+          #       - /dev/sdb
+          #       - /dev/sdc
+    linstor_node_connections: []
+    linstor_storage_classes:
+      # === tier: lnstr-manager (only managers) ===
+      - name: "lnstr-manager-local"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "1"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          csi.storage.k8s.io/fstype: "ext4"
+
+      - name: "lnstr-manager-multi-sync"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "2"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+          property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+          csi.storage.k8s.io/fstype: "ext4"
+
+      # === tier: lnstr-major (managers + workers, multi-pool) ===
+      - name: "lnstr-major-local"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "1"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          csi.storage.k8s.io/fstype: "ext4"
+
+      - name: "lnstr-major-multi-sync"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "2"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+          property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+          csi.storage.k8s.io/fstype: "ext4"
+
+      # === tier: lnstr-worker (only workers) ===
+      - name: "lnstr-worker-local"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "1"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          csi.storage.k8s.io/fstype: "ext4"
+
+      - name: "lnstr-worker-multi-sync"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "2"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
+          property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+          csi.storage.k8s.io/fstype: "ext4"
+    linstor_volume_snapshot_classes: []
+    linstor_volume_group_snapshot_classes: []
+    # ---------
     linstor_cluster_helm_values:
       # === linstorCluster ===
-      linstorCluster:
-        nodeSelector: {}
-        tolerations:
-          - operator: Exists
-        # ---
-        # ---
-        # ---
-        controller:
-          enabled: true
-          # DEFAULT: nodeSelector/affinity — пустые {}
-          # tolerations НАМЕРЕННО опущено — пустой [] в podTemplate REPLACE'ит operator-defaults
-          # (LinstorControllerTolerations + HAControllerTolerations + cluster-wide
-          # `[{operator: Exists}]`); operator override через hosts-vars-override/ добавляет поле когда нужно
-          # ---
-          # resources = per-container
-          # container name = linstor-controller
-          # ---
-          podTemplate:
-            spec:
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: linstor-controller
-                  resources: {}
-        csiController:
-          enabled: true
-          # DEFAULT: nodeSelector/affinity — пустые {}
-          # sidecars csi-provisioner/csi-attacher не перечислены — operator override добавляет когда нужно
-          # ---
-          # container name = linstor-csi
-          # ---
-          podTemplate:
-            spec:
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: linstor-csi
-                  resources: {}
-        csiNode:
-          enabled: true
-          # DEFAULT: nodeSelector/affinity — пустые {}
-          # ---
-          # container name = linstor-csi
-          # ---
-          podTemplate:
-            spec:
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: linstor-csi
-                  resources: {}
-        # === High Availability Controller (DaemonSet) ===
-        # Ускоряет failover stateful-подов при отказе узла: на каждом узле мониторит DRBD и эвакуирует поды с узла, потерявшего доступ к данным
-        # Конфигурируется полями LinstorCluster.spec.highAvailabilityController:
-        #   enabled      — разворачивать ли DaemonSet
-        #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
-        #
-        # ВАЖНО! per-workload, НЕ настраивается здесь
-        #   аннотация drbd.linbit.com/ignore-fail-over на Pod исключает этот Pod из управления HA-controller
-        #   kubectl annotate pod <name> drbd.linbit.com/ignore-fail-over=""
-        highAvailabilityController:
-          enabled: true
-          podTemplate:
-            spec:
-              # --- Размещение пода ---
-              # nodeSelector/affinity: empty {}
-              # tolerations НАМЕРЕННО опущено — empty [] REPLACE'ит operator-defaults
-              # (HAControllerTolerations + cluster-wide)
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: ha-controller
-                  # ---
-                  # resources: per-container placeholder. Шаблон
-                  # ---
-                  resources: {}
-                  # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1]. /agent и --v=1 ниже продублированы
-                  args:
-                    - /agent
-                    # --v: уровень логирования. 1 — DEFAULT
-                    - --v=1
-                    # пауза перед эвакуацией подов с "мёртвого" узла. 6m — осознанный backstop
-                    # Kubernetes сам эвакуирует поды ~через 5 мин (tolerationSeconds=300)
-                    # HA-controller добивает на 6 минуте
-                    # DEFAULT: 5s
-                    - --fail-over-timeout=6m
-                    # --- Прочие флаги (upstream-дефолты) ---
-                    # ---
-                    # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из genericclioptions.ConfigFlags
-                    # (--request-timeout, --namespace, --server, --kubeconfig, --context, --token, --certificate-authority).
-                    # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через cfgflags.ToRESTConfig()
-                    # внутри — clientcmd DeferredLoadingClientConfig, in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен bare-дефолту
-                    # Любой ConfigFlags-override (например --request-timeout выставляет overrides.Timeout) → детект отключается
-                    # → клиент уходит на http://localhost:8080 → DaemonSet не Ready.
-                    # ---
-                    # Все перечисленные ниже флаги — кастомные (cmd.Flags), override не трогают, добавлять безопасно.
-                    # - --grace-period-seconds=10    # grace-period при force-delete пода (сек)
-                    # - --drbd-status-interval=5s    # период опроса статуса DRBD на узле
-                    # - --reconcile-interval=10s     # макс. интервал цикла reconcile
-                    # - --resync-interval=15m        # период пересинхронизации внутр. кэша
-                    # - --operations-timeout=30s     # таймаут отдельной операции
-                    # - --disable-node-taints=false  # true → не ставить taint'ы на узел
-                    # --node-name оператор задаёт из env NODE_NAME — здесь не указывать
-                    # ---
-        # === Affinity Controller (Deployment) ===
-        # Держит nodeAffinity у PersistentVolume в синхроне с реальным размещением реплик в LINSTOR
-        # нужно при миграции томов и на эфемерных узлах
-        # Конфигурируется полями LinstorCluster.spec.affinityController:
-        #   enabled      — разворачивать ли Deployment
-        #   replicas     — кол-во подов (между ними leader-election)
-        #   podTemplate  — переопределение Pod-template (scheduling / resources / args)
-        #
-        # ВАЖНО! per-workload, НЕ настраивается здесь:
-        #   аннотация piraeus.io/skip-affinity-controller на PV запрещает контроллеру трогать (пересоздавать) этот PV
-        #   Ставится на потребительский PV:
-        #     kubectl annotate pv <name> piraeus.io/skip-affinity-controller=true
-        #
-        # Поведенческие флаги (НЕ меняем — memo). Оператор задаёт v / leader-election / property-namespace
-        # через env-переменные контейнера linstor-affinity-controller:
-        #   --v                   лог-уровень. Дефолт 1 (env VERBOSE)
-        #   --leader-election     leader-election между репликами. Дефолт true (env LEADER_ELECTION)
-        #   --property-namespace  LINSTOR property namespace для node-меток. Оператор: Aux/topology (env PROPERTY_NAMESPACE)
-        #   --reconcile-rate      как часто сверять affinity PV vs LINSTOR. Дефолт 15s (оператором НЕ задаётся — дефолт бинаря)
-        #   --resync-rate         период пересинхронизации кэша K8s-ресурсов. Дефолт 15m (оператором НЕ задаётся — дефолт бинаря)
-        affinityController:
-          enabled: true
-          replicas: "{{ linstor_affinity_controller_replica_count }}"
-          # DEFAULT: nodeSelector/affinity — пустые {}
-          # tolerations НАМЕРЕННО опущено (см. highAvailabilityController).
-          # ---
-          # Container name: linstor-affinity-controller
-          # ---
-          podTemplate:
-            spec:
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: linstor-affinity-controller
-                  resources: {}
-        nfsServer:
-          enabled: true
-          # DEFAULT: nodeSelector/affinity — пустые {}
-          # ---
-          # Container name
-          # - для NFS server: nfs-server (DaemonSet называется linstor-csi-nfs-server).
-          # - но main container — nfs-server
-          podTemplate:
-            spec:
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: nfs-server
-                  resources: {}
-        # === Active cluster-wide DRBD properties (controller-level) ===
-        # Property keys verified через `linstor controller drbd-options --<flag>` на кластере.
-        # Defaults для sync rate слишком консервативны (c-min-rate=250 KB/s, c-fill-target=50 KiB);
-        # 2 из quorum-properties (on-no-quorum, auto-add-quorum-tiebreaker) уже задаются Piraeus
-        # operator'ом по умолчанию — фиксируем явно для защиты от изменения upstream-default'ов.
-        properties:
-          # --- Sync rate tuning (DrbdOptions/PeerDevice) ---
-          # На VPS network эти tuned values дают ~120× ускорение sync.
-          # Values normalized — CLI `drbd-options --c-<X> 10M` парсит unit и кладёт
-          # числовое значение в LINSTOR API. Piraeus operator передаёт values из Helm
-          # as-is без unit translation, поэтому используем уже-нормализованные числа:
-          #   - c-min-rate/c-max-rate: KiB/s (CLI: 10M → 10240, 100M → 102400)
-          #   - c-fill-target: sectors=512B (CLI: 10M → 20480)
-          #   - c-plan-ahead: 1/10 seconds (no unit)
-          - name: DrbdOptions/PeerDevice/c-min-rate
-            value: "10240"
-          - name: DrbdOptions/PeerDevice/c-max-rate
-            value: "102400"
-          - name: DrbdOptions/PeerDevice/c-fill-target
-            value: "20480"
-          - name: DrbdOptions/PeerDevice/c-plan-ahead
-            value: "20"
-
-          # --- DRBD durability + split-brain protection ---
-          # End-to-end CRC за реплицируемый блок — защита от silent network bit-flip.
-          # crc32c — HW-accelerated, overhead <1%.
-          - name: DrbdOptions/Net/data-integrity-alg
-            value: "crc32c"
-
-          # Alg для on-demand scrubbing (`linstor resource verify <rd>`) — детектит bit rot.
-          - name: DrbdOptions/Net/verify-alg
-            value: "crc32c"
-
-          # Quorum policy — primary без quorum блокирует I/O (split-brain protection).
-          # КРИТИЧНО: без этого on-no-quorum: suspend-io не активен.
-          - name: DrbdOptions/Resource/quorum
-            value: "majority"
-
-          # Поведение при потере quorum — заморозить I/O, не возвращать I/O-error приложению.
-          # Piraeus default'ом задано `suspend-io`; фиксируем явно.
-          - name: DrbdOptions/Resource/on-no-quorum
-            value: "suspend-io"
-
-          # Авто-восстановление после failover: бывший Primary, потерявший quorum и
-          # замороженный (on-no-quorum: suspend-io), при возврате узнаёт что устарел —
-          # сам демотируется в Secondary и ресинкается. DRBD default: disconnect.
-          - name: DrbdOptions/Resource/on-suspended-primary-outdated
-            value: "force-secondary"
-
-          # Нет доступа к данным ни локально, ни через peer — заморозить I/O, а не
-          # отдавать I/O-error приложению (философия как у on-no-quorum). DRBD default: io-error.
-          - name: DrbdOptions/Resource/on-no-data-accessible
-            value: "suspend-io"
-
-          # Авто-создание diskless tiebreaker для replica=2 RD (нужно для majority quorum математически).
-          # Piraeus default'ом задано `True`; фиксируем явно.
-          - name: DrbdOptions/auto-add-quorum-tiebreaker
-            value: "True"
-
-          # --- Auto-evict (автопереезд реплик при ВНЕЗАПНОМ отказе ноды) ---
-          # Авто-фича LINSTOR (раздел 3.26): если сателлит offline дольше таймера,
-          # контроллер помечает ноду EVICTED и переназначает её diskful-реплики на
-          # живые ноды (auto-place + full-sync с уцелевшей копии). Работает ТОЛЬКО
-          # для replica>=2 (нужен источник для синка); для replica-1 бесполезен.
-          # Эти свойства НЕ влияют на ручную `linstor node evacuate` (отдельный механизм).
-          #
-          # Сколько МИНУТ нода offline до пометки EVICTED. 60 — дефолт; фиксируем явно.
-          - name: DrbdOptions/AutoEvictAfterTime
-            value: "60"
-          # Тормоз против массовой эвакуации: если одновременно offline БОЛЬШЕ этого %
-          # нод — auto-evict не срабатывает ни для одной (LINSTOR считает это сетевой
-          # аварией контроллера, а не отказом железа). 34 — дефолт; фиксируем явно.
-          # Для 5 нод: отказ 1 (20%) -> эвикт; отказ 2 (40%) -> подавляется (ждёт человека).
-          - name: DrbdOptions/AutoEvictMaxDisconnectedNodes
-            value: "34"
-          # Глобальное разрешение авто-эвикта. true — дефолт; фиксируем явно.
-          # Per-node false (label + LinstorSatelliteConfiguration) НЕ используем.
-          - name: DrbdOptions/AutoEvictAllowEviction
-            value: "true"
-          # AutoEvictMinReplicaCount — НАМЕРЕННО не задаём (пустой дефолт = адаптивный).
-          # Пустое = берётся place-count соответствующей resource-group (1 для -local,
-          # 2 для -multi-sync) — подстраивается под каждый класс сам. Хардкод значения
-          # сломал бы это для будущих replica-3+ классов. Раскомментировать ТОЛЬКО если
-          # нужен единый floor для всех ресурсов.
-          # - name: DrbdOptions/AutoEvictMinReplicaCount
-          #   value: "2"
-
-          # --- Auto-diskful (memo, закомментировано — функция под вопросом) ---
-          # Оставлено напоминанием: при необходимости раскомментировать парой.
-          # auto-diskful (value — минуты): diskless-узел, державший ресурс Primary
-          #   дольше N минут, автоматически получает локальную реплику (toggle-disk
-          #   + ресинк) — активно используемый том хранится локально, без round-trip.
-          # auto-diskful-allow-cleanup: после конвертации убирает лишнюю (старую)
-          #   реплику, возвращая число реплик к place-count. Без auto-diskful инертно.
-          # - name: DrbdOptions/auto-diskful
-          #   value: "60"
-          # - name: DrbdOptions/auto-diskful-allow-cleanup
-          #   value: "True"
+      linstorCluster: "{{ linstor_cluster_spec }}"
 
       # === Encryption + TLS creation method (не используем) ===
       # linstorPassphrase: ""
@@ -336,69 +474,10 @@ all:
       #   То есть: нет неразмеченного пространства, все уже размечено
       # lvmThinPool = VPS/VDS/BareMetal, где есть НЕРАЗМЕЧЕННЫЕ диски
       #   То есть: 1 или несколько неразмеченных дисков автоматически объединяются в VolumeGroup (через LVM)
-      linstorSatelliteConfigurations:
-        - name: manager
-          nodeSelector:
-            node-role.kubernetes.io/control-plane: ""
-          # podTemplate: scheduling/resources placeholder'ы для DaemonSet pod'ов
-          # satellite на узлах выбранных через `nodeSelector:` выше.
-          # ВАЖНО — два разных nodeSelector в этом config'е:
-          #   spec.nodeSelector (выше)              = на каких узлах вообще запускать
-          #                                           satellite DaemonSet (config применяется
-          #                                           только к узлам, проходящим селектор).
-          #   spec.podTemplate.spec.nodeSelector    = pod scheduling override на DaemonSet
-          #                                           (обычно redundant для DaemonSet, ставит
-          #                                           дополнительные требования к node).
-          # tolerations НАМЕРЕННО опущено — empty []
-          # ---
-          # Container name: linstor-satellite.
-          # ---
-          podTemplate:
-            spec:
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: linstor-satellite
-                  resources: {}
-          storagePools:
-            - name: lnstr-file-thin-manager
-              fileThinPool:
-                directory: /var/lib/linstor-pools/lnstr-file-thin-manager
-
-            # - name: lnstr-lvm-thin-manager
-            #   lvmThinPool:
-            #     volumeGroup: lnstr-lvm-thin-manager
-            #   source:
-            #     hostDevices:
-            #       - /dev/sdb
-            #       - /dev/sdc
-
-        - name: worker
-          nodeSelector:
-            node-role.kubernetes.io/worker: ""
-          # podTemplate: scheduling/resources placeholder'ы, см. memo у manager выше.
-          podTemplate:
-            spec:
-              nodeSelector: {}
-              affinity: {}
-              containers:
-                - name: linstor-satellite
-                  resources: {}
-          storagePools:
-            - name: lnstr-file-thin-worker
-              fileThinPool:
-                directory: /var/lib/linstor-pools/lnstr-file-thin-worker
-
-            # - name: lnstr-lvm-thin-worker
-            #   lvmThinPool:
-            #     volumeGroup: lnstr-lvm-thin-worker
-            #   source:
-            #     hostDevices:
-            #       - /dev/sdb
-            #       - /dev/sdc
+      linstorSatelliteConfigurations: "{{ linstor_satellite_configurations }}"
 
       # === linstorNodeConnections — пустой, не используем ===
-      linstorNodeConnections: []
+      linstorNodeConnections: "{{ linstor_node_connections }}"
 
       # === Prometheus monitoring ===
       # monitoring.enabled = Автоматически создать кучу правил для пониторинга (PrometheusRule)
@@ -416,82 +495,10 @@ all:
       # Все остальные приложения — replica-2 + Protocol C (классы `*-multi-sync`,
       #   autoPlace=2): отказоустойчивость на уровне хранилища + работающий auto-evict.
       # === storageClasses — 6 SC (3 tier × 2 modes) ===
-      storageClasses:
-        # === tier: lnstr-manager (only managers) ===
-        - name: "lnstr-manager-local"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "1"
-            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
-            csi.storage.k8s.io/fstype: "ext4"
-
-        - name: "lnstr-manager-multi-sync"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
-            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
-            csi.storage.k8s.io/fstype: "ext4"
-
-        # === tier: lnstr-major (managers + workers, multi-pool) ===
-        - name: "lnstr-major-local"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "1"
-            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
-            csi.storage.k8s.io/fstype: "ext4"
-
-        - name: "lnstr-major-multi-sync"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
-            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
-            csi.storage.k8s.io/fstype: "ext4"
-
-        # === tier: lnstr-worker (only workers) ===
-        - name: "lnstr-worker-local"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "1"
-            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
-            csi.storage.k8s.io/fstype: "ext4"
-
-        - name: "lnstr-worker-multi-sync"
-          allowVolumeExpansion: true
-          reclaimPolicy: "Retain"
-          volumeBindingMode: "WaitForFirstConsumer"
-          provisioner: linstor.csi.linbit.com
-          parameters:
-            linstor.csi.linbit.com/autoPlace: "2"
-            linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker"
-            linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
-            property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
-            csi.storage.k8s.io/fstype: "ext4"
-
+      storageClasses: "{{ linstor_storage_classes }}"
       # === volumeSnapshotClasses и volumeGroupSnapshotClasses — пустые ===
-      volumeSnapshotClasses: []
-      volumeGroupSnapshotClasses: []
+      volumeSnapshotClasses: "{{ linstor_volume_snapshot_classes }}"
+      volumeGroupSnapshotClasses: "{{ linstor_volume_group_snapshot_classes }}"
 
     # --- PHASE: post ---
     linstor_post_helm_timeout: "3m"
