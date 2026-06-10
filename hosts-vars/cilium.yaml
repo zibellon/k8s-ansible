@@ -75,6 +75,14 @@ all:
     cilium_helm_repo_name: "cilium"
     cilium_helm_chart_name: "cilium"
     cilium_helm_chart_version: "1.19.4"
+    # IPAM (operator clusterPool) — pod CIDR(s) + per-node mask. Наиболее часто меняемые knob'ы cilium.
+    cilium_ipam_operator_pod_cidr_list:
+      - "{{ pod_subnet }}"
+    cilium_ipam_operator_pod_cidr_mask_size: 21
+    # Replica counts (SCALE) — operator + Hubble relay/UI.
+    cilium_operator_replica_count: 1
+    cilium_hubble_relay_replica_count: 1
+    cilium_hubble_ui_replica_count: 1
     cilium_helm_values:
       operator:
         image:
@@ -84,7 +92,7 @@ all:
         tolerations:
           - operator: "Exists"
         nodeSelector: {}
-        replicas: 1
+        replicas: "{{ cilium_operator_replica_count }}"
         resources: {}
         prometheus:
           enabled: true
@@ -118,7 +126,7 @@ all:
           tolerations: []
           nodeSelector: {}
           resources: {}
-          replicas: 1
+          replicas: "{{ cilium_hubble_relay_replica_count }}"
           affinity: {}
           prometheus:
             enabled: true
@@ -135,7 +143,7 @@ all:
           enabled: true
           tolerations: []
           nodeSelector: {}
-          replicas: 1
+          replicas: "{{ cilium_hubble_ui_replica_count }}"
           affinity: {}
         metrics:
           port: 9965
@@ -169,9 +177,8 @@ all:
           labels: {}
       ipam:
         operator:
-          clusterPoolIPv4PodCIDRList:
-            - "{{ pod_subnet }}"
-          clusterPoolIPv4MaskSize: 21
+          clusterPoolIPv4PodCIDRList: "{{ cilium_ipam_operator_pod_cidr_list }}"
+          clusterPoolIPv4MaskSize: "{{ cilium_ipam_operator_pod_cidr_mask_size }}"
       kubeProxyReplacement: true
       kubeProxyReplacementHealthzBindAddr: "0.0.0.0:10256"
       k8sServiceHost: "{{ haproxy_apiserver_lb_host }}"
