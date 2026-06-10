@@ -345,92 +345,134 @@ all:
     # Per-pod parallelism (capacity)
     gitlab_helm_values_webservice_worker_processes: 2
     gitlab_helm_values_sidekiq_concurrency: 10
-    # ---------
-    gitlab_helm_values:
-      global:
-        edition: ce
-        # Версия образов GitLab — должна соответствовать gitlab_helm_chart_version (8.11.8 = GitLab 17.11)
-        gitlabVersion: "17.11.7"
-        hosts:
-          domain: "{{ gitlab_base_domain }}"
+    # --- round-3 blocks (extracted from gitlab_helm_values) ---
+    gitlab_helm_values_global:
+      edition: ce
+      # Версия образов GitLab — должна соответствовать gitlab_helm_chart_version (8.11.8 = GitLab 17.11)
+      gitlabVersion: "17.11.7"
+      hosts:
+        domain: "{{ gitlab_base_domain }}"
+        https: "{{ gitlab_external_https }}"
+        gitlab:
+          name: "{{ gitlab_ui_domain }}"
           https: "{{ gitlab_external_https }}"
-          gitlab:
-            name: "{{ gitlab_ui_domain }}"
-            https: "{{ gitlab_external_https }}"
-          registry:
-            name: "{{ gitlab_registry_domain }}"
-            https: "{{ gitlab_external_https }}"
-          pages:
-            name: "{{ gitlab_pages_domain }}"
-            https: "{{ gitlab_external_https }}"
-        ingress:
-          enabled: false
-          configureCertmanager: false
-        shell:
-          port: "{{ gitlab_ssh_port_external }}"
-        psql:
-          host: gitlab-postgresql
-          port: 5432
-          database: "{{ gitlab_postgresql_database_name }}"
-          username: "{{ gitlab_postgresql_username }}"
-          password:
-            useSecret: true
-            secret: "{{ gitlab_secret_postgresql_creds.body.target.name }}"
-            key: "{{ gitlab_postgresql_secret_key_password }}"
-        redis:
-          host: gitlab-redis
-          port: 6379
-          auth:
-            enabled: true
-            secret: "{{ gitlab_secret_redis_creds.body.target.name }}"
-            key: password
-        minio:
-          enabled: false
         registry:
-          bucket: "{{ gitlab_registry_bucket }}"
-        kas:
-          enabled: false
+          name: "{{ gitlab_registry_domain }}"
+          https: "{{ gitlab_external_https }}"
         pages:
-          enabled: true
-        appConfig:
-          lfs:
-            enabled: false
-          object_store:
-            enabled: true
-            proxy_download: true
-            connection:
-              secret: "{{ gitlab_secret_backup_s3_connection_config.body.target.name }}"
-              key: connection
-          artifacts:
-            enabled: true
-            bucket: "{{ gitlab_artifacts_bucket }}"
-          uploads:
-            enabled: true
-            bucket: "{{ gitlab_uploads_bucket }}"
-          packages:
-            enabled: true
-            bucket: "{{ gitlab_packages_bucket }}"
-          backups:
-            bucket: "{{ gitlab_backups_bucket }}"
-        smtp:
-          enabled: false
-        monitoring:
-          enabled: true
-      nginx-ingress:
+          name: "{{ gitlab_pages_domain }}"
+          https: "{{ gitlab_external_https }}"
+      ingress:
         enabled: false
-      certmanager:
-        install: false
-      prometheus:
-        install: false
-      postgresql:
-        install: false
+        configureCertmanager: false
+      shell:
+        port: "{{ gitlab_ssh_port_external }}"
+      psql:
+        host: gitlab-postgresql
+        port: 5432
+        database: "{{ gitlab_postgresql_database_name }}"
+        username: "{{ gitlab_postgresql_username }}"
+        password:
+          useSecret: true
+          secret: "{{ gitlab_secret_postgresql_creds.body.target.name }}"
+          key: "{{ gitlab_postgresql_secret_key_password }}"
       redis:
-        install: false
+        host: gitlab-redis
+        port: 6379
+        auth:
+          enabled: true
+          secret: "{{ gitlab_secret_redis_creds.body.target.name }}"
+          key: password
+      minio:
+        enabled: false
       registry:
+        bucket: "{{ gitlab_registry_bucket }}"
+      kas:
+        enabled: false
+      pages:
         enabled: true
-        tolerations: []
-        nodeSelector: {}
-        resources: {}
+      appConfig:
+        lfs:
+          enabled: false
+        object_store:
+          enabled: true
+          proxy_download: true
+          connection:
+            secret: "{{ gitlab_secret_backup_s3_connection_config.body.target.name }}"
+            key: connection
+        artifacts:
+          enabled: true
+          bucket: "{{ gitlab_artifacts_bucket }}"
+        uploads:
+          enabled: true
+          bucket: "{{ gitlab_uploads_bucket }}"
+        packages:
+          enabled: true
+          bucket: "{{ gitlab_packages_bucket }}"
+        backups:
+          bucket: "{{ gitlab_backups_bucket }}"
+      smtp:
+        enabled: false
+      monitoring:
+        enabled: true
+    gitlab_helm_values_nginx_ingress:
+      enabled: false
+    gitlab_helm_values_certmanager:
+      install: false
+    gitlab_helm_values_prometheus:
+      install: false
+    gitlab_helm_values_postgresql:
+      install: false
+    gitlab_helm_values_redis:
+      install: false
+    gitlab_helm_values_registry:
+      enabled: true
+      tolerations: []
+      nodeSelector: {}
+      resources: {}
+      metrics:
+        enabled: true
+        serviceMonitor:
+          enabled: true
+          endpointConfig:
+            interval: "30s"
+            scrapeTimeout: "10s"
+      hpa:
+        minReplicas: "{{ gitlab_helm_values_registry_min_replicas }}"
+        maxReplicas: "{{ gitlab_helm_values_registry_max_replicas }}"
+      maxUnavailable: 1
+      deployment:
+        strategy:
+          type: Recreate
+      storage:
+        secret: "{{ gitlab_secret_registry_connection_config.body.target.name }}"
+        key: config
+        redirect:
+          disable: true
+    gitlab_helm_values_webservice:
+      tolerations: []
+      nodeSelector: {}
+      minReplicas: "{{ gitlab_helm_values_webservice_min_replicas }}"
+      maxReplicas: "{{ gitlab_helm_values_webservice_max_replicas }}"
+      maxUnavailable: 1
+      deployment:
+        strategy:
+          type: Recreate
+      workerProcesses: "{{ gitlab_helm_values_webservice_worker_processes }}"
+      workerTimeout: 180
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "250m"
+        limits:
+          memory: "4Gi"
+      metrics:
+        serviceMonitor:
+          enabled: true
+          endpointConfig:
+            interval: "30s"
+            scrapeTimeout: "10s"
+      workhorse:
         metrics:
           enabled: true
           serviceMonitor:
@@ -438,143 +480,119 @@ all:
             endpointConfig:
               interval: "30s"
               scrapeTimeout: "10s"
-        hpa:
-          minReplicas: "{{ gitlab_helm_values_registry_min_replicas }}"
-          maxReplicas: "{{ gitlab_helm_values_registry_max_replicas }}"
-        maxUnavailable: 1
-        deployment:
-          strategy:
-            type: Recreate
-        storage:
-          secret: "{{ gitlab_secret_registry_connection_config.body.target.name }}"
-          key: config
-          redirect:
-            disable: true
-      gitlab:
-        webservice:
-          tolerations: []
-          nodeSelector: {}
-          minReplicas: "{{ gitlab_helm_values_webservice_min_replicas }}"
-          maxReplicas: "{{ gitlab_helm_values_webservice_max_replicas }}"
-          maxUnavailable: 1
-          deployment:
-            strategy:
-              type: Recreate
-          workerProcesses: "{{ gitlab_helm_values_webservice_worker_processes }}"
-          workerTimeout: 180
-          resources:
-            requests:
-              memory: "2Gi"
-              cpu: "250m"
-            limits:
-              memory: "4Gi"
-          metrics:
-            serviceMonitor:
-              enabled: true
-              endpointConfig:
-                interval: "30s"
-                scrapeTimeout: "10s"
-          workhorse:
-            metrics:
-              enabled: true
-              serviceMonitor:
-                enabled: true
-                endpointConfig:
-                  interval: "30s"
-                  scrapeTimeout: "10s"
-        sidekiq:
-          tolerations: []
-          nodeSelector: {}
-          minReplicas: "{{ gitlab_helm_values_sidekiq_min_replicas }}"
-          maxReplicas: "{{ gitlab_helm_values_sidekiq_max_replicas }}"
-          maxUnavailable: 1
-          deployment:
-            strategy:
-              type: Recreate
-          concurrency: "{{ gitlab_helm_values_sidekiq_concurrency }}"
-          resources:
-            requests:
-              memory: "1Gi"
-              cpu: "250m"
-            limits:
-              memory: "3Gi"
-          metrics:
-            enabled: true
-            podMonitor:
-              enabled: true
-              endpointConfig:
-                interval: "30s"
-                scrapeTimeout: "10s"
-        gitlab-shell:
-          tolerations: []
-          nodeSelector: {}
-          resources: {}
-          minReplicas: "{{ gitlab_helm_values_shell_min_replicas }}"
-          maxReplicas: "{{ gitlab_helm_values_shell_max_replicas }}"
-          maxUnavailable: 1
-          deployment:
-            strategy:
-              type: Recreate
-        gitaly:
-          tolerations: []
-          nodeSelector: {}
-          resources: {}
-          persistence:
-            size: "{{ gitlab_gitaly_storage_size }}"
-            storageClass: "{{ gitlab_gitaly_storage_class }}"
-          metrics:
-            enabled: true
-            serviceMonitor:
-              enabled: true
-              endpointConfig:
-                interval: "30s"
-                scrapeTimeout: "10s"
-        gitlab-exporter:
-          tolerations: []
-          nodeSelector: {}
-          resources: {}
-          deployment:
-            strategy:
-              type: Recreate
-          metrics:
-            serviceMonitor:
-              enabled: true
-              endpointConfig:
-                interval: "30s"
-                scrapeTimeout: "10s"
-        gitlab-pages:
-          tolerations: []
-          nodeSelector: {}
-          resources: {}
-          hpa:
-            minReplicas: "{{ gitlab_helm_values_pages_min_replicas }}"
-            maxReplicas: "{{ gitlab_helm_values_pages_max_replicas }}"
-          deployment:
-            strategy:
-              type: Recreate
-          metrics:
-            serviceMonitor:
-              enabled: true
-              endpointConfig:
-                interval: "30s"
-                scrapeTimeout: "10s"
-        toolbox:
-          enabled: true
-          tolerations: []
-          nodeSelector: {}
-          resources: {}
-          deployment:
-            strategy:
-              type: Recreate
-        migrations:
-          enabled: true
-          tolerations: []
-          nodeSelector: {}
-          resources: {}
-      gitlab-runner:
-        install: false
-      upgradeCheck:
+    gitlab_helm_values_sidekiq:
+      tolerations: []
+      nodeSelector: {}
+      minReplicas: "{{ gitlab_helm_values_sidekiq_min_replicas }}"
+      maxReplicas: "{{ gitlab_helm_values_sidekiq_max_replicas }}"
+      maxUnavailable: 1
+      deployment:
+        strategy:
+          type: Recreate
+      concurrency: "{{ gitlab_helm_values_sidekiq_concurrency }}"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "250m"
+        limits:
+          memory: "3Gi"
+      metrics:
         enabled: true
+        podMonitor:
+          enabled: true
+          endpointConfig:
+            interval: "30s"
+            scrapeTimeout: "10s"
+    gitlab_helm_values_gitlab_shell:
+      tolerations: []
+      nodeSelector: {}
+      resources: {}
+      minReplicas: "{{ gitlab_helm_values_shell_min_replicas }}"
+      maxReplicas: "{{ gitlab_helm_values_shell_max_replicas }}"
+      maxUnavailable: 1
+      deployment:
+        strategy:
+          type: Recreate
+    gitlab_helm_values_gitaly:
+      tolerations: []
+      nodeSelector: {}
+      resources: {}
+      persistence:
+        size: "{{ gitlab_gitaly_storage_size }}"
+        storageClass: "{{ gitlab_gitaly_storage_class }}"
+      metrics:
+        enabled: true
+        serviceMonitor:
+          enabled: true
+          endpointConfig:
+            interval: "30s"
+            scrapeTimeout: "10s"
+    gitlab_helm_values_gitlab_exporter:
+      tolerations: []
+      nodeSelector: {}
+      resources: {}
+      deployment:
+        strategy:
+          type: Recreate
+      metrics:
+        serviceMonitor:
+          enabled: true
+          endpointConfig:
+            interval: "30s"
+            scrapeTimeout: "10s"
+    gitlab_helm_values_gitlab_pages:
+      tolerations: []
+      nodeSelector: {}
+      resources: {}
+      hpa:
+        minReplicas: "{{ gitlab_helm_values_pages_min_replicas }}"
+        maxReplicas: "{{ gitlab_helm_values_pages_max_replicas }}"
+      deployment:
+        strategy:
+          type: Recreate
+      metrics:
+        serviceMonitor:
+          enabled: true
+          endpointConfig:
+            interval: "30s"
+            scrapeTimeout: "10s"
+    gitlab_helm_values_toolbox:
+      enabled: true
+      tolerations: []
+      nodeSelector: {}
+      resources: {}
+      deployment:
+        strategy:
+          type: Recreate
+    gitlab_helm_values_migrations:
+      enabled: true
+      tolerations: []
+      nodeSelector: {}
+      resources: {}
+    gitlab_helm_values_gitlab_runner:
+      install: false
+    gitlab_helm_values_upgrade_check:
+      enabled: true
+    # ---------
+    gitlab_helm_values:
+      global: "{{ gitlab_helm_values_global }}"
+      nginx-ingress: "{{ gitlab_helm_values_nginx_ingress }}"
+      certmanager: "{{ gitlab_helm_values_certmanager }}"
+      prometheus: "{{ gitlab_helm_values_prometheus }}"
+      postgresql: "{{ gitlab_helm_values_postgresql }}"
+      redis: "{{ gitlab_helm_values_redis }}"
+      registry: "{{ gitlab_helm_values_registry }}"
+      gitlab:
+        webservice: "{{ gitlab_helm_values_webservice }}"
+        sidekiq: "{{ gitlab_helm_values_sidekiq }}"
+        gitlab-shell: "{{ gitlab_helm_values_gitlab_shell }}"
+        gitaly: "{{ gitlab_helm_values_gitaly }}"
+        gitlab-exporter: "{{ gitlab_helm_values_gitlab_exporter }}"
+        gitlab-pages: "{{ gitlab_helm_values_gitlab_pages }}"
+        toolbox: "{{ gitlab_helm_values_toolbox }}"
+        migrations: "{{ gitlab_helm_values_migrations }}"
+      gitlab-runner: "{{ gitlab_helm_values_gitlab_runner }}"
+      upgradeCheck: "{{ gitlab_helm_values_upgrade_check }}"
     # --- PHASE: post ---
     gitlab_post_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
