@@ -84,85 +84,92 @@ all:
     cilium_helm_values_hubble_relay_replica_count: 1
     cilium_helm_values_hubble_ui_replica_count: 1
     # ---------
-    cilium_helm_values:
-      operator:
-        image:
-          # suffix="" → chart template produces operator-{cloud}{suffix} = operator-generic
-          # default chart suffix is "-ci" which would produce operator-generic-ci (wrong)
-          suffix: ""
-        tolerations:
-          - operator: "Exists"
+    # --- round-3 blocks (extracted from cilium_helm_values) ---
+    cilium_helm_values_operator:
+      image:
+        # suffix="" → chart template produces operator-{cloud}{suffix} = operator-generic
+        # default chart suffix is "-ci" which would produce operator-generic-ci (wrong)
+        suffix: ""
+      tolerations:
+        - operator: "Exists"
+      nodeSelector: {}
+      replicas: "{{ cilium_helm_values_operator_replica_count }}"
+      resources: {}
+      prometheus:
+        enabled: true
+        port: 9963
+        metricsService: true
+        serviceMonitor:
+          enabled: true
+          interval: "30s"
+          scrapeTimeout: "10s"
+          labels: {}
+    cilium_helm_values_envoy:
+      image:
+        # chart default useDigest=true with digest pinned to upstream version;
+        # disable digest to allow upstream chart's default image tag to apply cleanly
+        useDigest: false
+      tolerations:
+        - operator: "Exists"
+      nodeSelector: {}
+      resources: {}
+      prometheus:
+        enabled: true
+        port: "9964"
+        serviceMonitor:
+          enabled: true
+          interval: "30s"
+          scrapeTimeout: "10s"
+          labels: {}
+    cilium_helm_values_hubble:
+      relay:
+        enabled: true
+        tolerations: []
         nodeSelector: {}
-        replicas: "{{ cilium_helm_values_operator_replica_count }}"
         resources: {}
+        replicas: "{{ cilium_helm_values_hubble_relay_replica_count }}"
+        affinity: {}
         prometheus:
           enabled: true
-          port: 9963
-          metricsService: true
+          port: 9966
           serviceMonitor:
             enabled: true
             interval: "30s"
-            scrapeTimeout: "10s"
             labels: {}
-      envoy:
-        image:
-          # chart default useDigest=true with digest pinned to upstream version;
-          # disable digest to allow upstream chart's default image tag to apply cleanly
-          useDigest: false
-        tolerations:
-          - operator: "Exists"
-        nodeSelector: {}
-        resources: {}
-        prometheus:
-          enabled: true
-          port: "9964"
-          serviceMonitor:
-            enabled: true
-            interval: "30s"
-            scrapeTimeout: "10s"
-            labels: {}
-      hubble:
-        relay:
-          enabled: true
-          tolerations: []
-          nodeSelector: {}
+      ui:
+        backend:
           resources: {}
-          replicas: "{{ cilium_helm_values_hubble_relay_replica_count }}"
-          affinity: {}
-          prometheus:
-            enabled: true
-            port: 9966
-            serviceMonitor:
-              enabled: true
-              interval: "30s"
-              labels: {}
-        ui:
-          backend:
-            resources: {}
-          frontend:
-            resources: {}
+        frontend:
+          resources: {}
+        enabled: true
+        tolerations: []
+        nodeSelector: {}
+        replicas: "{{ cilium_helm_values_hubble_ui_replica_count }}"
+        affinity: {}
+      metrics:
+        port: 9965
+        enabled:
+          - dns
+          - drop
+          - tcp
+          - "flow:sourceContext=workload;destinationContext=workload"
+          - flows-to-world
+          - port-distribution
+          - icmp
+          - "httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction"
+        serviceMonitor:
           enabled: true
-          tolerations: []
-          nodeSelector: {}
-          replicas: "{{ cilium_helm_values_hubble_ui_replica_count }}"
-          affinity: {}
-        metrics:
-          port: 9965
-          enabled:
-            - dns
-            - drop
-            - tcp
-            - "flow:sourceContext=workload;destinationContext=workload"
-            - flows-to-world
-            - port-distribution
-            - icmp
-            - "httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction"
-          serviceMonitor:
-            enabled: true
-            interval: "30s"
-            labels: {}
-        peerService:
-          clusterDomain: "{{ cluster_dns_domain }}"
+          interval: "30s"
+          labels: {}
+      peerService:
+        clusterDomain: "{{ cluster_dns_domain }}"
+    cilium_helm_values_kube_proxy_replacement_healthz_bind_addr: "0.0.0.0:10256"
+    cilium_helm_values_host_firewall:
+      enabled: true
+    cilium_helm_values:
+      operator: "{{ cilium_helm_values_operator }}"
+      envoy: "{{ cilium_helm_values_envoy }}"
+      hubble: "{{ cilium_helm_values_hubble }}"
       tolerations:
         - operator: "Exists"
       nodeSelector: {}
@@ -181,13 +188,12 @@ all:
           clusterPoolIPv4PodCIDRList: "{{ cilium_helm_values_ipam_operator_pod_cidr_list }}"
           clusterPoolIPv4MaskSize: "{{ cilium_helm_values_ipam_operator_pod_cidr_mask_size }}"
       kubeProxyReplacement: true
-      kubeProxyReplacementHealthzBindAddr: "0.0.0.0:10256"
+      kubeProxyReplacementHealthzBindAddr: "{{ cilium_helm_values_kube_proxy_replacement_healthz_bind_addr }}"
       k8sServiceHost: "{{ haproxy_apiserver_lb_host }}"
       k8sServicePort: "{{ haproxy_apiserver_lb_port }}"
       nodePort:
         range: "{{ node_port_start }},{{ node_port_end }}"
-      hostFirewall:
-        enabled: true
+      hostFirewall: "{{ cilium_helm_values_host_firewall }}"
     # ---
     # ---
     cilium_post_helm_timeout: "2m"
