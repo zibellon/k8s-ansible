@@ -277,6 +277,21 @@ all:
     seaweedfs_install_extra_objects: []
     # Install-phase kustomize patches (operator-side customization, default empty)
     seaweedfs_install_kustomize_patches: []
+    # --- Hot operator knobs (component-level; extracted from seaweedfs_helm_values) ---
+    # Replica counts (SCALE)
+    seaweedfs_master_replica_count: 1
+    seaweedfs_filer_replica_count: 1
+    seaweedfs_s3_replica_count: 3
+    seaweedfs_admin_replica_count: 1
+    seaweedfs_worker_replica_count: 1
+    # Master: volume seal size MB (capacity) + default replication fallback
+    seaweedfs_master_volume_size_limit_mb: 200
+    seaweedfs_master_default_replication: "000"
+    # Master / admin PVC (storage size + class)
+    seaweedfs_master_data_storage_size: "1Gi"
+    seaweedfs_master_data_storage_class: "lnstr-major-local"
+    seaweedfs_admin_data_storage_size: "2Gi"
+    seaweedfs_admin_data_storage_class: "lnstr-major-multi-sync"
     # Helm chart values — структура соответствует upstream chart 4.32.0
     seaweedfs_helm_values:
       # Включить upstream Prometheus ServiceMonitor для всех компонентов
@@ -287,12 +302,12 @@ all:
             enabled: true
       master:
         enabled: true
-        replicas: 1
+        replicas: "{{ seaweedfs_master_replica_count }}"
         # PVC для Raft state (1Gi достаточно для метаданных мастера)
         data:
           type: "persistentVolumeClaim"
-          size: "1Gi"
-          storageClass: "lnstr-major-local"
+          size: "{{ seaweedfs_master_data_storage_size }}"
+          storageClass: "{{ seaweedfs_master_data_storage_class }}"
         # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
         logs: {}
         # Размер одного volume file в MB. По достижению — volume автоматически
@@ -302,10 +317,10 @@ all:
         # быстрая fill → быстрая EC eligibility, быстрый rebalance при failover.
         # Большие volumes (30 GB — weed binary default) — меньше metadata,
         # дольше до EC encoding. SeaweedFS chart 4.32.0 default = 1000 (1 GB).
-        volumeSizeLimitMB: 200
+        volumeSizeLimitMB: "{{ seaweedfs_master_volume_size_limit_mb }}"
         # defaultReplication "000" — без репликации по умолчанию; бакеты задают свою
         # replication сами через fs.configure (Phase C2). Default — fallback для non-bucket writes.
-        defaultReplication: "000"
+        defaultReplication: "{{ seaweedfs_master_default_replication }}"
 
       # Singular volume отключён — используем volumes: (plural) для тир-размещения.
       # Chart мёрджит singular в named-группы (mergeOverwrite deepCopy volume → group),
@@ -362,7 +377,7 @@ all:
 
       filer:
         enabled: true
-        replicas: 1
+        replicas: "{{ seaweedfs_filer_replica_count }}"
         # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
         logs: {}
         # PostgreSQL backend (postgres2, table-per-bucket) через env vars — отключаем leveldb,
@@ -393,7 +408,7 @@ all:
 
       s3:
         enabled: true
-        replicas: 3
+        replicas: "{{ seaweedfs_s3_replica_count }}"
         # HA: 3 replicas + Kubernetes Deployment default RollingUpdate strategy.
         # IAM auth: filer-driven (v17). existingConfigSecret указывает на empty-config
         # (eso-seaweedfs-s3-bootstrap, '{"identities":[]}') — форсит S3-gateway в Replace-режим
@@ -406,7 +421,7 @@ all:
       # Admin компонент (StatefulSet) — панель управления + координатор worker'ов.
       admin:
         enabled: true
-        replicas: 1
+        replicas: "{{ seaweedfs_admin_replica_count }}"
         # Креды admin UI — через ESO (existingSecret)
         secret:
           existingSecret: "{{ seaweedfs_secret_admin_ui_creds.body.target.name }}"
@@ -415,8 +430,8 @@ all:
         # Persistence: admin хранит session keys + maintenance/task config + историю задач
         data:
           type: "persistentVolumeClaim"
-          size: "2Gi"
-          storageClass: "lnstr-major-multi-sync"
+          size: "{{ seaweedfs_admin_data_storage_size }}"
+          storageClass: "{{ seaweedfs_admin_data_storage_class }}"
         # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
         logs:
           type: ""
@@ -426,7 +441,7 @@ all:
       # чарт авто-указывает на in-cluster admin gRPC.
       worker:
         enabled: true
-        replicas: 1
+        replicas: "{{ seaweedfs_worker_replica_count }}"
         # jobType "all" — default (vacuum/volume_balance/ec_balance/admin_script)
         # + heavy (erasure_coding/iceberg_maintenance). Фиксируем явно (= upstream default).
         jobType: "all"
