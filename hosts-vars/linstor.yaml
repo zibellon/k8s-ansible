@@ -38,10 +38,10 @@ all:
     piraeus_operator_helm_chart_version: "2.10.7"
 
     # Operator replica count (SCALE)
-    piraeus_operator_replica_count: 1
+    piraeus_operator_helm_values_replica_count: 1
     piraeus_operator_helm_values:
       installCRDs: true
-      replicaCount: "{{ piraeus_operator_replica_count }}"
+      replicaCount: "{{ piraeus_operator_helm_values_replica_count }}"
       tls:
         autogenerate: true
         renew: true
@@ -65,9 +65,9 @@ all:
     linstor_cluster_helm_chart_version: "1.1.1"
 
     # Affinity-controller replica count (SCALE)
-    linstor_affinity_controller_replica_count: 1
+    linstor_cluster_helm_values_affinity_controller_replica_count: 1
     # --- Operator-overridable blocks (extracted from linstor_cluster_helm_values) ---
-    linstor_cluster_spec:
+    linstor_cluster_helm_values_linstor_cluster:
       nodeSelector: {}
       tolerations:
         - operator: Exists
@@ -193,7 +193,7 @@ all:
       #   --resync-rate         период пересинхронизации кэша K8s-ресурсов. Дефолт 15m (оператором НЕ задаётся — дефолт бинаря)
       affinityController:
         enabled: true
-        replicas: "{{ linstor_affinity_controller_replica_count }}"
+        replicas: "{{ linstor_cluster_helm_values_affinity_controller_replica_count }}"
         # DEFAULT: nodeSelector/affinity — пустые {}
         # tolerations НАМЕРЕННО опущено (см. highAvailabilityController).
         # ---
@@ -318,7 +318,7 @@ all:
         #   value: "60"
         # - name: DrbdOptions/auto-diskful-allow-cleanup
         #   value: "True"
-    linstor_satellite_configurations:
+    linstor_cluster_helm_values_linstor_satellite_configurations:
       - name: manager
         nodeSelector:
           node-role.kubernetes.io/control-plane: ""
@@ -378,8 +378,8 @@ all:
           #     hostDevices:
           #       - /dev/sdb
           #       - /dev/sdc
-    linstor_node_connections: []
-    linstor_storage_classes:
+    linstor_cluster_helm_values_linstor_node_connections: []
+    linstor_cluster_helm_values_storage_classes:
       # === tier: lnstr-manager (only managers) ===
       - name: "lnstr-manager-local"
         allowVolumeExpansion: true
@@ -451,12 +451,12 @@ all:
           linstor.csi.linbit.com/allowRemoteVolumeAccess: "true"
           property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
           csi.storage.k8s.io/fstype: "ext4"
-    linstor_volume_snapshot_classes: []
-    linstor_volume_group_snapshot_classes: []
+    linstor_cluster_helm_values_volume_snapshot_classes: []
+    linstor_cluster_helm_values_volume_group_snapshot_classes: []
     # ---------
     linstor_cluster_helm_values:
       # === linstorCluster ===
-      linstorCluster: "{{ linstor_cluster_spec }}"
+      linstorCluster: "{{ linstor_cluster_helm_values_linstor_cluster }}"
 
       # === Encryption + TLS creation method (не используем) ===
       # linstorPassphrase: ""
@@ -474,10 +474,10 @@ all:
       #   То есть: нет неразмеченного пространства, все уже размечено
       # lvmThinPool = VPS/VDS/BareMetal, где есть НЕРАЗМЕЧЕННЫЕ диски
       #   То есть: 1 или несколько неразмеченных дисков автоматически объединяются в VolumeGroup (через LVM)
-      linstorSatelliteConfigurations: "{{ linstor_satellite_configurations }}"
+      linstorSatelliteConfigurations: "{{ linstor_cluster_helm_values_linstor_satellite_configurations }}"
 
       # === linstorNodeConnections — пустой, не используем ===
-      linstorNodeConnections: "{{ linstor_node_connections }}"
+      linstorNodeConnections: "{{ linstor_cluster_helm_values_linstor_node_connections }}"
 
       # === Prometheus monitoring ===
       # monitoring.enabled = Автоматически создать кучу правил для пониторинга (PrometheusRule)
@@ -495,10 +495,10 @@ all:
       # Все остальные приложения — replica-2 + Protocol C (классы `*-multi-sync`,
       #   autoPlace=2): отказоустойчивость на уровне хранилища + работающий auto-evict.
       # === storageClasses — 6 SC (3 tier × 2 modes) ===
-      storageClasses: "{{ linstor_storage_classes }}"
+      storageClasses: "{{ linstor_cluster_helm_values_storage_classes }}"
       # === volumeSnapshotClasses и volumeGroupSnapshotClasses — пустые ===
-      volumeSnapshotClasses: "{{ linstor_volume_snapshot_classes }}"
-      volumeGroupSnapshotClasses: "{{ linstor_volume_group_snapshot_classes }}"
+      volumeSnapshotClasses: "{{ linstor_cluster_helm_values_volume_snapshot_classes }}"
+      volumeGroupSnapshotClasses: "{{ linstor_cluster_helm_values_volume_group_snapshot_classes }}"
 
     # --- PHASE: post ---
     linstor_post_helm_timeout: "3m"
