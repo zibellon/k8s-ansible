@@ -55,67 +55,76 @@ all:
     haproxy_helm_repo_name: "haproxytech"
     haproxy_helm_chart_name: "kubernetes-ingress"
     haproxy_helm_chart_version: "1.52.0"
+    # --- Operator-overridable blocks (extracted from haproxy_helm_values.controller) ---
+    haproxy_controller_logging:
+      level: info
+      traffic:
+        address: stdout
+        format: raw
+        facility: daemon
+    haproxy_controller_service:
+      enabled: true
+      type: ClusterIP
+      enablePorts:
+        http: false
+        https: false
+        quic: false
+        stat: true
+    haproxy_controller:
+      kind: DaemonSet
+      tolerations:
+        - operator: "Exists"
+      nodeSelector: {}
+      resources: {}
+      ingressClassResource:
+        name: "{{ haproxy_ingress_class }}"
+      ingressClass: "{{ haproxy_ingress_class }}"
+      defaultTLSSecret:
+        enabled: false
+      logging: "{{ haproxy_controller_logging }}"
+      service: "{{ haproxy_controller_service }}"
+      serviceMonitor:
+        enabled: true
+        extraLabels: {}
+        endpoints:
+          - port: stat
+            path: /metrics
+            scheme: http
+            interval: "30s"
+    # ---------
     # Helm chart values
     haproxy_helm_values:
       fullnameOverride: "{{ haproxy_daemonset_name }}"
-      controller:
-        kind: DaemonSet
-        tolerations:
-          - operator: "Exists"
-        nodeSelector: {}
-        resources: {}
-        ingressClassResource:
-          name: "{{ haproxy_ingress_class }}"
-        ingressClass: "{{ haproxy_ingress_class }}"
-        defaultTLSSecret:
-          enabled: false
-        logging:
-          level: info
-          traffic:
-            address: stdout
-            format: raw
-            facility: daemon
-        service:
-          enabled: true
-          type: ClusterIP
-          enablePorts:
-            http: false
-            https: false
-            quic: false
-            stat: true
-        serviceMonitor:
-          enabled: true
-          extraLabels: {}
-          endpoints:
-            - port: stat
-              path: /metrics
-              scheme: http
-              interval: "30s"
+      controller: "{{ haproxy_controller }}"
       serviceAccount:
         create: true
     # ---
     # --- PHASE: post ---
     haproxy_post_helm_timeout: "2m"
+    # --- Operator-overridable sub-blocks (extracted from haproxy_global_config) ---
+    haproxy_global_config_config:
+      maxconn: 10000
+      nbthread: 2
+      tune_options:
+        bufsize: 32768
+        maxrewrite: 8192
+        rcvbuf_client: 32768
+        rcvbuf_server: 32768
+        sndbuf_client: 32768
+        sndbuf_server: 32768
+        maxaccept: 32
+        runqueue_depth: 128
+    haproxy_global_config_log_targets:
+      - index: 0
+        address: stdout
+        facility: daemon
+        format: raw
+        level: warning
+    # ---------
     # Global CRD spec: config + logTargets
     haproxy_global_config:
-      config:
-        maxconn: 10000
-        nbthread: 2
-        tune_options:
-          bufsize: 32768
-          maxrewrite: 8192
-          rcvbuf_client: 32768
-          rcvbuf_server: 32768
-          sndbuf_client: 32768
-          sndbuf_server: 32768
-          maxaccept: 32
-          runqueue_depth: 128
-      logTargets:
-        - index: 0
-          address: stdout
-          facility: daemon
-          format: raw
-          level: warning
+      config: "{{ haproxy_global_config_config }}"
+      logTargets: "{{ haproxy_global_config_log_targets }}"
     # Defaults CRD spec.config
     haproxy_defaults_config:
       mode: tcp
