@@ -71,10 +71,10 @@ properties:
 - DRBD запускает initial full sync — копирует весь volume bit-by-bit между replicas.
 
 ## Как узнать текущие настройки для DRDB на конкретной Node
-kubectl -n piraeus-datastore exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup status
-kubectl -n piraeus-datastore exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup show
-kubectl -n piraeus-datastore exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup show all
-kubectl -n piraeus-datastore exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup show --show-defaults
+kubectl -n linstor exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup status
+kubectl -n linstor exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup show
+kubectl -n linstor exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup show all
+kubectl -n linstor exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup show --show-defaults
 
 ## Описание параметров
 Представь sync как наполнение бутылки из крана:
@@ -85,31 +85,31 @@ kubectl -n piraeus-datastore exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drb
 - c-plan-ahead = как часто rotателю корректирует кран (каждые 2 сек)
 
 ## Список команд, чтобы узнать какие CLI параметры и команды принимает linstor и его друзья
-- `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor controller --help`
-- `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor controller drbd-options --help`
-- `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-definition drbd-options --help`
-- `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-group drbd-options --help`
+- `kubectl -n linstor exec deploy/linstor-controller -- linstor controller --help`
+- `kubectl -n linstor exec deploy/linstor-controller -- linstor controller drbd-options --help`
+- `kubectl -n linstor exec deploy/linstor-controller -- linstor resource-definition drbd-options --help`
+- `kubectl -n linstor exec deploy/linstor-controller -- linstor resource-group drbd-options --help`
 
 ## Полезные команды
 - Получить список Node в Linstor
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor node list`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor node list`
 - Получить список Storage-Pools
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor storage-pool list`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor storage-pool list`
 - Получить список ресурсов в Linstor
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource list`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource list`
 - Получить список volumes в Linstor
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource list-volumes`
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor volume list`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource list-volumes`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor volume list`
 - получить список ХЗ ЧЕГО, но надо
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-group list`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource-group list`
 - Получить список настроек текущих
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor controller list-properties`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor controller list-properties`
 - получить список команд для CLI, при resource-group SPAWN | create
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-group spawn --help`
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-group create --help`
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource create --help`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource-group spawn --help`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource-group create --help`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource create --help`
 - Удалить PV
-  - `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor resource-definition delete <имя_pv>`
+  - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource-definition delete <имя_pv>`
 
 ## CheckSum данных, перед отправкой и на стороне приемника
 - `data-integrity-alg`
@@ -155,7 +155,7 @@ LINSTOR property: DrbdOptions/Net/verify-alg (того же кроптоформ
 drbdadm verify <resource-name>
 
 # Или в Kubernetes контексте — через linstor CLI:
-kubectl -n piraeus-datastore exec deploy/linstor-controller -- \
+kubectl -n linstor exec deploy/linstor-controller -- \
   linstor resource-definition verify <rd-name>
 При обнаружении расхождения DRBD логирует в dmesg номера блоков, и можно запустить drbdadm disconnect/connect чтобы re-sync проблемные блоки.
 
