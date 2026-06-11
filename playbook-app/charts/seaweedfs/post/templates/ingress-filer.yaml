@@ -1,41 +1,45 @@
 # =============================================================================
-# INGRESSROUTE FOR SEAWEEDFS FILER UI (Traefik)
+# INGRESS FOR SEAWEEDFS FILER UI (Traefik)
 #   filer UI на отдельном поддомене (только Host, без path-prefix).
-#   ingress.enabled    → рендерить IngressRoute
-#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
+#   ingress.enabled    → рендерить Ingress
+#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 #   vpnOnlyEnabled     → false (filer UI открыт наружу в тестовой фазе)
 # =============================================================================
 {{- if .Values.filerIngressConfig.ingress.enabled }}
 ---
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
   name: seaweedfs-filer-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.filerIngressConfig.ingress.ingressClass }}"
-spec:
-  entryPoints:
+    kubernetes.io/ingress.class: {{ .Values.filerIngressConfig.ingress.ingressClass | quote }}
     {{- if .Values.filerIngressConfig.ingress.tlsEnabled }}
-    - {{ .Values.traefik.entryPoints.websecure }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
+    traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
-    - {{ .Values.traefik.entryPoints.web }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-  routes:
-    - kind: Rule
-      match: Host(`{{ .Values.filerIngressConfig.domain }}`)
-      {{- if .Values.filerIngressConfig.ingress.vpnOnlyEnabled }}
-      middlewares:
-        {{- range .Values.filerIngressConfig.ingress.vpnIngressRouteMiddlewares }}
-        - name: {{ .name }}
-          namespace: {{ .namespace }}
-        {{- end }}
-      {{- end }}
-      services:
-        - name: {{ .Values.seaweedfs.name }}-filer
-          port: swfs-filer
+    {{- if .Values.filerIngressConfig.ingress.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.filerIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.filerIngressConfig.ingress.ingressClass }}
   {{- if and .Values.filerIngressConfig.ingress.tlsEnabled .Values.filerIngressConfig.tlsSecretName }}
   tls:
-    secretName: {{ .Values.filerIngressConfig.tlsSecretName }}
+    - hosts:
+        - {{ .Values.filerIngressConfig.domain }}
+      secretName: {{ .Values.filerIngressConfig.tlsSecretName }}
   {{- end }}
+  rules:
+    - host: {{ .Values.filerIngressConfig.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.seaweedfs.name }}-filer
+                port:
+                  name: swfs-filer
 {{- end }}
