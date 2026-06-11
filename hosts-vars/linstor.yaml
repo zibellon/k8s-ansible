@@ -8,6 +8,61 @@ all:
 
     linstor_namespace: "linstor"
     linstor_rollout_timeout: "300s"
+
+    # =============================================================================
+    # LINSTOR Controller GUI — Ingress (Traefik) + cert-manager TLS
+    # GUI отдаётся самим linstor-controller (REST API + /ui/) на порту 3370.
+    # Своей авторизации у GUI нет — доступ ограничивается VPN (vpn_only_enabled).
+    # =============================================================================
+    linstor_ui_domain: "linstor-ui-k8s-v2.drawapp.ru"
+    linstor_ui_https_secret_name: "cert-linstor-ui"
+    linstor_ui_ingress_class_name: "traefik-lb"
+    linstor_ui_vpn_only_enabled: false
+
+    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
+    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
+    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
+    linstor_cert_manager_issuer:
+      enabled: true
+      body:
+        name: "linstor-acme"
+        spec:
+          acme:
+            server: "https://acme-v02.api.letsencrypt.org/directory"
+            email: "some-email-123@gmail.com"
+            privateKeySecretRef:
+              name: "linstor-acme-account-key"
+            solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: "traefik-lb"
+                    ingressTemplate:
+                      metadata:
+                        annotations:
+                          "kubernetes.io/ingress.class": "traefik-lb"
+                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+                    podTemplate:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/name: acme-solver
+                          app.kubernetes.io/instance: traefik-lb
+                          app.kubernetes.io/component: acme-http01-solver
+                          app.kubernetes.io/managed-by: cert-manager
+
+    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
+    # 1 domain === 1 ingress_config. linstor — 1 домен (controller GUI).
+    linstor_ui_ingress_config:
+      domain: "{{ linstor_ui_domain }}"
+      tlsSecretName: "{{ linstor_ui_https_secret_name }}"
+      ingress:
+        enabled: true
+        ingressClass: "{{ linstor_ui_ingress_class_name }}"
+        tlsEnabled: true
+        vpnOnlyEnabled: "{{ linstor_ui_vpn_only_enabled }}"
+        vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+      certificate:
+        enabled: true
+
     # ======
     # === SECTION 1 ===
     # ======
@@ -21,6 +76,10 @@ all:
     linstor_pre_helm_values:
       namespace: "{{ linstor_namespace }}"
       clusterDomain: "{{ cluster_dns_domain }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      issuer: "{{ linstor_cert_manager_issuer }}"
       dns:
         port: 53
       apiserver:
@@ -508,6 +567,13 @@ all:
     linstor_post_kustomize_patches: []
 
     linstor_post_helm_values:
+      namespace: "{{ linstor_namespace }}"
+      issuer: "{{ linstor_cert_manager_issuer }}"
+      ingressConfig: "{{ linstor_ui_ingress_config }}"
+      traefik:
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
       linstorController:
         serviceMonitor:
           enabled: true
