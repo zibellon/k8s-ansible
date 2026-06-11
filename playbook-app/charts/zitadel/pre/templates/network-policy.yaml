@@ -100,6 +100,44 @@ spec:
           port: {{ .Values.external.httpsPort }}
         - protocol: TCP
           port: {{ .Values.external.httpPort }}
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+---
+# ZITADEL: ingress from Traefik (HTTP/2 cleartext h2c on port 8080)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-zitadel-login
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zitadel-login
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.zitadel.loginPort }}
+  egress:
+    # To external HTTPS (email providers, OIDC discovery, etc.)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
 
 # =============================================================================
 # ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
@@ -193,3 +231,14 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.zitadel.h2cPort }}
+    # To ZITADEL login (http)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: zitadel-login
+      ports:
+        - protocol: TCP
+          port: {{ .Values.zitadel.loginPort }}

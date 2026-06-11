@@ -550,6 +550,9 @@
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
+Логин и пароль после установки
+Логин:  zitadel-admin@zitadel.zitadel-k8s-v2.drawapp.ru
+Пароль: Password1!
 
 ## ---------
 ## ---Secrets-Rotation

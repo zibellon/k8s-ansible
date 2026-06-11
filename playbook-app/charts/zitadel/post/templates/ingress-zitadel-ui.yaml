@@ -21,6 +21,23 @@ spec:
     - {{ .Values.traefik.entryPoints.web }}
     {{- end }}
   routes:
+    # Login v2 (Next.js) — отдельный сервис zitadel-login:3000 (http, НЕ h2c).
+    # Priority выше catch-all, чтобы /ui/v2/login выигрывал маршрутизацию.
+    - kind: Rule
+      match: Host(`{{ .Values.ingressConfig.domain }}`) && PathPrefix(`/ui/v2/login`)
+      priority: 20
+      {{- if .Values.ingressConfig.ingress.vpnOnlyEnabled }}
+      middlewares:
+        {{- range .Values.ingressConfig.ingress.vpnIngressRouteMiddlewares }}
+        - name: {{ .name }}
+          namespace: {{ .namespace }}
+        {{- end }}
+      {{- end }}
+      services:
+        - name: zitadel-login
+          port: 3000
+          scheme: http
+    # Всё остальное → главный backend zitadel (h2c/gRPC).
     - kind: Rule
       match: Host(`{{ .Values.ingressConfig.domain }}`)
       priority: 10
