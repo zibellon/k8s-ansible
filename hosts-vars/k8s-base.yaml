@@ -284,9 +284,12 @@ all:
     k9s_download_host: "https://github.com"
     k9s_url: "{{ k9s_download_host }}/derailed/k9s/releases/download/{{ k9s_version }}/k9s_linux_amd64.deb"
 
-    # Cluster networking
-    service_subnet: "10.128.0.0/12"
-    pod_subnet: "10.64.0.0/10"
+    # Cluster networking — pod/service CIDRs.
+    # IMMUTABLE на kubeadm init (расширить после нельзя). НЕ должны пересекаться
+    # друг с другом, с Hetzner VPC (ноды), и с любой peered-сетью.
+    # План: VPC 10.0.0.0/22 (ноды) | pod 10.2.0.0/15 (+ /23 на ноду = 256 нод x 512 подов) | service 10.4.0.0/18 (16384 ClusterIP)
+    service_subnet: "10.4.0.0/18"
+    pod_subnet: "10.2.0.0/15"
     cluster_dns_domain: "cluster.local"
     node_port_start: 1
     node_port_end: 50000
