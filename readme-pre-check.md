@@ -1,6 +1,37 @@
 # предварительная проверка сервероа
 
 # ------
+# Сети (Облака, VPC, address-pool и так далее)
+# ------
+## Лимиты по IP адресам на один сервер (одна Node)
+## Правило: РАСШИРИТЬ ПОСЛЕ ИНИЦИАЛИЗАЦИИ кластера - НЕЛЬЗЯ
+- kubelet
+  - 1 нода = 110 подов (default) То есть: 110 ip адресов
+  - Можно переопределить
+  - Переменная: kubelet_max_pods (`k8s-base.yaml`) 
+- cilium
+  - ipam.operator.clusterPoolIPv4MaskSize = 24 (default)
+  - Можно переопределить
+  - переменная: cilium_helm_values_ipam_operator_pod_cidr_mask_size (`cilium.yaml`)
+
+## Правило_2: Cloud-ip, pod-cidr и service-cidr - НИКОГДА НЕ ДОЛЖНЫ пересекаться
+
+## Примерный расчет
+- node = `200`
+- kubelet.maxPods = `200`
+- Максимум контейнеров в кластере = `200 * 200 = 40_000`
+- cilium.clusterPoolIPv4MaskSize = `/23` (`512` адресов на 1 node)
+- pod_cidr = `512` (cilium) * `200` (node) ~ `100_000` = `x.x.x.x/15` (`131_070` адресов, 10.0.0.1 - 10.1.255.254)
+- service_cidr = pod_cidr / 8 = `x.x.x.x/18` (`16_384` адресов, 10.0.0.1 - 10.0.63.254)
+- cilium.MAX_NODES = 131_070 / 512 = `256` (1 node === 1 BLOCK)
+
+## Пример
+VPC: 10.0.0.0/22 (10.0.0.1 - 10.0.3.254)
+subnet (1-4): 10.0.0.0 - 10.0.0.254 (и таких 4 штуки, по /24 сети)
+pod_cidr: 10.2.0.0/15, 10.2.0.1 - 10.3.255.254
+service_cidr: 10.4.0.0/18, 10.4.0.1 - 10.4.63.254
+
+# ------
 ## общая информация о системе
 # ------
 ## Команда: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
