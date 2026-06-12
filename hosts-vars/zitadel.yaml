@@ -53,6 +53,18 @@ all:
     zitadel_postgresql_secret_key_password: "password"
     # PINNED to "masterkey": zitadel chart 9.x хардкодит имя ключа секрета — НЕ переопределять
     zitadel_masterkey_secret_key: "masterkey"
+    # --- First human-admin (bootstrap, greenfield) ---
+    # Полный loginname = <zitadel_admin_username>@<org-label>.<zitadel_domain>,
+    # где <org-label> — zitadel_org_name, приведённое ZITADEL к нижнему регистру
+    # (ZITADEL генерирует primary domain организации из её имени).
+    # Пример: zitadel-admin@zitadel.zitadel-k8s-v2.drawapp.ru
+    # Дополнительно возможен вход по реальному email (zitadel_admin_email).
+    zitadel_admin_username: "zitadel-admin"
+    zitadel_org_name: "ZITADEL"
+    # Placeholder — реальный email оператор задаёт в hosts-vars-override/zitadel.yaml
+    zitadel_admin_email: "zitadel-admin@example.com"
+    zitadel_admin_secret_key_username: "username"
+    zitadel_admin_secret_key_password: "password"
     # === SECTION 2: ESO ===
     # ---------
     # ESO integration: Vault → K8s Secrets
@@ -88,9 +100,20 @@ all:
           - extract:
               key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/masterkey"
 
+    zitadel_secret_admin_creds:
+      external_secret_name: "eso-zitadel-admin-creds"
+      vault_path: "/zitadel/admin/creds"
+      body:
+        target:
+          name: "eso-zitadel-admin-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_zitadel.kv_engine_path }}/data/zitadel/admin/creds"
+
     eso_vault_integration_zitadel_secrets:
       - "{{ zitadel_secret_postgresql_creds }}"
       - "{{ zitadel_secret_masterkey }}"
+      - "{{ zitadel_secret_admin_creds }}"
 
     eso_vault_integration_zitadel_secrets_extra: []
     # === SECTION 3 ===
@@ -186,6 +209,14 @@ all:
               Username: "{{ zitadel_postgresql_username }}"
               SSL:
                 Mode: disable
+        FirstInstance:
+          Org:
+            Name: "{{ zitadel_org_name }}"
+            Human:
+              Username: "{{ zitadel_admin_username }}"
+              Email:
+                Address: "{{ zitadel_admin_email }}"
+                Verified: true
     zitadel_helm_values_env:
       - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
         valueFrom:
@@ -197,6 +228,13 @@ all:
           secretKeyRef:
             name: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
             key: "{{ zitadel_postgresql_secret_key_password }}"
+      - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: "{{ zitadel_secret_admin_creds.body.target.name }}"
+            key: "{{ zitadel_admin_secret_key_password }}"
+      - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED
+        value: "false"
     zitadel_helm_values_service:
       type: ClusterIP
       port: 8080
