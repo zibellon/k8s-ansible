@@ -174,11 +174,11 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 
 ### 1.14 `tasks-generate-secret.yaml`
 
-- **Purpose.** Generate a random N-character secret into a named fact.
-- **Input.** `dto_label_name`, `dto_generate_fact_name` (output fact name). Optional: `dto_generate_length` (default 32), `dto_generate_chars` (default `ascii_letters,digits`).
-- **Validates (assert).** `dto_label_name`, `dto_generate_fact_name` both defined + non-empty. Optional params not asserted.
-- **Output.** Fact with the generated secret.
-- **Callers.** Bootstrap of first-run passwords (GitLab root, Vault admin, Grafana admin).
+- **Purpose.** Generate a random secret with deterministic character-class guarantees (exact counts of digits / uppercase / lowercase / special) into a named fact, via the `password_generate` filter (`filter_plugins/password_generate.py`).
+- **Input.** `dto_label_name`, `dto_generate_fact_name` (output fact name). Optional count/charset params (defaults sum to 32 with special 0 — preserves callers passing only the two required; ZITADEL masterkey needs exactly 32): `dto_generate_count_digits` (8), `dto_generate_count_upper` (12), `dto_generate_count_lower` (12), `dto_generate_count_special` (0); `dto_generate_charset_digits` (`0123456789`), `dto_generate_charset_letters` (`a-z`), `dto_generate_charset_special` (`!@#%^&*-_=+`).
+- **Validates (assert).** `dto_label_name`, `dto_generate_fact_name` both defined + non-empty. Count/charset params are validated by the `password_generate` filter (raises `AnsibleFilterError` on negative counts, empty charset with count > 0, or zero total length).
+- **Output.** Fact with the generated secret (length = sum of the four counts).
+- **Callers.** Bootstrap of first-run passwords (GitLab root, Vault admin, Grafana admin; ZITADEL first-admin passes class-count overrides for policy compliance).
 - **Idempotent.** No — regenerates on each call. Pair with `tasks-vault-get.yaml` + `_exists` check to avoid regenerating existing secrets.
 
 ### 1.15 `tasks-vault-distribute-creds.yaml`
