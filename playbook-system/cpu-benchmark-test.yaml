@@ -1,0 +1,177 @@
+---
+# =============================================================================
+# Measure CPU performance via sysbench (single-thread + all-threads) on N nodes
+#
+# Usage:
+#   # All hosts:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+#     playbook-system/cpu-benchmark-test.yaml
+#
+#   # Subset via --limit:
+#   ansible-playbook ... --limit k8s-manager-1,k8s-worker-2
+#
+#   # Force sequential (one host at a time):
+#   ansible-playbook ... --forks 1
+#
+# Requirements:
+#   - >= 1 host in inventory after --limit filtering.
+#   - sudo/root privileges (become: true) — нужны только для apt install sysbench.
+#
+# Steps:
+#   1. Validate inputs (assert: >=1 host).
+#   2. Install sysbench inline (idempotent: pre-check which sysbench + apt + verify).
+#   3. Detect CPU count (nproc), then run two sysbench cpu passes:
+#        - single-thread (threads=cpu_threads_single)
+#        - all-threads   (threads=nproc — суммарная пропускная способность узла)
+#      Тест ничего не пишет на диск и не поднимает демонов — cleanup не нужен.
+#   4. Aggregate parsed results on localhost, print vertical per-host
+#      stanzas + cluster summary via debug: msg.
+#
+# Metric: events per second (eps) — сравнима между узлами (аналог IOPS / Gbit/s).
+# sysbench не умеет JSON, поэтому stdout парсится через regex_search.
+#
+# Output: stdout only (no file, no Vault, no cluster facts).
+# =============================================================================
+
+- name: Measure CPU performance via sysbench
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    # === Phase 1: Validate inputs ===
+    - name: "[cpu-benchmark-test] Assert >=1 host selected"
+      assert:
+        that:
+          - ansible_play_hosts | length >= 1
+        fail_msg: |
+          ERROR: no hosts selected. ansible_play_hosts is empty.
+          Raw --limit value: {{ ansible_limit | default('(none)') }}.
+      run_once: true
+
+    - name: "[cpu-benchmark-test] Show selected hosts and parameters"
+      debug:
+        msg:
+          - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
+          - "Single-thread: threads={{ cpu_threads_single }}, cpu-max-prime={{ cpu_max_prime }}, runtime={{ cpu_runtime }}s"
+          - "All-threads:   threads=nproc (per host), cpu-max-prime={{ cpu_max_prime }}, runtime={{ cpu_runtime }}s"
+      run_once: true
+
+    # === Phase 2: Install sysbench inline ===
+    - name: "[cpu-benchmark-test] Pre-check: is sysbench installed?"
+      command: which sysbench
+      register: sysbench_pre_check
+      changed_when: false
+      failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
+
+    - name: "[cpu-benchmark-test] Install sysbench via apt"
+      apt:
+        name: sysbench
+        state: present
+        update_cache: true
+      when: sysbench_pre_check.rc != 0
+
+    - name: "[cpu-benchmark-test] Verify sysbench binary works"
+      command: sysbench --version
+      register: sysbench_version_check
+      changed_when: false
+
+    - name: "[cpu-benchmark-test] Show sysbench version"
+      debug:
+        msg: "sysbench binary on {{ inventory_hostname }}: {{ sysbench_version_check.stdout_lines[0] }}"
+
+    # === Phase 3: Detect CPU count and run sysbench tests ===
+    - name: "[cpu-benchmark-test] Detect CPU count (nproc)"
+      command: nproc
+      register: cpu_nproc
+      changed_when: false
+
+    - name: "[cpu-benchmark-test] Run sysbench cpu — single thread"
+      command: >
+        sysbench cpu
+        --cpu-max-prime={{ cpu_max_prime }}
+        --threads={{ cpu_threads_single }}
+        --time={{ cpu_runtime }}
+        run
+      register: cpu_single_result
+      async: "{{ stress_test_async.timeout }}"  # защита от обрыва SSH / зависания прогона
+      poll: "{{ stress_test_async.poll }}"
+      failed_when: cpu_single_result.rc != 0 # AUTHORIZED §2.1
+      changed_when: false
+
+    - name: "[cpu-benchmark-test] Run sysbench cpu — all threads (nproc)"
+      command: >
+        sysbench cpu
+        --cpu-max-prime={{ cpu_max_prime }}
+        --threads={{ cpu_nproc.stdout | trim }}
+        --time={{ cpu_runtime }}
+        run
+      register: cpu_multi_result
+      async: "{{ stress_test_async.timeout }}"  # защита от обрыва SSH / зависания прогона
+      poll: "{{ stress_test_async.poll }}"
+      failed_when: cpu_multi_result.rc != 0 # AUTHORIZED §2.1
+      changed_when: false
+
+    # === Phase 4: Aggregate results and print report ===
+    - name: "[cpu-benchmark-test] Build per-host stanza"
+      set_fact:
+        per_host_stanzas: "{{ per_host_stanzas | default([]) + new_stanza }}"
+      loop: "{{ ansible_play_hosts | sort }}"
+      vars:
+        single_out: "{{ hostvars[item].cpu_single_result.stdout }}"
+        multi_out: "{{ hostvars[item].cpu_multi_result.stdout }}"
+        cores: "{{ hostvars[item].cpu_nproc.stdout | trim }}"
+        single_eps: "{{ (single_out | regex_search('events per second:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+        multi_eps: "{{ (multi_out | regex_search('events per second:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+        single_lat: "{{ (single_out | regex_search('avg:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+        multi_lat: "{{ (multi_out | regex_search('avg:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+        single_p95: "{{ (single_out | regex_search('95th percentile:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+        multi_p95: "{{ (multi_out | regex_search('95th percentile:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+        new_stanza:
+          - "--- {{ item }} ---"
+          - "  Single-thread:        {{ single_eps }} events/s   avg_lat={{ single_lat }}ms   p95={{ single_p95 }}ms"
+          - "  All-threads ({{ cores }} cores):  {{ multi_eps }} events/s   avg_lat={{ multi_lat }}ms   p95={{ multi_p95 }}ms"
+          - ""
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1
+
+    - name: "[cpu-benchmark-test] Build cluster numeric stats"
+      set_fact:
+        cpu_single_eps_list: "{{ cpu_single_eps_list | default([]) + [single_eps | float] }}"
+        cpu_multi_eps_list: "{{ cpu_multi_eps_list | default([]) + [multi_eps | float] }}"
+      loop: "{{ ansible_play_hosts | sort }}"
+      vars:
+        single_out: "{{ hostvars[item].cpu_single_result.stdout }}"
+        multi_out: "{{ hostvars[item].cpu_multi_result.stdout }}"
+        single_eps: "{{ (single_out | regex_search('events per second:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+        multi_eps: "{{ (multi_out | regex_search('events per second:\\s+([0-9.]+)', '\\1') | first | float) | round(2) }}"
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1
+
+    - name: "[cpu-benchmark-test] Build cluster summary lines"
+      set_fact:
+        cluster_summary_lines:
+          - "=== Cluster summary across {{ ansible_play_hosts | length }} hosts ==="
+          - "  Single-thread:  eps min={{ cpu_single_eps_list | min }} max={{ cpu_single_eps_list | max }} avg={{ ((cpu_single_eps_list | sum) / (cpu_single_eps_list | length)) | round(2) }} events/s"
+          - "  All-threads:    eps min={{ cpu_multi_eps_list | min }} max={{ cpu_multi_eps_list | max }} avg={{ ((cpu_multi_eps_list | sum) / (cpu_multi_eps_list | length)) | round(2) }} events/s"
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1
+
+    - name: "[cpu-benchmark-test] Compose and print final report"
+      vars:
+        sysbench_version_for_header: "{{ hostvars[ansible_play_hosts | first].sysbench_version_check.stdout_lines[0] | default('unknown') }}"
+        header_lines:
+          - "=== CPU Benchmark Test ({{ sysbench_version_for_header }}) ==="
+          - "Single-thread params: threads={{ cpu_threads_single }}, cpu-max-prime={{ cpu_max_prime }}, runtime={{ cpu_runtime }}s"
+          - "All-threads params:   threads=nproc (per host), cpu-max-prime={{ cpu_max_prime }}, runtime={{ cpu_runtime }}s"
+          - "Metric: events per second (выше = быстрее)"
+          - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
+          - ""
+      debug:
+        msg: "{{ header_lines + per_host_stanzas + cluster_summary_lines }}"
+      run_once: true
+      delegate_to: localhost
+      become: false # AUTHORIZED §2.1

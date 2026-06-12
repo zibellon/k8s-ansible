@@ -195,7 +195,7 @@ In this playbook `--tags` selects target *namespaces* by name, not Ansible task 
 
 ### 4.7 Network diagnostics
 
-Measure real inter-node network bandwidth between exactly two cluster nodes via iperf3 (bidirectional, 30s per direction, 4 parallel streams). Pre/post-bootstrap; on a running cluster Cilium `CiliumClusterwideNetworkPolicy` already permits inter-node traffic on port 5201 — no firewall change needed.
+Measure real inter-node network bandwidth between exactly two cluster nodes via iperf3 (bidirectional, 300s per direction, 4 parallel streams). Pre/post-bootstrap; on a running cluster Cilium `CiliumClusterwideNetworkPolicy` already permits inter-node traffic on port 5201 — no firewall change needed.
 
 ```bash
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
@@ -209,7 +209,7 @@ After the test iperf3 server processes are killed on both hosts; the `iperf3` pa
 
 ### 4.8 Disk I/O diagnostics
 
-Measure disk performance via `fio` (random write + random read, 8k blocks, iodepth=64, 2 minutes per direction) on 1...N selected nodes. Defaults configurable via `fio_read_*` and `fio_write_*` keys in `hosts-vars/linux-pkgs.yaml` (6 vars each: `_directory`, `_runtime`, `_size`, `_blocksize`, `_iodepth`, `_numjobs`). Used for DRBD/Longhorn replication rate capacity planning.
+Measure disk performance via `fio` (random write + random read, 8k blocks, iodepth=64, 2 minutes per direction) on 1...N selected nodes. Defaults configurable via `fio_read_*` and `fio_write_*` keys in `hosts-vars/stress-tests.yaml` (6 vars each: `_directory`, `_runtime`, `_size`, `_blocksize`, `_iodepth`, `_numjobs`). Used for DRBD/Longhorn replication rate capacity planning.
 
 ```bash
 # All hosts in parallel (~4 min wall-clock independent of N):

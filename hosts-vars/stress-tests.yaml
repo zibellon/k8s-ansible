@@ -1,0 +1,40 @@
+all:
+  vars:
+    # ------
+    # Stress / Benchmark Tests (CPU + disk + network)
+    # ------
+
+    # работа с iperf. Для проверки сети
+    iperf3_port: 5201
+    iperf3_duration: 300
+    iperf3_streams: 4
+
+    # работа с fio (random READ). Для проверки производительности диска
+    fio_read_directory: "/mnt"
+    fio_read_runtime: 120
+    fio_read_size: "2G"
+    fio_read_blocksize: "8k"
+    fio_read_iodepth: 64
+    fio_read_numjobs: 1
+
+    # работа с fio (random WRITE). Для проверки производительности диска
+    fio_write_directory: "/mnt"
+    fio_write_runtime: 120
+    fio_write_size: "2G"
+    fio_write_blocksize: "8k"
+    fio_write_iodepth: 64
+    fio_write_numjobs: 1
+
+    # работа с sysbench (CPU). Для проверки производительности процессора
+    cpu_max_prime: 40000     # верхняя граница перебора простых чисел = объём нагрузки на ядро
+    cpu_runtime: 180          # сек на каждый прогон (single-thread и all-threads)
+    cpu_threads_single: 1    # single-thread прогон; all-threads берёт все ядра хоста через nproc
+
+    # ------
+    # Async для длинных stress-команд (sysbench/fio/iperf3): защита от обрыва SSH и
+    # зависания прогона. timeout ОБЯЗАН быть >= самого большого *_runtime / iperf3_duration.
+    # retries в местах async_status выводится как (timeout // poll) — здесь не нужен (poll>0).
+    # ------
+    stress_test_async:
+      timeout: 1800    # 30 мин — потолок wall-clock на один прогон (по таймауту job убивается)
+      poll: 10         # 10 c — интервал опроса
