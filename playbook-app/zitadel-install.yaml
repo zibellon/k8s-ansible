@@ -36,6 +36,10 @@
     _local_zitadel_masterkey_vault_key: "_local_zitadel_masterkey_vault"
     _local_zitadel_masterkey_vault_exists_key: "_local_zitadel_masterkey_vault_exists"
     _local_zitadel_masterkey_generated_key: "_local_zitadel_masterkey_generated"
+    _local_zitadel_admin_creds_vault_key: "_local_zitadel_admin_creds_vault"
+    _local_zitadel_admin_creds_vault_exists_key: "_local_zitadel_admin_creds_vault_exists"
+    _local_zitadel_admin_creds_password_generated_key: "_local_zitadel_admin_creds_password_generated"
+    _local_zitadel_admin_creds_put_data_key: "_local_zitadel_admin_creds_put_data"
     _local_zitadel_helm_chart_source_key: "_local_zitadel_helm_chart_source"
 
   tasks:
@@ -284,6 +288,63 @@
       vars:
         dto_label_name: "zitadel-masterkey-secrets"
         dto_wait_secret_name: "{{ zitadel_secret_masterkey.body.target.name }}"
+        dto_wait_secret_namespace: "{{ zitadel_namespace }}"
+      tags: [install]
+
+    # ----- ZITADEL first human-admin creds (username + password, policy-compliant) -----
+    - name: "[zitadel-admin-secrets] Get admin credentials from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "zitadel-admin-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_admin_creds.vault_path }}"
+        dto_vault_get_field: "{{ zitadel_admin_secret_key_password }}"
+        dto_vault_get_res_fact_name: "{{ _local_zitadel_admin_creds_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_zitadel_admin_creds_vault_exists_key }}"
+      tags: [install]
+
+    - name: "[zitadel-admin-secrets] Generate admin password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "zitadel-admin-secrets"
+        dto_generate_fact_name: "{{ _local_zitadel_admin_creds_password_generated_key }}"
+        dto_generate_count_digits: 4
+        dto_generate_count_upper: 6
+        dto_generate_count_lower: 6
+        dto_generate_count_special: 4
+      when: not lookup('vars', _local_zitadel_admin_creds_vault_exists_key)
+      tags: [install]
+
+    - name: "[zitadel-admin-secrets] Prepare admin Vault put data"
+      set_fact:
+        "{{ _local_zitadel_admin_creds_put_data_key }}": >-
+          {{ {
+               zitadel_admin_secret_key_username: zitadel_admin_username,
+               zitadel_admin_secret_key_password: lookup('vars', _local_zitadel_admin_creds_password_generated_key)
+             } }}
+      when: not lookup('vars', _local_zitadel_admin_creds_vault_exists_key)
+      tags: [install]
+
+    - name: "[zitadel-admin-secrets] Store admin credentials in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "zitadel-admin-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_zitadel.kv_engine_path }}{{ zitadel_secret_admin_creds.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_zitadel_admin_creds_put_data_key) }}"
+      when: not lookup('vars', _local_zitadel_admin_creds_vault_exists_key)
+      tags: [install]
+
+    - name: "[zitadel-admin-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "zitadel-admin-secrets"
+        dto_eso_sync_namespace: "{{ zitadel_namespace }}"
+      tags: [install]
+
+    - name: "[zitadel-admin-secrets] Wait for secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "zitadel-admin-secrets"
+        dto_wait_secret_name: "{{ zitadel_secret_admin_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ zitadel_namespace }}"
       tags: [install]
 
