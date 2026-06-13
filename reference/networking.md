@@ -237,10 +237,13 @@ Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../playbook-
 
 ### 8.5 Enable-flag gating (порядко-независимая установка)
 
-Cross-ns NP к компоненту `<c>` (argocd / gitlab / gitlab-runner) обёрнута в `{{- if .Values.<c>.enabled }} … {{- end }}` и рендерится только при `<c>_enabled: true`. Если цель ещё не развёрнута (`enabled: false`), NP к ней пропускается — install consumer'а не падает из-за несуществующего namespace. Это делает порядок установки этих компонентов **независимым**. Когда цель включают позже, отложенные NP создаются повторным прогоном `<consumer>-install --tags pre` (идемпотентно). Тот же `<c>_enabled` служит start-guard'ом install/configure плейбука компонента (fail если false). Дефолт `false` (opt-in).
+Cross-ns доступ к компоненту `<c>` (argocd / gitlab / gitlab-runner) обёрнут в `{{- if .Values.<c>.enabled }} … {{- end }}` и рендерится только при `<c>_enabled: true`. Гейтятся два вида объектов: **(1)** целые cross-ns NP, создаваемые в namespace цели; **(2)** cross-ns правила (from/to-селекторы на namespace цели) внутри own-ns NP — own-ns NP при этом остаётся, исчезает только правило (исключение: `allow-repo-server` состоит целиком из gitlab-egress → гейтится как целая NP). Не-gitlab/runner правила (seaweedfs / apiserver / external / dind / traefik) не гейтятся. Если цель ещё не развёрнута (`enabled: false`), доступ к ней пропускается — install consumer'а не падает из-за несуществующего namespace. Это делает порядок установки этих компонентов **независимым**. Когда цель включают позже, отложенные объекты создаются повторным прогоном `<consumer>-install --tags pre` (идемпотентно). Тот же `<c>_enabled` служит start-guard'ом install/configure плейбука компонента (fail если false). Дефолт `false` (opt-in).
 
-| Consumer chart | Cross-ns NP → target ns | Gate |
+| Chart | Gated element | Gate |
 |---|---|---|
-| `argocd/pre` | `allow-gitlab-shell` → gitlab | `gitlab.enabled` |
-| `argocd/pre` | `allow-gitlab-runner-job` → gitlab-runner | `gitlabRunner.enabled` |
-| `gitlab-runner/pre` | `allow-gitlab-webservice` + `allow-gitlab-shell` → gitlab | `gitlab.enabled` |
+| `argocd/pre` | NP `allow-gitlab-shell` (в gitlab ns) | `gitlab.enabled` |
+| `argocd/pre` | NP `allow-gitlab-runner-job` (в gitlab-runner ns) | `gitlabRunner.enabled` |
+| `argocd/pre` | NP `allow-repo-server` целиком (egress → gitlab) | `gitlab.enabled` |
+| `argocd/pre` | `allow-argocd-server`: ingress-правило от gitlab-runner | `gitlabRunner.enabled` |
+| `gitlab-runner/pre` | NP `allow-gitlab-webservice` + `allow-gitlab-shell` (в gitlab ns) | `gitlab.enabled` |
+| `gitlab-runner/pre` | `allow-gitlab-runner` + `allow-job-pod`: egress-правила к gitlab webservice/shell | `gitlab.enabled` |
