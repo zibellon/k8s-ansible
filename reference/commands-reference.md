@@ -84,7 +84,7 @@ done
 - `vault` before anything whose ESO pulls from it
 - `traefik` before anything with ingress
 - `zitadel` before `mon-system` (for Grafana OIDC inside mon-system stack)
-- `argocd` / `gitlab` / `gitlab-runner` требуют `<c>_enabled: true` (дефолт `false`, opt-in) — иначе install/configure падает с guard'ом. Cross-ns NP между ними гейтятся этими флагами; порядок установки этих трёх не фиксирован — см. [`networking.md`](networking.md) §8.5
+- `argocd` / `gitlab` / `gitlab-runner` / `seaweedfs` требуют `<c>_enabled: true` (дефолт `false`, opt-in) — иначе install падает с guard'ом. Cross-ns NP между этими компонентами гейтятся флагами цели; фиксированный порядок установки не требуется — см. [`networking.md`](networking.md) §8.5
 - **Альтернатива** `longhorn` → `linstor` (Piraeus Operator + LINSTOR; ставится через `ansible-playbook ... playbook-app/linstor-install.yaml`). Только один из двух storage stack'ов в кластере, не оба параллельно. См. [`components.md`](components.md) §16.5.
 
 ---
