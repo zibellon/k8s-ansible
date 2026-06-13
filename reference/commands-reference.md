@@ -229,6 +229,26 @@ ansible-playbook ... -e fio_read_directory=/data -e fio_write_directory=/data
 
 Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + cluster summary (min/max/avg per metric). Test files (`disk-io-test-randread.*`, `disk-io-test-randwrite.*`) cleaned via `always:` block regardless of failure; `fio` package stays installed.
 
+### 4.8a Memory diagnostics (RAM bandwidth + capacity)
+
+Stress RAM via `sysbench memory` (bandwidth: write + read passes, `--threads=nproc`) **and** `stress-ng --vm` (capacity: fills ~`mem_capacity_pct`% of physical RAM across all workers, `--verify`) on 1...N selected nodes — single combined report. Defaults configurable via `mem_*` keys in `hosts-vars/stress-tests.yaml`.
+
+**⚠️ Pre-bootstrap only.** The capacity pass occupies ~90% of RAM and churns it. Run ONLY on raw nodes BEFORE `cluster-init.yaml` (pre-flight hardware check) or on a drained node — on a live node the OOM-killer may evict the kubelet / pods. Cluster-agnostic (host + sudo only). Place in bootstrap order: `node-install.yaml` → **memory-stress-test** → `cluster-init.yaml`.
+
+```bash
+# All hosts in parallel:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+  playbook-system/memory-stress-test.yaml
+
+# Subset via --limit:
+ansible-playbook ... --limit k8s-manager-1,k8s-worker-2
+
+# Force serial (one host at a time):
+ansible-playbook ... --forks 1
+```
+
+Output: stdout, vertical per-host stanzas (bandwidth write/read MiB/s + ops/s + latency, capacity allocated GiB + bogo-ops/s) + cluster summary (min/max/avg). Nothing written to disk, no daemons started — no cleanup; `sysbench` + `stress-ng` packages stay installed.
+
 ### 4.9 SeaweedFS sync operations
 
 Declarative sync invoked through `seaweedfs-install.yaml` tags (filer-driven IAM, v14→v20; см. [`components.md`](components.md) §17.5). No standalone `seaweedfs-sync.yaml` playbook — все sync logic в task includes под `playbook-app/tasks/seaweedfs/`. Порядок: policy-sync (Layer P) → user-sync (L1) → identity-distribute (L3) → bucket-sync (L2), все **после** helm install (`weed shell` требует running filer, live-reload).

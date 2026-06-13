@@ -346,7 +346,9 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `fio_read_directory`, `fio_read_runtime`, `fio_read_size`, `fio_read_blocksize`, `fio_read_iodepth`, `fio_read_numjobs` | `"/mnt"` / `120` / `"2G"` / `"8k"` / `64` / `1` | Параметры random READ теста для `playbook-system/disk-io-test.yaml` |
 | `fio_write_directory`, `fio_write_runtime`, `fio_write_size`, `fio_write_blocksize`, `fio_write_iodepth`, `fio_write_numjobs` | `"/mnt"` / `120` / `"2G"` / `"8k"` / `64` / `1` | Параметры random WRITE теста для `playbook-system/disk-io-test.yaml` |
 | `cpu_max_prime`, `cpu_runtime`, `cpu_threads_single` | `40000` / `180` / `1` | Параметры sysbench CPU для `playbook-system/cpu-benchmark-test.yaml` (верхняя граница простых чисел = нагрузка на ядро, сек на прогон, threads для single-thread прогона; all-threads берёт nproc) |
-| `stress_test_async` | `{timeout: 1800, poll: 10}` | Async timing для длинных stress-команд (sysbench/fio/iperf3): защита от обрыва SSH и зависания прогона. `timeout` ОБЯЗАН быть ≥ самого большого `*_runtime` / `iperf3_duration` |
+| `mem_block_size`, `mem_total_size`, `mem_runtime`, `mem_scope`, `mem_access_mode` | `"1M"` / `"100000G"` / `180` / `"global"` / `"seq"` | Параметры sysbench memory (bandwidth-проход) для `playbook-system/memory-stress-test.yaml` (размер блока; верхний предел объёма — намеренно огромный, чтобы реальным ограничителем был `mem_runtime` через `--time`; сек на проход; `--memory-scope`; `--memory-access-mode`). `threads=nproc` |
+| `mem_capacity_pct` | `90` | Доля физической RAM в % (суммарно по всем воркерам) для capacity-прохода stress-ng `--vm` в `playbook-system/memory-stress-test.yaml`. Pre-cluster => безопасно агрессивно |
+| `stress_test_async` | `{timeout: 1800, poll: 10}` | Async timing для длинных stress-команд (sysbench/fio/iperf3/stress-ng): защита от обрыва SSH и зависания прогона. `timeout` ОБЯЗАН быть ≥ самого большого `*_runtime` / `iperf3_duration` |
 
 ### 2.14 Bastion / SSH ProxyJump (optional)
 
