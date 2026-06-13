@@ -32,6 +32,19 @@ pod_cidr: 10.2.0.0/15, 10.2.0.1 - 10.3.255.254
 service_cidr: 10.4.0.0/18, 10.4.0.1 - 10.4.63.254
 
 # ------
+# флаги активации
+# ------
+## Есть флаги активации для: seaweedFS, gitlab, gitlab-runner и argocd
+## Это 4 компонента взаимодействут друг с другом по внутренней сети и им нужны NetworkPolicy для этого
+## Если устанавливается только argocd (например) - то gitlab, gitlab-runner и seaweedFS = надо отключить
+## Или при установке будет ошибка: Так как нет Namespace для установки Cross-namespace-NetworkPolicy
+## флаги:
+- seaweedfs_enabled
+- gitlab_enabled
+- gitlab_runner_enabled
+- argocd_enabled
+
+# ------
 ## общая информация о системе
 # ------
 ## Команда: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
