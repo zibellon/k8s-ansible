@@ -234,3 +234,13 @@ Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../playbook-
 ### 8.4 Anti-pattern
 
 **Не делать**: backend chart рендерит NP «allow ingress from gitlab/gitlab-runner» в своём `pre/` — это hard-codes список consumer'ов в backend, нарушает dependency order. См. также [`playbook-conventions.md`](playbook-conventions.md) §17.11.
+
+### 8.5 Enable-flag gating (порядко-независимая установка)
+
+Cross-ns NP к компоненту `<c>` (argocd / gitlab / gitlab-runner) обёрнута в `{{- if .Values.<c>.enabled }} … {{- end }}` и рендерится только при `<c>_enabled: true`. Если цель ещё не развёрнута (`enabled: false`), NP к ней пропускается — install consumer'а не падает из-за несуществующего namespace. Это делает порядок установки этих компонентов **независимым**. Когда цель включают позже, отложенные NP создаются повторным прогоном `<consumer>-install --tags pre` (идемпотентно). Тот же `<c>_enabled` служит start-guard'ом install/configure плейбука компонента (fail если false). Дефолт `false` (opt-in).
+
+| Consumer chart | Cross-ns NP → target ns | Gate |
+|---|---|---|
+| `argocd/pre` | `allow-gitlab-shell` → gitlab | `gitlab.enabled` |
+| `argocd/pre` | `allow-gitlab-runner-job` → gitlab-runner | `gitlabRunner.enabled` |
+| `gitlab-runner/pre` | `allow-gitlab-webservice` + `allow-gitlab-shell` → gitlab | `gitlab.enabled` |

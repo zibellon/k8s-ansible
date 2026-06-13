@@ -18,6 +18,7 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | Suffix | Purpose | Type / example |
 |---|---|---|
 | `_namespace` | K8s namespace target | `argocd_namespace: "argocd"` |
+| `_enabled` | Bool component activity flag (opt-in, default `false`): start-guard в install/configure (fail если false) + gate для cross-ns NetworkPolicy к компоненту. См. [`networking.md`](networking.md) §8.5 | `argocd_enabled: false` |
 | `_version` | App/image version | `vault_version: "1.21.2"` |
 | `_helm_chart_version` | Helm chart version (for external charts; rename from legacy `_chart_version`) | `traefik_helm_chart_version: "39.0.5"` |
 | `_helm_is_oci` | Bool: HTTP repo (false) or OCI registry (true). Switches `tasks-add-helm-repo.yaml` between `helm repo add` and noop | `cilium_helm_is_oci: false`, `vault_operator_helm_is_oci: true` |
