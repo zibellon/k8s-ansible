@@ -5,48 +5,55 @@ all:
     cilium_hubble_ui_vpn_only_enabled: false
     cilium_hubble_ui_https_secret_name: "cert-cilium-hubble-ui"
     cilium_hubble_ui_ingress_class_name: "traefik-lb"
+    cilium_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    cilium_acme_email: "some-email-123@gmail.com"
+    cilium_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    cilium_cert_manager_issuer_enabled: true
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
     # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
     # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
     cilium_cert_manager_issuer:
-      enabled: true
+      enabled: "{{ cilium_cert_manager_issuer_enabled }}"
       body:
         name: "cilium-acme"
         spec:
           acme:
-            server: "https://acme-v02.api.letsencrypt.org/directory"
-            email: "some-email-123@gmail.com"
+            server: "{{ cilium_acme_server }}"
+            email: "{{ cilium_acme_email }}"
             privateKeySecretRef:
               name: "cilium-acme-account-key"
-            solvers:
-              - http01:
-                  ingress:
-                    ingressClassName: "traefik-lb"
-                    ingressTemplate:
-                      metadata:
-                        annotations:
-                          "kubernetes.io/ingress.class": "traefik-lb"
-                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                    podTemplate:
-                      metadata:
-                        labels:
-                          app.kubernetes.io/name: acme-solver
-                          app.kubernetes.io/instance: traefik-lb
-                          app.kubernetes.io/component: acme-http01-solver
-                          app.kubernetes.io/managed-by: cert-manager
+            solvers: "{{ cilium_acme_solvers }}"
     # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
     # 1 domain === 1 ingress_config. cilium — 1 домен (Hubble UI).
+    cilium_ingress_enabled: true
+    cilium_ingress_tls_enabled: true
+    cilium_ingress_certificate_enabled: true
     cilium_ingress_config:
       domain: "{{ cilium_hubble_ui_domain }}"
       tlsSecretName: "{{ cilium_hubble_ui_https_secret_name }}"
       ingress:
-        enabled: true
+        enabled: "{{ cilium_ingress_enabled }}"
         ingressClass: "{{ cilium_hubble_ui_ingress_class_name }}"
-        tlsEnabled: true
+        tlsEnabled: "{{ cilium_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ cilium_hubble_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
-        enabled: true
+        enabled: "{{ cilium_ingress_certificate_enabled }}"
     # ---
     # Helm timeouts
     cilium_pre_helm_timeout: "2m"
