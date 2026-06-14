@@ -100,7 +100,7 @@ This is a fundamental Ansible limitation, not a project choice. The single user 
 #   3. <c>/post: Ingress + ServiceMonitor + post-install resources
 #
 # Usage:
-#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install.yaml
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<c>-install.yaml
 #   ansible-playbook ... --tags pre
 #   ansible-playbook ... --tags install
 #   ansible-playbook ... --tags post
@@ -158,7 +158,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 ## 18. Checklist Before Commit
 
-- [ ] Both inventories used in local test: `-i hosts-vars/ -i hosts-vars-override/`.
+- [ ] Both inventories used in local test: `-i hosts-vars/ -i hosts-vars-override/<cluster>/`.
 - [ ] Each phase re-runs cleanly with `--tags`.
 - [ ] No new identifiers (vars, files, namespaces) that don't resolve against the repo.
 - [ ] All `include_tasks` paths use `{{ project_root }}/<dir>/tasks/<name>.yaml` (rule §8.3); no relative `tasks/X.yaml` forms.

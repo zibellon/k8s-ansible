@@ -48,7 +48,7 @@ Defined in `playbook-app/charts/cilium/post/`. The policy's `nodeIpsList` array 
 ```
 1. Edit hosts-vars-override/hosts.yaml to add the new host
    (ansible_host + internal_ip).
-2. ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+2. ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
      playbook-app/cilium-install.yaml --tags post
    (Re-renders CiliumClusterwideNetworkPolicy with the new IPs.)
 3. ansible-playbook ... playbook-system/node-install.yaml --limit <new-host>

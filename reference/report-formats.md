@@ -28,7 +28,7 @@
 
 ## Verification
 - <что проверил + результат>
-  (например: ansible-playbook -i hosts-vars/ -i hosts-vars-override/ <file> --syntax-check → exit 0)
+  (например: ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ <file> --syntax-check → exit 0)
 - <...>
 
 ## Side issues (не исправлено)

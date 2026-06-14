@@ -408,12 +408,12 @@ Checklist — keep strictly in order.
 
 10. **Apply the new Vault policy/role**:
     ```
-    ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-install.yaml --tags install
+    ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/vault-install.yaml --tags install
     ```
 
 11. **Install the component**:
     ```
-    ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install.yaml
+    ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<c>-install.yaml
     ```
 
 12. **First-seed secrets** from a `<c>-configure.yaml` or in-install task using `tasks-generate-secret.yaml` + `tasks-vault-put.yaml`.

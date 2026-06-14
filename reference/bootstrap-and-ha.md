@@ -17,7 +17,7 @@ step 3   manager-join.yaml       each additional manager         --limit <mgrN>
 step 4   worker-join.yaml        each worker                     --limit <workerN>
 ```
 
-All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both inventories every time: `-i hosts-vars/ -i hosts-vars-override/`.
+All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both inventories every time: `-i hosts-vars/ -i hosts-vars-override/<cluster>/`.
 
 ### 1.2 `node-install.yaml` (step 1)
 
@@ -120,9 +120,9 @@ Cilium runs with host firewall on. The policy `CiliumClusterwideNetworkPolicy` (
 
 ```
 1. Edit hosts-vars-override/hosts.yaml to add the new host (ansible_host + internal_ip).
-2. ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-install.yaml --tags post
+2. ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cilium-install.yaml --tags post
    (This re-renders the cluster-wide policy with the new IPs.)
-3. ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml --limit <new-host>
+3. ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-system/node-install.yaml --limit <new-host>
 4. manager-join.yaml or worker-join.yaml for the new host.
 ```
 
@@ -349,5 +349,5 @@ Note: these three playbooks intentionally do **not** use `tasks-require-limit.ya
 | `/etc/kubernetes/pki/encryption-config.yaml` missing on a manager | Re-run `manager-join.yaml` for that manager (distributes from the master); or manually `scp` from master (mode 0600). |
 | `/etc/kubernetes/vault-unseal.json` missing on a manager | Re-run `tasks-vault-distribute-creds.yaml` (standalone by running `vault-install.yaml --tags post` or via `manager-join.yaml`). |
 | Vault rekey прервался посередине | Temp-файл `{{ vault_rekey_temp_file_path }}` на `master_manager_fact` остался с новыми ключами. Повторный запуск `vault-rotate.yaml` детектирует его и довыполнит recovery (K8s Secret + distribute). Если в Vault висит незавершённый rekey, а temp-файла нет (ручной rekey помимо playbook'а) — сделать `vault operator rekey -cancel` и запустить playbook заново. |
-| Interrupted dpkg transaction on a host (`E: dpkg was interrupted`) | Run `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/preflight.yaml --limit <host>` — the `dpkg --configure -a` step recovers the transaction. Happens automatically on any re-run of `node-install.yaml` (preflight is Step 3). |
+| Interrupted dpkg transaction on a host (`E: dpkg was interrupted`) | Run `ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-system/preflight.yaml --limit <host>` — the `dpkg --configure -a` step recovers the transaction. Happens automatically on any re-run of `node-install.yaml` (preflight is Step 3). |
 | `kubeadm init` hangs 4min on `wait-control-plane` then fails with `kube-apiserver ... context deadline exceeded` | etcd cannot bind because `api_server_advertise_address` for this manager points to an IP not on any interface (`bind: cannot assign requested address` in `crictl logs <etcd-id>`). Fix `hosts-vars-override/hosts.yaml` for `{{ inventory_hostname }}`, then `kubeadm reset --force` + `rm -rf /var/lib/etcd/* /etc/kubernetes/manifests/* /etc/cni/net.d/*` on the host, then re-run `cluster-init.yaml`. The `preflight.yaml` (Step 3 of `node-install.yaml`) now asserts this up-front so the wrong IP is caught in seconds instead of minutes. |
