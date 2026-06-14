@@ -1,0 +1,56 @@
+all:
+  vars:
+    reloader_namespace: "reloader"
+    # Helm timeouts
+    reloader_pre_helm_timeout: "5m"
+    # ---
+    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
+    reloader_pre_extra_objects: []
+    # Pre-phase kustomize patches (operator-side customization, default empty)
+    reloader_pre_kustomize_patches: []
+    # Pre-phase values (NetworkPolicies chart)
+    reloader_pre_helm_values:
+      namespace: "{{ reloader_namespace }}"
+      extraObjects: "{{ reloader_pre_extra_objects }}"
+    # ---
+    reloader_install_helm_timeout: "5m"
+    reloader_rollout_timeout: "120s"
+    # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
+    reloader_helm_is_oci: false
+    reloader_helm_url: "https://stakater.github.io/stakater-charts"
+    reloader_helm_repo_name: "stakater"
+    reloader_helm_chart_name: "reloader"
+    reloader_helm_chart_version: "2.2.12"
+    # Replica count (SCALE).
+    reloader_helm_values_replica_count: 1
+    # ---------
+    # Helm chart values (nested under upstream chart's top-level `reloader:` key)
+    reloader_helm_values:
+      # Clean resource names: Deployment "reloader" (not "reloader-reloader")
+      fullnameOverride: reloader
+      reloader:
+        # OFF by default: Reloader reloads NOTHING unless a workload carries an
+        # explicit opt-in annotation. Do NOT set autoReloadAll: true.
+        autoReloadAll: false
+        watchGlobally: true
+        reloadOnCreate: false
+        # annotations strategy: patches pod-template annotation (GitOps/ArgoCD-friendly)
+        reloadStrategy: annotations
+        rbac:
+          enabled: true
+        serviceAccount:
+          create: true
+        deployment:
+          replicas: "{{ reloader_helm_values_replica_count }}"
+          tolerations: []
+          nodeSelector: {}
+          affinity: {}
+          resources: {}
+        # Prometheus scrape via chart's PodMonitor (scrapes pod :9090/metrics directly)
+        podMonitor:
+          enabled: true
+        serviceMonitor:
+          enabled: false
+        # NetworkPolicy is managed by reloader/pre chart, not the upstream chart
+        netpol:
+          enabled: false
