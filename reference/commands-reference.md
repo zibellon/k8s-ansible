@@ -9,13 +9,13 @@ For the rationale behind these commands (why `--limit`, why both inventories, wh
 ## 1. Canonical invocation pattern
 
 ```bash
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-<system|app>/<name>.yaml [--limit <host>] [--tags <tag>]
 ```
 
 **Rules (see `CLAUDE.md` §0 and [`playbook-conventions.md`](playbook-conventions.md) §3):**
 
-- **Always** both inventory dirs: `-i hosts-vars/ -i hosts-vars-override/`
+- **Always** both inventory dirs, с override на **подпапку целевого кластера**: `-i hosts-vars/ -i hosts-vars-override/<cluster>/`. `<cluster>` — подпапка на кластер под `hosts-vars-override/` (напр. `test-1`, `1520-tech-prod-1`); НЕ указывать `-i` на голый родитель `hosts-vars-override/` — он рекурсивно грузит все кластеры разом (баг)
 - `--limit` **required** for **node-scoped** system playbooks (enforced by `tasks-require-limit.yaml`); cluster-wide rolling-update plays (`apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`) run on all nodes via `serial: 1` and don't take `--limit`
 - `--limit` **not required** for app playbooks (cluster-scoped, delegate to master manager)
 - Use `--tags <phase>` to re-run a single phase (`pre`, `install`, `post`, etc.)
@@ -30,7 +30,7 @@ See [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §1 for semantics. Run these in
 
 ```bash
 # For each node (managers and workers):
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/node-install.yaml --limit <host>
 ```
 
@@ -40,7 +40,7 @@ Can parallelize with comma-separated hosts: `--limit m1,m2,m3`.
 
 ```bash
 # One-time, on the manager with is_master: true:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/cluster-init.yaml --limit <master>
 ```
 
@@ -48,10 +48,10 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
 
 ```bash
 # One at a time (quorum preservation):
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/manager-join.yaml --limit <mgr2>
 
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/manager-join.yaml --limit <mgr3>
 ```
 
@@ -59,7 +59,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
 
 ```bash
 # Can be parallel:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/worker-join.yaml --limit <worker>
 # Or multiple at once:
 ansible-playbook ... --limit w1,w2,w3
@@ -72,7 +72,7 @@ for c in cilium cert-manager external-secrets vault traefik metrics-server longh
          seaweedfs \
          mon-system \
          argocd gitlab gitlab-runner zitadel teleport haproxy; do
-  ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/$c-install.yaml
+  ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
 ```
 
@@ -95,12 +95,12 @@ Each phase is idempotent and can be re-run independently:
 
 ```bash
 # Full re-install (all phases):
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<c>-install.yaml
 
 # Single phase:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install.yaml --tags pre
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install.yaml --tags install
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install.yaml --tags post
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<c>-install.yaml --tags pre
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<c>-install.yaml --tags install
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<c>-install.yaml --tags post
 ```
 
 **Extra phase tags (where applicable):**
@@ -133,7 +133,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/<c>-install
 **4.1.a — Cilium firewall refresh before node add:**
 
 ```bash
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-app/cilium-install.yaml --tags post
 ```
 
@@ -162,12 +162,12 @@ All three use `serial: 1` internally to preserve quorum. Safe to run on a health
 
 ```bash
 # Rollout-restart wrappers for specific components:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cilium-restart.yaml
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/external-secrets-restart.yaml
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/haproxy-restart.yaml
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/traefik-restart.yaml
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/linstor-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cilium-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/external-secrets-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/haproxy-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/traefik-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/linstor-restart.yaml
 ```
 
 Each uses `kubectl rollout restart` on the target resources and waits for rollout to complete.
@@ -186,10 +186,10 @@ Read-only dump of K8s state across selected (or all) namespaces. For each target
 
 ```bash
 # Dump all namespaces:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-info.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-info.yaml
 
 # Dump only specific namespaces:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-info.yaml --tags vault,argocd
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-info.yaml --tags vault,argocd
 ```
 
 In this playbook `--tags` selects target *namespaces* by name, not Ansible task tags. Without `--tags` all cluster namespaces are dumped.
@@ -199,7 +199,7 @@ In this playbook `--tags` selects target *namespaces* by name, not Ansible task 
 Measure real inter-node network bandwidth between exactly two cluster nodes via iperf3 (bidirectional, 300s per direction, 4 parallel streams). Pre/post-bootstrap; on a running cluster Cilium `CiliumClusterwideNetworkPolicy` already permits inter-node traffic on port 5201 — no firewall change needed.
 
 ```bash
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/network-bandwidth-test.yaml \
   --limit <host_a>,<host_b>
 ```
@@ -214,7 +214,7 @@ Measure disk performance via `fio` (random write + random read, 8k blocks, iodep
 
 ```bash
 # All hosts in parallel (~4 min wall-clock independent of N):
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/disk-io-test.yaml
 
 # Subset via --limit:
@@ -231,13 +231,13 @@ Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + clu
 
 ### 4.8a Memory diagnostics (RAM bandwidth + capacity)
 
-Stress RAM via `sysbench memory` (bandwidth: write + read passes, `--threads=nproc`) **and** `stress-ng --vm` (capacity: fills ~`mem_capacity_pct`% of physical RAM across all workers, `--verify`) on 1...N selected nodes — single combined report. Defaults configurable via `mem_*` keys in `hosts-vars/stress-tests.yaml`.
+Stress RAM via `sysbench memory` (bandwidth: write + read passes, `--threads=nproc`) **and** `stress-ng --vm` (capacity: fills ~`mem_capacity_percent`% of physical RAM across all workers, `--verify`) on 1...N selected nodes — single combined report. Defaults configurable via `mem_*` keys in `hosts-vars/stress-tests.yaml`.
 
 **⚠️ Pre-bootstrap only.** The capacity pass occupies ~90% of RAM and churns it. Run ONLY on raw nodes BEFORE `cluster-init.yaml` (pre-flight hardware check) or on a drained node — on a live node the OOM-killer may evict the kubelet / pods. Cluster-agnostic (host + sudo only). Place in bootstrap order: `node-install.yaml` → **memory-stress-test** → `cluster-init.yaml`.
 
 ```bash
 # All hosts in parallel:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-system/memory-stress-test.yaml
 
 # Subset via --limit:
@@ -255,7 +255,7 @@ Declarative sync invoked through `seaweedfs-install.yaml` tags (filer-driven IAM
 
 ```bash
 # Full install (all phases including sync):
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-install.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/seaweedfs-install.yaml
 
 # Re-sync managed policies only (Layer P — weed shell s3.policy, filer-driven diff):
 ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags policy-sync
@@ -283,27 +283,27 @@ Reach the cluster through the delegated manager without needing `kubectl` locall
 
 ```bash
 # Pod list cluster-wide:
-ansible -i hosts-vars/ -i hosts-vars-override/ <master> -m command \
+ansible -i hosts-vars/ -i hosts-vars-override/<cluster>/ <master> -m command \
   -a 'kubectl get pods -A'
 
 # Vault status:
-ansible -i hosts-vars/ -i hosts-vars-override/ <master> -m command \
+ansible -i hosts-vars/ -i hosts-vars-override/<cluster>/ <master> -m command \
   -a 'kubectl -n vault exec vault-0 -- vault status'
 
 # Force-sync a single ExternalSecret:
-ansible -i hosts-vars/ -i hosts-vars-override/ <master> -m command \
+ansible -i hosts-vars/ -i hosts-vars-override/<cluster>/ <master> -m command \
   -a 'kubectl -n <ns> annotate externalsecret <name> force-sync=$(date +%s) --overwrite'
 
 # Helm releases in a namespace:
-ansible -i hosts-vars/ -i hosts-vars-override/ <master> -m command \
+ansible -i hosts-vars/ -i hosts-vars-override/<cluster>/ <master> -m command \
   -a 'helm list -n <namespace>'
 
 # Check apiserver cert SANs:
-ansible -i hosts-vars/ -i hosts-vars-override/ <master> -m command \
+ansible -i hosts-vars/ -i hosts-vars-override/<cluster>/ <master> -m command \
   -a 'openssl x509 -in /etc/kubernetes/pki/apiserver.crt -noout -text | grep -A1 "Subject Alternative Name"'
 
 # ETCD member list:
-ansible -i hosts-vars/ -i hosts-vars-override/ <master> -m command \
+ansible -i hosts-vars/ -i hosts-vars-override/<cluster>/ <master> -m command \
   -a 'kubectl -n kube-system exec etcd-<master-hostname> -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key member list'
 ```
 
@@ -315,11 +315,11 @@ Before running any playbook against a real cluster:
 
 ```bash
 # Syntax check (no connection):
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-app/<c>-install.yaml --syntax-check
 
 # List tags / hosts / tasks without running:
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-app/<c>-install.yaml --list-tags
 ansible-playbook ... --list-tasks
 ansible-playbook ... --list-hosts
