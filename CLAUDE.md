@@ -32,7 +32,7 @@ Violating any of these will break the cluster or leak secrets.
     ```
     L7 Observability   (mon-system: Prometheus, Grafana, Loki, Vector, Alertmanager, node-exporter, ksm)  playbook-app/
     L6 Applications    (argocd, gitlab, teleport, zitadel)                                                playbook-app/
-    L5 Platform        (vault + external-secrets, cert-manager)                                           playbook-app/
+    L5 Platform        (vault + external-secrets, cert-manager, reloader)                                 playbook-app/
     L4 Storage         (longhorn | linstor) + seaweedfs (S3)                                              playbook-app/
     L3 Ingress         (traefik @ traefik-lb, haproxy @ haproxy-lb)                                       playbook-app/
     L2 CNI             (cilium — replaces kube-proxy, host firewall)                                      playbook-app/

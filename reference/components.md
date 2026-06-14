@@ -194,6 +194,19 @@ Template fields:
 - **Dependencies.** Cilium, cert-manager, traefik.
 - **Notes.** `configure/` phase runs after the server is up and applies the declarative resource list.
 
+## 15. `reloader`
+
+- **Chart path.** `charts/reloader/pre/` (NetworkPolicies only; no local `install/` or `post/` — the controller is the external Stakater chart).
+- **Install playbook.** `reloader-install.yaml`.
+- **Namespace.** `reloader`.
+- **Releases.** `reloader-pre`, `reloader`.
+- **External Helm repo.** `https://stakater.github.io/stakater-charts` → chart `stakater/reloader`, version `reloader_helm_chart_version` (default `2.2.12`, appVersion `v1.4.17`). HTTP↔OCI switchable via `reloader_helm_is_oci`.
+- **Required vars.** `reloader_namespace`, `reloader_helm_chart_version`, `reloader_helm_values_replica_count`. Upstream chart values under `reloader_helm_values.reloader` (off-by-default: `autoReloadAll: false`; `reloadStrategy: annotations`; `podMonitor.enabled: true`; `netpol.enabled: false`). Kustomize patches (default `[]`): `reloader_pre_kustomize_patches`.
+- **ESO integration.** No.
+- **ServiceMonitor.** PodMonitor (chart built-in, scrapes pod `:9090/metrics`); no ServiceMonitor.
+- **Dependencies.** Cilium.
+- **Notes.** Off-by-default — reloads nothing unless a workload opts in via annotation: broad `reloader.stakater.com/auto: "true"` (all referenced CM/Secrets) or narrow `configmap.reloader.stakater.com/reload: "<name>"` / `secret.reloader.stakater.com/reload: "<name>"` (only the named resources — the standard for explicit control). `reloadStrategy: annotations` patches the fixed pod-template annotation `reloader.stakater.com/last-reloaded-from` (key hardcoded, not configurable). Under ArgoCD, exclude it via `ignoreDifferences` jqPathExpression `.spec.template.metadata.annotations."reloader.stakater.com/last-reloaded-from"` (group `apps`) together with `RespectIgnoreDifferences=true` in `syncPolicy.syncOptions` so `selfHeal` does not revert it.
+
 ## 16. `metrics-server`
 
 - **Chart path.** `charts/metrics-server/{pre,install}/` (no `post/`).
@@ -347,6 +360,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `zitadel` | zitadel | no |
 | `teleport` | teleport | no |
 | `kube-system` | metrics-server (exceptional) | upstream |
+| `reloader` | reloader | no |
 | `linstor` | linstor (Piraeus operator + LinstorCluster + satellites + CSI + HA controller + affinity controller + NFS server) | no (configurable via `linstor_namespace`) |
 | `seaweedfs` | seaweedfs (central S3 storage: master, volume, filer, s3 gateway + filer's PostgreSQL backend) | no |
 | `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
@@ -358,7 +372,7 @@ Install in roughly this order (first → last). Parallel installation within a d
 ```
 L0  cilium
 L1  cert-manager   external-secrets
-L2  longhorn       linstor       metrics-server
+L2  longhorn       linstor       metrics-server   reloader
 L3  vault
 L4  traefik        haproxy
 L5  mon-system     seaweedfs
