@@ -25,45 +25,52 @@ all:
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
     # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
     # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
+    vault_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    vault_acme_email: "some-email-123@gmail.com"
+    vault_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    vault_cert_manager_issuer_enabled: true
     vault_cert_manager_issuer:
-      enabled: true
+      enabled: "{{ vault_cert_manager_issuer_enabled }}"
       body:
         name: "vault-acme"
         spec:
           acme:
-            server: "https://acme-v02.api.letsencrypt.org/directory"
-            email: "some-email-123@gmail.com"
+            server: "{{ vault_acme_server }}"
+            email: "{{ vault_acme_email }}"
             privateKeySecretRef:
               name: "vault-acme-account-key"
-            solvers:
-              - http01:
-                  ingress:
-                    ingressClassName: "traefik-lb"
-                    ingressTemplate:
-                      metadata:
-                        annotations:
-                          "kubernetes.io/ingress.class": "traefik-lb"
-                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                    podTemplate:
-                      metadata:
-                        labels:
-                          app.kubernetes.io/name: acme-solver
-                          app.kubernetes.io/instance: traefik-lb
-                          app.kubernetes.io/component: acme-http01-solver
-                          app.kubernetes.io/managed-by: cert-manager
+            solvers: "{{ vault_acme_solvers }}"
     # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
     # 1 domain === 1 ingress_config. vault — 1 домен (vault UI).
+    vault_ingress_enabled: true
+    vault_ingress_tls_enabled: true
+    vault_ingress_certificate_enabled: true
     vault_ingress_config:
       domain: "{{ vault_ui_domain }}"
       tlsSecretName: "{{ vault_ui_https_secret_name }}"
       ingress:
-        enabled: true
+        enabled: "{{ vault_ingress_enabled }}"
         ingressClass: "{{ vault_ui_ingress_class_name }}"
-        tlsEnabled: true
+        tlsEnabled: "{{ vault_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ vault_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
-        enabled: true
+        enabled: "{{ vault_ingress_certificate_enabled }}"
 
     vault_creds_host_path: "/etc/kubernetes/vault-unseal.json"
     # Temp-file with new unseal keys + root token, written during vault-rotate.yaml
