@@ -38,26 +38,27 @@ all:
                   app.kubernetes.io/component: acme-http01-solver
                   app.kubernetes.io/managed-by: cert-manager
     linstor_cert_manager_issuer_enabled: true
-    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
-    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
-    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
+    # Issuer identity — вынесено в простые переменные (единый источник истины:
+    # на name ссылается и Issuer, и issuerRef.name сертификата).
+    linstor_acme_issuer_name: "linstor-acme"
+    linstor_acme_private_key_name: "linstor-acme-account-key"
+    # cert-manager Issuer (per-component, namespaced) — плоский объект {enabled, name, spec}.
+    # enabled: true → Issuer + solver-NetworkPolicies (pre); enabled: false → ничего.
     linstor_cert_manager_issuer:
       enabled: "{{ linstor_cert_manager_issuer_enabled }}"
-      body:
-        name: "linstor-acme"
-        spec:
-          acme:
-            server: "{{ linstor_acme_server }}"
-            email: "{{ linstor_acme_email }}"
-            privateKeySecretRef:
-              name: "linstor-acme-account-key"
-            solvers: "{{ linstor_acme_solvers }}"
+      name: "{{ linstor_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ linstor_acme_server }}"
+          email: "{{ linstor_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ linstor_acme_private_key_name }}"
+          solvers: "{{ linstor_acme_solvers }}"
 
-    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
-    # 1 domain === 1 ingress_config. linstor — 1 домен (controller GUI).
+    # Ingress config (per-domain). linstor — 1 домен (controller GUI).
     linstor_ui_ingress_enabled: true
     linstor_ui_ingress_tls_enabled: true
-    linstor_ui_ingress_certificate_enabled: true
+    linstor_ui_certificate_enabled: true
     linstor_ui_ingress_config:
       domain: "{{ linstor_ui_domain }}"
       tlsSecretName: "{{ linstor_ui_https_secret_name }}"
@@ -67,8 +68,18 @@ all:
         tlsEnabled: "{{ linstor_ui_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ linstor_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ linstor_ui_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    # Полный raw spec → issuer указывается через spec.issuerRef (любой Issuer/ClusterIssuer).
+    linstor_ui_certificate:
+      enabled: "{{ linstor_ui_certificate_enabled }}"
+      name: "{{ linstor_ui_https_secret_name }}"
+      spec:
+        secretName: "{{ linstor_ui_https_secret_name }}"
+        dnsNames:
+          - "{{ linstor_ui_domain }}"
+        issuerRef:
+          name: "{{ linstor_acme_issuer_name }}"
+          kind: "Issuer"
 
     # ======
     # === SECTION 1 ===
@@ -575,8 +586,8 @@ all:
 
     linstor_post_helm_values:
       namespace: "{{ linstor_namespace }}"
-      issuer: "{{ linstor_cert_manager_issuer }}"
       ingressConfig: "{{ linstor_ui_ingress_config }}"
+      certificateConfig: "{{ linstor_ui_certificate }}"
       traefik:
         entryPoints:
           web: "{{ traefik_web_entrypoint }}"
