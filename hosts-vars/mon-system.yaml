@@ -22,32 +22,36 @@ all:
     # Один на mon-system (3 UI: grafana/prometheus/alertmanager).
     # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
     # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
+    mon_system_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    mon_system_acme_email: "some-email-123@gmail.com"
+    mon_system_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    mon_system_cert_manager_issuer_enabled: true
     mon_system_cert_manager_issuer:
-      enabled: true
+      enabled: "{{ mon_system_cert_manager_issuer_enabled }}"
       body:
         name: "mon-system-acme"
         spec:
           acme:
-            server: "https://acme-v02.api.letsencrypt.org/directory"
-            email: "some-email-123@gmail.com"
+            server: "{{ mon_system_acme_server }}"
+            email: "{{ mon_system_acme_email }}"
             privateKeySecretRef:
               name: "mon-system-acme-account-key"
-            solvers:
-              - http01:
-                  ingress:
-                    ingressClassName: "traefik-lb"
-                    ingressTemplate:
-                      metadata:
-                        annotations:
-                          "kubernetes.io/ingress.class": "traefik-lb"
-                          "traefik.ingress.kubernetes.io/router.entrypoints": "web"
-                    podTemplate:
-                      metadata:
-                        labels:
-                          app.kubernetes.io/name: acme-solver
-                          app.kubernetes.io/instance: traefik-lb
-                          app.kubernetes.io/component: acme-http01-solver
-                          app.kubernetes.io/managed-by: cert-manager
+            solvers: "{{ mon_system_acme_solvers }}"
 
     mon_system_grafana_domain: "grafana-k8s-v2.drawapp.ru"
     mon_system_grafana_external_url: "https://grafana-k8s-v2.drawapp.ru"
@@ -66,39 +70,48 @@ all:
 
     # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
     # 1 domain === 1 ingress_config. mon-system — 3 домена.
+    mon_system_grafana_ingress_enabled: true
+    mon_system_grafana_ingress_tls_enabled: true
+    mon_system_grafana_ingress_certificate_enabled: true
     mon_system_grafana_ingress_config:
       domain: "{{ mon_system_grafana_domain }}"
       tlsSecretName: "{{ mon_system_grafana_https_secret_name }}"
       ingress:
-        enabled: true
+        enabled: "{{ mon_system_grafana_ingress_enabled }}"
         ingressClass: "{{ mon_system_ingress_class_name }}"
-        tlsEnabled: true
+        tlsEnabled: "{{ mon_system_grafana_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ mon_system_grafana_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
-        enabled: true
+        enabled: "{{ mon_system_grafana_ingress_certificate_enabled }}"
+    mon_system_prometheus_ingress_enabled: true
+    mon_system_prometheus_ingress_tls_enabled: true
+    mon_system_prometheus_ingress_certificate_enabled: true
     mon_system_prometheus_ingress_config:
       domain: "{{ mon_system_prometheus_domain }}"
       tlsSecretName: "{{ mon_system_prometheus_https_secret_name }}"
       ingress:
-        enabled: true
+        enabled: "{{ mon_system_prometheus_ingress_enabled }}"
         ingressClass: "{{ mon_system_ingress_class_name }}"
-        tlsEnabled: true
+        tlsEnabled: "{{ mon_system_prometheus_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ mon_system_prometheus_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
-        enabled: true
+        enabled: "{{ mon_system_prometheus_ingress_certificate_enabled }}"
+    mon_system_alertmanager_ingress_enabled: true
+    mon_system_alertmanager_ingress_tls_enabled: true
+    mon_system_alertmanager_ingress_certificate_enabled: true
     mon_system_alertmanager_ingress_config:
       domain: "{{ mon_system_alertmanager_domain }}"
       tlsSecretName: "{{ mon_system_alertmanager_https_secret_name }}"
       ingress:
-        enabled: true
+        enabled: "{{ mon_system_alertmanager_ingress_enabled }}"
         ingressClass: "{{ mon_system_ingress_class_name }}"
-        tlsEnabled: true
+        tlsEnabled: "{{ mon_system_alertmanager_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ mon_system_alertmanager_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
       certificate:
-        enabled: true
+        enabled: "{{ mon_system_alertmanager_ingress_certificate_enabled }}"
 
     mon_system_prometheus_port: 9090
     mon_system_prometheus_reloader_port: 8080
@@ -284,6 +297,7 @@ all:
     mon_system_prometheus_spec_replica_count: 1
     mon_system_prometheus_spec_retention: "60d"
     mon_system_prometheus_spec_storage_size: "4Gi"
+    mon_system_prometheus_spec_storage_class: "lnstr-major-local"
     # ---------
     mon_system_prometheus_spec:
       podMetadata:
@@ -326,7 +340,7 @@ all:
       storage:
         volumeClaimTemplate:
           spec:
-            storageClassName: lnstr-major-local
+            storageClassName: "{{ mon_system_prometheus_spec_storage_class }}"
             accessModes:
               - ReadWriteOnce
             resources:
@@ -376,6 +390,7 @@ all:
     # Alertmanager hot knobs (SCALE / capacity)
     mon_system_alertmanager_spec_replica_count: 1
     mon_system_alertmanager_spec_storage_size: "4Gi"
+    mon_system_alertmanager_spec_storage_class: "lnstr-major-local"
     # ---------
     mon_system_alertmanager_spec:
       podMetadata:
@@ -405,7 +420,7 @@ all:
       storage:
         volumeClaimTemplate:
           spec:
-            storageClassName: lnstr-major-local
+            storageClassName: "{{ mon_system_alertmanager_spec_storage_class }}"
             accessModes:
               - ReadWriteOnce
             resources:
