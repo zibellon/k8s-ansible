@@ -16,7 +16,7 @@
 # Requirements:
 #   - >= 1 host in inventory after --limit filtering.
 #   - sudo/root privileges (become: true) — нужны для apt install sysbench / stress-ng.
-#   - ВАЖНО: capacity-проход занимает ~mem_capacity_pct% физической RAM и churn'ит её.
+#   - ВАЖНО: capacity-проход занимает ~mem_capacity_percent% физической RAM и churn'ит её.
 #     Запускать ТОЛЬКО на raw-узлах ДО cluster-init.yaml (pre-flight проверка железа) либо
 #     на drained-узле. На живом узле возможен OOM-killer (kubelet / поды под раздачу).
 #
@@ -26,7 +26,7 @@
 #   3. Detect nproc + total RAM, run three passes (от лёгкого к тяжёлому):
 #        - sysbench memory write  (bandwidth, --threads=nproc)
 #        - sysbench memory read   (bandwidth, --threads=nproc)
-#        - stress-ng --vm nproc   (capacity: ~mem_capacity_pct% RAM суммарно, --verify)
+#        - stress-ng --vm nproc   (capacity: ~mem_capacity_percent% RAM суммарно, --verify)
 #      Тест ничего не пишет на диск и не поднимает демонов — cleanup не нужен.
 #   4. Aggregate parsed results on localhost, print vertical per-host
 #      stanzas + cluster summary via debug: msg.
@@ -58,7 +58,7 @@
         msg:
           - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
           - "Bandwidth: block={{ mem_block_size }}, scope={{ mem_scope }}, mode={{ mem_access_mode }}, threads=nproc, runtime={{ mem_runtime }}s/pass"
-          - "Capacity:  --vm nproc, ~{{ mem_capacity_pct }}% RAM суммарно, --vm-method all --verify, runtime={{ mem_runtime }}s"
+          - "Capacity:  --vm nproc, ~{{ mem_capacity_percent }}% RAM суммарно, --vm-method all --verify, runtime={{ mem_capacity_runtime }}s"
       run_once: true
 
     # === Phase 2: Install sysbench + stress-ng inline ===
@@ -153,15 +153,15 @@
       failed_when: mem_read_result.rc != 0 # AUTHORIZED §2.1
       changed_when: false
 
-    - name: "[memory-stress-test] Run stress-ng vm — capacity (~{{ mem_capacity_pct }}% RAM)"
+    - name: "[memory-stress-test] Run stress-ng vm — capacity (~{{ mem_capacity_percent }}% RAM)"
       command: >
         stress-ng
         --vm {{ cpu_nproc.stdout | trim }}
-        --vm-bytes {{ ((mem_total_bytes | int) * mem_capacity_pct / 100 / (cpu_nproc.stdout | trim | int)) | int }}
+        --vm-bytes {{ ((mem_total_bytes | int) * mem_capacity_percent / 100 / (cpu_nproc.stdout | trim | int)) | int }}
         --vm-method all
         --verify
         --metrics-brief
-        --timeout {{ mem_runtime }}s
+        --timeout {{ mem_capacity_runtime }}s
       register: mem_capacity_result
       async: "{{ stress_test_async.timeout }}"  # защита от обрыва SSH / зависания прогона
       poll: "{{ stress_test_async.poll }}"
@@ -179,7 +179,7 @@
         cap_out: "{{ hostvars[item].mem_capacity_result.stdout }}"
         cores: "{{ hostvars[item].cpu_nproc.stdout | trim }}"
         ram_gib: "{{ ((hostvars[item].mem_total_bytes | int) / 1073741824) | round(1) }}"
-        alloc_gib: "{{ ((hostvars[item].mem_total_bytes | int) * mem_capacity_pct / 100 / 1073741824) | round(1) }}"
+        alloc_gib: "{{ ((hostvars[item].mem_total_bytes | int) * mem_capacity_percent / 100 / 1073741824) | round(1) }}"
         write_mibs: "{{ (write_out | regex_search('transferred \\(([0-9.]+) MiB/sec\\)', '\\1') | first | float) | round(2) }}"
         read_mibs: "{{ (read_out | regex_search('transferred \\(([0-9.]+) MiB/sec\\)', '\\1') | first | float) | round(2) }}"
         write_ops: "{{ (write_out | regex_search('Total operations: [0-9]+ \\(([0-9.]+) per second\\)', '\\1') | first | float) | round(2) }}"
@@ -193,7 +193,7 @@
           - "--- {{ item }} ({{ cores }} cores, {{ ram_gib }} GiB RAM) ---"
           - "  Bandwidth Write:  {{ write_mibs }} MiB/s   ops/s={{ write_ops }}   avg={{ write_avg }}ms   p95={{ write_p95 }}ms"
           - "  Bandwidth Read:   {{ read_mibs }} MiB/s   ops/s={{ read_ops }}   avg={{ read_avg }}ms   p95={{ read_p95 }}ms"
-          - "  Capacity:         allocated ~{{ alloc_gib }} GiB ({{ mem_capacity_pct }}%)   bogo-ops/s={{ cap_bogos }} (real)"
+          - "  Capacity:         allocated ~{{ alloc_gib }} GiB ({{ mem_capacity_percent }}%)   bogo-ops/s={{ cap_bogos }} (real)"
           - ""
       run_once: true
       delegate_to: localhost
@@ -234,7 +234,7 @@
         header_lines:
           - "=== Memory Stress Test ({{ sysbench_version_for_header }} / {{ stressng_version_for_header }}) ==="
           - "Bandwidth params: block={{ mem_block_size }}, scope={{ mem_scope }}, mode={{ mem_access_mode }}, threads=nproc, runtime={{ mem_runtime }}s/pass"
-          - "Capacity params:  --vm nproc, ~{{ mem_capacity_pct }}% RAM суммарно, --vm-method all --verify, runtime={{ mem_runtime }}s"
+          - "Capacity params:  --vm nproc, ~{{ mem_capacity_percent }}% RAM суммарно, --vm-method all --verify, runtime={{ mem_capacity_runtime }}s"
           - "Metrics: MiB/sec (bandwidth, выше = быстрее) + bogo-ops/s real (capacity throughput)"
           - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
           - ""

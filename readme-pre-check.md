@@ -114,6 +114,11 @@ service_cidr: 10.4.0.0/18, 10.4.0.1 - 10.4.63.254
   - они обязательно должны быть в inventory (`hosts-vars/ -i hosts-vars-override/`)
 
 # ------
+# Скорость RAM и вместимость RAM
+# ------
+## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/memory-stress-test.yaml`
+
+# ------
 # конфигурация параметров для LINSTOR
 # ------
 1. У LINSTOR есть параметры по скорости репликации (Представь sync как наполнение бутылки из крана)
