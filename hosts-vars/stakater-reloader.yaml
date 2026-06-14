@@ -1,33 +1,34 @@
 all:
   vars:
-    reloader_namespace: "reloader"
+    stakater_reloader_namespace: "stakater-reloader"
     # Helm timeouts
-    reloader_pre_helm_timeout: "5m"
+    stakater_reloader_pre_helm_timeout: "5m"
     # ---
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    reloader_pre_extra_objects: []
+    stakater_reloader_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
-    reloader_pre_kustomize_patches: []
+    stakater_reloader_pre_kustomize_patches: []
     # Pre-phase values (NetworkPolicies chart)
-    reloader_pre_helm_values:
-      namespace: "{{ reloader_namespace }}"
-      extraObjects: "{{ reloader_pre_extra_objects }}"
+    stakater_reloader_pre_helm_values:
+      namespace: "{{ stakater_reloader_namespace }}"
+      extraObjects: "{{ stakater_reloader_pre_extra_objects }}"
     # ---
-    reloader_install_helm_timeout: "5m"
-    reloader_rollout_timeout: "120s"
+    stakater_reloader_install_helm_timeout: "5m"
+    stakater_reloader_rollout_timeout: "120s"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
-    reloader_helm_is_oci: false
-    reloader_helm_url: "https://stakater.github.io/stakater-charts"
-    reloader_helm_repo_name: "stakater"
-    reloader_helm_chart_name: "reloader"
-    reloader_helm_chart_version: "2.2.12"
+    stakater_reloader_helm_is_oci: false
+    stakater_reloader_helm_url: "https://stakater.github.io/stakater-charts"
+    stakater_reloader_helm_repo_name: "stakater"
+    stakater_reloader_helm_chart_name: "reloader"
+    stakater_reloader_helm_chart_version: "2.2.12"
     # Replica count (SCALE).
-    reloader_helm_values_replica_count: 1
+    stakater_reloader_helm_values_replica_count: 1
     # ---------
     # Helm chart values (nested under upstream chart's top-level `reloader:` key)
-    reloader_helm_values:
-      # Clean resource names: Deployment "reloader" (not "reloader-reloader")
-      fullnameOverride: reloader
+    stakater_reloader_helm_values:
+      # nameOverride + fullnameOverride => все ресурсы и labels = "stakater-reloader"
+      nameOverride: stakater-reloader
+      fullnameOverride: stakater-reloader
       reloader:
         # OFF by default: Reloader reloads NOTHING unless a workload carries an
         # explicit opt-in annotation. Do NOT set autoReloadAll: true.
@@ -41,7 +42,7 @@ all:
         serviceAccount:
           create: true
         deployment:
-          replicas: "{{ reloader_helm_values_replica_count }}"
+          replicas: "{{ stakater_reloader_helm_values_replica_count }}"
           tolerations: []
           nodeSelector: {}
           affinity: {}
@@ -51,6 +52,6 @@ all:
           enabled: true
         serviceMonitor:
           enabled: false
-        # NetworkPolicy is managed by reloader/pre chart, not the upstream chart
+        # NetworkPolicy is managed by stakater-reloader/pre chart, not the upstream chart
         netpol:
           enabled: false

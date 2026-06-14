@@ -1,0 +1,180 @@
+# =============================================================================
+# Install Stakater Reloader via Helm
+# Steps:
+#   1. stakater-reloader/pre: NetworkPolicies for stakater-reloader namespace
+#   2. Official Stakater reloader Helm chart
+#
+# Usage (tags):
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/stakater-reloader-install.yaml
+#   ansible-playbook ... stakater-reloader-install.yaml --tags pre      # only NetworkPolicies
+#   ansible-playbook ... stakater-reloader-install.yaml --tags install
+#   ansible-playbook ... stakater-reloader-install.yaml --tags post     # (no-op)
+# =============================================================================
+
+---
+- name: Install stakater-reloader
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  vars:
+    # Имя локального факта — единая точка объявления (вынос из хардкода)
+    _local_stakater_reloader_helm_chart_source_key: "_local_stakater_reloader_helm_chart_source"
+
+  tasks:
+    - name: "[stakater-reloader-install-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-install-pre-check"
+      tags: [always]
+
+    - name: "[stakater-reloader-install-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-install-pre-check"
+        dto_target_namespace: "{{ stakater_reloader_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: STAKATER-RELOADER/PRE (NetworkPolicies)
+    # =========================================================================
+
+    - name: "[stakater-reloader-pre] Copy chart to server"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/stakater-reloader/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/stakater-reloader/pre"
+      tags: [pre]
+
+    - name: "[stakater-reloader-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-pre"
+        dto_dir: "{{ remote_charts_dir }}/stakater-reloader/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ stakater_reloader_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[stakater-reloader-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-pre"
+        dto_release_name: "stakater-reloader-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/stakater-reloader/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/stakater-reloader/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/stakater-reloader/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/stakater-reloader/pre-k"
+        dto_patches_list: "{{ stakater_reloader_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ stakater_reloader_namespace }}"
+      tags: [pre]
+
+    - name: "[stakater-reloader-pre] Install or upgrade via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-pre"
+        dto_helm_command: >
+          helm upgrade --install stakater-reloader-pre {{ remote_charts_dir }}/stakater-reloader/pre-k
+          --namespace {{ stakater_reloader_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ stakater_reloader_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: OFFICIAL STAKATER RELOADER HELM
+    # =========================================================================
+
+    - name: "[stakater-reloader-install] Add Helm repository"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-install"
+        dto_helm_is_oci: "{{ stakater_reloader_helm_is_oci }}"
+        dto_helm_url: "{{ stakater_reloader_helm_url }}"
+        dto_helm_chart_version: "{{ stakater_reloader_helm_chart_version }}"
+        dto_helm_repo_name: "{{ stakater_reloader_helm_repo_name }}"
+        dto_helm_chart_name: "{{ stakater_reloader_helm_chart_name }}"
+        dto_helm_chart_source_res_fact_name: "{{ _local_stakater_reloader_helm_chart_source_key }}"
+      tags: [install]
+
+    - name: "[stakater-reloader-install] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-install"
+        dto_dir: "{{ remote_charts_dir }}/stakater-reloader/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ stakater_reloader_helm_values | to_nice_yaml }}"
+      tags: [install]
+
+    - name: "[stakater-reloader-install] Install or upgrade via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-install"
+        dto_helm_command: >
+          helm upgrade --install stakater-reloader {{ lookup('vars', _local_stakater_reloader_helm_chart_source_key) }}
+          --namespace {{ stakater_reloader_namespace }}
+          --create-namespace
+          --version {{ stakater_reloader_helm_chart_version }}
+          --values {{ remote_charts_dir }}/stakater-reloader/install/values-override.yaml
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ stakater_reloader_install_helm_timeout }}
+      tags: [install]
+
+    # =========================================================================
+    # WAIT FOR STAKATER-RELOADER POD
+    # =========================================================================
+
+    - name: "[stakater-reloader-install] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-install"
+        dto_rollout_namespace: "{{ stakater_reloader_namespace }}"
+        dto_rollout_timeout: "{{ stakater_reloader_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/stakater-reloader
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: POST (no-op)
+    # =========================================================================
+
+    # post: nothing to do for stakater-reloader (PodMonitor ships with the install chart)
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[stakater-reloader-verify] Verify Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_helm_namespace: "{{ stakater_reloader_namespace }}"
+        dto_label_name: "stakater-reloader-verify"
+      tags: [always]
+
+    - name: "[stakater-reloader-verify] Show pods in {{ stakater_reloader_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-verify"
+        dto_pods_namespace: "{{ stakater_reloader_namespace }}"
+      tags: [always]
+
+    - name: "[stakater-reloader-verify] Show NetworkPolicies in {{ stakater_reloader_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-verify"
+        dto_np_namespace: "{{ stakater_reloader_namespace }}"
+      tags: [always]
+
+    - name: "[stakater-reloader-verify] Installation complete"
+      debug:
+        msg: "stakater-reloader-pre + stakater-reloader: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
