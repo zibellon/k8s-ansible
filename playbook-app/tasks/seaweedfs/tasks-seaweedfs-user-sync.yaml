@@ -23,7 +23,8 @@
 # Stateless filter API (signature: s3configure_raw | filter(target_identities)):
 #   seaweedfs_identities_to_delete — filer-identity не в target → bare -delete (whole id).
 #   seaweedfs_identities_to_create — target не в filer → create keys[0] + gen secret_key
-#                                    (anonymous → пусто) + full actions/policy_names.
+#                                    + account_id/account_display_name (anonymous → пусто)
+#                                    + full actions/policy_names.
 #   seaweedfs_keys_to_add          — inventory access_key не в filer → append credential
 #                                    (brand-new identity: keys[1:]; gen secret_key). No-rotation.
 #   seaweedfs_keys_to_delete       — filer access_key не в target (identity kept) → -access_key
@@ -45,7 +46,7 @@
 #   READ. s3.configure (live filer) → capture stdout.
 #   A. Delete стейл identities (filer, not in target): s3.configure -user=X -delete -apply (bare).
 #   B. Create new identities with keys[0] (target, not in filer): s3.configure -user=X
-#      [-access_key -secret_key][-actions][-policies] -apply.
+#      [-account_id -account_display_name][-access_key -secret_key][-actions][-policies] -apply.
 #   C. Grant (existing, add-delta): s3.configure -user=X [-actions=csv][-policies=csv] -apply.
 #   D. Revoke (existing, remove-delta): s3.configure -user=X [-policies=csv][-actions=csv]
 #      -delete -apply — NEVER a bare -delete (filter + when guard).
@@ -187,7 +188,7 @@
 - name: "[{{ dto_label_name }}] Phase B — Create new identities via weed shell s3.configure -apply"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
-    dto_weed_command: "s3.configure -user={{ item.name }}{% if item.accessKey | length > 0 %} -access_key={{ item.accessKey }} -secret_key={{ item.secretKey }}{% endif %}{% if item.actions %} -actions={{ item.actions | join(',') }}{% endif %}{% if item.policy_names %} -policies={{ item.policy_names | join(',') }}{% endif %} -apply"
+    dto_weed_command: "s3.configure -user={{ item.name }}{% if item.accountId | length > 0 %} -account_id={{ item.accountId }} -account_display_name={{ item.accountDisplayName }}{% endif %}{% if item.accessKey | length > 0 %} -access_key={{ item.accessKey }} -secret_key={{ item.secretKey }}{% endif %}{% if item.actions %} -actions={{ item.actions | join(',') }}{% endif %}{% if item.policy_names %} -policies={{ item.policy_names | join(',') }}{% endif %} -apply"
   loop: "{{ lookup('vars', _local_identities_to_create_key) }}"
   loop_control:
     label: "{{ item.name }}"

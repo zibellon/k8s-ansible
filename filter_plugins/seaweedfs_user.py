@@ -65,14 +65,25 @@ def _parse_s3_configure_identities(raw):
 
 def _validate_target_keys(target_identities):
     """Fail-fast validation of the v20 per-key inventory schema. Raises AnsibleFilterError on:
+      - a named (non-anonymous) identity with no account_id, or an empty / non-string one
+        (account_id is the explicit object-ownership id — SeaweedFS 4.34 owner = account,
+        pinned explicitly as the identity name);
+      - a named identity whose account_id != name (strict 1:1 — the object owner is pinned to
+        the name; to change ownership, rename = delete+recreate the identity);
+      - a duplicate identity name across ALL identities (names must be globally unique;
+        account_id == name, so a dup name is also a dup owner);
+      - a named identity with an empty / non-string account_display_name when present
+        (the field is OPTIONAL — omit it to default to account_id);
       - a named (non-anonymous) identity with no keys (a credential-less identity is useless —
         SeaweedFS never auto-generates keys);
       - a key with an empty / non-string access_key;
       - a duplicate access_key across ALL identities (global uniqueness — the S3 gateway maps
         accessKey→identity flat, so a dup is an auth collision);
-      - the anonymous identity carrying keys (anonymous has empty credentials).
+      - the anonymous identity carrying keys, account_id, or account_display_name (anonymous
+        maps to AccountAnonymous and never routes through the owner resolver).
     Pure / idempotent — every keys-consuming filter calls it first."""
     seen = {}
+    seen_name = {}
     for ident in target_identities:
         name = ident.get('name')
         keys = ident.get('keys') or []
@@ -81,7 +92,38 @@ def _validate_target_keys(target_identities):
                 raise AnsibleFilterError(
                     "Anonymous identity must not have keys (anonymous has empty "
                     "credentials). Remove 'keys' from the anonymous identity in inventory.")
+            if ident.get('account_id') is not None:
+                raise AnsibleFilterError(
+                    "Anonymous identity must not have account_id (anonymous maps to "
+                    "AccountAnonymous, never routed through the owner resolver). Remove "
+                    "'account_id' from the anonymous identity in inventory.")
+            if ident.get('account_display_name') is not None:
+                raise AnsibleFilterError(
+                    "Anonymous identity must not have account_display_name (anonymous "
+                    "carries no account). Remove it from the anonymous identity in inventory.")
             continue
+        account_id = ident.get('account_id')
+        if not account_id or not isinstance(account_id, str):
+            raise AnsibleFilterError(
+                "Identity '{0}' has no account_id. account_id is a REQUIRED non-empty "
+                "string — the explicit object-ownership id (SeaweedFS 4.34 owner = account, "
+                "pinned explicitly as the identity name).".format(name))
+        if account_id != name:
+            raise AnsibleFilterError(
+                "Identity '{0}' has account_id '{1}' != name. account_id MUST equal the "
+                "identity name (strict 1:1 — the object owner is pinned to the name; to "
+                "change ownership, rename = delete+recreate the identity).".format(name, account_id))
+        if name in seen_name:
+            raise AnsibleFilterError(
+                "Duplicate identity name '{0}'. Identity names must be globally unique "
+                "(account_id == name, so a dup name is also a dup owner).".format(name))
+        seen_name[name] = True
+        display = ident.get('account_display_name')
+        if display is not None and (not display or not isinstance(display, str)):
+            raise AnsibleFilterError(
+                "Identity '{0}' has an empty / non-string account_display_name. When present "
+                "it must be a non-empty string (the field is OPTIONAL — omit it to default "
+                "to account_id).".format(name))
         if not keys:
             raise AnsibleFilterError(
                 "Identity '{0}' has no keys. Every named identity must declare at least one "
@@ -114,11 +156,15 @@ def seaweedfs_identities_to_delete(s3configure_raw, target_identities):
 def seaweedfs_identities_to_create(s3configure_raw, target_identities, *,
                                    secret_key_length, secret_key_charset):
     """Target identities NOT present in the filer → create with their FIRST key + full grants.
-    anonymous → empty creds; a named identity → keys[0].access_key (operator-chosen) plus a
-    freshly generated secret_key. Returns [{name, accessKey, secretKey, actions, policy_names}]
-    — applied via `s3.configure -user=X [-access_key -secret_key][-actions][-policies] -apply`.
+    anonymous → empty creds + empty account fields; a named identity → keys[0].access_key
+    (operator-chosen) plus a freshly generated secret_key, and its explicit account_id /
+    account_display_name (the object-ownership id; display defaults to account_id when unset).
+    Returns [{name, accountId, accountDisplayName, accessKey, secretKey, actions, policy_names}]
+    — applied via `s3.configure -user=X [-account_id -account_display_name][-access_key
+    -secret_key][-actions][-policies] -apply`. accountId/accountDisplayName are ALWAYS present
+    ('' for anonymous) so the Phase B template can gate on them.
     (v20: per-key. keys[1:] are added by seaweedfs_keys_to_add, not here.)
-    Raises (via _validate_target_keys) on a named identity with no keys / dup AK / etc."""
+    Raises (via _validate_target_keys) on a named identity with no account_id / no keys / dup."""
     _validate_target_keys(target_identities)
     current_names = {i['name'] for i in _parse_s3_configure_identities(s3configure_raw)}
     result = []
@@ -128,11 +174,16 @@ def seaweedfs_identities_to_create(s3configure_raw, target_identities, *,
             continue
         if name == 'anonymous':
             ak, sk = '', ''
+            account_id, account_display_name = '', ''
         else:
             ak = t['keys'][0]['access_key']
             sk = _gen_secret(secret_key_length, secret_key_charset)
+            account_id = t['account_id']
+            account_display_name = t.get('account_display_name') or account_id
         result.append({
             'name': name,
+            'accountId': account_id,
+            'accountDisplayName': account_display_name,
             'accessKey': ak,
             'secretKey': sk,
             'actions': list(t.get('actions') or []),
