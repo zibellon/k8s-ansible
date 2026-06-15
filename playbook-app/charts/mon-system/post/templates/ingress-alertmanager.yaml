@@ -1,11 +1,11 @@
 # =============================================================================
 # INGRESS FOR ALERTMANAGER UI (Traefik)
 #   prometheus_operator.enabled + alertmanager.enabled → workload-enable gate (composite, внешний)
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
 {{- if and .Values.prometheus_operator.enabled .Values.alertmanager.enabled }}
-{{- if .Values.alertmanagerIngressConfig.ingress.enabled }}
+{{- if .Values.alertmanagerIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,19 +13,19 @@ metadata:
   name: alertmanager
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.alertmanagerIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.alertmanagerIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.alertmanagerIngressConfig.ingressClass | quote }}
+    {{- if .Values.alertmanagerIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.alertmanagerIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.alertmanagerIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.alertmanagerIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.alertmanagerIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.alertmanagerIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.alertmanagerIngressConfig.ingress.tlsEnabled .Values.alertmanagerIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.alertmanagerIngressConfig.ingressClass }}
+  {{- if and .Values.alertmanagerIngressConfig.tlsEnabled .Values.alertmanagerIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.alertmanagerIngressConfig.domain }}

@@ -1,11 +1,11 @@
 # =============================================================================
 # INGRESS FOR GRAFANA (Traefik)
 #   grafana.enabled    → workload-enable gate (composite, внешний)
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
 {{- if .Values.grafana.enabled }}
-{{- if .Values.grafanaIngressConfig.ingress.enabled }}
+{{- if .Values.grafanaIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,19 +13,19 @@ metadata:
   name: ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.grafanaIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.grafanaIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.grafanaIngressConfig.ingressClass | quote }}
+    {{- if .Values.grafanaIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.grafanaIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.grafanaIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.grafanaIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.grafanaIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.grafanaIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.grafanaIngressConfig.ingress.tlsEnabled .Values.grafanaIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.grafanaIngressConfig.ingressClass }}
+  {{- if and .Values.grafanaIngressConfig.tlsEnabled .Values.grafanaIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.grafanaIngressConfig.domain }}

@@ -1,11 +1,11 @@
 # =============================================================================
 # INGRESS FOR PROMETHEUS UI (Traefik)
 #   prometheus_operator.enabled + prometheus.enabled → workload-enable gate (composite, внешний)
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
 {{- if and .Values.prometheus_operator.enabled .Values.prometheus.enabled }}
-{{- if .Values.prometheusIngressConfig.ingress.enabled }}
+{{- if .Values.prometheusIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,19 +13,19 @@ metadata:
   name: prometheus
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.prometheusIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.prometheusIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.prometheusIngressConfig.ingressClass | quote }}
+    {{- if .Values.prometheusIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.prometheusIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.prometheusIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.prometheusIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.prometheusIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.prometheusIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.prometheusIngressConfig.ingress.tlsEnabled .Values.prometheusIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.prometheusIngressConfig.ingressClass }}
+  {{- if and .Values.prometheusIngressConfig.tlsEnabled .Values.prometheusIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.prometheusIngressConfig.domain }}
