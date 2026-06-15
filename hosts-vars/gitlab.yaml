@@ -42,22 +42,24 @@ all:
                   app.kubernetes.io/component: acme-http01-solver
                   app.kubernetes.io/managed-by: cert-manager
     gitlab_cert_manager_issuer_enabled: true
+    # Issuer identity — вынесено в простые переменные (единый источник истины:
+    # на name ссылается и Issuer, и issuerRef.name сертификатов).
+    gitlab_acme_issuer_name: "gitlab-acme"
+    gitlab_acme_private_key_name: "gitlab-acme-account-key"
     gitlab_cert_manager_issuer:
       enabled: "{{ gitlab_cert_manager_issuer_enabled }}"
-      body:
-        name: "gitlab-acme"
-        spec:
-          acme:
-            server: "{{ gitlab_acme_server }}"
-            email: "{{ gitlab_acme_email }}"
-            privateKeySecretRef:
-              name: "gitlab-acme-account-key"
-            solvers: "{{ gitlab_acme_solvers }}"
-    # Ingress config (per-domain) — независимые toggle'ы ingress / certificate.
-    # 1 domain === 1 ingress_config. gitlab — 5 доменов.
+      name: "{{ gitlab_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ gitlab_acme_server }}"
+          email: "{{ gitlab_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ gitlab_acme_private_key_name }}"
+          solvers: "{{ gitlab_acme_solvers }}"
+    # Ingress config (per-domain). gitlab — 3 домена (ui + registry + pages).
     gitlab_ui_ingress_enabled: true
     gitlab_ui_ingress_tls_enabled: true
-    gitlab_ui_ingress_certificate_enabled: true
+    gitlab_ui_certificate_enabled: true
     gitlab_ui_ingress_config:
       domain: "{{ gitlab_ui_domain }}"
       tlsSecretName: "{{ gitlab_ui_https_secret_name }}"
@@ -67,11 +69,20 @@ all:
         tlsEnabled: "{{ gitlab_ui_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ gitlab_ui_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    gitlab_ui_certificate:
+      enabled: "{{ gitlab_ui_certificate_enabled }}"
+      name: "{{ gitlab_ui_https_secret_name }}"
+      spec:
+        secretName: "{{ gitlab_ui_https_secret_name }}"
+        dnsNames:
+          - "{{ gitlab_ui_domain }}"
+        issuerRef:
+          name: "{{ gitlab_acme_issuer_name }}"
+          kind: "Issuer"
     gitlab_registry_ingress_enabled: true
     gitlab_registry_ingress_tls_enabled: true
-    gitlab_registry_ingress_certificate_enabled: true
+    gitlab_registry_certificate_enabled: true
     gitlab_registry_ingress_config:
       domain: "{{ gitlab_registry_domain }}"
       tlsSecretName: "{{ gitlab_registry_https_secret_name }}"
@@ -81,11 +92,20 @@ all:
         tlsEnabled: "{{ gitlab_registry_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ gitlab_registry_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    gitlab_registry_certificate:
+      enabled: "{{ gitlab_registry_certificate_enabled }}"
+      name: "{{ gitlab_registry_https_secret_name }}"
+      spec:
+        secretName: "{{ gitlab_registry_https_secret_name }}"
+        dnsNames:
+          - "{{ gitlab_registry_domain }}"
+        issuerRef:
+          name: "{{ gitlab_acme_issuer_name }}"
+          kind: "Issuer"
     gitlab_pages_ingress_enabled: true
     gitlab_pages_ingress_tls_enabled: true
-    gitlab_pages_ingress_certificate_enabled: true
+    gitlab_pages_certificate_enabled: true
     gitlab_pages_ingress_config:
       domain: "{{ gitlab_pages_domain }}"
       tlsSecretName: "{{ gitlab_pages_https_secret_name }}"
@@ -95,8 +115,17 @@ all:
         tlsEnabled: "{{ gitlab_pages_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ gitlab_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ gitlab_pages_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    gitlab_pages_certificate:
+      enabled: "{{ gitlab_pages_certificate_enabled }}"
+      name: "{{ gitlab_pages_https_secret_name }}"
+      spec:
+        secretName: "{{ gitlab_pages_https_secret_name }}"
+        dnsNames:
+          - "{{ gitlab_pages_domain }}"
+        issuerRef:
+          name: "{{ gitlab_acme_issuer_name }}"
+          kind: "Issuer"
     gitlab_postgresql_username: "gitlab"
     gitlab_postgresql_database_name: "gitlabhq_production"
     gitlab_postgresql_secret_key_username: "username"
@@ -620,10 +649,12 @@ all:
     # Post-phase values (Ingress chart)
     gitlab_post_helm_values:
       namespace: "{{ gitlab_namespace }}"
-      issuer: "{{ gitlab_cert_manager_issuer }}"
       uiIngressConfig: "{{ gitlab_ui_ingress_config }}"
+      uiCertificateConfig: "{{ gitlab_ui_certificate }}"
       registryIngressConfig: "{{ gitlab_registry_ingress_config }}"
+      registryCertificateConfig: "{{ gitlab_registry_certificate }}"
       pagesIngressConfig: "{{ gitlab_pages_ingress_config }}"
+      pagesCertificateConfig: "{{ gitlab_pages_certificate }}"
       sshPortExternal: "{{ gitlab_ssh_port_external }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
