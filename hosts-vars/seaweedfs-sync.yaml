@@ -146,6 +146,18 @@ all:
     # Schema per identity:
     #   name:    SeaweedFS identity name. Используется в bucket.owner (SECTION 3) и как
     #            S3 credential identity. Special name 'anonymous' для public-read.
+    #   account_id: REQUIRED непустая строка, СТРОГО == name. Явный owner объектов в S3
+    #            (SeaweedFS 4.34: владелец объекта = account; PR #9962/#9971). Пиннится явно
+    #            (s3.configure -account_id=<id>), а не деривится из имени рантаймом — устойчиво
+    #            к смене дефолта SeaweedFS. Равенство == name навязывается валидацией
+    #            (filter_plugins/seaweedfs_user.py); сменить owner = rename identity =
+    #            delete+recreate. Так как == name, account_id уникален (name уникален).
+    #            NOTE: out-of-band смена account через admin-UI sync'ом НЕ детектируется;
+    #            ранее созданные account-less identity (account: null) не back-fill'ятся.
+    #   account_display_name: OPTIONAL непустая строка — человекочитаемый label. Отсутствует →
+    #            деривится = account_id. Косметика (на доступ/владение не влияет).
+    #            'anonymous' — account_id и account_display_name ЗАПРЕЩЕНЫ (special-case
+    #            AccountAnonymous, через owner-резолвер не идёт).
     #   actions: SeaweedFS-internal actions list.
     #            - admin:  ["Admin"] → bypass identity check (isAdmin()), доступ ко всему.
     #            - users:  [] + policy_names=[<p>] → identity-based access через attached
@@ -154,7 +166,7 @@ all:
     #   policy_names: OPTIONAL list of managed-policy names (из seaweedfs_managed_policies,
     #            SECTION 1) прикрепляемых к identity (weed shell s3.configure -policies=<csv>).
     #            Identity с actions=[] + policy_names=[<p>] = identity-based access. Пусто/
-    #            отсутствует — без attached policies (нет доступа кроме admin bypass).
+    #            отсутствует — без attached policies → доступа НЕТ (в 4.34 implicit admin-bypass убран).
     #   keys:    list credential-объектов. REQUIRED непустой для каждой НАЗВАННОЙ identity
     #            (admin + users). ОТСУТСТВУЕТ/пуст для 'anonymous' (нет credentials).
     #            access_key уникален ГЛОБАЛЬНО (по всем identities — S3 gateway мапит
@@ -182,6 +194,7 @@ all:
     # (НЕ путать с admin-UI login seaweedfs_admin_ui_* в hosts-vars/seaweedfs.yaml — другой admin.)
     seaweedfs_identity_s3_admin:
       name: s3-admin
+      account_id: s3-admin
       actions: ["Admin"]
       keys:
         - access_key: "s3-admin"
@@ -192,6 +205,8 @@ all:
     # Пример operator extension (для hosts-vars-override/seaweedfs-sync.yaml):
     # seaweedfs_identities_extra:
     #   - name: alice
+    #     account_id: alice                  # REQUIRED, строго == name
+    #     account_display_name: "Alice"      # OPTIONAL (default = account_id); косметика
     #     actions: []
     #     policy_names: ["team-alpha-rw"]   # attached managed policy (SECTION 1)
     #     keys:
@@ -200,10 +215,11 @@ all:
     #           - "eso-secret/gitlab/s3-storage"
     #           - "secret/team-alpha/s3-creds"
     #   - name: bob
+    #     account_id: bob                    # REQUIRED, строго == name
     #     actions: []
     #     keys:
     #       - access_key: "bob"             # без vault_paths — distribute не выполняется
-    #     # без policy_names — нет доступа кроме admin bypass
+    #     # без policy_names → доступа НЕТ (в 4.34 implicit admin-bypass убран)
     #   - name: anonymous
     #     actions: []
     #     policy_names: ["anonymous-read"]   # включить, когда появится публичный бакет
@@ -218,6 +234,7 @@ all:
     # делает 'vault kv put' для тех же resolved путей.
     # seaweedfs_identities_extra:
     #   - name: gitlab
+    #     account_id: gitlab                # REQUIRED, строго == name
     #     actions: []                       # identity-based: доступ через managed policy
     #     policy_names: ["gitlab-rw"]       # attach managed policy (SECTION 1 opt-in)
     #     keys:
@@ -225,6 +242,7 @@ all:
     #         vault_paths:
     #           - "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
     #   - name: gitlab-runner
+    #     account_id: gitlab-runner         # REQUIRED, строго == name
     #     actions: []
     #     policy_names: ["gitlab-runner-rw"]
     #     keys:
@@ -240,6 +258,7 @@ all:
     # вручную делает 'vault kv put' для того же resolved пути.
     # seaweedfs_identities_extra:
     #   - name: loki
+    #     account_id: loki                  # REQUIRED, строго == name
     #     actions: []                       # identity-based: доступ через managed policy
     #     policy_names: ["loki-rw"]         # attach managed policy (SECTION 1 opt-in)
     #     keys:
