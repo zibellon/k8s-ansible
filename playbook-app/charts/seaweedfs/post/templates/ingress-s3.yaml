@@ -1,10 +1,10 @@
 # =============================================================================
 # INGRESS FOR SEAWEEDFS S3 ENDPOINT (Traefik)
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 #   vpnOnlyEnabled     → false (S3 endpoint открыт наружу)
 # =============================================================================
-{{- if .Values.s3IngressConfig.ingress.enabled }}
+{{- if .Values.s3IngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -12,19 +12,19 @@ metadata:
   name: seaweedfs-s3
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.s3IngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.s3IngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.s3IngressConfig.ingressClass | quote }}
+    {{- if .Values.s3IngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.s3IngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.s3IngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.s3IngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.s3IngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.s3IngressConfig.ingress.ingressClass }}
-  {{- if and .Values.s3IngressConfig.ingress.tlsEnabled .Values.s3IngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.s3IngressConfig.ingressClass }}
+  {{- if and .Values.s3IngressConfig.tlsEnabled .Values.s3IngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.s3IngressConfig.domain }}

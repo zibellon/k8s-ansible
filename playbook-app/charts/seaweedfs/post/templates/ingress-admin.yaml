@@ -2,11 +2,11 @@
 # INGRESS FOR SEAWEEDFS ADMIN COMPONENT UI (Traefik)
 #   admin (полноценная панель управления) на отдельном поддомене (только Host,
 #   без path-prefix). Защита — TLS + login/password (WEED_ADMIN_USER/PASSWORD).
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 #   vpnOnlyEnabled     → false (admin открыт наружу в тестовой фазе)
 # =============================================================================
-{{- if .Values.adminIngressConfig.ingress.enabled }}
+{{- if .Values.adminIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -14,19 +14,19 @@ metadata:
   name: seaweedfs-admin
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.adminIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.adminIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.adminIngressConfig.ingressClass | quote }}
+    {{- if .Values.adminIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.adminIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.adminIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.adminIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.adminIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.adminIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.adminIngressConfig.ingress.tlsEnabled .Values.adminIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.adminIngressConfig.ingressClass }}
+  {{- if and .Values.adminIngressConfig.tlsEnabled .Values.adminIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.adminIngressConfig.domain }}

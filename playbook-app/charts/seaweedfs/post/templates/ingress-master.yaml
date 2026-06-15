@@ -1,11 +1,11 @@
 # =============================================================================
 # INGRESS FOR SEAWEEDFS MASTER UI (Traefik)
 #   master UI на отдельном поддомене (только Host, без path-prefix).
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 #   vpnOnlyEnabled     → false (master UI открыт наружу в тестовой фазе)
 # =============================================================================
-{{- if .Values.masterIngressConfig.ingress.enabled }}
+{{- if .Values.masterIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,19 +13,19 @@ metadata:
   name: seaweedfs-master-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.masterIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.masterIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.masterIngressConfig.ingressClass | quote }}
+    {{- if .Values.masterIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.masterIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.masterIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.masterIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.masterIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.masterIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.masterIngressConfig.ingress.tlsEnabled .Values.masterIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.masterIngressConfig.ingressClass }}
+  {{- if and .Values.masterIngressConfig.tlsEnabled .Values.masterIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.masterIngressConfig.domain }}

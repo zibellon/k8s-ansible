@@ -1,11 +1,11 @@
 # =============================================================================
 # INGRESS FOR SEAWEEDFS FILER UI (Traefik)
 #   filer UI на отдельном поддомене (только Host, без path-prefix).
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 #   vpnOnlyEnabled     → false (filer UI открыт наружу в тестовой фазе)
 # =============================================================================
-{{- if .Values.filerIngressConfig.ingress.enabled }}
+{{- if .Values.filerIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,19 +13,19 @@ metadata:
   name: seaweedfs-filer-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.filerIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.filerIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.filerIngressConfig.ingressClass | quote }}
+    {{- if .Values.filerIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.filerIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.filerIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.filerIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.filerIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.filerIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.filerIngressConfig.ingress.tlsEnabled .Values.filerIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.filerIngressConfig.ingressClass }}
+  {{- if and .Values.filerIngressConfig.tlsEnabled .Values.filerIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.filerIngressConfig.domain }}
