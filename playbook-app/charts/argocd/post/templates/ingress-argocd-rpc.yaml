@@ -1,10 +1,10 @@
 # =============================================================================
 # INGRESSROUTE FOR ARGOCD RPC / gRPC (Traefik)
-#   ingress.enabled    → рендерить IngressRoute
-#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
+#   enabled    → рендерить IngressRoute
+#   tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
 # Matches gRPC requests by Content-Type header. Higher priority than UI route.
 # =============================================================================
-{{- if .Values.rpcIngressConfig.ingress.enabled }}
+{{- if .Values.rpcIngressConfig.enabled }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -12,10 +12,10 @@ metadata:
   name: argocd-rpc
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.rpcIngressConfig.ingress.ingressClass }}"
+    kubernetes.io/ingress.class: "{{ .Values.rpcIngressConfig.ingressClass }}"
 spec:
   entryPoints:
-    {{- if .Values.rpcIngressConfig.ingress.tlsEnabled }}
+    {{- if .Values.rpcIngressConfig.tlsEnabled }}
     - {{ .Values.traefik.entryPoints.websecure }}
     {{- else }}
     - {{ .Values.traefik.entryPoints.web }}
@@ -24,9 +24,9 @@ spec:
     - kind: Rule
       match: Host(`{{ .Values.rpcIngressConfig.domain }}`) && Header(`Content-Type`, `application/grpc`)
       priority: 11
-      {{- if .Values.rpcIngressConfig.ingress.vpnOnlyEnabled }}
+      {{- if .Values.rpcIngressConfig.vpnOnlyEnabled }}
       middlewares:
-        {{- range .Values.rpcIngressConfig.ingress.vpnIngressRouteMiddlewares }}
+        {{- range .Values.rpcIngressConfig.vpnIngressRouteMiddlewares }}
         - name: {{ .name }}
           namespace: {{ .namespace }}
         {{- end }}
@@ -35,7 +35,7 @@ spec:
         - name: argocd-server
           port: 80
           scheme: h2c
-  {{- if and .Values.rpcIngressConfig.ingress.tlsEnabled .Values.rpcIngressConfig.tlsSecretName }}
+  {{- if and .Values.rpcIngressConfig.tlsEnabled .Values.rpcIngressConfig.tlsSecretName }}
   tls:
     secretName: {{ .Values.rpcIngressConfig.tlsSecretName }}
   {{- end }}

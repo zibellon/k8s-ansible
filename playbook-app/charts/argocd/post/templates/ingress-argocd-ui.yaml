@@ -1,9 +1,9 @@
 # =============================================================================
 # INGRESSROUTE FOR ARGOCD UI (Traefik)
-#   ingress.enabled    → рендерить IngressRoute
-#   ingress.tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
+#   enabled    → рендерить IngressRoute
+#   tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.uiIngressConfig.ingress.enabled }}
+{{- if .Values.uiIngressConfig.enabled }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -11,10 +11,10 @@ metadata:
   name: argocd-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.uiIngressConfig.ingress.ingressClass }}"
+    kubernetes.io/ingress.class: "{{ .Values.uiIngressConfig.ingressClass }}"
 spec:
   entryPoints:
-    {{- if .Values.uiIngressConfig.ingress.tlsEnabled }}
+    {{- if .Values.uiIngressConfig.tlsEnabled }}
     - {{ .Values.traefik.entryPoints.websecure }}
     {{- else }}
     - {{ .Values.traefik.entryPoints.web }}
@@ -23,9 +23,9 @@ spec:
     - kind: Rule
       match: Host(`{{ .Values.uiIngressConfig.domain }}`)
       priority: 10
-      {{- if .Values.uiIngressConfig.ingress.vpnOnlyEnabled }}
+      {{- if .Values.uiIngressConfig.vpnOnlyEnabled }}
       middlewares:
-        {{- range .Values.uiIngressConfig.ingress.vpnIngressRouteMiddlewares }}
+        {{- range .Values.uiIngressConfig.vpnIngressRouteMiddlewares }}
         - name: {{ .name }}
           namespace: {{ .namespace }}
         {{- end }}
@@ -33,7 +33,7 @@ spec:
       services:
         - name: argocd-server
           port: 80
-  {{- if and .Values.uiIngressConfig.ingress.tlsEnabled .Values.uiIngressConfig.tlsSecretName }}
+  {{- if and .Values.uiIngressConfig.tlsEnabled .Values.uiIngressConfig.tlsSecretName }}
   tls:
     secretName: {{ .Values.uiIngressConfig.tlsSecretName }}
   {{- end }}
