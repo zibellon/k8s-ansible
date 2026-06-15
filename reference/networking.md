@@ -114,9 +114,9 @@ Each component's `pre/` chart contains:
 The `post/` chart drives each domain through two parallel objects — an `<c>_<unit>_ingress_config` and an `<c>_<unit>_certificate` (see [`variables.md`](variables.md) §1.2):
 
 - `Certificate` — a flat object `<c>_<unit>_certificate` `{enabled, name, spec}` (e.g. `cilium_hubble_ui_certificate`, `argocd_ui_certificate`), passed to the chart as `certificateConfig` / `<unit>CertificateConfig`. `templates/certificate.yaml` renders it raw via `toYaml .spec`, gated only by `certificateConfig.enabled`. The `spec` carries its own `issuerRef` (`name` + `kind`), so the `Certificate` is decoupled from the local `Issuer` and can target any `Issuer`/`ClusterIssuer`; `kind: Issuer` is the standard default.
-- `Ingress` / `IngressRoute` — rendered in its own per-domain template from the `ingress_config` object, gated by `ingress.enabled`. `ingress.tlsEnabled` selects the `websecure` (TLS) vs `web` (plain HTTP) entrypoint and whether the `tls` block is emitted.
+- `Ingress` / `IngressRoute` — rendered in its own per-domain template from the `ingress_config` object, gated by `enabled`. `tlsEnabled` selects the `websecure` (TLS) vs `web` (plain HTTP) entrypoint and whether the `tls` block is emitted.
 
-The toggles are independent: e.g. `ingress.enabled: true` + `ingress.tlsEnabled: false` + `<c>_<unit>_certificate_enabled: false` yields a plain HTTP ingress with no `Certificate` — useful when TLS is terminated upstream.
+The toggles are independent: e.g. `enabled: true` + `tlsEnabled: false` + `<c>_<unit>_certificate_enabled: false` yields a plain HTTP ingress with no `Certificate` — useful when TLS is terminated upstream.
 
 ### 4.4 Global ClusterIssuers
 

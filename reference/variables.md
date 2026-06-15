@@ -44,7 +44,7 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | `_domain`, `_ui_domain`, `_rpc_domain` | FQDN for ingress |
 | `_https_secret_name` | `tls.secretName` on the Ingress / IngressRoute |
 | `_cert_manager_issuer` | Per-component namespaced cert-manager `Issuer` — flat object `{enabled, name, spec}`. `enabled` toggles the `Issuer` + solver-NetworkPolicies (`pre`); `name` is the `Issuer` `metadata.name` (extracted to `<c>_acme_issuer_name`); `spec` is the verbatim `Issuer` spec. Passed to `pre/` only as `issuer` |
-| `_ingress_config` | Per-domain ingress object — `{domain, tlsSecretName, ingress: {enabled, ingressClass, tlsEnabled, vpnOnlyEnabled, vpn*Middlewares}}` with independent `ingress.enabled` / `ingress.tlsEnabled` toggles. Naming: `<c>_<unit>_ingress_config` (e.g. `cilium_hubble_ui_ingress_config`, `argocd_ui_ingress_config`) |
+| `_ingress_config` | Per-domain ingress object — flat `{enabled, domain, ingressClass, tlsEnabled, tlsSecretName, vpnOnlyEnabled, vpn*Middlewares}` with independent `enabled` / `tlsEnabled` toggles. Naming: `<c>_<unit>_ingress_config` (e.g. `cilium_hubble_ui_ingress_config`, `argocd_ui_ingress_config`) |
 | `_certificate` | Per-domain cert-manager `Certificate` — flat object `{enabled, name, spec}` (mirrors `_cert_manager_issuer`). `enabled` gates the `Certificate`; `name` is `metadata.name`; `spec` is the verbatim `Certificate` spec incl. `issuerRef` (`name` + `kind`, default `Issuer`). Passed to `post/` as `certificateConfig` / `<unit>CertificateConfig`. Naming: `<c>_<unit>_certificate` |
 | `_ingress_class_name` | Traefik ingress class (usually `traefik-lb`) |
 | `_vpn_only_enabled` | If true, attach Traefik `vpn-only` middleware |
