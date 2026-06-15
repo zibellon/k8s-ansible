@@ -47,22 +47,25 @@ all:
                   app.kubernetes.io/component: acme-http01-solver
                   app.kubernetes.io/managed-by: cert-manager
     seaweedfs_cert_manager_issuer_enabled: true
+    # Issuer identity — вынесено в простые переменные (единый источник истины:
+    # на name ссылается и Issuer, и issuerRef.name сертификатов).
+    seaweedfs_acme_issuer_name: "seaweedfs-acme"
+    seaweedfs_acme_private_key_name: "seaweedfs-acme-account-key"
     seaweedfs_cert_manager_issuer:
       enabled: "{{ seaweedfs_cert_manager_issuer_enabled }}"
-      body:
-        name: "seaweedfs-acme"
-        spec:
-          acme:
-            server: "{{ seaweedfs_acme_server }}"
-            email: "{{ seaweedfs_acme_email }}"
-            privateKeySecretRef:
-              name: "seaweedfs-acme-account-key"
-            solvers: "{{ seaweedfs_acme_solvers }}"
+      name: "{{ seaweedfs_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ seaweedfs_acme_server }}"
+          email: "{{ seaweedfs_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ seaweedfs_acme_private_key_name }}"
+          solvers: "{{ seaweedfs_acme_solvers }}"
 
     # Ingress config 1: S3 endpoint (без VPN-only) — 1 domain === 1 ingress_config
     seaweedfs_s3_ingress_enabled: true
     seaweedfs_s3_ingress_tls_enabled: true
-    seaweedfs_s3_ingress_certificate_enabled: true
+    seaweedfs_s3_certificate_enabled: true
     seaweedfs_s3_ingress_config:
       domain: "{{ seaweedfs_s3_domain }}"
       tlsSecretName: "{{ seaweedfs_s3_tls_secret_name }}"
@@ -72,13 +75,22 @@ all:
         tlsEnabled: "{{ seaweedfs_s3_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ seaweedfs_s3_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ seaweedfs_s3_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    seaweedfs_s3_certificate:
+      enabled: "{{ seaweedfs_s3_certificate_enabled }}"
+      name: "{{ seaweedfs_s3_tls_secret_name }}"
+      spec:
+        secretName: "{{ seaweedfs_s3_tls_secret_name }}"
+        dnsNames:
+          - "{{ seaweedfs_s3_domain }}"
+        issuerRef:
+          name: "{{ seaweedfs_acme_issuer_name }}"
+          kind: "Issuer"
 
     # Ingress config 2: Master UI — отдельный поддомен (только Host, без path-prefix)
     seaweedfs_master_ui_ingress_enabled: true
     seaweedfs_master_ui_ingress_tls_enabled: true
-    seaweedfs_master_ui_ingress_certificate_enabled: true
+    seaweedfs_master_ui_certificate_enabled: true
     seaweedfs_master_ui_ingress_config:
       domain: "{{ seaweedfs_master_ui_domain }}"
       tlsSecretName: "{{ seaweedfs_master_ui_tls_secret_name }}"
@@ -88,13 +100,22 @@ all:
         tlsEnabled: "{{ seaweedfs_master_ui_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ seaweedfs_master_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ seaweedfs_master_ui_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    seaweedfs_master_ui_certificate:
+      enabled: "{{ seaweedfs_master_ui_certificate_enabled }}"
+      name: "{{ seaweedfs_master_ui_tls_secret_name }}"
+      spec:
+        secretName: "{{ seaweedfs_master_ui_tls_secret_name }}"
+        dnsNames:
+          - "{{ seaweedfs_master_ui_domain }}"
+        issuerRef:
+          name: "{{ seaweedfs_acme_issuer_name }}"
+          kind: "Issuer"
 
     # Ingress config 3: Filer UI — отдельный поддомен (только Host, без path-prefix)
     seaweedfs_filer_ui_ingress_enabled: true
     seaweedfs_filer_ui_ingress_tls_enabled: true
-    seaweedfs_filer_ui_ingress_certificate_enabled: true
+    seaweedfs_filer_ui_certificate_enabled: true
     seaweedfs_filer_ui_ingress_config:
       domain: "{{ seaweedfs_filer_ui_domain }}"
       tlsSecretName: "{{ seaweedfs_filer_ui_tls_secret_name }}"
@@ -104,13 +125,22 @@ all:
         tlsEnabled: "{{ seaweedfs_filer_ui_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ seaweedfs_filer_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ seaweedfs_filer_ui_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    seaweedfs_filer_ui_certificate:
+      enabled: "{{ seaweedfs_filer_ui_certificate_enabled }}"
+      name: "{{ seaweedfs_filer_ui_tls_secret_name }}"
+      spec:
+        secretName: "{{ seaweedfs_filer_ui_tls_secret_name }}"
+        dnsNames:
+          - "{{ seaweedfs_filer_ui_domain }}"
+        issuerRef:
+          name: "{{ seaweedfs_acme_issuer_name }}"
+          kind: "Issuer"
 
     # Ingress config 4: Admin component UI — отдельный поддомен (только Host, без path-prefix)
     seaweedfs_admin_ui_ingress_enabled: true
     seaweedfs_admin_ui_ingress_tls_enabled: true
-    seaweedfs_admin_ui_ingress_certificate_enabled: true
+    seaweedfs_admin_ui_certificate_enabled: true
     seaweedfs_admin_ui_ingress_config:
       domain: "{{ seaweedfs_admin_ui_domain }}"
       tlsSecretName: "{{ seaweedfs_admin_ui_tls_secret_name }}"
@@ -120,8 +150,17 @@ all:
         tlsEnabled: "{{ seaweedfs_admin_ui_ingress_tls_enabled }}"
         vpnOnlyEnabled: "{{ seaweedfs_admin_ui_vpn_only_enabled }}"
         vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
-      certificate:
-        enabled: "{{ seaweedfs_admin_ui_ingress_certificate_enabled }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    seaweedfs_admin_ui_certificate:
+      enabled: "{{ seaweedfs_admin_ui_certificate_enabled }}"
+      name: "{{ seaweedfs_admin_ui_tls_secret_name }}"
+      spec:
+        secretName: "{{ seaweedfs_admin_ui_tls_secret_name }}"
+        dnsNames:
+          - "{{ seaweedfs_admin_ui_domain }}"
+        issuerRef:
+          name: "{{ seaweedfs_acme_issuer_name }}"
+          kind: "Issuer"
 
     # PostgreSQL creds field names (потребляются через ESO-materialised Secret)
     seaweedfs_postgresql_username: "seaweedfs"
@@ -483,11 +522,14 @@ all:
     # Post-phase values (Ingress chart)
     seaweedfs_post_helm_values:
       namespace: "{{ seaweedfs_namespace }}"
-      issuer: "{{ seaweedfs_cert_manager_issuer }}"
       s3IngressConfig: "{{ seaweedfs_s3_ingress_config }}"
+      s3CertificateConfig: "{{ seaweedfs_s3_certificate }}"
       masterIngressConfig: "{{ seaweedfs_master_ui_ingress_config }}"
+      masterCertificateConfig: "{{ seaweedfs_master_ui_certificate }}"
       filerIngressConfig: "{{ seaweedfs_filer_ui_ingress_config }}"
+      filerCertificateConfig: "{{ seaweedfs_filer_ui_certificate }}"
       adminIngressConfig: "{{ seaweedfs_admin_ui_ingress_config }}"
+      adminCertificateConfig: "{{ seaweedfs_admin_ui_certificate }}"
       traefik:
         entryPoints:
           web: "{{ traefik_web_entrypoint }}"
