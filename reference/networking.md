@@ -94,28 +94,29 @@ Traefik HTTP-01 challenges create solver pods that must be admitted by `NetworkP
 
 ### 4.1 Per-component Issuer
 
-Each ingress component `<c>` defines `<c>_cert_manager_issuer` in `hosts-vars/<c>.yaml` — a single object `{enabled, body}`:
+Each ingress component `<c>` defines `<c>_cert_manager_issuer` in `hosts-vars/<c>.yaml` — a flat object `{enabled, name, spec}`:
 
-- `enabled` (`true`/`false`) — the toggle. `true` → the `pre/` chart renders the `Issuer` + solver-NetworkPolicies, and the `Certificate` becomes available in `post/`. `false` → no `Issuer`, no solver-NetworkPolicies, no `Certificate` (e.g. when TLS is terminated upstream by Cloudflare).
-- `body` — `{name, spec}` where `spec` is the verbatim cert-manager `Issuer` spec (ACME `server`, `email`, `privateKeySecretRef`, `solvers[]`).
+- `enabled` (`true`/`false`) — the toggle. `true` → the `pre/` chart renders the `Issuer` + solver-NetworkPolicies. `false` → no `Issuer`, no solver-NetworkPolicies (e.g. when TLS is terminated upstream by Cloudflare).
+- `name` — the `Issuer` `metadata.name` (e.g. `<c>-acme`), extracted to the simple var `<c>_acme_issuer_name` so the same value feeds both the `Issuer` and each `Certificate`'s `issuerRef.name` (the ACME `privateKeySecretRef` name is likewise extracted to `<c>_acme_private_key_name`).
+- `spec` — the verbatim cert-manager `Issuer` spec (ACME `server`, `email`, `privateKeySecretRef`, `solvers[]`).
 
-The object is passed verbatim into `<c>_pre_helm_values` and `<c>_post_helm_values` as a single `issuer` key.
+The object is passed verbatim into `<c>_pre_helm_values` as a single `issuer` key. The `post/` chart no longer receives `issuer` — each `Certificate` carries its own `issuerRef` (§4.3).
 
 ### 4.2 issuer.yaml + solver-loop in pre/
 
 Each component's `pre/` chart contains:
 
-- `templates/issuer.yaml` — renders the namespaced `Issuer` under `{{- if .Values.issuer.enabled }}`, `body.spec` dumped via `toYaml`. The template is byte-identical across all components.
-- the `NetworkPolicy` template — a solver-loop: iterates `.Values.issuer.body.spec.acme.solvers[]` and, for each `http01` solver, emits a pair of NetworkPolicies — (1) ingress in the component namespace (traefik → solver pod, port `acmeSolver.port`); (2) egress in the traefik namespace (traefik → solver pod). The pod selector uses the solver's `http01.ingress.podTemplate.metadata.labels` (falling back to `acme.cert-manager.io/http01-solver: "true"`). The whole block is gated by `issuer.enabled` + presence of `body.spec.acme`.
+- `templates/issuer.yaml` — renders the namespaced `Issuer` under `{{- if .Values.issuer.enabled }}`, `spec` dumped via `toYaml`. The template is byte-identical across all components.
+- the `NetworkPolicy` template — a solver-loop: iterates `.Values.issuer.spec.acme.solvers[]` and, for each `http01` solver, emits a pair of NetworkPolicies — (1) ingress in the component namespace (traefik → solver pod, port `acmeSolver.port`); (2) egress in the traefik namespace (traefik → solver pod). The pod selector uses the solver's `http01.ingress.podTemplate.metadata.labels` (falling back to `acme.cert-manager.io/http01-solver: "true"`). The whole block is gated by `issuer.enabled` + presence of `spec.acme`.
 
 ### 4.3 Certificate + ingress in post/
 
-The `post/` chart drives each domain through an `ingress_config` object — `<c>_ingress_config` (single-domain) or `<c>_<unit>_ingress_config` (multi-domain) — with independent toggles (see [`variables.md`](variables.md) §1.2):
+The `post/` chart drives each domain through two parallel objects — an `<c>_<unit>_ingress_config` and an `<c>_<unit>_certificate` (see [`variables.md`](variables.md) §1.2):
 
-- `Certificate` — rendered in a dedicated `templates/certificate.yaml`, gated by `issuer.enabled` AND `<unit>.certificate.enabled`. If the issuer is disabled the `Certificate` is silently skipped (no error).
-- `Ingress` / `IngressRoute` — rendered in its own per-domain template, gated by `<unit>.ingress.enabled`. `<unit>.ingress.tlsEnabled` selects the `websecure` (TLS) vs `web` (plain HTTP) entrypoint and whether the `tls` block is emitted.
+- `Certificate` — a flat object `<c>_<unit>_certificate` `{enabled, name, spec}` (e.g. `cilium_hubble_ui_certificate`, `argocd_ui_certificate`), passed to the chart as `certificateConfig` / `<unit>CertificateConfig`. `templates/certificate.yaml` renders it raw via `toYaml .spec`, gated only by `certificateConfig.enabled`. The `spec` carries its own `issuerRef` (`name` + `kind`), so the `Certificate` is decoupled from the local `Issuer` and can target any `Issuer`/`ClusterIssuer`; `kind: Issuer` is the standard default.
+- `Ingress` / `IngressRoute` — rendered in its own per-domain template from the `ingress_config` object, gated by `ingress.enabled`. `ingress.tlsEnabled` selects the `websecure` (TLS) vs `web` (plain HTTP) entrypoint and whether the `tls` block is emitted.
 
-The toggles are independent: e.g. `ingress.enabled: true` + `ingress.tlsEnabled: false` + `certificate.enabled: false` yields a plain HTTP ingress with no `Certificate` — useful when TLS is terminated upstream.
+The toggles are independent: e.g. `ingress.enabled: true` + `ingress.tlsEnabled: false` + `<c>_<unit>_certificate_enabled: false` yields a plain HTTP ingress with no `Certificate` — useful when TLS is terminated upstream.
 
 ### 4.4 Global ClusterIssuers
 
@@ -216,7 +217,7 @@ Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../playbook-
 
 | Consumer chart | Target backend | Pair of NPs |
 |---|---|---|
-| consumer's `pre/` (range loop по `issuer.body.spec.acme.solvers`) | `traefik` (ACME HTTP-01) | `allow-acme-solver-<i>` в consumer ns + `<consumer-ns>-allow-acme-solver-<i>` в traefik ns |
+| consumer's `pre/` (range loop по `issuer.spec.acme.solvers`) | `traefik` (ACME HTTP-01) | `allow-acme-solver-<i>` в consumer ns + `<consumer-ns>-allow-acme-solver-<i>` в traefik ns |
 | `gitlab/pre` | `traefik` | egress entries в `{namespace}-allow-traefik` (NP в traefik ns) |
 | `gitlab/pre` | `haproxy` | `{namespace}-allow-haproxy` в haproxy ns |
 | `gitlab-runner/pre` | `gitlab` (webservice, shell) | `{namespace}-allow-gitlab-webservice` + `{namespace}-allow-gitlab-shell` в gitlab ns |
