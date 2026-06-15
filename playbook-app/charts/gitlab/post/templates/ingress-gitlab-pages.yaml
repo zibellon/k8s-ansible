@@ -1,9 +1,9 @@
 # =============================================================================
 # INGRESS FOR GITLAB PAGES (Traefik)
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.pagesIngressConfig.ingress.enabled }}
+{{- if .Values.pagesIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -11,19 +11,19 @@ metadata:
   name: gitlab-pages
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.pagesIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.pagesIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.pagesIngressConfig.ingressClass | quote }}
+    {{- if .Values.pagesIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.pagesIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.pagesIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.pagesIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.pagesIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.pagesIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.pagesIngressConfig.ingress.tlsEnabled .Values.pagesIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.pagesIngressConfig.ingressClass }}
+  {{- if and .Values.pagesIngressConfig.tlsEnabled .Values.pagesIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.pagesIngressConfig.domain }}

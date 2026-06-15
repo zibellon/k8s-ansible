@@ -1,9 +1,9 @@
 # =============================================================================
 # INGRESS FOR GITLAB REGISTRY (Traefik)
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.registryIngressConfig.ingress.enabled }}
+{{- if .Values.registryIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -11,19 +11,19 @@ metadata:
   name: gitlab-registry
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.registryIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.registryIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.registryIngressConfig.ingressClass | quote }}
+    {{- if .Values.registryIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.registryIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.registryIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.registryIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.registryIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.registryIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.registryIngressConfig.ingress.tlsEnabled .Values.registryIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.registryIngressConfig.ingressClass }}
+  {{- if and .Values.registryIngressConfig.tlsEnabled .Values.registryIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.registryIngressConfig.domain }}

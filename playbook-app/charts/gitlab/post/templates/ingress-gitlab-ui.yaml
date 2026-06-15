@@ -1,9 +1,9 @@
 # =============================================================================
 # INGRESS FOR GITLAB UI (Traefik)
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.uiIngressConfig.ingress.enabled }}
+{{- if .Values.uiIngressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -11,19 +11,19 @@ metadata:
   name: gitlab-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.uiIngressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.uiIngressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.uiIngressConfig.ingressClass | quote }}
+    {{- if .Values.uiIngressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.uiIngressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.uiIngressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.uiIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.uiIngressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.uiIngressConfig.ingress.ingressClass }}
-  {{- if and .Values.uiIngressConfig.ingress.tlsEnabled .Values.uiIngressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.uiIngressConfig.ingressClass }}
+  {{- if and .Values.uiIngressConfig.tlsEnabled .Values.uiIngressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.uiIngressConfig.domain }}
