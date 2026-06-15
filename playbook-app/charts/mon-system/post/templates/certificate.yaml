@@ -1,51 +1,35 @@
 # =============================================================================
 # CERTIFICATES FOR MON-SYSTEM (cert-manager)
-#   Каждый Certificate рендерится только если workload-enable gate И
-#   issuer.enabled И <unit>IngressConfig.certificate.enabled. issuer выключен
-#   → Certificate молча пропускается (без ошибки).
+#   Каждый Certificate рендерится если <unit>CertificateConfig.enabled.
+#   Полный raw spec из values (workload-гейт свёрнут в enabled на уровне inventory).
 # =============================================================================
-{{- if and .Values.grafana.enabled .Values.issuer.enabled .Values.grafanaIngressConfig.certificate.enabled }}
+{{- if .Values.grafanaCertificateConfig.enabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.grafanaIngressConfig.tlsSecretName }}
+  name: {{ .Values.grafanaCertificateConfig.name }}
   namespace: {{ .Values.namespace }}
 spec:
-  secretName: {{ .Values.grafanaIngressConfig.tlsSecretName }}
-  dnsNames:
-    - {{ .Values.grafanaIngressConfig.domain }}
-  issuerRef:
-    name: {{ .Values.issuer.body.name }}
-    kind: Issuer
+{{ toYaml .Values.grafanaCertificateConfig.spec | indent 2 }}
 {{- end }}
-{{- if and .Values.prometheus_operator.enabled .Values.prometheus.enabled .Values.issuer.enabled .Values.prometheusIngressConfig.certificate.enabled }}
+{{- if .Values.prometheusCertificateConfig.enabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.prometheusIngressConfig.tlsSecretName }}
+  name: {{ .Values.prometheusCertificateConfig.name }}
   namespace: {{ .Values.namespace }}
 spec:
-  secretName: {{ .Values.prometheusIngressConfig.tlsSecretName }}
-  dnsNames:
-    - {{ .Values.prometheusIngressConfig.domain }}
-  issuerRef:
-    name: {{ .Values.issuer.body.name }}
-    kind: Issuer
+{{ toYaml .Values.prometheusCertificateConfig.spec | indent 2 }}
 {{- end }}
-{{- if and .Values.prometheus_operator.enabled .Values.alertmanager.enabled .Values.issuer.enabled .Values.alertmanagerIngressConfig.certificate.enabled }}
+{{- if .Values.alertmanagerCertificateConfig.enabled }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.alertmanagerIngressConfig.tlsSecretName }}
+  name: {{ .Values.alertmanagerCertificateConfig.name }}
   namespace: {{ .Values.namespace }}
 spec:
-  secretName: {{ .Values.alertmanagerIngressConfig.tlsSecretName }}
-  dnsNames:
-    - {{ .Values.alertmanagerIngressConfig.domain }}
-  issuerRef:
-    name: {{ .Values.issuer.body.name }}
-    kind: Issuer
+{{ toYaml .Values.alertmanagerCertificateConfig.spec | indent 2 }}
 {{- end }}
