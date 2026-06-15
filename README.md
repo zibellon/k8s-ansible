@@ -183,6 +183,19 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/external-secrets-restart.yaml`
 
 ## ---
+## StakaterReloader. Официальный helm
+## ---
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## ---
+## `--tags pre, install`
+## ---
+##
+- установка + обновление (версия, конфиг)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/stakater-reloader-install.yaml`
+- Есть дополнительный playbook, для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/stakater-reloader-restart.yaml`
+
+## ---
 ## traefik (ingress-1). Официальный helm
 ## ---
 ## Параметры (конфиг) для работы - в cli (как аргументы при запуске)
