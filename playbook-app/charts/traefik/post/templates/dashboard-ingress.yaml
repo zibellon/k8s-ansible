@@ -1,9 +1,9 @@
 # =============================================================================
 # TRAEFIK DASHBOARD INGRESS
-#   ingress.enabled    → рендерить Ingress
-#   ingress.tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls
 # =============================================================================
-{{- if .Values.ingressConfig.ingress.enabled }}
+{{- if .Values.ingressConfig.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -11,19 +11,19 @@ metadata:
   name: ingress-traefik-dashboard
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.ingressConfig.ingress.ingressClass | quote }}
-    {{- if .Values.ingressConfig.ingress.tlsEnabled }}
+    kubernetes.io/ingress.class: {{ .Values.ingressConfig.ingressClass | quote }}
+    {{- if .Values.ingressConfig.tlsEnabled }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
     {{- end }}
-    {{- if .Values.ingressConfig.ingress.vpnOnlyEnabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.ingressConfig.ingress.vpnIngressMiddlewares }}"
+    {{- if .Values.ingressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.ingressConfig.vpnIngressMiddlewares }}"
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingressConfig.ingress.ingressClass }}
-  {{- if and .Values.ingressConfig.ingress.tlsEnabled .Values.ingressConfig.tlsSecretName }}
+  ingressClassName: {{ .Values.ingressConfig.ingressClass }}
+  {{- if and .Values.ingressConfig.tlsEnabled .Values.ingressConfig.tlsSecretName }}
   tls:
     - hosts:
         - {{ .Values.ingressConfig.domain }}
