@@ -11,8 +11,8 @@ REPO_ROOT="$(pwd)"
 WRAPPER=/tmp/syntax-wrapper.yaml
 fail=0
 
-# === Cycle 1: playbooks (top-level) ===
-for f in playbook-system/*.yaml playbook-app/*.yaml; do
+# === Cycle 1: playbooks (recursive, excluding tasks/ + charts/) ===
+for f in $(find playbook-system playbook-app -name '*.yaml' -not -path '*/tasks/*' -not -path '*/charts/*' | sort); do
   if ansible-playbook --syntax-check \
        -i hosts-vars/ -i hosts-vars-test/ "$f" >/tmp/syntax.log 2>&1; then
     echo "OK:   $f"
