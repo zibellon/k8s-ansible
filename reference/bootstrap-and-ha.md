@@ -309,11 +309,11 @@ After `node-remove`:
 
 ### 5.4 `node-clean.yaml`
 
-**Destructive.** Brings a host back to its pre-`node-install` state.
+**Destructive.** Brings a host back to its pre-`full-node-install` state.
 
 - `kubeadm reset --force`.
 - `rm -rf /etc/cni/net.d/* /etc/kubernetes/* /var/lib/kubelet/* /var/lib/etcd/* /root/.kube/*`.
-- Does NOT uninstall containerd / HAProxy / kubelet (package-level). Re-running `full-node-install.yaml` after `server-clean` is cheap.
+- Does NOT uninstall containerd / HAProxy / kubelet (package-level). Re-running `full-node-install.yaml` after `node-clean.yaml` is cheap.
 
 **Requires `--limit`.** Running on all nodes by accident is catastrophic.
 

@@ -233,7 +233,7 @@ Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + clu
 
 Stress RAM via `sysbench memory` (bandwidth: write + read passes, `--threads=nproc`) **and** `stress-ng --vm` (capacity: fills ~`mem_capacity_percent`% of physical RAM across all workers, `--verify`) on 1...N selected nodes — single combined report. Defaults configurable via `mem_*` keys in `hosts-vars/stress-tests.yaml`.
 
-**⚠️ Pre-bootstrap only.** The capacity pass occupies ~90% of RAM and churns it. Run ONLY on raw nodes BEFORE `cluster-init.yaml` (pre-flight hardware check) or on a drained node — on a live node the OOM-killer may evict the kubelet / pods. Cluster-agnostic (host + sudo only). Place in bootstrap order: `full-node-install.yaml` → **memory-stress-test** → `cluster-init.yaml`.
+**⚠️ Pre-bootstrap only.** The capacity pass occupies ~90% of RAM and churns it. Run ONLY on raw nodes BEFORE `cluster-init.yaml` (pre-flight hardware check) or on a drained node — on a live node the OOM-killer may evict the kubelet / pods. Cluster-agnostic (host + sudo only). Place in bootstrap order: `full-node-install.yaml` → **benchmark/ram.yaml** → `cluster-init.yaml`.
 
 ```bash
 # All hosts in parallel:

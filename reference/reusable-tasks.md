@@ -40,7 +40,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Validates (assert).** `dto_label_name`, `dto_chart_name`, `dto_chart_local_src`, `dto_chart_remote_dest` all defined + non-empty.
 - **Output.** Chart files at `{{ dto_chart_remote_dest }}/` on the master manager.
 - **Callers.** Every phase of every install playbook.
-- **Idempotent.** Re-extraction overwrites. Old files not pruned — if you rename a template, re-run `server-clean` on chart dir or `rm -rf` the remote dir.
+- **Idempotent.** Re-extraction overwrites. Old files not pruned — if you rename a template, re-run `node-clean.yaml` on chart dir or `rm -rf` the remote dir.
 - **Gotcha.** Missing trailing slash on `dto_chart_local_src` creates a nested dir.
 
 ### 1.4а `tasks-copy-helm-values.yaml`

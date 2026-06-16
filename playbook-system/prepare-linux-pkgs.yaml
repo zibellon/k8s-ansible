@@ -1,10 +1,13 @@
 ---
 # =============================================================================
-# Configure linux services (apt / fail2ban / sshd) + reboot on change
+# Prepare Linux — service config (apt / fail2ban / sshd) + node kernel prep
+# (swap / sysctl / modules / softdog); two halves, each with conditional reboot
 # =============================================================================
-# Объединяет три прежних playbook'а: apt-configure, fail2ban-install, sshd-configure.
-# Все три применяют ansible-managed drop-in файлы по префиксу "ansible-" через
-# tasks-sync-managed-files.yaml и проходят последовательно в одном bootstrap-pass.
+# Объединяет два прежних playbook'а: linux-service-configure.yaml
+# (apt-configure + fail2ban-install + sshd-configure) и node-prepare.yaml
+# (swap / sysctl / kernel modules / softdog). Идут последовательно в одном
+# bootstrap-pass; drop-in файлы синкаются по префиксу "ansible-" через
+# tasks-sync-managed-files.yaml.
 #
 # Phases:
 #   1. APT — sync /etc/apt/{sources.list.d, apt.conf.d, preferences.d}/ files
@@ -13,13 +16,21 @@
 #                 fail2ban_jail_d_files, restart on change.
 #   3. SSHD — sync /etc/ssh/sshd_config.d/ from sshd_config_d_files, validate via
 #             sshd -t, reload (not restart) on change.
-#   4. REBOOT — conditional reboot if any of the 5 sync facts is true:
+#   4. REBOOT (services) — conditional reboot if any of the 5 service-sync facts:
 #               apt_sources_changed / apt_conf_d_changed / apt_prefs_changed /
 #               fail2ban_files_changed / sshd_files_changed.
+#   5. SWAP — swapoff, comment swap in /etc/fstab, mask swap.target.
+#   6. SYSCTL — write /etc/sysctl.d/k8s.conf from k8s_sysctl_list.
+#   7. KERNEL MODULES — write /etc/modules-load.d/k8s.conf from k8s_module_list
+#                       (overlay, br_netfilter).
+#   8. SOFTDOG — modprobe config + softdog.service watchdog unit.
+#   9. REBOOT (node) — conditional reboot if sysctl / modules / softdog changed
+#                      or swap was active.
+#  10. FINAL VERIFICATION — assert swap off, sysctl params set, modules loaded.
 #
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
-#     playbook-system/linux-service-configure.yaml [--limit <host>]
+#     playbook-system/prepare-linux-pkgs.yaml [--limit <host>]
 # =============================================================================
 
 - name: Configure linux services (apt / fail2ban / sshd) + conditional reboot
