@@ -44,7 +44,7 @@
 
   tasks:
     # === Phase 1: Validate inputs ===
-    - name: "[memory-stress-test] Assert >=1 host selected"
+    - name: "[ram] Assert >=1 host selected"
       assert:
         that:
           - ansible_play_hosts | length >= 1
@@ -53,7 +53,7 @@
           Raw --limit value: {{ ansible_limit | default('(none)') }}.
       run_once: true
 
-    - name: "[memory-stress-test] Show selected hosts and parameters"
+    - name: "[ram] Show selected hosts and parameters"
       debug:
         msg:
           - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
@@ -62,64 +62,64 @@
       run_once: true
 
     # === Phase 2: Install sysbench + stress-ng inline ===
-    - name: "[memory-stress-test] Pre-check: is sysbench installed?"
+    - name: "[ram] Pre-check: is sysbench installed?"
       command: which sysbench
       register: sysbench_pre_check
       changed_when: false
       failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
 
-    - name: "[memory-stress-test] Install sysbench via apt"
+    - name: "[ram] Install sysbench via apt"
       apt:
         name: sysbench
         state: present
         update_cache: true
       when: sysbench_pre_check.rc != 0
 
-    - name: "[memory-stress-test] Verify sysbench binary works"
+    - name: "[ram] Verify sysbench binary works"
       command: sysbench --version
       register: sysbench_version_check
       changed_when: false
 
-    - name: "[memory-stress-test] Pre-check: is stress-ng installed?"
+    - name: "[ram] Pre-check: is stress-ng installed?"
       command: which stress-ng
       register: stressng_pre_check
       changed_when: false
       failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
 
-    - name: "[memory-stress-test] Install stress-ng via apt"
+    - name: "[ram] Install stress-ng via apt"
       apt:
         name: stress-ng
         state: present
         update_cache: true
       when: stressng_pre_check.rc != 0
 
-    - name: "[memory-stress-test] Verify stress-ng binary works"
+    - name: "[ram] Verify stress-ng binary works"
       command: stress-ng --version
       register: stressng_version_check
       changed_when: false
 
-    - name: "[memory-stress-test] Show installed tool versions"
+    - name: "[ram] Show installed tool versions"
       debug:
         msg:
           - "sysbench on {{ inventory_hostname }}: {{ sysbench_version_check.stdout_lines[0] }}"
           - "stress-ng on {{ inventory_hostname }}: {{ stressng_version_check.stdout_lines[0] }}"
 
     # === Phase 3: Detect host facts and run three passes ===
-    - name: "[memory-stress-test] Detect CPU count (nproc)"
+    - name: "[ram] Detect CPU count (nproc)"
       command: nproc
       register: cpu_nproc
       changed_when: false
 
-    - name: "[memory-stress-test] Detect total RAM (bytes via free -b)"
+    - name: "[ram] Detect total RAM (bytes via free -b)"
       command: free -b
       register: mem_free_raw
       changed_when: false
 
-    - name: "[memory-stress-test] Set mem_total_bytes fact"
+    - name: "[ram] Set mem_total_bytes fact"
       set_fact:
         mem_total_bytes: "{{ mem_free_raw.stdout | regex_search('Mem:\\s+([0-9]+)', '\\1') | first }}"
 
-    - name: "[memory-stress-test] Run sysbench memory — write (bandwidth)"
+    - name: "[ram] Run sysbench memory — write (bandwidth)"
       command: >
         sysbench memory
         --memory-block-size={{ mem_block_size }}
@@ -136,7 +136,7 @@
       failed_when: mem_write_result.rc != 0 # AUTHORIZED §2.1
       changed_when: false
 
-    - name: "[memory-stress-test] Run sysbench memory — read (bandwidth)"
+    - name: "[ram] Run sysbench memory — read (bandwidth)"
       command: >
         sysbench memory
         --memory-block-size={{ mem_block_size }}
@@ -153,7 +153,7 @@
       failed_when: mem_read_result.rc != 0 # AUTHORIZED §2.1
       changed_when: false
 
-    - name: "[memory-stress-test] Run stress-ng vm — capacity (~{{ mem_capacity_percent }}% RAM)"
+    - name: "[ram] Run stress-ng vm — capacity (~{{ mem_capacity_percent }}% RAM)"
       command: >
         stress-ng
         --vm {{ cpu_nproc.stdout | trim }}
@@ -169,7 +169,7 @@
       changed_when: false
 
     # === Phase 4: Aggregate results and print report ===
-    - name: "[memory-stress-test] Build per-host stanza"
+    - name: "[ram] Build per-host stanza"
       set_fact:
         per_host_stanzas: "{{ per_host_stanzas | default([]) + new_stanza }}"
       loop: "{{ ansible_play_hosts | sort }}"
@@ -199,7 +199,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[memory-stress-test] Build cluster numeric stats"
+    - name: "[ram] Build cluster numeric stats"
       set_fact:
         mem_write_mibs_list: "{{ mem_write_mibs_list | default([]) + [write_mibs | float] }}"
         mem_read_mibs_list: "{{ mem_read_mibs_list | default([]) + [read_mibs | float] }}"
@@ -216,7 +216,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[memory-stress-test] Build cluster summary lines"
+    - name: "[ram] Build cluster summary lines"
       set_fact:
         cluster_summary_lines:
           - "=== Cluster summary across {{ ansible_play_hosts | length }} hosts ==="
@@ -227,7 +227,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[memory-stress-test] Compose and print final report"
+    - name: "[ram] Compose and print final report"
       vars:
         sysbench_version_for_header: "{{ hostvars[ansible_play_hosts | first].sysbench_version_check.stdout_lines[0] | default('unknown') }}"
         stressng_version_for_header: "{{ hostvars[ansible_play_hosts | first].stressng_version_check.stdout_lines[0] | default('unknown') }}"

@@ -41,7 +41,7 @@
 
   tasks:
     # === Phase 1: Validate inputs ===
-    - name: "[disk-io-test] Assert >=1 host selected"
+    - name: "[disk-io] Assert >=1 host selected"
       assert:
         that:
           - ansible_play_hosts | length >= 1
@@ -50,19 +50,19 @@
           Raw --limit value: {{ ansible_limit | default('(none)') }}.
       run_once: true
 
-    - name: "[disk-io-test] Stat fio_read_directory on each host"
+    - name: "[disk-io] Stat fio_read_directory on each host"
       stat:
         path: "{{ fio_read_directory }}"
       register: fio_read_dir_stat
       changed_when: false
 
-    - name: "[disk-io-test] Stat fio_write_directory on each host"
+    - name: "[disk-io] Stat fio_write_directory on each host"
       stat:
         path: "{{ fio_write_directory }}"
       register: fio_write_dir_stat
       changed_when: false
 
-    - name: "[disk-io-test] Assert fio_read_directory and fio_write_directory exist and are directories"
+    - name: "[disk-io] Assert fio_read_directory and fio_write_directory exist and are directories"
       assert:
         that:
           - fio_read_dir_stat.stat.exists
@@ -72,7 +72,7 @@
         fail_msg: |
           One of fio_read_directory '{{ fio_read_directory }}' / fio_write_directory '{{ fio_write_directory }}' does not exist or is not a directory on {{ inventory_hostname }}.
 
-    - name: "[disk-io-test] Show selected hosts and parameters"
+    - name: "[disk-io] Show selected hosts and parameters"
       debug:
         msg:
           - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
@@ -82,33 +82,33 @@
       run_once: true
 
     # === Phase 2: Install fio inline ===
-    - name: "[disk-io-test] Pre-check: is fio installed?"
+    - name: "[disk-io] Pre-check: is fio installed?"
       command: which fio
       register: fio_pre_check
       changed_when: false
       failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
 
-    - name: "[disk-io-test] Install fio via apt"
+    - name: "[disk-io] Install fio via apt"
       apt:
         name: fio
         state: present
         update_cache: true
       when: fio_pre_check.rc != 0
 
-    - name: "[disk-io-test] Verify fio binary works"
+    - name: "[disk-io] Verify fio binary works"
       command: fio --version
       register: fio_version_check
       changed_when: false
 
-    - name: "[disk-io-test] Show fio version"
+    - name: "[disk-io] Show fio version"
       debug:
         msg: "fio binary on {{ inventory_hostname }}: {{ fio_version_check.stdout_lines[0] }}"
 
     # === Phase 3: Run fio tests (block with cleanup) ===
-    - name: "[disk-io-test] Run fio tests (block with cleanup)"
+    - name: "[disk-io] Run fio tests (block with cleanup)"
       # AUTHORIZED §2.1: block/always для guaranteed cleanup test файлов
       block:
-        - name: "[disk-io-test] Run fio randwrite (creates test file)"
+        - name: "[disk-io] Run fio randwrite (creates test file)"
           command: >
             fio
             --directory={{ fio_write_directory }}
@@ -130,7 +130,7 @@
           failed_when: fio_randwrite_result.rc != 0 # AUTHORIZED §2.1
           changed_when: false
 
-        - name: "[disk-io-test] Run fio randread (creates and reads its own test file)"
+        - name: "[disk-io] Run fio randread (creates and reads its own test file)"
           command: >
             fio
             --directory={{ fio_read_directory }}
@@ -153,7 +153,7 @@
           changed_when: false
 
       always:
-        - name: "[disk-io-test] Find fio test files"
+        - name: "[disk-io] Find fio test files"
           find:
             paths:
               - "{{ fio_read_directory }}"
@@ -164,7 +164,7 @@
           register: fio_cleanup_files
           changed_when: false
 
-        - name: "[disk-io-test] Remove fio test files"
+        - name: "[disk-io] Remove fio test files"
           file:
             path: "{{ item.path }}"
             state: absent
@@ -173,7 +173,7 @@
             label: "{{ item.path }}"
 
     # === Phase 4: Aggregate results and print report ===
-    - name: "[disk-io-test] Build per-host stanza"
+    - name: "[disk-io] Build per-host stanza"
       set_fact:
         per_host_stanzas: "{{ per_host_stanzas | default([]) + new_stanza }}"
       loop: "{{ ansible_play_hosts | sort }}"
@@ -200,7 +200,7 @@
       become: false # AUTHORIZED §2.1
 
     # Simplified alternative (authorized): accumulate cluster numeric stats in one loop
-    - name: "[disk-io-test] Build cluster numeric stats"
+    - name: "[disk-io] Build cluster numeric stats"
       set_fact:
         fio_read_iops_list: "{{ fio_read_iops_list | default([]) + [read_iops | int] }}"
         fio_write_iops_list: "{{ fio_write_iops_list | default([]) + [write_iops | int] }}"
@@ -220,7 +220,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[disk-io-test] Build cluster summary lines"
+    - name: "[disk-io] Build cluster summary lines"
       set_fact:
         cluster_summary_lines:
           - "=== Cluster summary across {{ ansible_play_hosts | length }} hosts ==="
@@ -230,7 +230,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[disk-io-test] Compose and print final report"
+    - name: "[disk-io] Compose and print final report"
       vars:
         fio_version_for_header: "{{ (hostvars[ansible_play_hosts | first].fio_randread_result.stdout | from_json).fio_version | default('unknown') }}"
         header_lines:

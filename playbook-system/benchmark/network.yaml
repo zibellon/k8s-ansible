@@ -29,7 +29,7 @@
 
   tasks:
     # === Phase 1: Validate inputs ===
-    - name: "[network-bandwidth-test] Assert exactly 2 distinct hosts via --limit"
+    - name: "[network] Assert exactly 2 distinct hosts via --limit"
       assert:
         that:
           - ansible_play_hosts | length == 2
@@ -42,13 +42,13 @@
       run_once: true
 
     # === Phase 2: Determine host_a / host_b deterministically ===
-    - name: "[network-bandwidth-test] Set host_a / host_b (sorted lexicographically)"
+    - name: "[network] Set host_a / host_b (sorted lexicographically)"
       set_fact:
         host_a_fact: "{{ ansible_play_hosts | sort | first }}"
         host_b_fact: "{{ ansible_play_hosts | sort | last }}"
 
     # === Phase 3: Validate internal_ip on both ===
-    - name: "[network-bandwidth-test] Assert internal_ip is defined on both hosts"
+    - name: "[network] Assert internal_ip is defined on both hosts"
       assert:
         that:
           - hostvars[host_a_fact].internal_ip is defined
@@ -58,7 +58,7 @@
         fail_msg: "internal_ip must be defined on both {{ host_a_fact }} and {{ host_b_fact }}"
       run_once: true
 
-    - name: "[network-bandwidth-test] Show selected hosts"
+    - name: "[network] Show selected hosts"
       debug:
         msg:
           - "Host A: {{ host_a_fact }} (internal_ip: {{ hostvars[host_a_fact].internal_ip }})"
@@ -66,52 +66,52 @@
       run_once: true
 
     # === Phase 4: Install iperf3 inline (3-layer defense: debconf + apt + systemd) ===
-    - name: "[network-bandwidth-test] Pre-check: is iperf3 installed?"
+    - name: "[network] Pre-check: is iperf3 installed?"
       command: which iperf3
       register: iperf3_pre_check
       changed_when: false
       failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
 
-    - name: "[network-bandwidth-test] Preseed debconf: iperf3/start_daemon=false"
+    - name: "[network] Preseed debconf: iperf3/start_daemon=false"
       debconf:
         name: iperf3
         question: iperf3/start_daemon
         value: "false"
         vtype: boolean
 
-    - name: "[network-bandwidth-test] Install iperf3 via apt"
+    - name: "[network] Install iperf3 via apt"
       apt:
         name: iperf3
         state: present
         update_cache: true
       when: iperf3_pre_check.rc != 0
 
-    - name: "[network-bandwidth-test] Ensure iperf3 systemd unit disabled and stopped"
+    - name: "[network] Ensure iperf3 systemd unit disabled and stopped"
       systemd:
         name: iperf3
         enabled: false
         state: stopped
       failed_when: false # AUTHORIZED §2.1: iperf3.service может отсутствовать на Debian
 
-    - name: "[network-bandwidth-test] Verify iperf3 binary works"
+    - name: "[network] Verify iperf3 binary works"
       command: iperf3 --version
       register: iperf3_version_check
       changed_when: false
 
-    - name: "[network-bandwidth-test] Show iperf3 version"
+    - name: "[network] Show iperf3 version"
       debug:
         msg: "iperf3 binary: {{ iperf3_version_check.stdout_lines[0] }}"
 
     # === Phase 5: Run tests in block/always (AUTHORIZED §2.1 #5) ===
-    - name: "[network-bandwidth-test] Run bandwidth tests (block with cleanup)"
+    - name: "[network] Run bandwidth tests (block with cleanup)"
       block:
-        - name: "[network-bandwidth-test] Start iperf3 server on both hosts"
+        - name: "[network] Start iperf3 server on both hosts"
           include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-iperf3-server-start.yaml"
           vars:
             dto_label_name: "network-bandwidth-test"
             dto_iperf3_port: "{{ iperf3_port }}"
 
-        - name: "[network-bandwidth-test] Run iperf3 client A→B"
+        - name: "[network] Run iperf3 client A→B"
           command: >
             iperf3
             -c {{ hostvars[host_b_fact].internal_ip }}
@@ -126,7 +126,7 @@
           changed_when: false
           when: inventory_hostname == host_a_fact
 
-        - name: "[network-bandwidth-test] Run iperf3 client B→A"
+        - name: "[network] Run iperf3 client B→A"
           command: >
             iperf3
             -c {{ hostvars[host_a_fact].internal_ip }}
@@ -142,14 +142,14 @@
           when: inventory_hostname == host_b_fact
 
       always:
-        - name: "[network-bandwidth-test] Stop iperf3 server on both hosts"
+        - name: "[network] Stop iperf3 server on both hosts"
           include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-iperf3-server-stop.yaml"
           vars:
             dto_label_name: "network-bandwidth-test"
             dto_iperf3_port: "{{ iperf3_port }}"
 
     # === Phase 6: Format and print report ===
-    - name: "[network-bandwidth-test] Parse results and print report"
+    - name: "[network] Parse results and print report"
       run_once: true
       delegate_to: localhost
       become: false

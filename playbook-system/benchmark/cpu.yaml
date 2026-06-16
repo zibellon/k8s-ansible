@@ -40,7 +40,7 @@
 
   tasks:
     # === Phase 1: Validate inputs ===
-    - name: "[cpu-benchmark-test] Assert >=1 host selected"
+    - name: "[cpu] Assert >=1 host selected"
       assert:
         that:
           - ansible_play_hosts | length >= 1
@@ -49,7 +49,7 @@
           Raw --limit value: {{ ansible_limit | default('(none)') }}.
       run_once: true
 
-    - name: "[cpu-benchmark-test] Show selected hosts and parameters"
+    - name: "[cpu] Show selected hosts and parameters"
       debug:
         msg:
           - "Hosts under test: {{ ansible_play_hosts | sort | join(', ') }}"
@@ -58,35 +58,35 @@
       run_once: true
 
     # === Phase 2: Install sysbench inline ===
-    - name: "[cpu-benchmark-test] Pre-check: is sysbench installed?"
+    - name: "[cpu] Pre-check: is sysbench installed?"
       command: which sysbench
       register: sysbench_pre_check
       changed_when: false
       failed_when: false # AUTHORIZED §2.1: pre-check не должен fail play
 
-    - name: "[cpu-benchmark-test] Install sysbench via apt"
+    - name: "[cpu] Install sysbench via apt"
       apt:
         name: sysbench
         state: present
         update_cache: true
       when: sysbench_pre_check.rc != 0
 
-    - name: "[cpu-benchmark-test] Verify sysbench binary works"
+    - name: "[cpu] Verify sysbench binary works"
       command: sysbench --version
       register: sysbench_version_check
       changed_when: false
 
-    - name: "[cpu-benchmark-test] Show sysbench version"
+    - name: "[cpu] Show sysbench version"
       debug:
         msg: "sysbench binary on {{ inventory_hostname }}: {{ sysbench_version_check.stdout_lines[0] }}"
 
     # === Phase 3: Detect CPU count and run sysbench tests ===
-    - name: "[cpu-benchmark-test] Detect CPU count (nproc)"
+    - name: "[cpu] Detect CPU count (nproc)"
       command: nproc
       register: cpu_nproc
       changed_when: false
 
-    - name: "[cpu-benchmark-test] Run sysbench cpu — single thread"
+    - name: "[cpu] Run sysbench cpu — single thread"
       command: >
         sysbench cpu
         --cpu-max-prime={{ cpu_max_prime }}
@@ -99,7 +99,7 @@
       failed_when: cpu_single_result.rc != 0 # AUTHORIZED §2.1
       changed_when: false
 
-    - name: "[cpu-benchmark-test] Run sysbench cpu — all threads (nproc)"
+    - name: "[cpu] Run sysbench cpu — all threads (nproc)"
       command: >
         sysbench cpu
         --cpu-max-prime={{ cpu_max_prime }}
@@ -113,7 +113,7 @@
       changed_when: false
 
     # === Phase 4: Aggregate results and print report ===
-    - name: "[cpu-benchmark-test] Build per-host stanza"
+    - name: "[cpu] Build per-host stanza"
       set_fact:
         per_host_stanzas: "{{ per_host_stanzas | default([]) + new_stanza }}"
       loop: "{{ ansible_play_hosts | sort }}"
@@ -136,7 +136,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[cpu-benchmark-test] Build cluster numeric stats"
+    - name: "[cpu] Build cluster numeric stats"
       set_fact:
         cpu_single_eps_list: "{{ cpu_single_eps_list | default([]) + [single_eps | float] }}"
         cpu_multi_eps_list: "{{ cpu_multi_eps_list | default([]) + [multi_eps | float] }}"
@@ -150,7 +150,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[cpu-benchmark-test] Build cluster summary lines"
+    - name: "[cpu] Build cluster summary lines"
       set_fact:
         cluster_summary_lines:
           - "=== Cluster summary across {{ ansible_play_hosts | length }} hosts ==="
@@ -160,7 +160,7 @@
       delegate_to: localhost
       become: false # AUTHORIZED §2.1
 
-    - name: "[cpu-benchmark-test] Compose and print final report"
+    - name: "[cpu] Compose and print final report"
       vars:
         sysbench_version_for_header: "{{ hostvars[ansible_play_hosts | first].sysbench_version_check.stdout_lines[0] | default('unknown') }}"
         header_lines:
