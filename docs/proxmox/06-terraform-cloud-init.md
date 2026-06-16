@@ -597,7 +597,7 @@ cd ../   # в k8s-ansible root
 
 # Запустить bootstrap
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
-    playbook-system/node-install.yaml --limit manager-1
+    playbook-system/full-node-install.yaml --limit manager-1
 # и так далее по последовательности из bootstrap-and-ha.md
 ```
 

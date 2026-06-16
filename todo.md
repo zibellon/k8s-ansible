@@ -231,3 +231,10 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 
 - **Backup to remote S3** — после появления реальных production-данных активировать backup из SeaweedFS в external S3 (Wasabi / Backblaze B2). Mechanism: Deployment с `filer.remote.sync` daemon (continuous async one-way replication) → remote bucket с versioning enabled. Опционально дополнительно — `weed backup` CronJob (snapshot-style раз в сутки). Creds для remote S3 хранятся в Vault path `eso-secret/seaweedfs/backup/remote-s3-creds` (operator делает через одноразовый `tasks-vault-put`). Cost estimate: ~$60/мес Wasabi за 10 TB зеркала. На тестовом контуре пока не нужно — нет реальных данных для защиты.
 - **Per-project IAM bootstrap automation** — текущая итерация SeaweedFS plan (F1-F4) реализовала только базовый install. Per-project IAM creation (создание project user, N buckets, quotas, K8s Secret через ESO) пока — manual operator workflow через `kubectl -n seaweedfs exec deploy/seaweedfs-s3 -- weed shell` → `s3.configure ...`. Будущая mini-task F5: reusable `tasks-seaweedfs-project-create.yaml` (input: project_name + buckets_list + quotas) → автоматизирует full flow.
+
+
+интересный моммент - про перенос docker-image
+
+1. На машине с доступом в интернет: docker pull, docker save, и упаковывают в .tar.
+2. Переносят .tar в закрытый контур.
+3. На локальной машине: docker load, docker tag (на адрес 1.2.3.4:15001) и docker push.

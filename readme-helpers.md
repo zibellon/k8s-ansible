@@ -23,7 +23,7 @@
 ## Делается через mv: manifests -> tmp, mv: tmp -> manifests (чтобы kubelet убил api-server и снова его восстановил)
 ## Этот процесс спровоцирует полную остановку api-server
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/etcd-key-rotate.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/etcd-key-rotate.yaml`
 
 # ------
 # `haproxy-apiserver-lb` - обновление конфига
@@ -32,7 +32,7 @@
 ## Запускается как `linux systemd service` на каждой node (установка через `apt: PPA` или локальный `.deb`)
 ## Версия пакета зафиксирована в hosts.yaml (`haproxy_apiserver_lb_package_version`) и заморожена через `apt-mark hold`
 ## Чтобы обновить конфиг на всех нодах (например при добавлении нового manager)
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/haproxy-apiserver-lb-update.yaml`
   - Обновляет /etc/haproxy/haproxy.cfg
   - делает `systemctl reload haproxy` последовательно (serial: 1)
   - reload === graceful, без разрыва TCP соединений
@@ -44,15 +44,15 @@
 ## Каждый текущий api-server - будет перезапущен один раз
 ## Перезапуск - последовательный (по одному за раз)
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/apiserver-sans-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/apiserver-sans-update.yaml`
 
 # ---
 # Обслуживание сервера (cordon + drain) и возврат в работу
 # ---
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-drain-on.yaml --limit k8s-worker-3`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/node-drain-on.yaml --limit k8s-worker-3`
   - Вывод ноды на обслуживание
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-drain-off.yaml --limit k8s-worker-3`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/node-drain-off.yaml --limit k8s-worker-3`
   - Вернуть ноду в работу
 
 # ---
@@ -61,13 +61,13 @@
 ## Отключение node от кластера
 ## Перед этим надо выполнить = `Вывод Node на обслуживание`
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-remove.yaml --limit k8s-worker-4`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/node-remove.yaml --limit k8s-worker-4`
 
 # ---
 # Очистка сервера, от всех компонентов k8s
 # ---
 ##
-1. `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/server-clean.yaml --limit k8s-worker-4`
+1. `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/node-clean.yaml --limit k8s-worker-4`
    1. Выполнение команды  `kubeadm reset --force`
    2. Удаление директорий для k8s
 

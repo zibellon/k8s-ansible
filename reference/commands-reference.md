@@ -31,7 +31,7 @@ See [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §1 for semantics. Run these in
 ```bash
 # For each node (managers and workers):
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-system/node-install.yaml --limit <host>
+  playbook-system/full-node-install.yaml --limit <host>
 ```
 
 Can parallelize with comma-separated hosts: `--limit m1,m2,m3`.
@@ -49,10 +49,10 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
 ```bash
 # One at a time (quorum preservation):
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-system/manager-join.yaml --limit <mgr2>
+  playbook-system/utils/manager-join.yaml --limit <mgr2>
 
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-system/manager-join.yaml --limit <mgr3>
+  playbook-system/utils/manager-join.yaml --limit <mgr3>
 ```
 
 ### 2.4 Workers
@@ -60,7 +60,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
 ```bash
 # Can be parallel:
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-system/worker-join.yaml --limit <worker>
+  playbook-system/utils/worker-join.yaml --limit <worker>
 # Or multiple at once:
 ansible-playbook ... --limit w1,w2,w3
 ```
@@ -125,9 +125,9 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 
 | Task | Command | See |
 |---|---|---|
-| Add new node | 1) update inventory; 2) run (4.1.a); 3) `node-install.yaml`; 4) `manager-join` or `worker-join` | [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §1.5 |
+| Add new node | 1) update inventory; 2) run (4.1.a); 3) `full-node-install.yaml`; 4) `manager-join` or `worker-join` | [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §1.5 |
 | Drain for maintenance | `node-drain-on.yaml --limit <h>`, after maintenance `node-drain-off.yaml --limit <h>` | [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §5 |
-| Remove worker permanently | `node-drain-on.yaml` → `node-remove.yaml` → `server-clean.yaml` (all `--limit <h>`) | [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §5 |
+| Remove worker permanently | `node-drain-on.yaml` → `node-remove.yaml` → `node-clean.yaml` (all `--limit <h>`) | [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §5 |
 | Inspect cluster | `node-info.yaml` | read-only report |
 
 **4.1.a — Cilium firewall refresh before node add:**
@@ -143,9 +143,9 @@ Must run BEFORE joining the new node (see [`networking.md`](networking.md) §2).
 
 | Task | Command |
 |---|---|
-| Rotate ETCD encryption key | `ansible-playbook ... playbook-system/etcd-key-rotate.yaml` |
-| Add apiserver SAN (new manager IP/DNS) | `ansible-playbook ... playbook-system/apiserver-sans-update.yaml` |
-| Update HAProxy LB backends (after manager change) | `ansible-playbook ... playbook-system/haproxy-apiserver-lb-update.yaml` |
+| Rotate ETCD encryption key | `ansible-playbook ... playbook-system/utils/etcd-key-rotate.yaml` |
+| Add apiserver SAN (new manager IP/DNS) | `ansible-playbook ... playbook-system/utils/apiserver-sans-update.yaml` |
+| Update HAProxy LB backends (after manager change) | `ansible-playbook ... playbook-system/utils/haproxy-apiserver-lb-update.yaml` |
 
 All three use `serial: 1` internally to preserve quorum. Safe to run on a healthy cluster. See [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §2–§4, §6.
 
@@ -200,7 +200,7 @@ Measure real inter-node network bandwidth between exactly two cluster nodes via 
 
 ```bash
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-system/network-bandwidth-test.yaml \
+  playbook-system/benchmark/network.yaml \
   --limit <host_a>,<host_b>
 ```
 
@@ -215,7 +215,7 @@ Measure disk performance via `fio` (random write + random read, 8k blocks, iodep
 ```bash
 # All hosts in parallel (~4 min wall-clock independent of N):
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-system/disk-io-test.yaml
+  playbook-system/benchmark/disk-io.yaml
 
 # Subset via --limit:
 ansible-playbook ... --limit k8s-manager-1,k8s-worker-2
@@ -233,12 +233,12 @@ Output: stdout, vertical per-host stanzas (IOPS, BW MiB/s, clat avg + p99) + clu
 
 Stress RAM via `sysbench memory` (bandwidth: write + read passes, `--threads=nproc`) **and** `stress-ng --vm` (capacity: fills ~`mem_capacity_percent`% of physical RAM across all workers, `--verify`) on 1...N selected nodes — single combined report. Defaults configurable via `mem_*` keys in `hosts-vars/stress-tests.yaml`.
 
-**⚠️ Pre-bootstrap only.** The capacity pass occupies ~90% of RAM and churns it. Run ONLY on raw nodes BEFORE `cluster-init.yaml` (pre-flight hardware check) or on a drained node — on a live node the OOM-killer may evict the kubelet / pods. Cluster-agnostic (host + sudo only). Place in bootstrap order: `node-install.yaml` → **memory-stress-test** → `cluster-init.yaml`.
+**⚠️ Pre-bootstrap only.** The capacity pass occupies ~90% of RAM and churns it. Run ONLY on raw nodes BEFORE `cluster-init.yaml` (pre-flight hardware check) or on a drained node — on a live node the OOM-killer may evict the kubelet / pods. Cluster-agnostic (host + sudo only). Place in bootstrap order: `full-node-install.yaml` → **memory-stress-test** → `cluster-init.yaml`.
 
 ```bash
 # All hosts in parallel:
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-system/memory-stress-test.yaml
+  playbook-system/benchmark/ram.yaml
 
 # Subset via --limit:
 ansible-playbook ... --limit k8s-manager-1,k8s-worker-2

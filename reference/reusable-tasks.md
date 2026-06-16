@@ -374,7 +374,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Purpose.** Fails immediately if `--limit` was not passed.
 - **Input.** None.
 - **Output.** Assertion.
-- **Callers.** `node-install.yaml`, `cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `node-remove.yaml`, `server-clean.yaml`.
+- **Callers.** `full-node-install.yaml`, `cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `node-remove.yaml`, `node-clean.yaml`.
 - **Idempotent.** Yes (check-only).
 
 #### `tasks-require-manager.yaml`
@@ -396,7 +396,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Purpose.** Internal helper called by `tasks-pre-check.yaml`, каждым из 9 system playbook'ов которым нужны cluster state facts, и каждым из 5 playbook'ов с reboot (для resolve `bastion_host_fact` до вызова `tasks-reboot-cluster.yaml`). Iterates inventory `managers` group, picks the host with `is_master: true`. Additionally iterates `all` group and picks the host with `is_bastion: true` (optional on-node bastion — see [`variables.md`](variables.md) §2.14.1). Bastion finding co-located here as conscious tech-debt — to be split into separate task in a future refactor.
 - **Input.** None.
 - **Output.** `master_manager_fact` (string), `is_master_manager_exist` (bool), `bastion_host_fact` (string, undefined if no `is_bastion: true` host), `is_bastion_host_exist` (bool).
-- **Callers.** `tasks-pre-check.yaml`; в начале `tasks:` каждого system playbook'а которому нужны cluster state facts — `cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`, `node-drain-on.yaml`, `node-drain-off.yaml`, `node-remove.yaml`; в начале `tasks:` каждого playbook'а который использует `tasks-reboot-cluster.yaml` — `set-hostname.yaml`, `node-prepare.yaml`, `cilium-prepare.yaml`, `longhorn-prepare.yaml`, `linux-service-configure.yaml`.
+- **Callers.** `tasks-pre-check.yaml`; в начале `tasks:` каждого system playbook'а которому нужны cluster state facts — `cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`, `node-drain-on.yaml`, `node-drain-off.yaml`, `node-remove.yaml`; в начале `tasks:` каждого playbook'а который использует `tasks-reboot-cluster.yaml` — `set-hostname.yaml`, `prepare-cilium.yaml`, `prepare-longhorn.yaml`, `prepare-linux-pkgs.yaml`.
 - **Idempotent.** Pure fact derivation.
 
 #### `tasks-set-is-cluster-init.yaml`
@@ -459,7 +459,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Validates (assert).** Both required params defined + non-empty; `dto_reboot_when_condition is boolean`. Tag `[always]`.
 - **Precondition.** Caller must resolve `bastion_host_fact` before invoking (typically by including `tasks-set-master-manager.yaml` as the first task in the playbook's `tasks:` block). This task does NOT auto-resolve facts — dependency is explicit at the playbook level (SRP).
 - **Output.** Hosts rebooted in two-phase order (non-bastion parallel, then bastion). Reboot message hardcoded as `"Reboot"` in both phases. No facts modified.
-- **Callers.** `set-hostname.yaml`, `node-prepare.yaml`, `cilium-prepare.yaml`, `longhorn-prepare.yaml`, `linux-service-configure.yaml`.
+- **Callers.** `set-hostname.yaml`, `prepare-cilium.yaml`, `prepare-longhorn.yaml`, `prepare-linux-pkgs.yaml`.
 - **Idempotent.** Yes — reboot module is no-op if condition false.
 - **Backward compat.** If `bastion_host_fact` is undefined (no `is_bastion: true` in inventory) — task 1 reboots ALL hosts in parallel (`inventory_hostname != ''` always true), task 2 skipped. Equivalent to old inline `reboot:` behavior.
 
@@ -469,19 +469,19 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 
 - **Purpose.** Render `/etc/haproxy/haproxy.cfg` from inventory managers list. Managers use `[127.0.0.1 + other managers]` as backends; workers use `[all managers]`.
 - **Input.** `hosts-vars/k8s-base.yaml` HAProxy vars + inventory.
-- **Callers.** `node-install.yaml` (sub-play `haproxy-apiserver-lb.yaml`), `haproxy-apiserver-lb-update.yaml`.
+- **Callers.** `full-node-install.yaml` (sub-play `install-haproxy-apiserver-lb.yaml`), `haproxy-apiserver-lb-update.yaml`.
 - **Idempotent.** Template rewrite.
 
 #### `tasks-haproxy-lb-restart.yaml`
 
 - **Purpose.** `systemctl restart haproxy`. Use for forced restart (config reload is preferable; rolling updates via `haproxy-apiserver-lb-update.yaml` use `serial: 1`).
-- **Callers.** `node-install.yaml`, `haproxy-apiserver-lb-update.yaml`.
+- **Callers.** `full-node-install.yaml`, `haproxy-apiserver-lb-update.yaml`.
 - **Idempotent.** Yes.
 
 #### `tasks-haproxy-lb-health-wait.yaml`
 
 - **Purpose.** Wait until `haproxy_apiserver_lb_host:haproxy_apiserver_lb_port` accepts connections.
-- **Callers.** `node-install.yaml`, `haproxy-apiserver-lb-update.yaml`.
+- **Callers.** `full-node-install.yaml`, `haproxy-apiserver-lb-update.yaml`.
 - **Idempotent.** Read-only wait.
 
 ### 2.5 Package install
@@ -492,7 +492,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name` (string, log prefix), `dto_deb_local_path` (string, path relative to `project_root`), `dto_apt_mark_hold_pkg_name` (string, package name to hold).
 - **Validates (assert).** All 3 params defined + non-empty. Tag `[always]`.
 - **Output.** Package installed and held; `/tmp/<basename>.deb` removed after install.
-- **Callers.** `playbook-system/haproxy-apiserver-lb.yaml` (when `haproxy_apiserver_lb_install_method: local_deb`).
+- **Callers.** `playbook-system/install-haproxy-apiserver-lb.yaml` (when `haproxy_apiserver_lb_install_method: local_deb`).
 - **Idempotent.** Yes — `apt: deb:` is a no-op if the same package version is already installed.
 
 #### `tasks-tarball-install.yaml`
@@ -510,7 +510,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name` (string, log prefix), `dto_iperf3_port` (int/string — port for the iperf3 server to listen on).
 - **Validates (assert).** Both params defined + non-empty. Tag `[always]`.
 - **Output.** iperf3 server process running in background; port `dto_iperf3_port` listening (verified via `wait_for state=started timeout=10`); log written to `/tmp/iperf3-server-<port>.log` on the host.
-- **Callers.** `playbook-system/network-bandwidth-test.yaml` (Phase 5, `block:`).
+- **Callers.** `playbook-system/benchmark/network.yaml` (Phase 5, `block:`).
 - **Idempotent.** No — re-invocation spawns a second iperf3 server process. Caller must invoke `tasks-iperf3-server-stop.yaml` before re-starting, or use a different port.
 
 ### 2.7 `tasks-iperf3-server-stop.yaml`
@@ -519,7 +519,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name` (string, log prefix), `dto_iperf3_port` (int/string — port of the iperf3 server to stop).
 - **Validates (assert).** Both params defined + non-empty. Tag `[always]`.
 - **Output.** iperf3 server process on `dto_iperf3_port` killed; port free (verified via `wait_for state=stopped timeout=10`); log file removed.
-- **Callers.** `playbook-system/network-bandwidth-test.yaml` (Phase 5, `always:`).
+- **Callers.** `playbook-system/benchmark/network.yaml` (Phase 5, `always:`).
 - **Idempotent.** Yes — `pkill` with rc=1 («no process matched») accepted via `failed_when: rc not in [0,1]`. Repeated stop is a no-op.
 
 ### 2.8 `tasks-sync-managed-files.yaml`
@@ -528,7 +528,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name` (string, log prefix), `dto_target_dir` (string, absolute directory path), `dto_files_list` (sequence of `{filename, content}` items; empty list valid), `dto_filename_prefix` (string, prefix for managed files — e.g. `"ansible-"`), `dto_res_fact_changed` (string, name of output fact to set). Optional: `dto_file_mode` (default `'0644'`), `dto_file_owner` (default `'root'`), `dto_file_group` (default `'root'`).
 - **Validates (assert).** All 5 required `dto_*` params defined + non-empty. `dto_target_dir` starts with `/`. `dto_files_list` is sequence. Per-item: `filename` + `content` non-empty; `filename` starts with `dto_filename_prefix` and contains no `/`. Unique filenames in list. Tag `[always]`.
 - **Output.** Files in `dto_target_dir` matching `dto_files_list` (managed files written + orphans by `dto_filename_prefix` deleted). Output fact `{{ dto_res_fact_changed }}` set to `true` if any file was written or deleted, `false` otherwise.
-- **Callers.** `playbook-system/linux-service-configure.yaml` (five calls — APT phase: three calls in `/etc/apt/{sources.list.d, apt.conf.d, preferences.d}/`; FAIL2BAN phase: one call in `/etc/fail2ban/jail.d/`; SSHD phase: one call in `/etc/ssh/sshd_config.d/`).
+- **Callers.** `playbook-system/prepare-linux-pkgs.yaml` (five calls — APT phase: three calls in `/etc/apt/{sources.list.d, apt.conf.d, preferences.d}/`; FAIL2BAN phase: one call in `/etc/fail2ban/jail.d/`; SSHD phase: one call in `/etc/ssh/sshd_config.d/`).
 - **Idempotent.** Yes — on re-run with same `dto_files_list`, all `copy` and `file: state=absent` tasks are no-ops; output fact will be `false`.
 
 ---

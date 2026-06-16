@@ -47,7 +47,7 @@ service_cidr: 10.4.0.0/18, 10.4.0.1 - 10.4.63.254
 # ------
 ## общая информация о системе
 # ------
-## Команда: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
+## Команда: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/node-info.yaml`
 - Что проверяется
   - ядро
   - hostname
@@ -99,14 +99,14 @@ service_cidr: 10.4.0.0/18, 10.4.0.1 - 10.4.63.254
 # ------
 ## Скорость диска
 # ------
-`ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/disk-io-test.yaml`
+`ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/benchmark/disk-io.yaml`
   - на READ
   - на WRITE
 
 # ------
-## Скорость сети между серверами по внутренней сети
+## Скорость сети между серверами
 # ------
-## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/network-bandwidth-test.yaml --limit k8s-worker-1,k8s-worker-2`
+## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/benchmark/network.yaml --limit k8s-worker-1,k8s-worker-2`
 ##
 - Покажет информацию: какой реально пропускной канал (скорость между серверами)
 - `--limit k8s-worker-1,k8s-worker-2`
@@ -116,7 +116,7 @@ service_cidr: 10.4.0.0/18, 10.4.0.1 - 10.4.63.254
 # ------
 # Скорость RAM и вместимость RAM
 # ------
-## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/memory-stress-test.yaml`
+## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/benchmark/ram.yaml`
 
 # ------
 # конфигурация параметров для LINSTOR

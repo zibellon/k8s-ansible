@@ -13,7 +13,7 @@
 ## НО - менять переменные в этой директории не рекомендуется. Эта директория находится под контролем GIT
 ## Если нужно переопредеелить какую-то переменную - нужно создать новую директорию (любую)
 ## Например: `hosts-vars-override/*` и там создать `xxx.yaml` файл в котором определить нужную переменную
-## Пример запуска: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-info.yaml`
+## Пример запуска: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/node-info.yaml`
 ## То есть: сначала берем все базовые переменные, а потом сверху накладываем переменные из override
 ## ---
 ## Как идет установка, всего, что НЕ ЕСТЬ ОФИЦИАЛЬНЫЙ helm-chart
@@ -52,8 +52,8 @@
 ## Если вызывать без `--limit` - инициализация производится на всех Node сразу
 ## Если вызвать с `--limit` - инициализация произойдет только на указанной node
 ##
-- Без лимита: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml`
-- С лимитом: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml --limit k8s-manager-1`
+- Без лимита: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/full-node-install.yaml`
+- С лимитом: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/full-node-install.yaml --limit k8s-manager-1`
 
 # Инициализация кластера (в первый раз)
 ## Инициализация кластера
@@ -73,9 +73,9 @@
 ## Если уже был установлен Cilium - смотрим `Подготовка_2`
 ## Если уже был установлен и настроен Longhorn - смотрим `longhorn/tags-sync`
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml --limit k8s-worker-1`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/full-node-install.yaml --limit k8s-worker-1`
   - Инициализация ноды
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/worker-join.yaml --limit k8s-worker-1`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/worker-join.yaml --limit k8s-worker-1`
   - Получение токена и вызов команды `kubeadm join ...`
 
 # ------
@@ -87,19 +87,19 @@
 ## Обновить SANS для api-server
 ## Обновить haproxy-apiserver-lb
 ##
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/apiserver-sans-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/apiserver-sans-update.yaml`
   - Это обновит CANS в сертификатах для api-server (добавит туда нового manager-ip)
   - Вызывать нужно БЕЗ `--limit`. Конфиг - нужно обновить на ВСЕХ текущих managers
   - Обновит - только текущие managers
   - Перезапуск api-server - производится последовательно, для каждого managers
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/haproxy-apiserver-lb-update.yaml`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/haproxy-apiserver-lb-update.yaml`
   - Обновить конфиг для `haproxy-apiserver-lb` на всех текущих Node (manager + worker)
   - Обновление производится по одному за раз, через playbook.serial: 1
   - То есть: перезапуск производится последовательно, для обеспечения HA доступности
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/node-install.yaml --limit k8s-manager-2`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/full-node-install.yaml --limit k8s-manager-2`
   - Инициализация ноды
   - Указываем `--limit` - так как это добавление конкретной Node
-- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/manager-join.yaml --limit k8s-manager-2`
+- `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/utils/manager-join.yaml --limit k8s-manager-2`
   - Загрузка сертификатов в k8s.secrets
   - получение токена
   - вызов команды `kubeadm join ...`
@@ -577,9 +577,3 @@
 ## ...
 ## ...
 ## ---
-
-интересный моммент - про перенос docker-image
-
-1. На машине с доступом в интернет: docker pull, docker save, и упаковывают в .tar.
-2. Переносят .tar в закрытый контур.
-3. На локальной машине: docker load, docker tag (на адрес 1.2.3.4:15001) и docker push.

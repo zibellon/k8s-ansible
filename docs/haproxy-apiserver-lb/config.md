@@ -40,7 +40,7 @@ static-pod - находится в директории `/etc/kubernetes/manifes
 ## Решение и послежовательность установки
 - устанавливаются все компоненты
 - создается конфиг для `haproxy-apiserver-lb`
-  - `/etc/kubernetes/manifests/haproxy-apiserver-lb.yaml` - static-pod
+  - `/etc/kubernetes/manifests/install-haproxy-apiserver-lb.yaml` - static-pod
   - `/etc/kubernetes/haproxy-apiserver-lb.cfg` - конфиг для haproxy
 - создается МИНИМАЛЬНЫЙ конфиг для старта kubelet
   - Надо чтобы он запустился и запустил все, что находится в директории для static-pods

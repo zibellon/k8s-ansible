@@ -11,7 +11,7 @@ For the high-level mental model, see `CLAUDE.md` §3 and §10. For the individua
 ### 1.1 Overview
 
 ```
-step 1   node-install.yaml       per node (managers + workers)   --limit <host>
+step 1   full-node-install.yaml       per node (managers + workers)   --limit <host>
 step 2   cluster-init.yaml       on the first manager            --limit <master>   (once)
 step 3   manager-join.yaml       each additional manager         --limit <mgrN>
 step 4   worker-join.yaml        each worker                     --limit <workerN>
@@ -19,7 +19,7 @@ step 4   worker-join.yaml        each worker                     --limit <worker
 
 All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both inventories every time: `-i hosts-vars/ -i hosts-vars-override/<cluster>/`.
 
-### 1.2 `node-install.yaml` (step 1)
+### 1.2 `full-node-install.yaml` (step 1)
 
 **Role.** Prepare a host for kubeadm join. Orchestrates twelve sub-plays, each idempotent.
 
@@ -28,15 +28,14 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 | 1 | `setup-ssh-keys.yaml` | Ensures `authorized_keys` contains the operator's pubkey. |
 | 2 | `set-hostname.yaml` | Persists `hostname` + `/etc/hosts` entry. |
 | 3 | `preflight.yaml` | Waits for cloud-init to finish (if installed), stops any running `unattended-upgrade` cooperatively, masks `unattended-upgrades.service` and `apt-daily*` timers permanently (policy: OS updates via rolling upgrade, not in background), runs `dpkg --configure -a` to recover any interrupted transaction. On managers also asserts `api_server_advertise_address` is present on a real network interface — fails fast with a clear message if inventory points to a non-existent IP, instead of letting kubeadm hang 4 minutes on `wait-control-plane`. |
-| 4 | `linux-service-configure.yaml` | Объединяет три прежних шага. **APT phase**: applies ansible-managed apt files (mirrors / extra sources / `apt.conf` overrides / pinning) from `apt_additional_configs` and `apt_preferences`. Default `[]` → no-op. Files are isolated by `ansible-` prefix; cloud-init defaults and other repos (`ubuntu.sources`, `kubernetes.list`, vbernat PPA) are not touched. Auto-cleanup orphans: removing entry deletes the file on next run. **FAIL2BAN phase**: installs `fail2ban` package via apt, renders `fail2ban_jail_d_files` (list of `{filename, content}`) into `/etc/fail2ban/jail.d/` via `tasks-sync-managed-files.yaml` (auto-cleanup orphans by `ansible-` prefix), enables + (re)starts service. Migration assert catches deprecated `fail2ban_jail_local` variable. **SSHD phase**: renders `sshd_config_d_files` (list of `{filename, content}`) into `/etc/ssh/sshd_config.d/` via `tasks-sync-managed-files.yaml`, validates full sshd config via `sshd -t`, `systemctl reload ssh` (not restart) on change. Default content disables password auth + KbdInteractive + EmptyPasswords. **REBOOT phase**: conditional reboot if any of 5 sync facts changed (`apt_sources_changed`, `apt_conf_d_changed`, `apt_prefs_changed`, `fail2ban_files_changed`, `sshd_files_changed`). Idempotent. |
-| 5 | `node-prepare.yaml` | Disable swap, load kernel modules (`br_netfilter`, `overlay`, `softdog`), sysctls (`net.ipv4.ip_forward`, `net.bridge.bridge-nf-call-*`, IPv6 counterparts), time sync. Blacklisted modules re-enabled via unit-service wrapping `modprobe` (survives reboots despite blacklists). |
-| 6 | `longhorn-prepare.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`) install via standard Ubuntu apt repos. Modules (`iscsi_tcp`, `dm_crypt`). |
-| 7 | `linstor-prepare.yaml` | Install `linux-headers-$(uname -r)` via apt + `apt-mark hold` + verify `/lib/modules/$(uname -r)/build` symlink. Required by Piraeus operator kmod-loader (DRBD module built in-container at satellite init; only kernel-headers needed on host). |
-| 8 | `cilium-prepare.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
-| 9 | `main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
-| 10 | `haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
-| 11 | `install-helm.yaml` | Managers only — install the `helm` binary via download (`helm_install_method: url`, default) or local tarball from `pkgs-sources/` (`helm_install_method: local_tarball`). Pre-check skips install if helm is already present. |
-| 12 | `install-k9s.yaml` | Managers only — install `k9s`. |
+| 4 | `prepare-linux-pkgs.yaml` | Объединяет три прежних шага. **APT phase**: applies ansible-managed apt files (mirrors / extra sources / `apt.conf` overrides / pinning) from `apt_additional_configs` and `apt_preferences`. Default `[]` → no-op. Files are isolated by `ansible-` prefix; cloud-init defaults and other repos (`ubuntu.sources`, `kubernetes.list`, vbernat PPA) are not touched. Auto-cleanup orphans: removing entry deletes the file on next run. **FAIL2BAN phase**: installs `fail2ban` package via apt, renders `fail2ban_jail_d_files` (list of `{filename, content}`) into `/etc/fail2ban/jail.d/` via `tasks-sync-managed-files.yaml` (auto-cleanup orphans by `ansible-` prefix), enables + (re)starts service. Migration assert catches deprecated `fail2ban_jail_local` variable. **SSHD phase**: renders `sshd_config_d_files` (list of `{filename, content}`) into `/etc/ssh/sshd_config.d/` via `tasks-sync-managed-files.yaml`, validates full sshd config via `sshd -t`, `systemctl reload ssh` (not restart) on change. Default content disables password auth + KbdInteractive + EmptyPasswords. **REBOOT phase**: conditional reboot if any of 5 sync facts changed (`apt_sources_changed`, `apt_conf_d_changed`, `apt_prefs_changed`, `fail2ban_files_changed`, `sshd_files_changed`). Idempotent. |
+| 5 | `prepare-longhorn.yaml` | Packages (`open-iscsi`, `nfs-common`, `cryptsetup`, `dmsetup`) install via standard Ubuntu apt repos. Modules (`iscsi_tcp`, `dm_crypt`). |
+| 6 | `prepare-linstor.yaml` | Install `linux-headers-$(uname -r)` via apt + `apt-mark hold` + verify `/lib/modules/$(uname -r)/build` symlink. Required by Piraeus operator kmod-loader (DRBD module built in-container at satellite init; only kernel-headers needed on host). |
+| 7 | `prepare-cilium.yaml` | LLVM + clang + libbpf prerequisites, mount `/sys/fs/bpf`. |
+| 8 | `install-main-components.yaml` | Install pinned versions of `containerd`, `runc`, CNI plugins, `kubeadm`, `kubelet`, `kubectl` (apt-mark hold to prevent dist-upgrade drift). |
+| 9 | `install-haproxy-apiserver-lb.yaml` | Install HAProxy via `apt` (PPA, default — `haproxy_apiserver_lb_package_version`) or local `.deb` from `pkgs-sources/` (when `haproxy_apiserver_lb_install_method: local_deb`); held via `apt-mark hold`, render `/etc/haproxy/haproxy.cfg`, enable+start service. |
+| 10 | `install-helm.yaml` | Managers only — install the `helm` binary via download (`helm_install_method: url`, default) or local tarball from `pkgs-sources/` (`helm_install_method: local_tarball`). Pre-check skips install if helm is already present. |
+| 11 | `install-k9s.yaml` | Managers only — install `k9s`. |
 
 **Pre-conditions.**
 
@@ -66,7 +65,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 
 **Pre-conditions.**
 
-- `node-install.yaml` completed on this host.
+- `full-node-install.yaml` completed on this host.
 - Exactly one manager has `is_master: true`.
 - HAProxy on this host is listening on `127.0.0.1:16443` even with zero backends alive — kubelet uses `127.0.0.1:16443` as its bootstrap apiserver endpoint via kubeadm's `controlPlaneEndpoint`.
 
@@ -76,7 +75,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 - `/etc/kubernetes/pki/encryption-config.yaml` present on master (will be distributed to additional managers at join).
 - Node `Ready` (or waiting for CNI — Cilium will make it Ready after `cilium-install.yaml`).
 
-**Rollback.** `server-clean.yaml --limit <master>` wipes the master back to a pre-init state (destructive).
+**Rollback.** `node-clean.yaml --limit <master>` wipes the master back to a pre-init state (destructive).
 
 ### 1.4 `manager-join.yaml` (step 3)
 
@@ -97,7 +96,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 
 **Pre-conditions.**
 
-- `node-install.yaml` completed on the joiner.
+- `full-node-install.yaml` completed on the joiner.
 - Cilium host firewall already includes the joiner's IPs (§1.5).
 - HAProxy on the joiner is serving `127.0.0.1:16443 → <all existing managers>:6443`.
 
@@ -108,7 +107,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 - HAProxy on every other node needs to be updated afterwards so its backend list includes the new manager: run `haproxy-apiserver-lb-update.yaml`.
 - If this new manager should appear in apiserver certSANs: run `apiserver-sans-update.yaml`.
 
-**Rollback.** `node-drain-on.yaml` → `node-remove.yaml` → `server-clean.yaml`, all with `--limit <joiner>`.
+**Rollback.** `node-drain-on.yaml` → `node-remove.yaml` → `node-clean.yaml`, all with `--limit <joiner>`.
 
 ### 1.5 Cilium host-firewall prerequisite (critical)
 
@@ -122,7 +121,7 @@ Cilium runs with host firewall on. The policy `CiliumClusterwideNetworkPolicy` (
 1. Edit hosts-vars-override/hosts.yaml to add the new host (ansible_host + internal_ip).
 2. ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cilium-install.yaml --tags post
    (This re-renders the cluster-wide policy with the new IPs.)
-3. ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-system/node-install.yaml --limit <new-host>
+3. ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-system/full-node-install.yaml --limit <new-host>
 4. manager-join.yaml or worker-join.yaml for the new host.
 ```
 
@@ -188,7 +187,7 @@ Key state items that propagate:
 - You added a manager (its `ansible_host` must be in the apiserver cert SANs, otherwise HAProxy backend TLS verification fails).
 - You added a DNS name that clients use to reach the apiserver.
 
-**Playbook.** `playbook-system/apiserver-sans-update.yaml`.
+**Playbook.** `playbook-system/utils/apiserver-sans-update.yaml`.
 
 **Sequence (per manager, `serial: 1`).**
 
@@ -209,7 +208,7 @@ Key state items that propagate:
 
 **When.** Regular rotation (recommended: quarterly); after a key is suspected leaked; before a security audit.
 
-**Playbook.** `playbook-system/etcd-key-rotate.yaml`.
+**Playbook.** `playbook-system/utils/etcd-key-rotate.yaml`.
 
 **Complexity.** The rotation is multi-step and partially destructive — it re-encrypts every `Secret` and `ConfigMap` in the cluster. If interrupted, `encryption-config.yaml` can be in a mixed-key state where the first-listed provider differs across managers.
 
@@ -268,7 +267,7 @@ On re-run, the playbook inspects the state-file directory:
 - Changed `haproxy_apiserver_lb_*` ports or bind host.
 - Upgraded HAProxy package version.
 
-**Playbook.** `playbook-system/haproxy-apiserver-lb-update.yaml`.
+**Playbook.** `playbook-system/utils/haproxy-apiserver-lb-update.yaml`.
 
 **Sequence (per node, `serial: 1`, targets both managers and workers).**
 
@@ -308,13 +307,13 @@ After `node-remove`:
 - `haproxy-apiserver-lb-update.yaml` — so other nodes stop dialing the removed manager.
 - `apiserver-sans-update.yaml` — so the removed manager's IP no longer appears in apiserver certSANs (optional but hygiene).
 
-### 5.4 `server-clean.yaml`
+### 5.4 `node-clean.yaml`
 
 **Destructive.** Brings a host back to its pre-`node-install` state.
 
 - `kubeadm reset --force`.
 - `rm -rf /etc/cni/net.d/* /etc/kubernetes/* /var/lib/kubelet/* /var/lib/etcd/* /root/.kube/*`.
-- Does NOT uninstall containerd / HAProxy / kubelet (package-level). Re-running `node-install.yaml` after `server-clean` is cheap.
+- Does NOT uninstall containerd / HAProxy / kubelet (package-level). Re-running `full-node-install.yaml` after `server-clean` is cheap.
 
 **Requires `--limit`.** Running on all nodes by accident is catastrophic.
 
@@ -349,5 +348,5 @@ Note: these three playbooks intentionally do **not** use `tasks-require-limit.ya
 | `/etc/kubernetes/pki/encryption-config.yaml` missing on a manager | Re-run `manager-join.yaml` for that manager (distributes from the master); or manually `scp` from master (mode 0600). |
 | `/etc/kubernetes/vault-unseal.json` missing on a manager | Re-run `tasks-vault-distribute-creds.yaml` (standalone by running `vault-install.yaml --tags post` or via `manager-join.yaml`). |
 | Vault rekey прервался посередине | Temp-файл `{{ vault_rekey_temp_file_path }}` на `master_manager_fact` остался с новыми ключами. Повторный запуск `vault-rotate.yaml` детектирует его и довыполнит recovery (K8s Secret + distribute). Если в Vault висит незавершённый rekey, а temp-файла нет (ручной rekey помимо playbook'а) — сделать `vault operator rekey -cancel` и запустить playbook заново. |
-| Interrupted dpkg transaction on a host (`E: dpkg was interrupted`) | Run `ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-system/preflight.yaml --limit <host>` — the `dpkg --configure -a` step recovers the transaction. Happens automatically on any re-run of `node-install.yaml` (preflight is Step 3). |
-| `kubeadm init` hangs 4min on `wait-control-plane` then fails with `kube-apiserver ... context deadline exceeded` | etcd cannot bind because `api_server_advertise_address` for this manager points to an IP not on any interface (`bind: cannot assign requested address` in `crictl logs <etcd-id>`). Fix `hosts-vars-override/hosts.yaml` for `{{ inventory_hostname }}`, then `kubeadm reset --force` + `rm -rf /var/lib/etcd/* /etc/kubernetes/manifests/* /etc/cni/net.d/*` on the host, then re-run `cluster-init.yaml`. The `preflight.yaml` (Step 3 of `node-install.yaml`) now asserts this up-front so the wrong IP is caught in seconds instead of minutes. |
+| Interrupted dpkg transaction on a host (`E: dpkg was interrupted`) | Run `ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-system/preflight.yaml --limit <host>` — the `dpkg --configure -a` step recovers the transaction. Happens automatically on any re-run of `full-node-install.yaml` (preflight is Step 3). |
+| `kubeadm init` hangs 4min on `wait-control-plane` then fails with `kube-apiserver ... context deadline exceeded` | etcd cannot bind because `api_server_advertise_address` for this manager points to an IP not on any interface (`bind: cannot assign requested address` in `crictl logs <etcd-id>`). Fix `hosts-vars-override/hosts.yaml` for `{{ inventory_hostname }}`, then `kubeadm reset --force` + `rm -rf /var/lib/etcd/* /etc/kubernetes/manifests/* /etc/cni/net.d/*` on the host, then re-run `cluster-init.yaml`. The `preflight.yaml` (Step 3 of `full-node-install.yaml`) now asserts this up-front so the wrong IP is caught in seconds instead of minutes. |

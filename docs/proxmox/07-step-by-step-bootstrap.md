@@ -1087,7 +1087,7 @@ cd ~/work/k8s-ansible
 # 1. Подготовка нод (все)
 for h in manager-1 manager-2 manager-3 worker-1 worker-2 worker-3 worker-4 worker-5 worker-6 worker-7 worker-8 worker-9; do
     ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
-        playbook-system/node-install.yaml --limit $h
+        playbook-system/full-node-install.yaml --limit $h
 done
 
 # 2. Init первого manager (is_master: true)
@@ -1100,14 +1100,14 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
 
 # 4. Join остальных manager'ов
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
-    playbook-system/manager-join.yaml --limit manager-2
+    playbook-system/utils/manager-join.yaml --limit manager-2
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
-    playbook-system/manager-join.yaml --limit manager-3
+    playbook-system/utils/manager-join.yaml --limit manager-3
 
 # 5. Join worker'ов
 for h in worker-1 worker-2 worker-3 worker-4 worker-5 worker-6 worker-7 worker-8 worker-9; do
     ansible-playbook -i hosts-vars/ -i hosts-vars-override/ \
-        playbook-system/worker-join.yaml --limit $h
+        playbook-system/utils/worker-join.yaml --limit $h
 done
 ```
 
