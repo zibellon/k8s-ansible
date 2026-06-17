@@ -4,7 +4,7 @@
 #   1. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
 #   2. argocd/install: CRDs + ArgoCD manifests
 #   3. argocd/post: Ingress (UI + RPC) + default AppProject
-#   4. argocd-git-ops/install: AppProject + Application(s) from argocd_git_ops_apps
+#   4. argocd-git-ops/install: AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications
 #
 # Usage (tags):
 #   ansible-playbook argocd-install.yaml              # full install (pre + install + post + gitops)
@@ -265,7 +265,7 @@
       tags: [post]
 
     # =========================================================================
-    # STEP 5: ARGOCD/GITOPS (AppProject + Application(s) from argocd_git_ops_apps)
+    # STEP 5: ARGOCD/GITOPS (AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications)
     # =========================================================================
 
     - name: "[argocd-gitops] Copy git-ops install chart to remote"
@@ -315,25 +315,25 @@
 
     - name: "[argocd-gitops] Get Application status"
       command: >
-        kubectl get application {{ item.1.name }}
+        kubectl get application {{ item.name }}
         -n {{ argocd_namespace }}
         -o jsonpath='{.status.sync.status} / {.status.health.status}'
       register: _local_argocd_gitops_app_status
       changed_when: false
       failed_when: false
-      loop: "{{ argocd_git_ops_apps | subelements('apps') }}"
+      loop: "{{ argocd_git_ops_applications }}"
       loop_control:
-        label: "{{ item.1.name }}"
+        label: "{{ item.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [gitops]
 
     - name: "[argocd-gitops] Show Application status"
       debug:
-        msg: "{{ item.item.1.name }}: {{ item.stdout }}"
+        msg: "{{ item.item.name }}: {{ item.stdout }}"
       loop: "{{ _local_argocd_gitops_app_status.results }}"
       loop_control:
-        label: "{{ item.item.1.name }}"
+        label: "{{ item.item.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [gitops]

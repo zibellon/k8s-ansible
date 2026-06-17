@@ -2,38 +2,35 @@
 # Namespace
 namespace: "argocd"
 
-# List of AppProject + Application(s) to install in ArgoCD
-# Each entry creates one AppProject and one or more Applications
-gitOpsApps: []
-# - name: "root-app-of-apps"           # AppProject name
-#   project:
+# AppProjects — каждый принимает ПОЛНЫЙ spec (operator-provided); template оборачивает metadata.
+appProjects: []
+# - name: "prj-root"
+#   spec:
 #     sourceRepos: ["*"]
-#     sourceNamespaces: ["*"]           # optional, default: ["*"]
 #     destinations:
 #       - name: "*"
 #         namespace: "*"
 #         server: "*"
-#     clusterResourceBlacklist:         # optional, default: [{group: "*", kind: "*"}]
+#     clusterResourceWhitelist:
 #       - group: "*"
 #         kind: "*"
-#     namespaceResourceBlacklist:       # optional, default: AppProject + Application
-#       - group: "argoproj.io"
-#         kind: "AppProject"
-#       - group: "argoproj.io"
-#         kind: "Application"
-#   apps:
-#     - name: "root-app-of-apps"
+
+# Applications — каждый принимает ПОЛНЫЙ spec; template добавляет namespace + (опционально) finalizers.
+applications: []
+# - name: "app-of-apps-root"
+#   finalizers:                                      # optional; пустой/отсутствует → не добавляется
+#     - resources-finalizer.argocd.argoproj.io/background
+#   spec:
+#     project: "prj-root"
+#     source:
 #       repoURL: ""
 #       targetRevision: "master"
 #       path: "argocd-system"
-#       destinationServer: "https://kubernetes.default.svc"
-#       revisionHistoryLimit: 3         # optional, default: 3
-#       retry:
-#         limit: 5
-#         backoff:
-#           duration: "20s"
-#           factor: 1
-#           maxDuration: "30s"
+#     destination:
+#       server: "https://kubernetes.default.svc"
+#     syncPolicy:
+#       automated: {prune: true, selfHeal: true, allowEmpty: true}
+#       retry: {limit: 5, backoff: {duration: "20s", factor: 1, maxDuration: "30s"}}
 
 # Custom K8s objects to render (operator-side, default empty)
 extraObjects: []

@@ -1,4 +1,4 @@
-{{- range .Values.gitOpsApps }}
+{{- range .Values.appProjects }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -6,72 +6,19 @@ metadata:
   name: {{ .name }}
   namespace: "{{ $.Values.namespace }}"
 spec:
-  sourceRepos:
-    {{- toYaml .project.sourceRepos | nindent 4 }}
-{{- if .project.sourceNamespaces }}
-  sourceNamespaces:
-    {{- toYaml .project.sourceNamespaces | nindent 4 }}
+  {{- toYaml .spec | nindent 2 }}
 {{- end }}
-  destinations:
-    {{- toYaml .project.destinations | nindent 4 }}
-{{- if .project.clusterResourceBlacklist }}
-  clusterResourceBlacklist:
-    {{- toYaml .project.clusterResourceBlacklist | nindent 4 }}
-{{- end }}
-{{- if .project.namespaceResourceBlacklist }}
-  namespaceResourceBlacklist:
-    {{- toYaml .project.namespaceResourceBlacklist | nindent 4 }}
-{{- end }}
-{{- if .project.clusterResourceWhitelist }}
-  clusterResourceWhitelist:
-    {{- toYaml .project.clusterResourceWhitelist | nindent 4 }}
-{{- end }}
-{{- if .project.namespaceResourceWhitelist }}
-  namespaceResourceWhitelist:
-    {{- toYaml .project.namespaceResourceWhitelist | nindent 4 }}
-{{- end }}
-{{- if .project.orphanedResources }}
-  orphanedResources:
-    {{- toYaml .project.orphanedResources | nindent 4 }}
-{{- end }}
-{{- if .project.roles }}
-  roles:
-    {{- toYaml .project.roles | nindent 4 }}
-{{- end }}
-{{- $projectName := .name }}
-{{- $namespace := $.Values.namespace }}
-{{- range .apps }}
+{{- range .Values.applications }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: {{ .name }}
-  namespace: "{{ $namespace }}"
+  namespace: "{{ $.Values.namespace }}"
+  {{- if .finalizers }}
   finalizers:
-    - resources-finalizer.argocd.argoproj.io/background
+    {{- toYaml .finalizers | nindent 4 }}
+  {{- end }}
 spec:
-  project: {{ $projectName }}
-  revisionHistoryLimit: {{ .revisionHistoryLimit | default 3 }}
-  source:
-    repoURL: "{{ .repoURL }}"
-    targetRevision: "{{ .targetRevision }}"
-    path: "{{ .path }}"
-  destination:
-    server: "{{ .destinationServer }}"
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-      allowEmpty: true
-    syncOptions:
-      - SkipDryRunOnMissingResource=true
-      - ApplyOutOfSyncOnly=true
-      - PrunePropagationPolicy=background
-    retry:
-      limit: {{ .retry.limit }}
-      backoff:
-        duration: {{ .retry.backoff.duration }}
-        factor: {{ .retry.backoff.factor }}
-        maxDuration: {{ .retry.backoff.maxDuration }}
-{{- end }}
+  {{- toYaml .spec | nindent 2 }}
 {{- end }}
