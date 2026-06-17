@@ -119,6 +119,11 @@ service_cidr: 10.4.0.0/18, 10.4.0.1 - 10.4.63.254
 ## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/benchmark/ram.yaml`
 
 # ------
+# Нагрузить CPU
+# ------
+## `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-system/benchmark/cpu.yaml`
+
+# ------
 # конфигурация параметров для LINSTOR
 # ------
 1. У LINSTOR есть параметры по скорости репликации (Представь sync как наполнение бутылки из крана)
