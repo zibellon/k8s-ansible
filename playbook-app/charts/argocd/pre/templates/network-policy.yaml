@@ -133,12 +133,11 @@ spec:
           port: {{ .Values.apiserver.port }}
 
 # =============================================================================
-# ARGOCD-REPO-SERVER (git clone to internal GitLab)
+# ARGOCD-REPO-SERVER (git clone: internet HTTP/HTTPS + internal GitLab SSH)
 # =============================================================================
 
-{{- if .Values.gitlab.enabled }}
 ---
-# Allow repo-server egress to GitLab
+# Allow repo-server egress: internet (HTTP/HTTPS) + GitLab shell (SSH, if enabled)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -151,6 +150,22 @@ spec:
   policyTypes:
     - Egress
   egress:
+    # Internet egress (HTTP/HTTPS): git-over-HTTPS, Helm repos, OCI registries.
+    # 0.0.0.0/0 минус RFC1918 → только внешние адреса (внутрикластерный трафик не открываем).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+{{- if .Values.gitlab.enabled }}
+    # Internal GitLab shell (SSH): git clone over SSH
     - to:
         - namespaceSelector:
             matchLabels:
