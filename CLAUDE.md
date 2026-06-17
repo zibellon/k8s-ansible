@@ -70,7 +70,7 @@ k8s-ansible/
 ├── hosts-extra.example.yaml   ← template for extensible *_extra arrays
 ├── Makefile, .yamllint.yaml, .ansible-lint.yml  ← test runner + lint configs
 ├── .claude/prompts/           ← cold-start prompt for manual chat workflow
-├── playbook-system/  (+ tasks/)        ← node-scoped, imperative
+├── playbook-system/  (+ tasks/, benchmark/, utils/)  ← node-scoped, imperative
 ├── playbook-app/     (+ tasks/, charts/) ← cluster-scoped, declarative; charts/ = 18 local Helm-chart dirs
 ├── tests/                     ← Docker-based test runner
 ├── hosts-vars/                ← base defaults (in git)

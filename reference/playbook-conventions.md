@@ -8,6 +8,10 @@ Imperative rules for writing or modifying playbooks. For the *why* behind the ru
 1.2 File name pattern: `<component>-<action>.yaml`. Allowed actions: `install`, `configure`, `restart`, `rotate`, `sync`, `force-sync`, `tags-sync`, `create`, `delete`.
 1.3 For system playbooks, file name is either a cluster-lifecycle verb (`cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `full-node-install.yaml`, `node-remove.yaml`, `node-drain-on.yaml`, `node-drain-off.yaml`, `node-clean.yaml`, `set-hostname.yaml`, `setup-ssh-keys.yaml`, `node-info.yaml`) or `<subsystem>-<action>.yaml` (e.g. `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`).
 1.4 Task include file name pattern: `tasks-<verb>-<object>.yaml`. Exception: `task-apiserver-restart.yaml` (singular `task-` — keep as-is for historical reasons).
+1.5 Within `playbook-system/`, playbooks are grouped into subdirectories:
+- top-level `playbook-system/*.yaml` — bootstrap orchestrator `full-node-install.yaml` and its sub-plays (`preflight.yaml`, `prepare-*.yaml`, `install-*.yaml`, `set-hostname.yaml`, `setup-ssh-keys.yaml`) plus `cluster-init.yaml`;
+- `playbook-system/utils/` — node-lifecycle and cluster operations: `manager-join.yaml`, `worker-join.yaml`, `node-drain-on.yaml`, `node-drain-off.yaml`, `node-remove.yaml`, `node-clean.yaml`, `node-info.yaml`, `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`;
+- `playbook-system/benchmark/` — hardware benchmark playbooks: `cpu.yaml`, `disk-io.yaml`, `ram.yaml`, `network.yaml`.
 
 ## 2. Play Header
 
