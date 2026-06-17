@@ -142,6 +142,37 @@ all:
 
     # Affinity-controller replica count (SCALE)
     linstor_cluster_helm_values_affinity_controller_replica_count: 1
+
+    # === High Availability Controller — args (extracted for override-tunability) ===
+    # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1] — поэтому /agent и --v=1 продублированы.
+    # Override переопределяет ВЕСЬ список целиком (1 list-переменная): частичный override args невозможен.
+    linstor_ha_controller_args:
+      - /agent
+      # --v: уровень логирования. 1 — DEFAULT
+      - --v=1
+      # пауза перед эвакуацией подов с "мёртвого" узла. 6m — осознанный backstop
+      # Kubernetes сам эвакуирует поды ~через 5 мин (tolerationSeconds=300)
+      # HA-controller добивает на 6 минуте
+      # DEFAULT: 5s
+      - --fail-over-timeout=6m
+      # --- Прочие флаги (upstream-дефолты) ---
+      # ---
+      # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из genericclioptions.ConfigFlags
+      # (--request-timeout, --namespace, --server, --kubeconfig, --context, --token, --certificate-authority).
+      # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через cfgflags.ToRESTConfig()
+      # внутри — clientcmd DeferredLoadingClientConfig, in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен bare-дефолту
+      # Любой ConfigFlags-override (например --request-timeout выставляет overrides.Timeout) → детект отключается
+      # → клиент уходит на http://localhost:8080 → DaemonSet не Ready.
+      # ---
+      # Все перечисленные ниже флаги — кастомные (cmd.Flags), override не трогают, добавлять безопасно.
+      # - --grace-period-seconds=10    # grace-period при force-delete пода (сек)
+      # - --drbd-status-interval=5s    # период опроса статуса DRBD на узле
+      # - --reconcile-interval=10s     # макс. интервал цикла reconcile
+      # - --resync-interval=15m        # период пересинхронизации внутр. кэша
+      # - --operations-timeout=30s     # таймаут отдельной операции
+      # - --disable-node-taints=false  # true → не ставить taint'ы на узел
+      # --node-name оператор задаёт из env NODE_NAME — здесь не указывать
+      # ---
     # --- Operator-overridable blocks (extracted from linstor_cluster_helm_values) ---
     linstor_cluster_helm_values_linstor_cluster:
       nodeSelector: {}
@@ -219,34 +250,8 @@ all:
                 # resources: per-container placeholder. Шаблон
                 # ---
                 resources: {}
-                # args ПОЛНОСТЬЮ заменяет список оператора [/agent, --v=1]. /agent и --v=1 ниже продублированы
-                args:
-                  - /agent
-                  # --v: уровень логирования. 1 — DEFAULT
-                  - --v=1
-                  # пауза перед эвакуацией подов с "мёртвого" узла. 6m — осознанный backstop
-                  # Kubernetes сам эвакуирует поды ~через 5 мин (tolerationSeconds=300)
-                  # HA-controller добивает на 6 минуте
-                  # DEFAULT: 5s
-                  - --fail-over-timeout=6m
-                  # --- Прочие флаги (upstream-дефолты) ---
-                  # ---
-                  # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из genericclioptions.ConfigFlags
-                  # (--request-timeout, --namespace, --server, --kubeconfig, --context, --token, --certificate-authority).
-                  # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через cfgflags.ToRESTConfig()
-                  # внутри — clientcmd DeferredLoadingClientConfig, in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен bare-дефолту
-                  # Любой ConfigFlags-override (например --request-timeout выставляет overrides.Timeout) → детект отключается
-                  # → клиент уходит на http://localhost:8080 → DaemonSet не Ready.
-                  # ---
-                  # Все перечисленные ниже флаги — кастомные (cmd.Flags), override не трогают, добавлять безопасно.
-                  # - --grace-period-seconds=10    # grace-period при force-delete пода (сек)
-                  # - --drbd-status-interval=5s    # период опроса статуса DRBD на узле
-                  # - --reconcile-interval=10s     # макс. интервал цикла reconcile
-                  # - --resync-interval=15m        # период пересинхронизации внутр. кэша
-                  # - --operations-timeout=30s     # таймаут отдельной операции
-                  # - --disable-node-taints=false  # true → не ставить taint'ы на узел
-                  # --node-name оператор задаёт из env NODE_NAME — здесь не указывать
-                  # ---
+                # args — вынесено в linstor_ha_controller_args (override переопределяет весь список целиком).
+                args: "{{ linstor_ha_controller_args }}"
       # === Affinity Controller (Deployment) ===
       # Держит nodeAffinity у PersistentVolume в синхроне с реальным размещением реплик в LINSTOR
       # нужно при миграции томов и на эфемерных узлах
