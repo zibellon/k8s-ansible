@@ -28,7 +28,7 @@ RUN ansible-galaxy collection install ansible.posix:1.5.4
 RUN ansible-galaxy collection install community.general:12.6.0
 
 # helm — upstream binary, pinned for reproducibility (matches install-helm.yaml)
-ARG HELM_VERSION=3.20.2
+ARG HELM_VERSION=3.21.1
 RUN curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
     | tar -xz -C /tmp \
  && mv /tmp/linux-amd64/helm /usr/local/bin/helm \

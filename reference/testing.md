@@ -72,7 +72,7 @@ Recorded in `tests/Dockerfile`:
 - `pytest==8.3.4` — Python unit test framework для Layer 3 (filter plugin tests).
 - `ansible.posix:1.5.4` — required by `setup-ssh-keys.yaml` (authorized_key module).
 - `community.general:12.6.0` — required by `playbook-app/tasks/tasks-copy-chart.yaml` (`archive` module). Surfaced when task-file syntax-check coverage was added.
-- `helm 3.20.2` — pinned to match `playbook-system/install-helm.yaml` (the version actually deployed on the cluster, so test rendering reproduces production behaviour).
+- `helm 3.21.1` — pinned to match `playbook-system/install-helm.yaml` (the version actually deployed on the cluster, so test rendering reproduces production behaviour).
 - `kubeconform 0.7.0` — strict K8s schema validator; standalone tool, not part of the cluster.
 
 Bumping a version means editing `tests/Dockerfile` and rebuilding (`make docker-build`). Versions are intentionally frozen to make `make test` reproducible across machines.
@@ -130,11 +130,11 @@ Wall-clock: Xm YYs
 
 ## 9. Known upstream issues
 
-### 9.1 traefik chart 39.0.5 + helm 3.20.2 — `service.spec` deep-merge bug
+### 9.1 traefik chart 39.0.5 + helm 3.21.1 — `service.spec` deep-merge bug
 
 **Symptom:** `make test-helm` reports `FAIL: traefik` with kubeconform error `key "type" already set in map` in the rendered Service.
 
-**Root cause:** Traefik chart's default `values.yaml` sets `service.spec.type: LoadBalancer`. Our override in `hosts-vars/traefik.yaml` sets `service.spec.type: NodePort` + `service.spec.externalTrafficPolicy: Local`. Helm 3.20.2 does **not** deep-merge `service.spec` correctly — both values end up in the rendered Service spec, producing two `type:` keys at the same YAML level. K8s API server's last-wins parser silently picks `NodePort` in production (so the cluster is functional), but `kubeconform`'s strict YAML→JSON unmarshal correctly flags the duplicate.
+**Root cause:** Traefik chart's default `values.yaml` sets `service.spec.type: LoadBalancer`. Our override in `hosts-vars/traefik.yaml` sets `service.spec.type: NodePort` + `service.spec.externalTrafficPolicy: Local`. Helm 3.21.1 does **not** deep-merge `service.spec` correctly — both values end up in the rendered Service spec, producing two `type:` keys at the same YAML level. K8s API server's last-wins parser silently picks `NodePort` in production (so the cluster is functional), but `kubeconform`'s strict YAML→JSON unmarshal correctly flags the duplicate.
 
 **Verified:** reproducible with `helm template traefik traefik/traefik --version 39.0.5` and even minimal `-f` overrides (or `--set` flags). Inspection of `sources/traefik-charts/traefik/templates/_service.tpl` confirms the chart uses only `.Values.service.spec` (top-level `service.type` is NOT read), so a "fix" via top-level `service.type: NodePort` would silently break NodePort behaviour.
 

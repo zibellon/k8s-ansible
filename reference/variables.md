@@ -192,7 +192,7 @@ Per-file source of truth in parentheses.
 | `cni_plugins_download_host` | `"https://github.com"` | Download host for CNI plugins bundle — AirGap override |
 | `cni_plugins_install_method` | `"url"` | Install method: `"url"` (default — download from `cni_plugins_url`) or `"local_tarball"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
 | `cni_plugins_local_tarball_path` | `""` | Path to local CNI plugins tarball relative to `project_root` (used only when `cni_plugins_install_method: local_tarball`) |
-| `helm_version` | `"v3.20.2"` | Helm binary version |
+| `helm_version` | `"v3.21.1"` | Helm binary version |
 | `helm_download_host` | `"https://get.helm.sh"` | Download host for Helm tarball — AirGap override |
 | `helm_install_method` | `"url"` | Install method: `"url"` (default — download from `helm_url`) or `"local_tarball"` (offline) |
 | `helm_local_tarball_path` | `""` | Path to local Helm tarball relative to `project_root` (used only when `helm_install_method: local_tarball`) |

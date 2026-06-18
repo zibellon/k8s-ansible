@@ -23,8 +23,8 @@
 
 ## Где взять `tarball` + `containerd.service`
 - containerd binary
-  - `wget https://github.com/containerd/containerd/releases/download/v2.2.2/containerd-2.2.2-linux-amd64.tar.gz`
-  - `curl -LO https://github.com/containerd/containerd/releases/download/v2.2.2/containerd-2.2.2-linux-amd64.tar.gz`
+  - `wget https://github.com/containerd/containerd/releases/download/v2.3.1/containerd-2.3.1-linux-amd64.tar.gz`
+  - `curl -LO https://github.com/containerd/containerd/releases/download/v2.3.1/containerd-2.3.1-linux-amd64.tar.gz`
 - containerd.service (берётся из main-ветки, не привязан к версии)
   - `wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service`
   - `curl -LO https://raw.githubusercontent.com/containerd/containerd/main/containerd.service`
@@ -35,7 +35,7 @@
 all:
   vars:
     containerd_install_method: "local_tarball"
-    containerd_local_tarball_path: "pkgs-sources/containerd-2.2.2-linux-amd64.tar.gz"
+    containerd_local_tarball_path: "pkgs-sources/containerd-2.3.1-linux-amd64.tar.gz"
     containerd_service_local_path: "pkgs-sources/containerd.service"
 ```
 
@@ -45,8 +45,8 @@ all:
 
 ## Где взять
 - runc одиночный бинарник (не tarball), под архитектуру сервера (`runc.amd64` для x86_64; `runc.arm64` для ARM):
-  - `wget https://github.com/opencontainers/runc/releases/download/v1.4.2/runc.amd64`
-  - `curl -LO https://github.com/opencontainers/runc/releases/download/v1.4.2/runc.amd64`
+  - `wget https://github.com/opencontainers/runc/releases/download/v1.4.3/runc.amd64`
+  - `curl -LO https://github.com/opencontainers/runc/releases/download/v1.4.3/runc.amd64`
 
 ## Как переключить
 В `hosts-vars-override/XXXXX.yaml` под `all.vars` (или в любом файле override) задать:
@@ -79,13 +79,13 @@ all:
 ```
 
 # ------
-# установка Helm из локального `tarball` (tar.gz)
+# Helm из локального `tarball` (tar.gz)
 # ------
 
 ## Где взять `tarball = tar.gz`
 - под архитектуру сервера (`linux-amd64` для x86_64; `linux-arm64` для ARM)
-  - `wget https://get.helm.sh/helm-v3.20.2-linux-amd64.tar.gz`
-  - `curl -LO https://get.helm.sh/helm-v3.20.2-linux-amd64.tar.gz`
+  - `wget https://get.helm.sh/helm-v3.21.1-linux-amd64.tar.gz`
+  - `curl -LO https://get.helm.sh/helm-v3.21.1-linux-amd64.tar.gz`
 
 ## Как переключить
 В `hosts-vars-override/hosts.yaml` под `all.vars` (или в любом файле override) задать:
@@ -93,7 +93,7 @@ all:
 all:
   vars:
     helm_install_method: "local_tarball"
-    helm_local_tarball_path: "pkgs-sources/helm-v3.20.2-linux-amd64.tar.gz"
+    helm_local_tarball_path: "pkgs-sources/helm-v3.21.1-linux-amd64.tar.gz"
 ```
 
 # ------
