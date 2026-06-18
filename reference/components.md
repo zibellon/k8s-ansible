@@ -180,6 +180,7 @@ Template fields:
 - **First human-admin.** Bootstrapped once at install (greenfield) via the chart's `FirstInstance` + Vault. `zitadel_org_name`, `zitadel_admin_username`, `zitadel_admin_email` are explicit HELM params in `configmapConfig.FirstInstance.Org` (`Name` / `Human.Username` / `Human.Email` with `Verified: true`); the password is generated policy-compliant (class-guaranteed) into Vault `/zitadel/admin/creds` and injected via `ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD` env (username comes from config, not env). Loginname `<zitadel_admin_username>@<org-label>.<zitadel_domain>` (org-label = lowercased `Org.Name`); real-email login also works. No rotation (`vault-exists` guard).
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
+- **Enable flag.** `zitadel_enabled` (opt-in, default `false`): guards install.
 
 ## 14. `teleport`
 
@@ -192,6 +193,7 @@ Template fields:
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, traefik.
+- **Enable flag.** `teleport_enabled` (opt-in, default `false`): guards install + restart.
 - **Notes.** `configure/` phase runs after the server is up and applies the declarative resource list.
 
 ## 15. `stakater-reloader`
