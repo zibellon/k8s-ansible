@@ -373,3 +373,17 @@ extraObjects: []
 - Обычная phase: [`hosts-vars/cilium.yaml`](../hosts-vars/cilium.yaml) (`cilium_pre_extra_objects`, `cilium_post_extra_objects` + wiring в `cilium_pre_helm_values.extraObjects` / `cilium_post_helm_values.extraObjects`).
 - KUSTOMIZE_WRAPPER: [`hosts-vars/argocd.yaml`](../hosts-vars/argocd.yaml) (`argocd_install_helm_values` — мини-dict с одним key `extraObjects`) + [`playbook-app/argocd-install.yaml`](../playbook-app/argocd-install.yaml) (install phase: `dto_content: "{{ argocd_install_helm_values | to_nice_yaml }}"`).
 
+## 23. Sidecar DB chart pattern (StatefulSet + headless + per-pod DNS)
+
+23.1 Одно-репличные служебные БД (postgres/redis-«сайдкары» основных приложений) авторятся как **StatefulSet + static PVC + headless Service**, не Deployment. Текущие инстансы (5): `gitlab-postgresql` + `gitlab-redis` (charts `gitlab/postgresql/`, `gitlab/redis/`), `mon-system-grafana-postgresql` (`mon-system/grafana-postgresql/`), `seaweedfs-postgresql` (`seaweedfs/postgresql/`), `zitadel-postgresql` (`zitadel/postgresql/`). Workload = Service = PVC носят одно имя `<name>`.
+
+23.2 **Workload** (`templates/statefulset.yaml`): `kind: StatefulSet`, `replicas: 1`, `serviceName: <name>`. Том — **static PVC** из `templates/pvc.yaml`, монтируется через `volumes[].persistentVolumeClaim.claimName: <name>` (НЕ `volumeClaimTemplates` — совпадает с конвенцией `seaweedfs-admin` / `argocd-application-controller`). Без `strategy` (поле Deployment), без `updateStrategy` / `podManagementPolicy` (дефолты OrderedReady / RollingUpdate корректны для одной реплики).
+
+23.3 **Service** (`templates/service.yaml`): headless — `clusterIP: None` сразу после `type: ClusterIP` (`ports` + `selector` сохраняются). Headless публикует per-pod DNS-запись `<name>-0.<name>.<ns>.svc.<cluster_dns_domain>`.
+
+23.4 **Обращение консьюмеров** — по **short per-pod форме** `<name>-0.<name>` (без `.<ns>.svc.<cluster_dns_domain>`): консьюмер co-located в том же namespace, search-domain пода достраивает имя (k8s ndots:5 → search-suffix применяется первым). Значение — в `hosts-vars/<c>.yaml` внутри helm-values dict консьюмера (напр. `gitlab_helm_values_global.psql.host` / `.redis.host`, `mon_system_grafana_helm_values.database.host`, `seaweedfs_helm_values_filer` → `WEED_POSTGRES2_HOSTNAME`, `zitadel_helm_values_zitadel.configmapConfig.Database.Postgres.Host`).
+
+23.5 **Rollout-верификация** в install-playbook — `statefulset.apps/<name>` в `dto_rollout_resources_list` (`tasks-wait-rollout.yaml` → `kubectl rollout status`), не `deployment.apps/<name>`.
+
+23.6 NetworkPolicy от типа сервиса не зависит (label-based `podSelector`) — headless vs ClusterIP роли не играет.
+
