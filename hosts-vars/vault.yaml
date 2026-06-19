@@ -220,16 +220,17 @@ all:
           path "eso-secret/data/mon-system/*" { capabilities = ["read", "list"] }
           path "eso-secret/metadata/mon-system/*" { capabilities = ["read", "list"] }
       # ---------
-      # Vault Admin (full access for vault-admin SA, used by Ansible for writing secrets)
+      # Vault Admin — ПОЛНАЯ admin-политика (почти-root). Назначается человеку-админу
+      # (логин userpass в vault-ui), чтобы не сидеть под root-token в повседневке.
+      # Отличие от root: подчиняется ACL (аудит + можно отозвать), НЕ обходит политики.
+      # Пара root-only операций (sys/generate-root, sys/rekey) требует кворума unseal-ключей
+      # в любом случае. path "*" + sudo = доступ ко всем путям и sudo-эндпоинтам.
       # ---------
       - name: vault-admin
         rules: |
-          path "secret/data/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-          path "secret/metadata/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-          path "eso-secret/data/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-          path "eso-secret/metadata/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-          path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-          path "auth/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "*" {
+            capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+          }
 
     vault_policies_extra: []
 
@@ -341,6 +342,10 @@ all:
         config:
           kubernetes_host: "{{ vault_kubernetes_host }}"
         roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
+      # userpass — человеческий логин в vault-ui (метод «Username & Password»).
+      # Включаем ТОЛЬКО метод; пользователей заводим вручную через UI/CLI и НЕ держим в конфиге
+      # (пароли не в git; auth исключён из purgeUnmanagedConfig → ручные юзеры/пароли не затираются).
+      - type: userpass
     vault_spec_secrets:
       - path: secret
         type: kv
