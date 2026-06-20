@@ -1,9 +1,11 @@
 # =============================================================================
-# INGRESSROUTE FOR ARGOCD UI (Traefik)
+# INGRESSROUTE FOR ARGOCD UI / REST (Traefik)
 #   enabled    → рендерить IngressRoute
 #   tlsEnabled → websecure entrypoint + tls-блок; иначе web, без tls
+# UI + REST API → argocd-server:80 (http). gRPC (CLI) — в ingress-argocd-grpc.yaml,
+# на том же Host по Header(Content-Type, application/grpc) + h2c.
 # =============================================================================
-{{- if .Values.uiIngressConfig.enabled }}
+{{- if .Values.ingressConfig.enabled }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -11,21 +13,21 @@ metadata:
   name: argocd-ui
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: "{{ .Values.uiIngressConfig.ingressClass }}"
+    kubernetes.io/ingress.class: "{{ .Values.ingressConfig.ingressClass }}"
 spec:
   entryPoints:
-    {{- if .Values.uiIngressConfig.tlsEnabled }}
+    {{- if .Values.ingressConfig.tlsEnabled }}
     - {{ .Values.traefik.entryPoints.websecure }}
     {{- else }}
     - {{ .Values.traefik.entryPoints.web }}
     {{- end }}
   routes:
     - kind: Rule
-      match: Host(`{{ .Values.uiIngressConfig.domain }}`)
+      match: Host(`{{ .Values.ingressConfig.domain }}`)
       priority: 10
-      {{- if .Values.uiIngressConfig.vpnOnlyEnabled }}
+      {{- if .Values.ingressConfig.vpnOnlyEnabled }}
       middlewares:
-        {{- range .Values.uiIngressConfig.vpnIngressRouteMiddlewares }}
+        {{- range .Values.ingressConfig.vpnIngressRouteMiddlewares }}
         - name: {{ .name }}
           namespace: {{ .namespace }}
         {{- end }}
@@ -33,8 +35,8 @@ spec:
       services:
         - name: argocd-server
           port: 80
-  {{- if and .Values.uiIngressConfig.tlsEnabled .Values.uiIngressConfig.tlsSecretName }}
+  {{- if and .Values.ingressConfig.tlsEnabled .Values.ingressConfig.tlsSecretName }}
   tls:
-    secretName: {{ .Values.uiIngressConfig.tlsSecretName }}
+    secretName: {{ .Values.ingressConfig.tlsSecretName }}
   {{- end }}
 {{- end }}

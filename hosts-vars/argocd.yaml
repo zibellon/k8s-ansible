@@ -8,8 +8,6 @@ all:
     argocd_ui_domain: "argocd-ui-k8s-v2.drawapp.ru"
     argocd_external_url: "https://argocd-ui-k8s-v2.drawapp.ru"
     argocd_ui_https_secret_name: "cert-argocd-ui"
-    argocd_rpc_domain: "argocd-rpc-k8s-v2.drawapp.ru"
-    argocd_rpc_https_secret_name: "cert-argocd-rpc"
     argocd_vpn_only_enabled: false
     argocd_ingress_class_name: "traefik-lb"
     # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
@@ -48,11 +46,13 @@ all:
           privateKeySecretRef:
             name: "{{ argocd_acme_private_key_name }}"
           solvers: "{{ argocd_acme_solvers }}"
-    # Ingress config (per-domain). argocd — 2 домена (ui + rpc), по объекту на каждый.
+    # Ingress config — ОДИН домен. UI/REST + gRPC (CLI) идут через тот же Host:
+    # из этого конфига рендерятся два IngressRoute (argocd-ui + argocd-grpc, по Content-Type
+    # header → h2c), на один tlsSecret. Отдельный rpc-домен не нужен (см. оф. доку Traefik v3).
     argocd_ui_ingress_enabled: true
     argocd_ui_ingress_tls_enabled: true
     argocd_ui_certificate_enabled: true
-    argocd_ui_ingress_config:
+    argocd_ingress_config:
       enabled: "{{ argocd_ui_ingress_enabled }}"
       domain: "{{ argocd_ui_domain }}"
       ingressClass: "{{ argocd_ingress_class_name }}"
@@ -60,36 +60,14 @@ all:
       tlsSecretName: "{{ argocd_ui_https_secret_name }}"
       vpnOnlyEnabled: "{{ argocd_vpn_only_enabled }}"
       vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
-    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
-    argocd_ui_certificate:
+    # cert-manager Certificate (один на домен) — плоский объект {enabled, name, spec}.
+    argocd_certificate:
       enabled: "{{ argocd_ui_certificate_enabled }}"
       name: "{{ argocd_ui_https_secret_name }}"
       spec:
         secretName: "{{ argocd_ui_https_secret_name }}"
         dnsNames:
           - "{{ argocd_ui_domain }}"
-        issuerRef:
-          name: "{{ argocd_acme_issuer_name }}"
-          kind: "Issuer"
-    argocd_rpc_ingress_enabled: true
-    argocd_rpc_ingress_tls_enabled: true
-    argocd_rpc_certificate_enabled: true
-    argocd_rpc_ingress_config:
-      enabled: "{{ argocd_rpc_ingress_enabled }}"
-      domain: "{{ argocd_rpc_domain }}"
-      ingressClass: "{{ argocd_ingress_class_name }}"
-      tlsEnabled: "{{ argocd_rpc_ingress_tls_enabled }}"
-      tlsSecretName: "{{ argocd_rpc_https_secret_name }}"
-      vpnOnlyEnabled: "{{ argocd_vpn_only_enabled }}"
-      vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
-    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
-    argocd_rpc_certificate:
-      enabled: "{{ argocd_rpc_certificate_enabled }}"
-      name: "{{ argocd_rpc_https_secret_name }}"
-      spec:
-        secretName: "{{ argocd_rpc_https_secret_name }}"
-        dnsNames:
-          - "{{ argocd_rpc_domain }}"
         issuerRef:
           name: "{{ argocd_acme_issuer_name }}"
           kind: "Issuer"
@@ -223,10 +201,8 @@ all:
     # Post-phase values (Ingress + ServiceMonitor chart)
     argocd_post_helm_values:
       namespace: "{{ argocd_namespace }}"
-      uiIngressConfig: "{{ argocd_ui_ingress_config }}"
-      uiCertificateConfig: "{{ argocd_ui_certificate }}"
-      rpcIngressConfig: "{{ argocd_rpc_ingress_config }}"
-      rpcCertificateConfig: "{{ argocd_rpc_certificate }}"
+      ingressConfig: "{{ argocd_ingress_config }}"
+      certificateConfig: "{{ argocd_certificate }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
