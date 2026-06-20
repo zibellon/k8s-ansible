@@ -1,10 +1,16 @@
 all:
   vars:
-    gitlab_namespace: "gitlab"
     # Component enable flag (default false, opt-in): guards install/configure start + gates cross-ns NetworkPolicies to this component.
     gitlab_enabled: false
+
+    # ------
+
+    gitlab_namespace: "gitlab"
+
     # ------
     # ------
+    # ------
+
     # Base domain - используется для генерации внутренних URL (CI/CD переменные, clone URL, webhooks)
     # https: true - потому что внешний трафик приходит по HTTPS (TLS терминируется на Traefik + cert-manager)
     gitlab_ssh_port_external: 3714
@@ -19,10 +25,13 @@ all:
     gitlab_pages_https_secret_name: "cert-gitlab-pages"
     gitlab_ingress_class_name: "traefik-lb"
     gitlab_vpn_only_enabled: false
-    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
-    # Один на весь gitlab (все 3 домена: UI/registry/pages).
-    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
-    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
+
+    # ------
+    # ------
+    # ------
+    
+    gitlab_acme_issuer_name: "gitlab-acme"
+    gitlab_acme_private_key_name: "gitlab-acme-account-key"
     gitlab_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
     gitlab_acme_email: "some-email-123@gmail.com"
     gitlab_acme_solvers:
@@ -42,10 +51,6 @@ all:
                   app.kubernetes.io/component: acme-http01-solver
                   app.kubernetes.io/managed-by: cert-manager
     gitlab_cert_manager_issuer_enabled: true
-    # Issuer identity — вынесено в простые переменные (единый источник истины:
-    # на name ссылается и Issuer, и issuerRef.name сертификатов).
-    gitlab_acme_issuer_name: "gitlab-acme"
-    gitlab_acme_private_key_name: "gitlab-acme-account-key"
     gitlab_cert_manager_issuer:
       enabled: "{{ gitlab_cert_manager_issuer_enabled }}"
       name: "{{ gitlab_acme_issuer_name }}"
@@ -56,6 +61,11 @@ all:
           privateKeySecretRef:
             name: "{{ gitlab_acme_private_key_name }}"
           solvers: "{{ gitlab_acme_solvers }}"
+    
+    # ------
+    # ------
+    # ------
+    
     # Ingress config (per-domain). gitlab — 3 домена (ui + registry + pages).
     gitlab_ui_ingress_enabled: true
     gitlab_ui_ingress_tls_enabled: true
@@ -370,7 +380,7 @@ all:
     gitlab_helm_url: "https://charts.gitlab.io"
     gitlab_helm_repo_name: "gitlab"
     gitlab_helm_chart_name: "gitlab"
-    gitlab_helm_chart_version: "8.11.8"  # GitLab 17.11
+    gitlab_helm_chart_version: "8.11.8" # GitLab 17.11
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lnstr-major-local"
     # Helm chart values

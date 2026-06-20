@@ -1,15 +1,23 @@
 all:
   vars:
-    zitadel_namespace: "zitadel"
     # Component enable flag (default false, opt-in): guards install/configure start + gates cross-ns NetworkPolicies to this component.
     zitadel_enabled: false
+
+    # ------
+
+    zitadel_namespace: "zitadel"
+
     zitadel_domain: "zitadel-k8s-v2.drawapp.ru"
     zitadel_tls_secret_name: "cert-zitadel"
     zitadel_ingress_class_name: "traefik-lb"
     zitadel_vpn_only_enabled: false
-    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
-    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
-    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
+
+    # ------
+    # ------
+    # ------
+
+    zitadel_acme_issuer_name: "zitadel-acme"
+    zitadel_acme_private_key_name: "zitadel-acme-account-key"
     zitadel_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
     zitadel_acme_email: "some-email-123@gmail.com"
     zitadel_acme_solvers:
@@ -29,10 +37,6 @@ all:
                   app.kubernetes.io/component: acme-http01-solver
                   app.kubernetes.io/managed-by: cert-manager
     zitadel_cert_manager_issuer_enabled: true
-    # Issuer identity — вынесено в простые переменные (единый источник истины:
-    # на name ссылается и Issuer, и issuerRef.name сертификата).
-    zitadel_acme_issuer_name: "zitadel-acme"
-    zitadel_acme_private_key_name: "zitadel-acme-account-key"
     zitadel_cert_manager_issuer:
       enabled: "{{ zitadel_cert_manager_issuer_enabled }}"
       name: "{{ zitadel_acme_issuer_name }}"
@@ -43,7 +47,11 @@ all:
           privateKeySecretRef:
             name: "{{ zitadel_acme_private_key_name }}"
           solvers: "{{ zitadel_acme_solvers }}"
-    # Ingress config (per-domain). zitadel — 1 домен (2 IngressRoute: ui + grpc).
+
+    # ------
+    # ------
+    # ------
+
     zitadel_ui_ingress_enabled: true
     zitadel_ui_ingress_tls_enabled: true
     zitadel_ui_certificate_enabled: true
@@ -67,6 +75,11 @@ all:
         issuerRef:
           name: "{{ zitadel_acme_issuer_name }}"
           kind: "Issuer"
+
+    # ------
+    # ------
+    # ------
+
     zitadel_postgresql_username: "zitadel"
     zitadel_postgresql_database_name: "zitadel"
     zitadel_postgresql_secret_key_username: "username"

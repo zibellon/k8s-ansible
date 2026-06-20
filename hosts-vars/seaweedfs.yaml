@@ -1,8 +1,11 @@
 all:
   vars:
-    seaweedfs_namespace: "seaweedfs"
     # Component enable flag (default false, opt-in): guards install/configure start + gates cross-ns NetworkPolicies to this component.
     seaweedfs_enabled: false
+
+    # ------
+
+    seaweedfs_namespace: "seaweedfs"
 
     # Domain'ы — placeholder values в hosts-vars/, реальные в hosts-vars-override/
     # S3 endpoint + три раздельных UI-поддомена (master/filer/admin), без path-prefix.
@@ -25,9 +28,12 @@ all:
     seaweedfs_filer_ui_vpn_only_enabled: false
     seaweedfs_admin_ui_vpn_only_enabled: false
 
-    # cert-manager Issuer (per-component, namespaced) — единый объект {enabled, body}.
-    # enabled: true  → Issuer + solver-NetworkPolicies (pre); Certificate доступен (post).
-    # enabled: false → ни Issuer, ни solver-NP, ни Certificate.
+    # ------
+    # ------
+    # ------
+
+    seaweedfs_acme_issuer_name: "seaweedfs-acme"
+    seaweedfs_acme_private_key_name: "seaweedfs-acme-account-key"
     seaweedfs_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
     seaweedfs_acme_email: "some-email-123@gmail.com"
     seaweedfs_acme_solvers:
@@ -47,10 +53,6 @@ all:
                   app.kubernetes.io/component: acme-http01-solver
                   app.kubernetes.io/managed-by: cert-manager
     seaweedfs_cert_manager_issuer_enabled: true
-    # Issuer identity — вынесено в простые переменные (единый источник истины:
-    # на name ссылается и Issuer, и issuerRef.name сертификатов).
-    seaweedfs_acme_issuer_name: "seaweedfs-acme"
-    seaweedfs_acme_private_key_name: "seaweedfs-acme-account-key"
     seaweedfs_cert_manager_issuer:
       enabled: "{{ seaweedfs_cert_manager_issuer_enabled }}"
       name: "{{ seaweedfs_acme_issuer_name }}"
@@ -61,6 +63,10 @@ all:
           privateKeySecretRef:
             name: "{{ seaweedfs_acme_private_key_name }}"
           solvers: "{{ seaweedfs_acme_solvers }}"
+
+    # ------
+    # ------
+    # ------
 
     # Ingress config 1: S3 endpoint (без VPN-only) — 1 domain === 1 ingress_config
     seaweedfs_s3_ingress_enabled: true
@@ -170,7 +176,6 @@ all:
     seaweedfs_admin_ui_secret_key_user: "adminUser"
     seaweedfs_admin_ui_secret_key_password: "adminPassword"
 
-
     # === SECTION 2: ESO ===
     # ---------
     # ESO integration: Vault → K8s Secrets
@@ -221,7 +226,7 @@ all:
               # K8s Secret key — upstream chart 4.34.0 ожидает 'seaweedfs_s3_config'
               # (см. sources/seaweedfs/k8s/charts/seaweedfs/values.yaml line ~958).
               # Inline-quoted form: {% endraw %} БЕЗ +% (см. reference/secrets-and-eso.md §2.4).
-              seaweedfs_s3_config: '{% raw %}{{ .config }}{% endraw %}'
+              seaweedfs_s3_config: "{% raw %}{{ .config }}{% endraw %}"
         data:
           - secretKey: config
             remoteRef:
