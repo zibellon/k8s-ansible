@@ -91,6 +91,26 @@ all:
     argocd_applicationset_controller_metrics_port: 8080
     argocd_dex_server_metrics_port: 5558
     argocd_notifications_controller_metrics_port: 9001
+    # === SECTION: LOCAL ACCOUNTS (declarative) ===
+    # Декларативные локальные аккаунты ArgoCD (login + пароль). Пароли НЕ здесь — генерятся
+    # в рантайме task'ом accounts-sync и кладутся в Vault-зеркало. Per-project RBAC
+    # (AppProject roles/groups) — вне репозитория (внешний git-ops repo ссылается на эти имена).
+    # Реальный список — в hosts-vars-override/<cluster>/argocd.yaml. Схема элемента:
+    #   - name: <str>                 # ^[A-Za-z0-9._-]+$
+    #     passwordMtime: "<RFC3339>"  # ОБЯЗАТЕЛЬНО; смена значения = триггер ротации пароля
+    argocd_local_accounts: []
+    # Встроенный admin: true (default) для безопасного bootstrap. Флипать в false ТОЛЬКО после того,
+    # как заведён custom-admin и ему выдан role:admin через argocd_policy_csv_list (иначе lock-out).
+    argocd_builtin_admin_enabled: true
+    # Глобальный RBAC argocd-rbac-cm (policy.csv) — явный список Casbin-строк. Каждый элемент = одна строка, напр.:
+    #   - "g, root-admin, role:admin"
+    #   - "g, ci-bot, role:readonly"
+    # Реальные значения — в hosts-vars-override/<cluster>/argocd.yaml.
+    argocd_policy_csv_list: []
+    # Vault-зеркало аккаунтов: один path, одно поле "mirror" = JSON {"<name>": {plaintext, hash, passwordMtime}}.
+    # Полный путь = eso_vault_integration_argocd.kv_engine_path + argocd_accounts_vault_path.
+    argocd_accounts_vault_path: "/argocd/accounts/creds"
+    argocd_accounts_vault_field: "mirror"
     # === SECTION 2: ESO ===
     # ---------
     # ESO integration: Vault → K8s Secrets
@@ -199,6 +219,42 @@ all:
             name: argocd-cmd-params-cm
           data:
             server.insecure: "true"
+    # Generated kustomize patches (install phase), рендерятся из деклараций:
+    #   1) argocd-cm: accounts.<name>: login (из argocd_local_accounts) + admin.enabled
+    #   2) argocd-rbac-cm: policy.csv (из argocd_policy_csv_list)
+    # Применяются через argocd_install_kustomize_patches_effective (ниже). Отдельные патчи —
+    # kustomize мержит несколько патчей на один target.
+    argocd_accounts_kustomize_patches:
+      - target:
+          kind: ConfigMap
+          name: argocd-cm
+        patch: |-
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: argocd-cm
+          data:
+          {% for acc in argocd_local_accounts %}
+            accounts.{{ acc.name }}: "login"
+          {% endfor %}
+            admin.enabled: "{{ argocd_builtin_admin_enabled | string | lower }}"
+      - target:
+          kind: ConfigMap
+          name: argocd-rbac-cm
+        patch: |-
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: argocd-rbac-cm
+          data:
+            policy.csv: |
+          {% for line in argocd_policy_csv_list %}
+              {{ line }}
+          {% endfor %}
+    # Effective install patches = базовые патчи оператора + генерируемые accounts-патчи.
+    # argocd-install.yaml будет потреблять ИМЕННО эту var (wiring в другом SUB), поэтому override-файлы,
+    # которые целиком переопределяют argocd_install_kustomize_patches, продолжают работать без копирования accounts-патчей.
+    argocd_install_kustomize_patches_effective: "{{ argocd_install_kustomize_patches + argocd_accounts_kustomize_patches }}"
     # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
     argocd_install_helm_values:
       extraObjects: "{{ argocd_install_extra_objects }}"
