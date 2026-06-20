@@ -175,16 +175,16 @@ Per-file source of truth in parentheses.
 | `llvm_download_host` | `"https://apt.llvm.org"` | Download host for `llvm.sh` script — AirGap override |
 | `llvm_install_method` | `"url"` | Install method: `"url"` (default — download from `llvm_url`) or `"local_script"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`). **Не решает AirGap полностью** — `llvm.sh` сам внутри ходит curl на `apt.llvm.org` за GPG-ключом |
 | `llvm_local_script_path` | `""` | Path to local `llvm.sh` relative to `project_root` (used only when `llvm_install_method: local_script`) |
-| `k8s_version` | `"1.35"` | Short version (for apt repo URL) |
-| `k8s_full_version` | `"v1.35.3"` | Full version pin in kubeadm config |
-| `containerd_version` | `"2.2.2"` | Container runtime |
+| `k8s_version` | `"1.36"` | Short version (for apt repo URL) |
+| `k8s_full_version` | `"v1.36.1"` | Full version pin in kubeadm config |
+| `containerd_version` | `"2.3.1"` | Container runtime |
 | `containerd_download_host` | `"https://github.com"` | Download host for containerd tarball — AirGap override |
 | `containerd_service_download_host` | `"https://raw.githubusercontent.com"` | Download host for containerd.service unit — AirGap override |
 | `containerd_install_method` | `"url"` | Install method: `"url"` (default — download from `containerd_url` + `containerd_service_url`) or `"local_tarball"` (offline; paths relative to `project_root`, files kept in `pkgs-sources/`) |
 | `containerd_local_tarball_path` | `""` | Path to local containerd tarball relative to `project_root` (used only when `containerd_install_method: local_tarball`) |
 | `containerd_service_local_path` | `""` | Path to local `containerd.service` unit file relative to `project_root` (used only when `containerd_install_method: local_tarball`) |
 | `containerd_additional_configs` | `[{dirName: "_default", content: "..."}]` | List of drop-in configs in `/etc/containerd/certs.d/<dirName>/hosts.toml`. Default has one `_default` entry pointing all registries (catch-all) at `mirror.gcr.io`. **Единая точка AirGap-интерсепции** для образов всех компонентов — заменяет per-component `_image_registry` overrides. **Full-sync семантика:** любая поддиректория в `/etc/containerd/certs.d/`, которой нет в этом списке (включая ручные `mkdir` оператора), удаляется на следующем прогоне `full-node-install.yaml`. См. `hosts-vars/k8s-base.yaml` для развёрнутого описания + примеров |
-| `runc_version` | `"v1.4.2"` | OCI runtime |
+| `runc_version` | `"v1.4.3"` | OCI runtime |
 | `runc_download_host` | `"https://github.com"` | Download host for runc binary — AirGap override |
 | `runc_install_method` | `"url"` | Install method: `"url"` (default — download from `runc_url`) or `"local_file"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
 | `runc_local_path` | `""` | Path to local runc binary relative to `project_root` (used only when `runc_install_method: local_file`) |
