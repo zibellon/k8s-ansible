@@ -172,8 +172,11 @@ all:
     argocd_rollout_timeout: "180s"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_install_extra_objects: []
-    # Install-phase kustomize patches (operator-side customization for ArgoCD pristine upstream install.yaml)
-    argocd_install_kustomize_patches:
+    # Install-phase kustomize patches: base = operator patches + generated accounts/RBAC patches.
+    # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure) + generated argocd-cm
+    # (accounts.<name>: login из argocd_local_accounts + admin.enabled) + argocd-rbac-cm
+    # (policy.csv из argocd_policy_csv_list). kustomize мержит несколько патчей на один target.
+    argocd_accounts_kustomize_patches_base:
       - target:
           kind: ConfigMap
           name: argocd-cm
@@ -205,12 +208,6 @@ all:
             name: argocd-cmd-params-cm
           data:
             server.insecure: "true"
-    # Generated kustomize patches (install phase), рендерятся из деклараций:
-    #   1) argocd-cm: accounts.<name>: login (из argocd_local_accounts) + admin.enabled
-    #   2) argocd-rbac-cm: policy.csv (из argocd_policy_csv_list)
-    # Применяются через argocd_install_kustomize_patches_effective (ниже). Отдельные патчи —
-    # kustomize мержит несколько патчей на один target.
-    argocd_accounts_kustomize_patches:
       - target:
           kind: ConfigMap
           name: argocd-cm
@@ -237,10 +234,10 @@ all:
           {% for line in argocd_policy_csv_list %}
               {{ line }}
           {% endfor %}
-    # Effective install patches = базовые патчи оператора + генерируемые accounts-патчи.
-    # argocd-install.yaml будет потреблять ИМЕННО эту var (wiring в другом SUB), поэтому override-файлы,
-    # которые целиком переопределяют argocd_install_kustomize_patches, продолжают работать без копирования accounts-патчей.
-    argocd_install_kustomize_patches_effective: "{{ argocd_install_kustomize_patches + argocd_accounts_kustomize_patches }}"
+    # Operator-side extra patches — задаются в hosts-vars-override/ (напр. argocd-ssh-known-hosts-cm). Default пусто.
+    argocd_install_kustomize_patches_extra: []
+    # Consumed by the install phase (named like other components): base + operator extra.
+    argocd_install_kustomize_patches: "{{ argocd_accounts_kustomize_patches_base + argocd_install_kustomize_patches_extra }}"
     # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
     argocd_install_helm_values:
       extraObjects: "{{ argocd_install_extra_objects }}"
