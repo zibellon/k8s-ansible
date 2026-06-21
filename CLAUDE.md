@@ -21,6 +21,7 @@ Violating any of these will break the cluster or leak secrets.
 - Exactly **one** manager in inventory must have `is_master: true`. That host becomes `master_manager_fact` — the single delegation target for every cluster-scope operation.
 - **Optional:** if bastion-схема используется и bastion — один из узлов кластера (manager или worker), на нём ставится `is_bastion: true`. Этот хост становится `bastion_host_fact` и ребутится последним в `tasks-reboot-cluster.yaml` (избегаем self-kill ProxyJump tunnel'а). Подробности — [`variables.md`](reference/variables.md) §2.14.
 - Before adding a new node to the cluster, run `playbook-app/cilium-install.yaml --tags post` first — it refreshes the Cilium host firewall with the new node's IPs, otherwise the join handshake is blocked.
+- ArgoCD's **`argocd-secret` must stay empty** (no `data:`) in every helm render. Local-account passwords (`accounts.<name>.password`/`.passwordMtime`) and `server.secretkey` are written out-of-band — by the accounts-sync reconcile (`kubectl patch`) and by argocd-server — and the upstream `install.yaml` ships `argocd-secret` with no `data:` so helm's 3-way merge never prunes those keys. Templating ANY `data:` key into `argocd-secret` makes helm own the data map and delete the out-of-band keys (helm#12886) → lost passwords + broken auth. See [`components.md`](reference/components.md) §9.
 
 ---
 
