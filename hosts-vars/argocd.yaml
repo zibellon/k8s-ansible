@@ -81,9 +81,6 @@ all:
     # ------
     # ------
 
-    argocd_admin_username: "admin"
-    argocd_admin_secret_key_username: "username"
-    argocd_admin_secret_key_password: "password"
     # Prometheus metrics ports (hardcoded in ArgoCD manifests)
     argocd_application_controller_metrics_port: 8082
     argocd_server_metrics_port: 8083
@@ -127,21 +124,10 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
-    # never rendered (is_need_eso: false) — body присутствует для консистентности схемы.
-    # Используется только playbook'ом argocd-configure.yaml для чтения/записи в Vault.
-    argocd_secret_admin_creds:
-      external_secret_name: "eso-argocd-admin-creds"
-      vault_path: "/argocd/admin/creds"
-      is_need_eso: false
-      body:
-        target:
-          name: "eso-argocd-admin-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/admin/creds"
-
-    eso_vault_integration_argocd_secrets:
-      - "{{ argocd_secret_admin_creds }}"
+    # Base ESO secrets list is empty: local-account passwords are written to argocd-secret
+    # by accounts-sync (kubectl patch), not via ESO. Operators add git-ops repo credentials
+    # through eso_vault_integration_argocd_secrets_extra in hosts-vars-override/.
+    eso_vault_integration_argocd_secrets: []
 
     eso_vault_integration_argocd_secrets_extra: []
     # === SECTION 3 ===
