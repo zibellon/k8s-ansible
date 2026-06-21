@@ -113,6 +113,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags cr` — for `vault` (Vault Custom Resource)
 - `--tags configure` — for `teleport` (declarative resources)
 - `--tags gitops` — for `argocd` (AppProjects + Applications)
+- `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
 
 `tags: [always]` tasks (`tasks-pre-check`, `tasks-vault-config-verify`, `tasks-eso-verify`) run regardless of `--tags`.
@@ -155,7 +156,7 @@ All three use `serial: 1` internally to preserve quorum. Safe to run on a health
 |---|---|---|
 | Rotate Vault root + unseal shares | `ansible-playbook ... playbook-app/vault-rotate.yaml` | [`secrets-and-eso.md`](secrets-and-eso.md) §8.1 |
 | Force ESO re-sync (all / single) | `ansible-playbook ... playbook-app/eso-force-sync.yaml` | [`reusable-tasks.md`](reusable-tasks.md) §1.11 |
-| Rotate `argocd` admin password | `ansible-playbook ... playbook-app/argocd-configure.yaml` | [`secrets-and-eso.md`](secrets-and-eso.md) §8.2 |
+| Rotate `argocd` local-account password | bump that account's `passwordMtime` in `argocd_local_accounts`, then `ansible-playbook ... playbook-app/argocd-install.yaml --tags accounts-sync` | [`secrets-and-eso.md`](secrets-and-eso.md) §8.3 |
 | Rotate `gitlab` creds | `ansible-playbook ... playbook-app/gitlab-configure.yaml` | same |
 
 ### 4.4 Component restart
