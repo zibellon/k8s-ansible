@@ -24,7 +24,7 @@ for f in $(find playbook-system playbook-app -name '*.yaml' -not -path '*/tasks/
 done
 
 # === Cycle 2: task files (wrapped in import_tasks playbook) ===
-for f in playbook-system/tasks/*.yaml playbook-app/tasks/*.yaml playbook-app/tasks/vault/*.yaml; do
+for f in playbook-system/tasks/*.yaml playbook-app/tasks/*.yaml playbook-app/tasks/vault/*.yaml playbook-app/tasks/argocd/*.yaml; do
   cat > "$WRAPPER" <<EOF
 - hosts: localhost
   gather_facts: false
