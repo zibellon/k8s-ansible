@@ -16,48 +16,6 @@
       include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-set-master-manager.yaml"
 
     # =========================================================================
-    # LLVM + CLANG INSTALLATION
-    # =========================================================================
-
-    - name: PreCheck clang is installed
-      command: which clang-{{ llvm_version }}
-      register: clang_pre_check
-      changed_when: false
-      failed_when: false
-
-    - name: Assert llvm install method is valid
-      assert:
-        that:
-          - llvm_install_method in ["url", "local_script"]
-          - (llvm_install_method == "url") or (llvm_local_script_path | length > 0)
-        fail_msg: "llvm_install_method must be 'url' or 'local_script'; for 'local_script' set llvm_local_script_path"
-
-    - name: Download LLVM install script (url)
-      get_url:
-        url: "{{ llvm_url }}"
-        dest: /tmp/llvm.sh
-        mode: '0755'
-      when:
-        - clang_pre_check.rc != 0
-        - llvm_install_method == "url"
-
-    - name: Copy LLVM install script (local_script)
-      copy:
-        src: "{{ project_root }}/{{ llvm_local_script_path }}"
-        dest: /tmp/llvm.sh
-        mode: '0755'
-      when:
-        - clang_pre_check.rc != 0
-        - llvm_install_method == "local_script"
-
-    - name: Install LLVM {{ llvm_version }} (async)
-      command: /tmp/llvm.sh {{ llvm_version }} all
-      async: "{{ system_async.timeout }}"
-      poll: "{{ system_async.poll }}"
-      register: llvm_install
-      when: clang_pre_check.rc != 0
-
-    # =========================================================================
     # eBPF MOUNT (sys-fs-bpf.mount)
     # =========================================================================
 
@@ -159,24 +117,6 @@
         success_msg: "BPF mount: OK (type=bpf)"
 
     # ======
-    # CLANG
-    # ======
-
-    # rc=0 if OK, rc=XXX if not found
-    - name: Check clang version
-      command: clang-{{ llvm_version }} --version
-      register: clang_check
-      changed_when: false
-      failed_when: false
-
-    - name: Assert clang is installed
-      assert:
-        that:
-          - clang_check.rc == 0
-        fail_msg: "clang-{{ llvm_version }} is NOT installed!"
-        success_msg: "clang-{{ llvm_version }}: OK"
-
-    # ======
     # MODULES
     # ======
 
@@ -197,7 +137,6 @@
       debug:
         msg:
           - "=== Cilium Complete ==="
-          - "clang-{{ llvm_version }}: {{ 'OK' if clang_check.rc == 0 else 'NOT_OK' }}"
           - "bpf_mount: {{ 'OK' if bpf_mount_check.rc == 0 else 'NOT_OK' }}"
           - "bpf_type: {{ 'OK' if bpf_type_check.rc == 0 else 'NOT_OK' }}"
           - "modules: ALL {{ cilium_modules | length }} loaded"
