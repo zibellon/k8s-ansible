@@ -8,6 +8,7 @@ import sys
 import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent / 'filter_plugins'))
 
+import base64
 import json
 import pytest
 
@@ -117,6 +118,49 @@ def sample_bucket_list_raw():
     return ('  b1\tsize:0\tchunk:0\towner:"gitlab"\n'
             '  b2\tsize:0\tchunk:0\towner:"loki"\n'
             '  b_stale\tsize:0\tchunk:0\towner:"admin"\n')
+
+
+@pytest.fixture
+def sample_argocd_desired():
+    """Desired accounts exercising all 4 deltas: stableuser (steady), root-admin (resync —
+    S drift), vasya.pupkin (rotate — newer mtime, dotted name), petya (create — not in V)."""
+    return [
+        {'name': 'stableuser',   'passwordMtime': '2026-06-20T13:00:00Z'},
+        {'name': 'root-admin',   'passwordMtime': '2026-06-20T13:00:00Z'},
+        {'name': 'vasya.pupkin', 'passwordMtime': '2026-06-21T10:00:00Z'},
+        {'name': 'petya',        'passwordMtime': '2026-06-20T13:00:00Z'},
+    ]
+
+
+@pytest.fixture
+def sample_argocd_vault_mirror():
+    """Vault mirror: stableuser/root-admin/vasya.pupkin (vasya old mtime) + olduser (not in desired -> delete)."""
+    return {
+        'stableuser':   {'plaintext': 'pw-s', 'hash': '$2a$10$STABLE', 'passwordMtime': '2026-06-20T13:00:00Z'},
+        'root-admin':   {'plaintext': 'pw-r', 'hash': '$2a$10$ROOT',   'passwordMtime': '2026-06-20T13:00:00Z'},
+        'vasya.pupkin': {'plaintext': 'pw-v', 'hash': '$2a$10$VASYA',  'passwordMtime': '2026-06-20T13:00:00Z'},
+        'olduser':      {'plaintext': 'pw-o', 'hash': '$2a$10$OLD',    'passwordMtime': '2026-06-19T00:00:00Z'},
+    }
+
+
+@pytest.fixture
+def sample_argocd_live_secret_data():
+    """Live argocd-secret .data (base64). Includes server.secretkey + accounts.olduser.tokens
+    which the parser MUST ignore; root-admin ABSENT (S drift -> resync); ghost is an S-only stray."""
+    def b(s):
+        return base64.b64encode(s.encode()).decode()
+    return {
+        'server.secretkey': b('SIGNINGKEY'),
+        'accounts.stableuser.password': b('$2a$10$STABLE'),
+        'accounts.stableuser.passwordMtime': b('2026-06-20T13:00:00Z'),
+        'accounts.vasya.pupkin.password': b('$2a$10$VASYA'),
+        'accounts.vasya.pupkin.passwordMtime': b('2026-06-20T13:00:00Z'),
+        'accounts.olduser.password': b('$2a$10$OLD'),
+        'accounts.olduser.passwordMtime': b('2026-06-19T00:00:00Z'),
+        'accounts.olduser.tokens': b('sometoken'),
+        'accounts.ghost.password': b('$2a$10$GHOST'),
+        'accounts.ghost.passwordMtime': b('2026-06-01T00:00:00Z'),
+    }
 
 
 @pytest.fixture

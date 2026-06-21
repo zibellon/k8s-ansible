@@ -471,10 +471,10 @@
 ## ---
 ##
 - установка + конфигурация
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml --tags pre,install,post`
-  - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc)
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-configure.yaml`
-  - Конфигурация (сбросить права у default-project, достать пароль admin и положить его в Vault)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
+  - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), lockdown default-project (gitops), локальные аккаунты (accounts-sync)
+  - Локальные аккаунты (login + пароль, включая custom-admin) — декларативно через `argocd_local_accounts` в `hosts-vars-override/`; пароли генерятся в рантайме и кладутся в Vault `eso-secret/argocd/accounts/creds`. Ротация: bump `passwordMtime` у аккаунта → `argocd-install.yaml --tags accounts-sync`.
+  - Контракт для внешнего git-ops repo: имена из `argocd_local_accounts` ссылаются в `AppProject.spec.roles[].groups` как есть (строка-username — ArgoCD биндит её к роли проекта через Casbin). Custom-admin получает глобальный `role:admin` через `argocd_policy_csv_list` здесь.
 - обновление (версия)
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на несколько файлов

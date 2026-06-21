@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (33 tasks)
+## 1. `playbook-app/tasks/` (34 tasks)
 
 The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
@@ -160,7 +160,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Input.** `dto_label_name`, `dto_vault_put_path` (full KV path), `dto_vault_put_data` (non-empty dict of `{field: value}`).
 - **Validates (assert).** `dto_label_name` defined + non-empty; `dto_vault_put_path` defined + non-empty; `dto_vault_put_data` defined, is mapping, non-empty.
 - **Output.** Vault path written (full replace). Does NOT annotate any ExternalSecret or touch any K8s `Secret`.
-- **Callers.** Seed + rotation flows (Postgres, Redis, GitLab root, ArgoCD admin, Vault admin-token, seaweedfs identity/bucket/admin seeds).
+- **Callers.** Seed + rotation flows (Postgres, Redis, GitLab root, ArgoCD accounts mirror via `tasks-argocd-accounts-sync.yaml`, Vault admin-token, seaweedfs identity/bucket/admin seeds).
 - **Idempotent.** Re-running re-puts identical values — safe (full replace, no side effects).
 
 ### 1.13a `tasks-vault-delete.yaml`
@@ -216,7 +216,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Output (runtime facts, set on all hosts).**
   - `{{ dto_secret_res_fact_name }}` — decoded string value (`''` if missing).
   - `{{ dto_secret_res_exists_fact_name }}` — bool (true only if field is non-empty).
-- **Callers.** `argocd-configure.yaml`, `gitlab-configure.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `vault-install.yaml`.
+- **Callers.** `gitlab-configure.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `vault-install.yaml`.
 - **Idempotent.** Read-only; safe to call repeatedly.
 
 ### 1.18 `tasks-k8s-list-pods.yaml`
@@ -336,7 +336,16 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 4 SYNC (tag `[identity-distribute]`, after user-sync — **after** helm install).
 - **Idempotent.** Yes — vault-put full replace, vault-delete idempotent на missing path, diff vs ConfigMap state.
 
-### 1.31 `tasks-seaweedfs-bucket-sync.yaml`
+### 1.31 `tasks-argocd-accounts-sync.yaml`
+
+- **Purpose.** Declarative ArgoCD local-account reconcile (Layer 1). Diffs desired accounts (`argocd_local_accounts`) против Vault-зеркала (`eso-secret/argocd/accounts/creds`, поле `mirror`) и живого `argocd-secret` → 4 дельты (create/delete/rotate/resync) через `filter_plugins/argocd_accounts.py`. Пароли генерятся в рантайме (`tasks-generate-secret.yaml`), bcrypt — `kubectl exec deploy/argocd-server -- argocd account bcrypt`. Writes: `kubectl patch argocd-secret` (merge `accounts.*` add/update + json-remove deletes — `server.secretkey` не трогается) + `tasks-vault-put.yaml` (полное зеркало). Идемпотентно: bcrypt только на create/rotate; Vault authoritative при дрейфе. Lock-out guard: `argocd_builtin_admin_enabled=false` требует строку `role:admin` в `argocd_policy_csv_list`.
+- **Input.** `dto_label_name` (required string, log prefix).
+- **Validates (assert).** `dto_label_name` defined + non-empty. Lock-out guard (assert). Schema desired-аккаунтов (name charset, RFC3339 `passwordMtime`, дубликаты) — внутри фильтра (`AnsibleFilterError`).
+- **Output.** `accounts.<name>.password`/`.passwordMtime` в `argocd-secret`; полное зеркало в Vault `eso-secret/argocd/accounts/creds`. Идентичность (`accounts.<name>: login`) и RBAC применяются отдельно — install-фаза kustomize-патчами.
+- **Callers.** `playbook-app/argocd-install.yaml` STEP 3.5 (tag `[accounts-sync]`, **after** install rollout — нужен живой argocd-server + argocd-secret).
+- **Idempotent.** Yes — diff каждый run; bcrypt только на реальную смену; resync копирует Vault→secret при дрейфе (no-rotation).
+
+### 1.32 `tasks-seaweedfs-bucket-sync.yaml`
 
 - **Purpose.** Declarative SeaweedFS Layer 2 buckets + quotas + owner (v18 filer-driven; bucket policies удалены). Schema per bucket: `{name, owner, replication, rack, dataCenter, quota_size?}` (name/owner/replication/rack/dataCenter обязательны, quota_size optional). READ current state из **живого filer** двумя командами — `fs.configure` (location config: replication/rack/dataCenter) + `s3.bucket.list` (existence + owner + quota) → diff vs target (`seaweedfs_sync_buckets + _extra`) by name primary key. Validate replication format + rack/dataCenter/owner required внутри каждой compute функции. **Pre-phase fail-fast ASSERT** (после compute calls, до Phase A): если ЛЮБОЕ из immutable полей (**owner, replication, rack, dataCenter**) changed на kept bucket vs filer → sync aborts с detailed message, cluster intact. Sync order: A) delete стейл buckets via `s3.bucket.delete -name=<n>`; B) create new via `s3.bucket.create -name=<n> -owner=<owner>`; C) `fs.configure -locationPrefix=/buckets/<n> -replication=<r> -rack=<rk> -dataCenter=<dc> -apply` для new (все три всегда); D) quota upsert (target с quota_size, чья квота отличается от filer — diff vs `s3.bucket.list` quota, unchanged скипаются) via `s3.bucket.quota -op=set -sizeMB=<n>` (size_mib pre-computed Python-side); E) quota delete (target без quota_size, у кого в filer квота ЕСТЬ) via `s3.bucket.quota -op=remove` (unlimited; уже-без-квоты скипаются). Owner immutable — owner-reconcile фаза удалена в v18. NO ConfigMap state. **Stateless filter API** (`filter_plugins/seaweedfs_bucket.py`; signature `(fs_configure_raw, bucket_list_raw, target_buckets)`): `seaweedfs_buckets_to_delete` + `_to_create` + `_immutable_violations` + `seaweedfs_buckets_quota_to_upsert` + `seaweedfs_buckets_quota_to_delete`.
 - **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation.
@@ -345,7 +354,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 4 SYNC (tag `[bucket-sync]`, **after** install — before post; filer must be running).
 - **Idempotent.** Yes — diff vs живой filer каждый run. `s3.bucket.delete` без `-force` флага но делает hard delete (CollectionDelete sweeps все volumes/objects; Object Lock с locked objects — единственное препятствие).
 
-### 1.32 `tasks-seaweedfs-policy-sync.yaml`
+### 1.33 `tasks-seaweedfs-policy-sync.yaml`
 
 - **Purpose.** Declarative SeaweedFS Layer P managed-policy sync (v17 filer-driven). Diff target (`seaweedfs_managed_policies + _extra`, `{name, document}` AWS IAM doc) vs **живой filer**. READ current policies via `weed shell s3.policy -list` (имена + JSON-документы) → diff. Phase A: delete стейл policies via `s3.policy -delete -name=<n>`. Phase B: put changed/new policies (semantic doc-compare, order-insensitive — только changed/new, НЕ put-all) via `s3.policy -put -name=<n> -file=<tmp>` — document пишется в pod `/tmp` файл и применяется в одном `kubectl exec`. NO ConfigMap state (удалён в v17). Managed policies прикрепляются к identities через `policy_names` (user-sync, `s3.configure -policies`). **Stateless filter API** (`filter_plugins/seaweedfs_policy.py`; signature `(s3policy_list_raw, target_policies)`): `seaweedfs_policies_to_put` + `seaweedfs_policies_to_delete`.
 - **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation.
@@ -354,7 +363,7 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Callers.** `playbook-app/seaweedfs-install.yaml` STEP 4 SYNC (tag `[policy-sync]`, **первый** в sync-блоке — ДО user-sync, после install; policy должна существовать до identity attach).
 - **Idempotent.** Yes — diff vs живой filer каждый run; `s3.policy -put` idempotent overwrite (self-healing).
 
-### 1.33 `tasks-seaweedfs-weed-shell.yaml`
+### 1.34 `tasks-seaweedfs-weed-shell.yaml`
 
 - **Purpose.** Fail-fast обёртка вокруг одного `kubectl exec -i deploy/seaweedfs-s3 -- weed shell` вызова. `weed shell` из pipe ВСЕГДА завершается с exit 0 даже при ошибке команды (пишет `error: ` / `unknown command: ` в stderr и возвращает success — `sources/seaweedfs/weed/shell/shell_liner.go:144-151`), поэтому обёртка инспектирует stderr и валит таск на этих маркерах. Два режима: **APPLY** (мутации `s3.*`/`fs.*`) и **READ** (filer dump через `dto_weed_capture_fact`).
 - **Input.** `dto_label_name` (log prefix, наследуется из scope caller'а), `dto_weed_command` (строка команды weed shell). **Optional (file-staging — для `s3.policy -put`, set BOTH):** `dto_weed_stdin_payload` + `dto_weed_stdin_path`. **Optional (READ mode):** `dto_weed_capture_fact` (имя caller-факта, в который публикуется stdout команды — для filer reads `s3.configure` / `s3.policy -list` / `fs.configure` / `s3.bucket.list`; caller читает через `lookup('vars', <name>)`). **Optional (security):** `dto_weed_no_log` (bool, default false) → `no_log` на exec + capture (plaintext secretKey в `s3.configure` dump + `-secret_key=` в apply) + redact имени таска (no_log сам имя не скрывает).

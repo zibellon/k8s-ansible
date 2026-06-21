@@ -1,0 +1,260 @@
+# =============================================================================
+# ArgoCD local-accounts sync (reconcile) — D <-> V <-> S
+#   D = argocd_local_accounts (desired; name + passwordMtime, NO passwords)
+#   V = Vault mirror at <kv>/argocd/accounts/creds field "mirror"
+#       JSON {name: {plaintext, hash, passwordMtime}} — operator's password book
+#   S = live argocd-secret accounts.<name>.password/.passwordMtime (bcrypt)
+# Passwords generated at runtime; bcrypt via argocd CLI in argocd-server.
+# Writes ONLY accounts.* keys into argocd-secret (server.secretkey untouched).
+# Idempotent: bcrypt runs only on create/rotate.
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert dto_label_name"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+    fail_msg: "tasks-argocd-accounts-sync: dto_label_name required"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Guard: built-in admin disable requires a role:admin policy"
+  assert:
+    that:
+      - (argocd_builtin_admin_enabled | bool) or ((argocd_policy_csv_list | join('\n')) is search('role:admin'))
+    fail_msg: >-
+      argocd_builtin_admin_enabled=false requires at least one 'role:admin' binding in
+      argocd_policy_csv_list, otherwise you lock yourself out of ArgoCD.
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Read accounts mirror from Vault"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+  vars:
+    dto_vault_get_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_accounts_vault_path }}"
+    dto_vault_get_field: "{{ argocd_accounts_vault_field }}"
+    dto_vault_get_res_fact_name: "_local_argocd_mirror_raw"
+    dto_vault_get_res_exists_fact_name: "_local_argocd_mirror_exists"
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Parse mirror (fail-loud on corrupt JSON)"
+  set_fact:
+    _local_argocd_vault_mirror: "{{ (_local_argocd_mirror_raw | from_json) if (_local_argocd_mirror_exists | bool) else {} }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Read live argocd-secret"
+  command: "kubectl get secret argocd-secret -n {{ argocd_namespace }} -o json"
+  register: _local_argocd_secret_raw
+  changed_when: false
+  failed_when: false
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Parse live secret .data"
+  set_fact:
+    _local_argocd_live_data: "{{ ((_local_argocd_secret_raw.stdout | from_json).data | default({})) if (_local_argocd_secret_raw.rc == 0) else {} }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute create/delete/rotate deltas"
+  set_fact:
+    _local_create: "{{ argocd_local_accounts | argocd_accounts_to_create(_local_argocd_vault_mirror) }}"
+    _local_delete: "{{ argocd_local_accounts | argocd_accounts_to_delete(_local_argocd_vault_mirror, _local_argocd_live_data) }}"
+    _local_rotate: "{{ argocd_local_accounts | argocd_accounts_to_rotate(_local_argocd_vault_mirror) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute resync delta"
+  set_fact:
+    _local_resync: "{{ argocd_local_accounts | argocd_accounts_to_resync(_local_argocd_vault_mirror, _local_argocd_live_data) }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build create+rotate worklist"
+  set_fact:
+    _local_cr: "{{ _local_create + _local_rotate }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Generate plaintext per new/rotated account"
+  set_fact:
+    _local_gen: "{{ (_local_gen | default({})) | combine({ item.name: {
+                    'plaintext': (8 | password_generate(12, 12, 0, '0123456789', 'abcdefghijklmnopqrstuvwxyz', '-_.+!*')),
+                    'mtime': item.passwordMtime } }) }}"
+  loop: "{{ _local_cr }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] bcrypt generated passwords"
+  command:
+    argv:
+      - kubectl
+      - exec
+      - -n
+      - "{{ argocd_namespace }}"
+      - deployment/argocd-server
+      - --
+      - argocd
+      - account
+      - bcrypt
+      - --password
+      - "{{ (_local_gen[item.name]).plaintext }}"
+  register: _local_bcrypt
+  changed_when: false
+  no_log: true
+  loop: "{{ _local_cr }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Fold bcrypt hashes into gen"
+  set_fact:
+    _local_gen: "{{ _local_gen | combine({ item.item.name: ((_local_gen[item.item.name]) | combine({'hash': item.stdout | trim})) }) }}"
+  loop: "{{ _local_bcrypt.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assemble secret write-list from create/rotate"
+  set_fact:
+    _local_s_writes: "{{ (_local_s_writes | default([])) + [ {'name': item.name, 'hash': (_local_gen[item.name]).hash, 'mtime': item.passwordMtime} ] }}"
+  loop: "{{ _local_cr }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Append resync to secret write-list"
+  set_fact:
+    _local_s_writes: "{{ (_local_s_writes | default([])) + [ {'name': item.name, 'hash': item.hash, 'mtime': item.passwordMtime} ] }}"
+  loop: "{{ _local_resync }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build secret data patch map (base64)"
+  set_fact:
+    _local_s_data: "{{ (_local_s_data | default({})) | combine({
+        'accounts.' ~ item.name ~ '.password': item.hash | b64encode,
+        'accounts.' ~ item.name ~ '.passwordMtime': item.mtime | b64encode }) }}"
+  loop: "{{ _local_s_writes | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build JSON-patch remove ops (only keys present in S)"
+  set_fact:
+    _local_remove_ops: "{{ (_local_remove_ops | default([])) + [ {'op': 'remove', 'path': '/data/accounts.' ~ item.0 ~ '.' ~ item.1} ] }}"
+  loop: "{{ _local_delete | product(['password', 'passwordMtime']) | list }}"
+  loop_control:
+    label: "{{ item.0 }}.{{ item.1 }}"
+  when: ('accounts.' ~ item.0 ~ '.' ~ item.1) in (_local_argocd_live_data | default({}))
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Patch argocd-secret — add/update accounts (merge)"
+  command:
+    argv:
+      - kubectl
+      - patch
+      - secret
+      - argocd-secret
+      - -n
+      - "{{ argocd_namespace }}"
+      - --type=merge
+      - -p
+      - '{"data": {{ _local_s_data | default({}) | to_json }}}'
+  changed_when: true
+  no_log: true
+  when: (_local_s_data | default({})) | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Patch argocd-secret — remove deleted accounts (json)"
+  command:
+    argv:
+      - kubectl
+      - patch
+      - secret
+      - argocd-secret
+      - -n
+      - "{{ argocd_namespace }}"
+      - --type=json
+      - -p
+      - "{{ _local_remove_ops | default([]) | to_json }}"
+  changed_when: true
+  when: (_local_remove_ops | default([])) | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Build create/rotate mirror entries"
+  set_fact:
+    _local_cr_mirror: "{{ (_local_cr_mirror | default({})) | combine({
+        item.name: {'plaintext': (_local_gen[item.name]).plaintext, 'hash': (_local_gen[item.name]).hash, 'passwordMtime': item.passwordMtime} }) }}"
+  loop: "{{ _local_cr }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assemble new Vault mirror (old + create/rotate minus deletes)"
+  set_fact:
+    _local_new_mirror: "{{ ((_local_argocd_vault_mirror | combine(_local_cr_mirror | default({}))) | dict2items | rejectattr('key', 'in', _local_delete) | items2dict) }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Write mirror to Vault (only when membership/creds changed)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+  vars:
+    dto_vault_put_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_accounts_vault_path }}"
+    dto_vault_put_data: "{{ {argocd_accounts_vault_field: (_local_new_mirror | to_json)} }}"
+  when: (_local_cr | length > 0) or (_local_delete | length > 0)
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Sync summary"
+  debug:
+    msg: >-
+      accounts-sync:
+      create={{ _local_create | map(attribute='name') | list }}
+      rotate={{ _local_rotate | map(attribute='name') | list }}
+      delete={{ _local_delete }}
+      resync={{ _local_resync | map(attribute='name') | list }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]

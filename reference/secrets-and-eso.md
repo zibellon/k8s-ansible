@@ -310,7 +310,7 @@ The chart no longer contains any knowledge of `type`, data shapes, or ArgoCD lab
 
 **Key properties:**
 - `$.Values.eso.isNeedEso false` — gates the entire component. If the integration object has `is_need_eso: false`, no ExternalSecrets are rendered.
-- `$secret.is_need_eso false` — gates a single item (e.g., `argocd` root password when ESO is disabled for that specific secret).
+- `$secret.is_need_eso false` — gates a single item (a base secret defined for schema consistency but not rendered as an ExternalSecret).
 - `$secret.refresh_interval` — per-item override; falls back to `esoResourcesConfig.externalSecretRefreshInterval` from values.
 - `toYaml $secret.body | indent 2` — dumps the entire `body` dict as YAML indented under `spec:`. The `body` must contain at minimum a `target.name` and either `dataFrom` or `data`.
 
@@ -444,6 +444,10 @@ Generic template (see §6.2 for concrete example):
 4. `tasks-vault-put.yaml` — persist + force ESO re-sync.
 5. (future: Reloader) restart workload to pick up the new mounted Secret. Until Reloader lands, use `<c>-restart.yaml`.
 
+### 8.3 ArgoCD local-account password rotation
+
+Local-account passwords (incl. the custom admin) are NOT rotated via ESO. To rotate one account: bump its `passwordMtime` (RFC3339, set to "now") in `argocd_local_accounts`, then run `argocd-install.yaml --tags accounts-sync`. The reconcile generates a new password, bcrypts it into `argocd-secret`, updates the Vault mirror (`eso-secret/argocd/accounts/creds`), and — because the new `passwordMtime` is later than the live JWT's `iat` — ArgoCD logs the user out on their next request. Retrieve the new plaintext from the Vault mirror to hand to the user.
+
 ---
 
 ## 9. Per-component Vault Paths (quick reference)
@@ -458,7 +462,7 @@ All under `eso-secret/` KV engine.
 | `gitlab` | `eso-secret/gitlab/*` | `postgresql/creds`, `redis/creds`, `s3-storage` (single path, fields `username`/`accessKey`/`secretKey` — provisioned by SeaweedFS sync OR manual `vault kv put`), `gitlab-root`, PATs |
 | `gitlab-runner` | `eso-secret/gitlab-runner/*` | registration token (`/token`), `s3-storage` (single path для runner cache, same fields format as gitlab) |
 | `zitadel` | `eso-secret/zitadel/*` | `postgresql`, `masterkey` |
-| `argocd` | `eso-secret/argocd/*` | `admin` (password), optional OIDC client-secret, plus git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` |
+| `argocd` | `eso-secret/argocd/*` | `accounts/creds` — field `mirror`, full JSON mirror of all local accounts incl. the custom admin (`{name: {plaintext, hash, passwordMtime}}`), written by `tasks-argocd-accounts-sync.yaml` (NOT via ESO); git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` via `_extra` |
 | `mon_system` | `eso-secret/mon-system/*` | `grafana/admin/creds` (password), `grafana/postgresql/creds` (username + password for backing Postgres), `loki/s3/creds` (Loki S3 backend — fields `username`/`accessKey`/`secretKey`; provisioned by SeaweedFS sync OR manual `vault kv put`), optional `grafana/oidc` client-secret, optional `grafana/<ds>` datasource creds |
 | `seaweedfs` | `eso-secret/seaweedfs/*` (+ per-key operator-configurable Vault paths via `identity.keys[].vault_paths`, fixed keys `username`/`accessKey`/`secretKey` — Layer 3 distribute; см. §11 v14 + v17 + v20) | `postgresql/creds` (username + password for filer Postgres backend); `s3-config/bootstrap` (ESO empty-config `{"identities":[]}` → K8s Secret `eso-seaweedfs-s3-bootstrap` → upstream chart `existingConfigSecret`, форсит filer-driven Replace-режим; field name — plain-var `seaweedfs_s3_bootstrap_vault_field`); `admin-ui/creds` (`adminUser` + `adminPassword` — admin UI login, simple `dataFrom.extract`, seeded by `seaweedfs-install.yaml`). v17: S3 identities (admin + users) живут ТОЛЬКО в filer `/etc/iam/identities/` (нет Vault key-store); managed IAM policies — в filer `/etc/iam/policies/`. См. §11 v14 + v17. |
 
