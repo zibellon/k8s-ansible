@@ -3,7 +3,7 @@ all:
     # ------
     # binaries (AirGap) — downloadable packages
     # ------
-    # 7 внешних артефактов (6 бинарников + 1 shell-скрипт) тянутся
+    # 6 внешних артефактов (6 бинарников) тянутся
     # с публичных источников на этапе
     # full-node-install.yaml (playbook-system/install-main-components.yaml,
     # install-helm.yaml, install-k9s.yaml). Каждый URL собирается как
@@ -14,14 +14,13 @@ all:
     # upstream path). Если у mirror'а другая структура — переопределяй
     # `<c>_url` целиком.
     #
-    # СБ должна подложить на mirror следующие 7 файлов:
+    # СБ должна подложить на mirror следующие 6 файлов:
     #   <containerd_download_host>/containerd/containerd/releases/download/v<ver>/containerd-<ver>-linux-amd64.tar.gz
     #   <containerd_service_download_host>/containerd/containerd/main/containerd.service
     #   <runc_download_host>/opencontainers/runc/releases/download/<ver>/runc.amd64
     #   <cni_plugins_download_host>/containernetworking/plugins/releases/download/<ver>/cni-plugins-linux-amd64-<ver>.tgz
     #   <helm_download_host>/helm-<ver>-linux-amd64.tar.gz
     #   <k9s_download_host>/derailed/k9s/releases/download/<ver>/k9s_linux_amd64.deb
-    #   <llvm_download_host>/llvm.sh
     #
     # Пример airgap-override (hosts-vars-override/k8s-base.yaml):
     #   containerd_download_host:         "https://my-mirror.local/github.com"
@@ -30,10 +29,9 @@ all:
     #   cni_plugins_download_host:        "https://my-mirror.local/github.com"
     #   helm_download_host:               "https://my-mirror.local/get.helm.sh"
     #   k9s_download_host:                "https://my-mirror.local/github.com"
-    #   llvm_download_host:               "https://my-mirror.local/apt.llvm.org"
     #
     # Альтернатива mirror'у — полностью офлайн (control machine без доступа в сеть):
-    # Скачать 7 файлов заранее, положить в pkgs-sources/, переопределить в
+    # Скачать 6 файлов заранее, положить в pkgs-sources/, переопределить в
     # hosts-vars-override/k8s-base.yaml:
     #   containerd_install_method:       "local_tarball"
     #   containerd_local_tarball_path:   "pkgs-sources/containerd-<ver>-linux-amd64.tar.gz"
@@ -46,28 +44,8 @@ all:
     #   helm_local_tarball_path:         "pkgs-sources/helm-<ver>-linux-amd64.tar.gz"
     #   k9s_install_method:              "local_deb"
     #   k9s_local_deb_path:              "pkgs-sources/k9s_linux_amd64.deb"
-    #   llvm_install_method:             "local_script"
-    #   llvm_local_script_path:          "pkgs-sources/llvm.sh"
     # ---------
     # ---------
-
-    # LLVM/Clang version for Cilium eBPF
-    llvm_version: 20
-
-    # ------
-    # LLVM/Clang install script (llvm.sh)
-    # ------
-    # Install method: "url" (default — download from llvm_url) or
-    # "local_script" (offline, path relative to project_root, file kept in pkgs-sources/).
-    # NOTE: ни url, ни local_script не дают полного AirGap — сам llvm.sh
-    # внутри ходит curl/wget на apt.llvm.org за GPG-ключом и repo metadata
-    # (в обход apt). Полный AirGap-fix — отдельная задача (нативный apt-flow
-    # вместо llvm.sh).
-    llvm_install_method: "url"
-    llvm_local_script_path: ""
-    # ------
-    llvm_download_host: "https://apt.llvm.org"
-    llvm_url: "{{ llvm_download_host }}/llvm.sh"
 
     # Kubernetes version (MAJOR.MINOR only, without patch)
     k8s_version: "1.36"
@@ -547,7 +525,7 @@ all:
     # ------
     # Async system playbook configuration (shared for all long-running
     # imperative tasks in playbook-system/: kubeadm init/join, node drain,
-    # LLVM install, etc.). Resilient to SSH disconnects during long ops.
+    # etc.). Resilient to SSH disconnects during long ops.
     # ------
     system_async:
       timeout: 1800     # 30 minutes — max wall-clock per remote job

@@ -171,10 +171,6 @@ Per-file source of truth in parentheses.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `llvm_version` | `20` | LLVM/Clang version for Cilium eBPF |
-| `llvm_download_host` | `"https://apt.llvm.org"` | Download host for `llvm.sh` script — AirGap override |
-| `llvm_install_method` | `"url"` | Install method: `"url"` (default — download from `llvm_url`) or `"local_script"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`). **Не решает AirGap полностью** — `llvm.sh` сам внутри ходит curl на `apt.llvm.org` за GPG-ключом |
-| `llvm_local_script_path` | `""` | Path to local `llvm.sh` relative to `project_root` (used only when `llvm_install_method: local_script`) |
 | `k8s_version` | `"1.36"` | Short version (for apt repo URL) |
 | `k8s_full_version` | `"v1.36.1"` | Full version pin in kubeadm config |
 | `containerd_version` | `"2.3.1"` | Container runtime |
@@ -213,7 +209,7 @@ Per-file source of truth in parentheses.
 | `secret_wait` | `{retries: 15, delay: 5}` | K8s Secret wait config — used by ESO sync tasks |
 | `rollout_wait` | `{retries: 15, delay: 5}` | Rollout wait config — used by `tasks-wait-rollout.yaml` |
 | `helm_async` | `{timeout: 1800, poll: 5}` | Async Helm upgrade config — resilient to SSH disconnects on long upgrades |
-| `system_async` | `{timeout: 900, poll: 10}` | Async system playbook config — resilient to SSH disconnects on long imperative ops in `playbook-system/` (kubeadm init/join, node drain, LLVM install) |
+| `system_async` | `{timeout: 900, poll: 10}` | Async system playbook config — resilient to SSH disconnects on long imperative ops in `playbook-system/` (kubeadm init/join, node drain) |
 
 ### 2.2 HAProxy apiserver LB (`hosts-vars/k8s-base.yaml`)
 

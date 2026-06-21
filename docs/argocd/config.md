@@ -434,3 +434,12 @@ https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/refs/tags/s
 ArgoCD применит манифест из git, в котором restartedAt нет;
 при некоторых режимах apply (server-side apply, отдельные версии) аннотация restartedAt будет затёрта → меняется hash pod-шаблона → лишний незапланированный rolling-restart подов прямо в момент этого синка.
 То есть риск не «всё сломается», а «поды неожиданно перезапустятся, когда ты синкаешь что-то совсем другое». С RespectIgnoreDifferences=true restartedAt переживает любой sync → поды крутятся только когда ты сам дёрнул restart-action, и никогда как побочка.
+
+# Stakater-reloader
+
+ignoreDifferences:
+   - group: apps
+   kind: Deployment
+   jqPathExpressions:
+      - '.spec.template.metadata.annotations."kubectl.kubernetes.io/restartedAt"'
+      - '.spec.template.metadata.annotations."reloader.stakater.com/last-reloaded-from"'
