@@ -10,10 +10,12 @@
 #   ansible-playbook argocd-install.yaml              # full install (pre + install + post + gitops)
 #   ansible-playbook argocd-install.yaml --tags pre     # only pre (NetworkPolicies + ESO)
 #   ansible-playbook argocd-install.yaml --tags install
-#   ansible-playbook argocd-install.yaml --tags post    # only post (Ingress + AppProject)
-#   ansible-playbook argocd-install.yaml --tags gitops  # only git-ops AppProjects + Applications
+#   ansible-playbook argocd-install.yaml --tags post           # only post (Ingress)
+#   ansible-playbook argocd-install.yaml --tags gitops         # only git-ops AppProjects + Applications
+#   ansible-playbook argocd-install.yaml --tags accounts-sync  # only local-accounts reconcile (rotation entrypoint)
 #
-# NOTE: Admin password management → argocd-configure.yaml
+# NOTE: Local accounts + custom-admin (passwords) are managed declaratively via
+#       --tags accounts-sync (argocd_local_accounts → argocd-secret + Vault mirror).
 # =============================================================================
 
 - name: Install ArgoCD via local Helm chart
@@ -173,7 +175,7 @@
         dto_values_file_path: "{{ remote_charts_dir }}/argocd/install/values-override.yaml"
         dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argocd/install-k-tmp"
         dto_kustomize_final_dir: "{{ remote_charts_dir }}/argocd/install-k"
-        dto_patches_list: "{{ argocd_install_kustomize_patches }}"
+        dto_patches_list: "{{ argocd_install_kustomize_patches_effective }}"
         dto_target_namespace: "{{ argocd_namespace }}"
         dto_kustomize_apply_namespace_transform: true
       tags: [install]
@@ -215,7 +217,17 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 4: ARGOCD/POST (Ingress UI + RPC + default AppProject)
+    # STEP 3.5: LOCAL ACCOUNTS SYNC
+    # =========================================================================
+
+    - name: "[argocd-accounts-sync] Sync local accounts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/argocd/tasks-argocd-accounts-sync.yaml"
+      vars:
+        dto_label_name: "argocd-accounts-sync"
+      tags: [accounts-sync]
+
+    # =========================================================================
+    # STEP 4: ARGOCD/POST (Ingress UI + RPC)
     # =========================================================================
 
     - name: "[argocd-post] Copy post chart to remote"
@@ -267,6 +279,23 @@
     # =========================================================================
     # STEP 5: ARGOCD/GITOPS (AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications)
     # =========================================================================
+
+    - name: "[argocd-gitops-default-project] Render default-project lockdown manifest"
+      copy:
+        dest: "/tmp/argocd-default-appproject.yaml"
+        mode: "0644"
+        content: "{{ argocd_gitops_default_project_update | to_nice_yaml }}"
+      when: argocd_gitops_default_project_update | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [gitops]
+
+    - name: "[argocd-gitops-default-project] Apply default-project lockdown (ArgoCD-owned, raw apply)"
+      command: kubectl apply -f /tmp/argocd-default-appproject.yaml
+      when: argocd_gitops_default_project_update | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [gitops]
 
     - name: "[argocd-gitops] Copy git-ops install chart to remote"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
@@ -366,8 +395,8 @@
     - name: "[argocd-verify] Installation complete"
       debug:
         msg:
-          - "argocd-pre + argocd + argocd-post + argocd-git-ops: OK"
-          - "Run argocd-configure.yaml to save admin password to Vault."
+          - "argocd-pre + argocd + argocd-post + argocd-git-ops + accounts-sync: OK"
+          - "Local-account passwords are stored in Vault mirror: {{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_accounts_vault_path }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

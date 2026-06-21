@@ -290,6 +290,26 @@ all:
     # ------
     argocd_git_ops_app_projects: []
     argocd_git_ops_applications: []
+    # Default AppProject lockdown. ArgoCD АВТО-создаёт `default` project (permissive: source/dest/* = '*')
+    # и НЕ даёт его удалить — только модифицировать (оф. дока). Применяется raw `kubectl apply` в gitops-фазе,
+    # ЕСЛИ непусто (НЕ через helm-чарт — default-project ArgoCD-owned). Дефолт снимает ВСЕ права (deny-by-default);
+    # приложения переводи в явные проекты. {} = пропустить (оставить permissive default).
+    argocd_gitops_default_project_update:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: default
+        namespace: "{{ argocd_namespace }}"
+      spec:
+        sourceRepos: []
+        sourceNamespaces: []
+        destinations: []
+        clusterResourceBlacklist:
+          - group: "*"
+            kind: "*"
+        namespaceResourceBlacklist:
+          - group: "*"
+            kind: "*"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_gitops_extra_objects: []
     # GitOps-phase kustomize patches (operator-side customization, default empty)
