@@ -1,0 +1,81 @@
+# =============================================================================
+# Vault Get All — Read the full KV v2 field map into a named fact
+# =============================================================================
+# Reads ALL fields of a Vault KV v2 path and publishes the whole data map
+# ({field: value}) as a named fact. Never fails on missing path — callers
+# branch on the caller-named exists fact (or just default({}) the map).
+#
+# Required vars:
+#   dto_label_name                     — task label prefix
+#   dto_vault_get_path                 — full KV path incl. mount
+#   dto_vault_get_res_fact_name        — output fact name for the {field: value} map
+#   dto_vault_get_res_exists_fact_name — output fact name for the exists bool
+#
+# Output facts (set on master_manager_fact):
+#   {{ dto_vault_get_res_fact_name }}        — dict {field: value} ({} if missing)
+#   {{ dto_vault_get_res_exists_fact_name }} — bool (true only if path exists with data)
+#
+# Requires global vars: vault_namespace, vault_creds_host_path, master_manager_fact
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert all dto params are provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - dto_vault_get_path is defined
+      - dto_vault_get_path | length > 0
+      - dto_vault_get_res_fact_name is defined
+      - dto_vault_get_res_fact_name | length > 0
+      - dto_vault_get_res_exists_fact_name is defined
+      - dto_vault_get_res_exists_fact_name | length > 0
+    fail_msg: >-
+      tasks-vault-get-all: all params required:
+      dto_label_name, dto_vault_get_path,
+      dto_vault_get_res_fact_name, dto_vault_get_res_exists_fact_name
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Read Vault root token"
+  shell: "jq -r '.\"vault-root\"' {{ vault_creds_host_path }}"
+  register: _vault_getall_token
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Fetch secret from Vault"
+  shell: |
+    kubectl exec -n {{ vault_namespace }} vault-0 -- \
+      env VAULT_TOKEN="{{ _vault_getall_token.stdout }}" \
+      vault kv get -format=json {{ dto_vault_get_path }}
+  register: _vault_getall_raw
+  failed_when: false
+  changed_when: false
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Set result facts (whole field map)"
+  set_fact:
+    "{{ dto_vault_get_res_fact_name }}": >-
+      {{
+        {} if (_vault_getall_raw.rc != 0 or _vault_getall_raw.stdout | length == 0)
+        else (_vault_getall_raw.stdout | from_json).data.data
+      }}
+    "{{ dto_vault_get_res_exists_fact_name }}": "{{ _vault_getall_raw.rc == 0 and _vault_getall_raw.stdout | length > 0 }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Set fact to all host"
+  set_fact:
+    "{{ dto_vault_get_res_fact_name }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_fact_name] }}"
+    "{{ dto_vault_get_res_exists_fact_name }}": "{{ hostvars[master_manager_fact][dto_vault_get_res_exists_fact_name] }}"
+  no_log: true
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]

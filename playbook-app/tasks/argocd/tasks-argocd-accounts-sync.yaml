@@ -1,8 +1,8 @@
 # =============================================================================
 # ArgoCD local-accounts sync (reconcile) — D <-> V <-> S
 #   D = argocd_local_accounts (desired; name + passwordMtime, NO passwords)
-#   V = Vault mirror at <kv>/argocd/accounts/creds field "mirror"
-#       JSON {name: {plaintext, hash, passwordMtime}} — operator's password book
+#   V = Vault creds at <kv>/argocd/accounts/creds — ONE FIELD PER ACCOUNT,
+#       value {plaintext, hash, passwordMtime} (nested object) — operator's password book
 #   S = live argocd-secret accounts.<name>.password/.passwordMtime (bcrypt)
 # Passwords generated at runtime; bcrypt via argocd CLI in argocd-server.
 # Writes ONLY accounts.* keys into argocd-secret (server.secretkey untouched).
@@ -30,18 +30,18 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Read accounts mirror from Vault"
-  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+- name: "[{{ dto_label_name }}] Read accounts creds (all per-account fields) from Vault"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get-all.yaml"
   vars:
     dto_vault_get_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_accounts_vault_path }}"
-    dto_vault_get_field: "{{ argocd_accounts_vault_field }}"
-    dto_vault_get_res_fact_name: "_local_argocd_mirror_raw"
-    dto_vault_get_res_exists_fact_name: "_local_argocd_mirror_exists"
+    dto_vault_get_res_fact_name: "_local_argocd_vault_fields"
+    dto_vault_get_res_exists_fact_name: "_local_argocd_creds_exists"
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Parse mirror (fail-loud on corrupt JSON)"
+- name: "[{{ dto_label_name }}] Reconstruct mirror — keep per-account fields, drop legacy 'mirror' string"
   set_fact:
-    _local_argocd_vault_mirror: "{{ (_local_argocd_mirror_raw | from_json) if (_local_argocd_mirror_exists | bool) else {} }}"
+    _local_argocd_vault_mirror: "{{ _local_argocd_vault_fields | default({}) | dict2items | selectattr('value', 'mapping') | items2dict }}"
+  no_log: true
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -239,11 +239,11 @@
   run_once: true
   tags: [always]
 
-- name: "[{{ dto_label_name }}] Write mirror to Vault (only when membership/creds changed)"
+- name: "[{{ dto_label_name }}] Write per-account creds to Vault (only when membership/creds changed)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
   vars:
     dto_vault_put_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_accounts_vault_path }}"
-    dto_vault_put_data: "{{ {argocd_accounts_vault_field: (_local_new_mirror | to_json)} }}"
+    dto_vault_put_data: "{{ _local_new_mirror }}"
   when: (_local_cr | length > 0) or (_local_delete | length > 0)
   tags: [always]
 

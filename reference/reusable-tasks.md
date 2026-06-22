@@ -14,7 +14,7 @@ General rules for callers:
 
 ## 1. `playbook-app/tasks/` (34 tasks)
 
-The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
+The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-get-all.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
 ### 1.1 `tasks-pre-check.yaml`
 
@@ -152,6 +152,15 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 - **Validates (assert).** `dto_label_name`, `dto_vault_get_path`, `dto_vault_get_field`, `dto_vault_get_res_fact_name`, `dto_vault_get_res_exists_fact_name` all defined + non-empty.
 - **Output.** Fact named by `dto_vault_get_res_fact_name` (field value) + fact named by `dto_vault_get_res_exists_fact_name` (bool). Missing fields set the exists fact `false` without failing the play.
 - **Callers.** `-configure` playbooks (resolve current credentials before rotating), `-rotate` playbooks.
+- **Idempotent.** Read-only.
+
+### 1.12a `tasks-vault-get-all.yaml`
+
+- **Purpose.** Read the WHOLE KV v2 field map (`.data.data`) from Vault into an Ansible fact (plus a caller-named `_exists` boolean fact). Sibling of `tasks-vault-get.yaml` (which returns one field) — used when the caller needs every field, e.g. the per-account ArgoCD creds mirror.
+- **Input.** `dto_label_name`, `dto_vault_get_path` (full KV path), `dto_vault_get_res_fact_name` (output fact name for the `{field: value}` map), `dto_vault_get_res_exists_fact_name` (output fact name for the exists bool). No `dto_vault_get_field` — returns all fields.
+- **Validates (assert).** `dto_label_name`, `dto_vault_get_path`, `dto_vault_get_res_fact_name`, `dto_vault_get_res_exists_fact_name` all defined + non-empty.
+- **Output.** Fact named by `dto_vault_get_res_fact_name` (the whole `{field: value}` map, `{}` if missing) + fact named by `dto_vault_get_res_exists_fact_name` (bool). Missing path sets the exists fact `false` without failing the play.
+- **Callers.** `tasks-argocd-accounts-sync.yaml` (read all per-account creds fields).
 - **Idempotent.** Read-only.
 
 ### 1.13 `tasks-vault-put.yaml`
@@ -338,10 +347,10 @@ The five vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`,
 
 ### 1.31 `tasks-argocd-accounts-sync.yaml`
 
-- **Purpose.** Declarative ArgoCD local-account reconcile (Layer 1). Diffs desired accounts (`argocd_local_accounts`) против Vault-зеркала (`eso-secret/argocd/accounts/creds`, поле `mirror`) и живого `argocd-secret` → 4 дельты (create/delete/rotate/resync) через `filter_plugins/argocd_accounts.py`. Пароли генерятся в рантайме (`tasks-generate-secret.yaml`), bcrypt — `kubectl exec deploy/argocd-server -- argocd account bcrypt`. Writes: `kubectl patch argocd-secret` (merge `accounts.*` add/update + json-remove deletes — `server.secretkey` не трогается) + `tasks-vault-put.yaml` (полное зеркало). Идемпотентно: bcrypt только на create/rotate; Vault authoritative при дрейфе. Lock-out guard: `argocd_builtin_admin_enabled=false` требует строку `role:admin` в `argocd_policy_csv_list`.
+- **Purpose.** Declarative ArgoCD local-account reconcile (Layer 1). Diffs desired accounts (`argocd_local_accounts`) против Vault-зеркала (`eso-secret/argocd/accounts/creds`, поле на аккаунт = nested `{plaintext, hash, passwordMtime}`) и живого `argocd-secret` → 4 дельты (create/delete/rotate/resync) через `filter_plugins/argocd_accounts.py`. Пароли генерятся в рантайме (`tasks-generate-secret.yaml`), bcrypt — `kubectl exec deploy/argocd-server -- argocd account bcrypt`. Reads all per-account Vault fields via `tasks-vault-get-all.yaml`. Writes: `kubectl patch argocd-secret` (merge `accounts.*` add/update + json-remove deletes — `server.secretkey` не трогается) + `tasks-vault-put.yaml` (per-account fields, full-replace). Идемпотентно: bcrypt только на create/rotate; Vault authoritative при дрейфе. Lock-out guard: `argocd_builtin_admin_enabled=false` требует строку `role:admin` в `argocd_policy_csv_list`.
 - **Input.** `dto_label_name` (required string, log prefix).
 - **Validates (assert).** `dto_label_name` defined + non-empty. Lock-out guard (assert). Schema desired-аккаунтов (name charset, RFC3339 `passwordMtime`, дубликаты) — внутри фильтра (`AnsibleFilterError`).
-- **Output.** `accounts.<name>.password`/`.passwordMtime` в `argocd-secret`; полное зеркало в Vault `eso-secret/argocd/accounts/creds`. Идентичность (`accounts.<name>: login`) и RBAC применяются отдельно — install-фаза kustomize-патчами.
+- **Output.** `accounts.<name>.password`/`.passwordMtime` в `argocd-secret`; per-account fields (`{plaintext, hash, passwordMtime}`) в Vault `eso-secret/argocd/accounts/creds`. Идентичность (`accounts.<name>: login`) и RBAC применяются отдельно — install-фаза kustomize-патчами.
 - **Callers.** `playbook-app/argocd-install.yaml` STEP 3.5 (tag `[accounts-sync]`, **after** install rollout — нужен живой argocd-server + argocd-secret).
 - **Idempotent.** Yes — diff каждый run; bcrypt только на реальную смену; resync копирует Vault→secret при дрейфе (no-rotation).
 
