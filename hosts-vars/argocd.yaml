@@ -95,6 +95,8 @@ all:
     # Реальный список — в hosts-vars-override/<cluster>/argocd.yaml. Схема элемента:
     #   - name: <str>                 # ^[A-Za-z0-9._-]+$
     #     passwordMtime: "<RFC3339>"  # ОБЯЗАТЕЛЬНО; смена значения = триггер ротации пароля
+    #     enabled: <bool>             # ОБЯЗАТЕЛЬНО; false → аккаунт выключен (accounts.<name>.enabled)
+    #     capabilities: "<str>"       # ОБЯЗАТЕЛЬНО; CSV из login/apiKey: "login" | "apiKey" | "login, apiKey"
     argocd_local_accounts: []
     # Встроенный admin: true (default) для безопасного bootstrap. Флипать в false ТОЛЬКО после того,
     # как заведён custom-admin и ему выдан role:admin через argocd_policy_csv_list (иначе lock-out).
@@ -174,7 +176,7 @@ all:
     argocd_install_extra_objects: []
     # Install-phase kustomize patches: base = operator patches + generated accounts/RBAC patches.
     # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure) + generated argocd-cm
-    # (accounts.<name>: login из argocd_local_accounts + admin.enabled) + argocd-rbac-cm
+    # (accounts.<name>: <capabilities> + accounts.<name>.enabled из argocd_local_accounts + admin.enabled) + argocd-rbac-cm
     # (policy.csv из argocd_policy_csv_list). kustomize мержит несколько патчей на один target.
     argocd_kustomize_patches_base:
       - target:
@@ -218,7 +220,8 @@ all:
             name: argocd-cm
           data:
           {% for acc in argocd_local_accounts %}
-            accounts.{{ acc.name }}: "login"
+            accounts.{{ acc.name }}: "{{ acc.capabilities }}"
+            accounts.{{ acc.name }}.enabled: "{{ acc.enabled | string | lower }}"
           {% endfor %}
             admin.enabled: "{{ argocd_builtin_admin_enabled | string | lower }}"
       - target:

@@ -125,10 +125,10 @@ def sample_argocd_desired():
     """Desired accounts exercising all 4 deltas: stableuser (steady), root-admin (resync —
     S drift), vasya.pupkin (rotate — newer mtime, dotted name), petya (create — not in V)."""
     return [
-        {'name': 'stableuser',   'passwordMtime': '2026-06-20T13:00:00Z'},
-        {'name': 'root-admin',   'passwordMtime': '2026-06-20T13:00:00Z'},
-        {'name': 'vasya.pupkin', 'passwordMtime': '2026-06-21T10:00:00Z'},
-        {'name': 'petya',        'passwordMtime': '2026-06-20T13:00:00Z'},
+        {'name': 'stableuser',   'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True,  'capabilities': 'login'},
+        {'name': 'root-admin',   'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True,  'capabilities': 'login, apiKey'},
+        {'name': 'vasya.pupkin', 'passwordMtime': '2026-06-21T10:00:00Z', 'enabled': True,  'capabilities': 'login'},
+        {'name': 'petya',        'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': False, 'capabilities': 'apiKey'},
     ]
 
 

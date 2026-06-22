@@ -19,6 +19,7 @@ _RFC3339_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d
 _PREFIX = 'accounts.'
 _PW = '.password'
 _MTIME = '.passwordMtime'
+_CAP_TOKENS = {'login', 'apiKey'}
 
 
 def _validate_desired(desired):
@@ -42,6 +43,20 @@ def _validate_desired(desired):
             raise AnsibleFilterError("argocd_local_accounts: account %r needs a non-empty 'passwordMtime'" % name)
         if not _RFC3339_RE.match(mtime):
             raise AnsibleFilterError("argocd_local_accounts: account %r passwordMtime %r is not RFC3339" % (name, mtime))
+        enabled = item.get('enabled')
+        if not isinstance(enabled, bool):
+            raise AnsibleFilterError(
+                "argocd_local_accounts: account %r needs a boolean 'enabled' (true/false)" % name)
+        caps = item.get('capabilities')
+        if not isinstance(caps, str) or not caps.strip():
+            raise AnsibleFilterError(
+                "argocd_local_accounts: account %r needs a non-empty string 'capabilities' "
+                "(login / apiKey / 'login, apiKey')" % name)
+        tokens = [t.strip() for t in caps.split(',')]
+        if not all(tokens) or any(t not in _CAP_TOKENS for t in tokens):
+            raise AnsibleFilterError(
+                "argocd_local_accounts: account %r capabilities %r invalid; "
+                "allowed CSV tokens: login, apiKey" % (name, caps))
 
 
 def _parse_live_accounts(live_secret_data):
@@ -119,6 +134,14 @@ def argocd_accounts_to_resync(desired, vault_mirror, live_secret_data):
     return out
 
 
+def argocd_accounts_validate(desired):
+    """Fail-fast schema validation entrypoint for argocd_local_accounts.
+    Runs _validate_desired and returns the list unchanged — for an early
+    set_fact in argocd-install.yaml (before the kustomize render)."""
+    _validate_desired(desired)
+    return desired
+
+
 class FilterModule(object):
     """Ansible filter plugin entry point — argocd local-accounts sync filters."""
     def filters(self):
@@ -127,4 +150,5 @@ class FilterModule(object):
             'argocd_accounts_to_delete': argocd_accounts_to_delete,
             'argocd_accounts_to_rotate': argocd_accounts_to_rotate,
             'argocd_accounts_to_resync': argocd_accounts_to_resync,
+            'argocd_accounts_validate': argocd_accounts_validate,
         }
