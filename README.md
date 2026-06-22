@@ -464,24 +464,38 @@
 ## Есть дополнительный файл для `vault + ESO`
 ## ---
 ## Важно_1: нужно выполнить команду `ssh-keyscan` на те git-репозитории, которые планируется использовать для argocd
-## Добавить их публичные ключи в `hosts-vars-override/ (argocd_cm_ssh_known_hosts_extra)`. Это массив из строк
+## Добавить их публичные ключи в `hosts-vars-override/<cluster_name> (argocd_cm_ssh_known_hosts_extra)`. Это массив из строк
 ## Без этого, argocd не сможет к ним подключиться (недоверенный host)
 ## ---
-## `--tags crds, pre, install, post`
+## Важно_2: Аккаунты + политики. У ArgoCD есть механика локальных аккаунтов. Она состоит из трех частей
+## ConfigMap=argocd-cm. Список аккаунтов, их capabilities и время смены пароля
+## ConfigMap=argocd-rbac-cm. ОБЩИЕ политики для всего ArgoCD. какой аккаунт, какие права имеет в том или ином проекте
+## k8s.Secret=argocd-secret. Парлли в формате bcrypt для каждого аккаунта
+## Эта логика зашита в stage = `accounts-sync`
+## управляется переменными: argocd_local_accounts (список аккаунтов) + argocd_policy_csv_list (список политик)
+## пароли для аккаунтов (состояние) - хранится в VAULT. в одном JSON объекта по одному пути. Для всех аккаунтов сразу
+## Какая логика синхронизации
+## - account: есть локально но его нет в VAULT = сгенерировать пароль, положить в VAULT, положить в k8s.secret=argocd-secret
+## - account: нет локально, но есть в VAULT = удалить из VAULT, удалить из k8s.secret=argocd-secret
+## - account: есть и там и там = приоритет отдается VAULT. Он точка правды. то есть: если у аккаунтов разливается bcrypt пароля в VAULT и в k8s.secret=argocd-secret = то в k8s.secret=argocd-secret будет. положен bcrypt из VAULT
+## - account: есть и там и там, проверка поле passwordMTime. Если изменилось = новый пароль и положить в vault + k8s.secret=argocd-secret
+## После внесения изменений в политики и аккаунты надо сделать
+## - `ansible-playbook -i ... playbook-app/argocd-install.yaml --tags install` - синхронизировать аккаунты и политики (ConfigMap)
+## - `ansible-playbook -i ... playbook-app/argocd-install.yaml --tags accounts-sync` - синхронизировать пароли от аккаунтов в VAULT + k8s.secret
+## ---
+## `--tags crds, pre, install, accounts-sync, post, gitops`
 ## ---
 ##
 - установка + конфигурация
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
   - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), lockdown default-project (gitops), локальные аккаунты (accounts-sync)
   - Локальные аккаунты (login + пароль, включая custom-admin) — декларативно через `argocd_local_accounts` в `hosts-vars-override/`; пароли генерятся в рантайме и кладутся в Vault `eso-secret/argocd/accounts/creds`. Ротация: bump `passwordMtime` у аккаунта → `argocd-install.yaml --tags accounts-sync`.
-  - Контракт для внешнего git-ops repo: имена из `argocd_local_accounts` ссылаются в `AppProject.spec.roles[].groups` как есть (строка-username — ArgoCD биндит её к роли проекта через Casbin). Custom-admin получает глобальный `role:admin` через `argocd_policy_csv_list` здесь.
+  - Контракт для внешнего git-ops repo: имена из `argocd_local_accounts` ссылаются в `AppProject.spec.roles[].groups` как есть (строка-username ArgoCD биндит её к роли проекта через Casbin). Custom-admin получает глобальный `role:admin` через `argocd_policy_csv_list` здесь.
 - обновление (версия)
   - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
   - Разнести yaml на несколько файлов
     - `playbook-app/charts/argocd/crds/crds.yaml` - только CRD (там примерно 24к строк)
-    - `playbook-app/charts/argocd/pre/templates/configmaps.yaml` - ссюда нужно перенести 7 ConfigMaps + сохранить возможности расширения через HELM
-    - `playbook-app/charts/argocd/install/templates/argocd.yaml` - все, кроме CRD и configmaps
-  - Есть изменения в дефолтных конфигах. Их надо не затерепть. То есть: после вставки нового `*.yaml` -> надо вернуть обновленные дефолиные конфиги
+    - `playbook-app/charts/argocd/install/templates/argocd.yaml` - все, кроме CRD
   - Версия не указывается в `hosts-vars/` | `hosts-vars-override/` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/arocd/...`
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
