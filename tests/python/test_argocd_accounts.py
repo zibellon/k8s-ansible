@@ -158,7 +158,7 @@ def test_no_signing_key_in_any_delta(
 
 def test_steady_state_all_empty(sample_argocd_live_secret_data):
     import base64
-    desired = [{'name': 'stableuser', 'passwordMtime': '2026-06-20T13:00:00Z'}]
+    desired = [{'name': 'stableuser', 'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True, 'capabilities': 'login'}]
     vm = {'stableuser': {'plaintext': 'pw-s', 'hash': '$2a$10$STABLE', 'passwordMtime': '2026-06-20T13:00:00Z'}}
     def b(s):
         return base64.b64encode(s.encode()).decode()
@@ -193,8 +193,8 @@ def test_validate_name_with_slash():
 
 def test_validate_duplicate_name():
     desired = [
-        {'name': 'dup', 'passwordMtime': '2026-06-20T13:00:00Z'},
-        {'name': 'dup', 'passwordMtime': '2026-06-20T13:00:00Z'},
+        {'name': 'dup', 'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True, 'capabilities': 'login'},
+        {'name': 'dup', 'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True, 'capabilities': 'login'},
     ]
     with pytest.raises(AnsibleFilterError, match='duplicate name'):
         ac.argocd_accounts_to_create(desired, {})
@@ -208,3 +208,46 @@ def test_validate_missing_mtime():
 def test_validate_mtime_not_rfc3339():
     with pytest.raises(AnsibleFilterError, match='not RFC3339'):
         ac.argocd_accounts_to_create([{'name': 'x', 'passwordMtime': '2026-06-20 13:00'}], {})
+
+
+# ---------------------------------------------------------------------------
+# Validation: enabled + capabilities (new required fields)
+# ---------------------------------------------------------------------------
+
+def test_validate_missing_enabled():
+    with pytest.raises(AnsibleFilterError, match="boolean 'enabled'"):
+        ac.argocd_accounts_to_create(
+            [{'name': 'x', 'passwordMtime': '2026-06-20T13:00:00Z', 'capabilities': 'login'}], {})
+
+
+def test_validate_enabled_not_bool():
+    with pytest.raises(AnsibleFilterError, match="boolean 'enabled'"):
+        ac.argocd_accounts_to_create(
+            [{'name': 'x', 'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': 'true', 'capabilities': 'login'}], {})
+
+
+def test_validate_missing_capabilities():
+    with pytest.raises(AnsibleFilterError, match="capabilities"):
+        ac.argocd_accounts_to_create(
+            [{'name': 'x', 'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True}], {})
+
+
+def test_validate_capabilities_bad_token():
+    with pytest.raises(AnsibleFilterError, match="capabilities"):
+        ac.argocd_accounts_to_create(
+            [{'name': 'x', 'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True, 'capabilities': 'logni'}], {})
+
+
+def test_validate_capabilities_csv_ok():
+    out = ac.argocd_accounts_to_create(
+        [{'name': 'x', 'passwordMtime': '2026-06-20T13:00:00Z', 'enabled': True, 'capabilities': 'login, apiKey'}], {})
+    assert out == [{'name': 'x', 'passwordMtime': '2026-06-20T13:00:00Z'}]
+
+
+def test_validate_filter_returns_list(sample_argocd_desired):
+    assert ac.argocd_accounts_validate(sample_argocd_desired) is sample_argocd_desired
+
+
+def test_validate_filter_raises_on_missing_enabled():
+    with pytest.raises(AnsibleFilterError, match="boolean 'enabled'"):
+        ac.argocd_accounts_validate([{'name': 'x', 'passwordMtime': '2026-06-20T13:00:00Z', 'capabilities': 'login'}])
