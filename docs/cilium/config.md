@@ -65,6 +65,8 @@ kubectl exec -n cilium -it $(kubectl get pods -n cilium -l k8s-app=cilium -o jso
 # получить список ВСЕХ endpoints
 kubectl exec -n kube-system -it $(kubectl get pods -n kube-system -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}') -- cilium endpoint list
 
+kubectl exec -n cilium -it $(kubectl get pods -n cilium -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}') -- cilium endpoint list
+
 # Получить список подов с информацией с информацией о hostNetwork
 kubectl get pods -n kube-system -o custom-columns="NAME:.metadata.name,HOSTNETWORK:.spec.hostNetwork,IP:.status.podIP,NODE:.spec.nodeName"
 
