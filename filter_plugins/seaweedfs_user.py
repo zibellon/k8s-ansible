@@ -66,7 +66,7 @@ def _parse_s3_configure_identities(raw):
 def _validate_target_keys(target_identities):
     """Fail-fast validation of the v20 per-key inventory schema. Raises AnsibleFilterError on:
       - a named (non-anonymous) identity with no account_id, or an empty / non-string one
-        (account_id is the explicit object-ownership id — SeaweedFS 4.34 owner = account,
+        (account_id is the explicit object-ownership id — SeaweedFS 4.35 owner = account,
         pinned explicitly as the identity name);
       - a named identity whose account_id != name (strict 1:1 — the object owner is pinned to
         the name; to change ownership, rename = delete+recreate the identity);
@@ -106,7 +106,7 @@ def _validate_target_keys(target_identities):
         if not account_id or not isinstance(account_id, str):
             raise AnsibleFilterError(
                 "Identity '{0}' has no account_id. account_id is a REQUIRED non-empty "
-                "string — the explicit object-ownership id (SeaweedFS 4.34 owner = account, "
+                "string — the explicit object-ownership id (SeaweedFS 4.35 owner = account, "
                 "pinned explicitly as the identity name).".format(name))
         if account_id != name:
             raise AnsibleFilterError(
