@@ -318,6 +318,20 @@
 ## все политики, роли, методы авторизации и так далее - определяются в Vault (CRDs)
 ## Для их синхронизации с Vaul-instance, надо вызвать `... playbook-app/vault-install.yaml --tags vault-cr`
 ## ---
+## Важно_3. Добавление пользователей с userpass (Auth method)
+## - зашли в UI (под root token)
+## - добавили нового пользователя + указали ему пароль (без этого - нельзя создать пользоватяеля)
+## - переали логин + пароль сотруднику и просим его сменить пароль
+## - ОШИБКА. недостаточно прав
+## Это происходит из-за того, что при создании пользователя - ему крепится default политика. А в ней - нет разрешения на сброс пароля
+## Нужно такое разрешение: `path "auth/userpass/users/{{identity.entity.aliases.<ACCESSOR>.name}}/password" { capabilities = ["update"] }`
+## Что такое ACCESSOR ? Когда содается (включается) метод userpass_auth = он получае уникальный ID = это и есть ACCESSOR (если по простому)
+## Нужно помнить правило: ACCESSOR стабилен пока `userpass` не пересоздан или не отключен и влкючен заново
+## Чтобы его узнать, есть два варианта
+## - зайти в UI -> access -> userpass -> confugure. и там будет поле типа: auth_userpass_1q2w3e4r. Это ACCESSOR
+## - зайти в CLI и выполнить команду: `vault read -field=accessor sys/auth/userpass`
+## Пример политики: `user-self-service` (`./hosts-vars/vault.yaml`)
+## ---
 ## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
 ## Есть volume -> требуется работа с СХД (dynamic PVC)
 ## Ожидание готовности deployment/daemonset

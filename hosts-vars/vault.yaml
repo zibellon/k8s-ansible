@@ -235,6 +235,23 @@ all:
           path "*" {
             capabilities = ["create", "read", "update", "delete", "list", "sudo"]
           }
+      # ------
+      # user-self-service — self-сервис обычных userpass-юзеров.
+      # Политика ОДНА на всех (шаблон сам подставляет ник); привязка к юзеру — вручную в UI.
+      # ВАЖНО: {% raw %}…{% endraw %} обязателен — внутри Vault-шаблоны {{identity.*}};
+      # без raw Ansible/Jinja2 их вычислит (identity undefined) и политика сломается.
+      # accessor = mount userpass (`vault read -field=accessor sys/auth/userpass`),
+      # стабилен пока userpass не пересоздан; на другом кластере — свой.
+      # - name: user-self-service
+      #   rules: |
+      #     {% raw %}
+      #     path "auth/userpass/users/{{identity.entity.aliases.auth_userpass_bf406839.name}}/password" { capabilities = ["update"] }
+      #     path "auth/token/lookup-self" { capabilities = ["read"] }
+      #     path "auth/token/renew-self"  { capabilities = ["update"] }
+      #     path "auth/token/revoke-self" { capabilities = ["update"] }
+      #     path "sys/capabilities-self" { capabilities = ["update"] }
+      #     path "identity/entity/id/{{identity.entity.id}}" { capabilities = ["read"] }
+      #     {% endraw %}
 
     vault_policies_extra: []
 
