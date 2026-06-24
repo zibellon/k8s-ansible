@@ -313,3 +313,14 @@ REVISION	UPDATED                 	STATUS         	CHART                   	APP V
 
 # Проверить что в POD
 `kubectl exec -n <NS_NAME> <POD_NAME> -- date -u +%T.%N`
+
+# Как работать локально с Registry (MacOS)
+
+посмотреть файл с конфигами, НО - без auth-creds (они хранятся в другом месте)
+`cat ~/.docker/config.json`
+
+Посмотреть список с login, но без password
+`echo "list" | docker-credential-desktop list`
+
+посмотреть пароль + логин по одному registry
+`echo "https://ghcr.io" | docker-credential-desktop get`
