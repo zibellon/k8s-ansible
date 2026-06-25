@@ -346,6 +346,23 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - Не выбирать узкий EC profile (`RS-3-2`) на 5 worker'ах с расчётом «потом мигрирую». Лишний re-encoding cycle при росте.
 - Phase 1 = чистый replication до 9+ worker'ов. EC появляется естественно с ростом.
 
+## 17.7. `filestash`
+
+- **Chart path.** `charts/filestash/{pre,install,post}/` (local handwritten chart; no upstream Helm chart exists).
+- **Install playbook.** `filestash-install.yaml`.
+- **Namespace.** `filestash`.
+- **Releases.** `filestash-pre`, `filestash`, `filestash-post`.
+- **Image.** `filestash_image` (full URI:tag, default `docker.io/machines/filestash:latest` — pin per-cluster). Port `8334`.
+- **Required vars.** `filestash_namespace`, `filestash_image`, `filestash_domain`, `filestash_storage_class`, `filestash_storage_size`, `filestash_container_port`. securityContext: `filestash_run_as_user` / `_run_as_group` / `_fs_group` (default `1000` — confirm container uid at deploy), `filestash_read_only_root_fs` (default `false`). Ingress toggles: `filestash_cert_manager_issuer_enabled`, `filestash_ui_ingress_tls_enabled`, `filestash_ui_certificate_enabled`, `filestash_vpn_only_enabled` (cert-manager ACME vs behind-Cloudflare). Kustomize patches (default `[]`): `filestash_pre_kustomize_patches`, `filestash_install_kustomize_patches`, `filestash_post_kustomize_patches`.
+- **Workload.** StatefulSet (1 replica) + static RWO PVC at `/app/data` (state: `config.json`, embedded SQLite sessions/share/audit, search index) + emptyDir for `/app/cache` and `/tmp`; headless Service on `8334`. Hardened securityContext (runAsNonRoot, seccomp RuntimeDefault, drop ALL caps). Probes: readiness `GET /healthz`, liveness `tcpSocket :8334`.
+- **ESO integration.** Yes (via `eso_vault_integration_filestash`) — admin password only. Vault `eso-secret/filestash/app` holds `admin_password` (plaintext, operator reads for `/admin` login) + `admin_password_hash` (bcrypt); the ExternalSecret extracts ONLY the hash → env `ADMIN_PASSWORD` (→ `auth.admin`). Operator seeds both manually BEFORE install (not auto-generated). `general.secret_key` self-generates on first boot, persisted on PVC.
+- **S3 connection.** NOT seeded declaratively. After first boot the admin logs into `/admin` and adds the SeaweedFS S3 connection once (endpoint `http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333`, lives in PVC). Devs then log in with their own AK/SK (BYO-keys: Filestash proxies server-side, keys held transit-only in session, never stored). Per-dev S3 identities/buckets are operator-provisioned via `seaweedfs-sync` (out of this component's scope).
+- **NetworkPolicy.** deny-all + DNS + intra-ns + ingress from traefik (`:8334`) + egress to seaweedfs-s3 (`:8333`, cross-ns ingress pair `filestash-allow-seaweedfs-s3` gated by `seaweedfs_enabled`) + ACME HTTP-01 solver pair (gated by issuer) + `filestash-allow-traefik` egress in traefik ns. No Vault egress (ESO operator talks to Vault).
+- **Ingress.** Plain `kind: Ingress` (Traefik), like longhorn-ui/gitlab-ui — not an IngressRoute. Toggles: cert-manager ACME (`websecure` + `router.tls` + `spec.tls` + Certificate) or behind-Cloudflare (`web`, no TLS). `vpn-only` middleware via `router.middlewares` annotation.
+- **ServiceMonitor.** No (no metrics).
+- **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn/linstor (storage), seaweedfs (S3 backend, functional).
+- **Enable flag.** `filestash_enabled` (opt-in, default `false`): guards install + gates cross-ns NetworkPolicies.
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -367,6 +384,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `linstor` | linstor (Piraeus operator + LinstorCluster + satellites + CSI + HA controller + affinity controller + NFS server) | no (configurable via `linstor_namespace`) |
 | `seaweedfs` | seaweedfs (central S3 storage: master, volume, filer, s3 gateway + filer's PostgreSQL backend) | no |
 | `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
+| `filestash` | filestash | no |
 
 ## 19. Cross-cutting Dependency Order
 
@@ -380,7 +398,7 @@ L3  vault
 L4  traefik        haproxy
 L5  mon-system     seaweedfs
 L6  zitadel
-L7  argocd    gitlab    teleport
+L7  argocd    gitlab    teleport    filestash
 L8  gitlab-runner
 ```
 
@@ -388,11 +406,11 @@ L8  gitlab-runner
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L7 as part of `argocd-install.yaml` — no separate playbook.
 
-## 20. ESO-integrated Components (9)
+## 20. ESO-integrated Components (10)
 
 Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-verify.yaml`:
 
-`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`
+`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`, `filestash`
 
 Each integration object + `_secrets` list + `_secrets_extra` list lives in the corresponding `hosts-vars/<c>.yaml`.
 

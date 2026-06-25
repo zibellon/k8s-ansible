@@ -279,7 +279,7 @@ spec:
             name: {{ .Values.eso.saName }}
 ```
 
-### 5.3 ExternalSecret — canonical chart template (identical across all 9 components)
+### 5.3 ExternalSecret — canonical chart template (identical across all 10 components)
 
 All 8 `charts/<c>/pre/templates/eso-external-secret.yaml` files are now identical (modulo the banner comment). The entire `spec` body of each `ExternalSecret` comes from inventory via `$secret.body`:
 
@@ -402,7 +402,7 @@ Checklist — keep strictly in order.
 
 7. **Add `eso_vault_integration_<c>` integration object + `<c>_pre_helm_values.eso` block** в `hosts-vars/<c>.yaml`. `<c>_pre_helm_values.eso.secrets` — inline merge: `"{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"`. Никаких runtime fact'ов / 8-component hard-coded lists больше нет.
 
-8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 9 components and requires no modification.
+8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 10 components and requires no modification.
 
 9. **В `<c>-install.yaml` (и configure если нужно)** добавь два последовательных pre-check блока: `tasks-vault-config-verify.yaml` (dto: `dto_label_name`) + `tasks-eso-verify.yaml` (dto: `dto_label_name`, `dto_eso_secrets_list` = inline base+extra, `dto_eso_integration_object`, `dto_namespace`). Шаблон в [`reusable-tasks.md`](reusable-tasks.md) §3.1.
 
@@ -465,6 +465,7 @@ All under `eso-secret/` KV engine.
 | `argocd` | `eso-secret/argocd/*` | `accounts/creds` — ONE FIELD PER ACCOUNT (field name = account name), value `{plaintext, hash, passwordMtime}` (nested) incl. the custom admin, written by `tasks-argocd-accounts-sync.yaml` (NOT via ESO); git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` via `_extra` |
 | `mon_system` | `eso-secret/mon-system/*` | `grafana/admin/creds` (password), `grafana/postgresql/creds` (username + password for backing Postgres), `loki/s3/creds` (Loki S3 backend — fields `username`/`accessKey`/`secretKey`; provisioned by SeaweedFS sync OR manual `vault kv put`), optional `grafana/oidc` client-secret, optional `grafana/<ds>` datasource creds |
 | `seaweedfs` | `eso-secret/seaweedfs/*` (+ per-key operator-configurable Vault paths via `identity.keys[].vault_paths`, fixed keys `username`/`accessKey`/`secretKey` — Layer 3 distribute; см. §11 v14 + v17 + v20) | `postgresql/creds` (username + password for filer Postgres backend); `s3-config/bootstrap` (ESO empty-config `{"identities":[]}` → K8s Secret `eso-seaweedfs-s3-bootstrap` → upstream chart `existingConfigSecret`, форсит filer-driven Replace-режим; field name — plain-var `seaweedfs_s3_bootstrap_vault_field`); `admin-ui/creds` (`adminUser` + `adminPassword` — admin UI login, simple `dataFrom.extract`, seeded by `seaweedfs-install.yaml`). v17: S3 identities (admin + users) живут ТОЛЬКО в filer `/etc/iam/identities/` (нет Vault key-store); managed IAM policies — в filer `/etc/iam/policies/`. См. §11 v14 + v17. |
+| `filestash` | `eso-secret/filestash/*` | `app` — admin password: `admin_password` (plaintext, operator `/admin` login) + `admin_password_hash` (bcrypt → env `ADMIN_PASSWORD`); seeded manually before install, ExternalSecret extracts ONLY the hash (least-privilege) |
 
 ---
 

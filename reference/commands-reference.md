@@ -71,7 +71,7 @@ ansible-playbook ... --limit w1,w2,w3
 for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader longhorn \
          seaweedfs \
          mon-system \
-         argocd gitlab gitlab-runner zitadel teleport haproxy; do
+         argocd gitlab gitlab-runner zitadel teleport filestash haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
 ```
@@ -84,7 +84,8 @@ done
 - `vault` before anything whose ESO pulls from it
 - `traefik` before anything with ingress
 - `zitadel` before `mon-system` (for Grafana OIDC inside mon-system stack)
-- `argocd` / `gitlab` / `gitlab-runner` / `seaweedfs` требуют `<c>_enabled: true` (дефолт `false`, opt-in) — иначе install падает с guard'ом. Cross-ns NP между этими компонентами гейтятся флагами цели; фиксированный порядок установки не требуется — см. [`networking.md`](networking.md) §8.5
+- `argocd` / `gitlab` / `gitlab-runner` / `seaweedfs` / `filestash` требуют `<c>_enabled: true` (дефолт `false`, opt-in) — иначе install падает с guard'ом. Cross-ns NP между этими компонентами гейтятся флагами цели; фиксированный порядок установки не требуется — см. [`networking.md`](networking.md) §8.5
+- `filestash`: оператор сидит admin-пароль в Vault ДО install — `vault kv put eso-secret/filestash/app admin_password='<PLAIN>' admin_password_hash="$(htpasswd -bnBC 12 '' '<PLAIN>' | tr -d ':\n')"` (оба ключа; не авто-генерится). После старта — войти в `/admin` и добавить S3-подключение (endpoint `http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333`); девы логинятся своими AK/SK.
 - **Альтернатива** `longhorn` → `linstor` (Piraeus Operator + LINSTOR; ставится через `ansible-playbook ... playbook-app/linstor-install.yaml`). Только один из двух storage stack'ов в кластере, не оба параллельно. См. [`components.md`](components.md) §16.5.
 
 ---
