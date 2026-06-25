@@ -202,7 +202,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - Unique `name` in merged roles.
 - Referential integrity: each role's `policies` references existing policy.
 
-**Callers:** `vault-install.yaml` + 9 ESO-install + 2 ESO-configure playbook'ов + `tests/helm-validate.yaml` (13 callers total).
+**Callers:** `vault-install.yaml` + 10 ESO-install + 1 ESO-configure playbook'ов + `tests/helm-validate.yaml` (13 callers total).
 
 ### 3.2 `tasks-eso-verify.yaml`
 
@@ -222,7 +222,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - C. ESO uniqueness: `external_secret_name`, `body.target.name`.
 - D. Policy path coverage scoped к role's policies: каждый Vault path (из `body.dataFrom[].extract.key` и `body.data[].remoteRef.key`) должен быть substring какого-либо path-prefix из policies этой role (после stripping `/*`).
 
-**Callers:** 11 ESO-integrated install/configure playbook'ов (9 install + 2 configure). НЕ вызывается из `tests/helm-validate.yaml`.
+**Callers:** 11 ESO-integrated install/configure playbook'ов (10 install + 1 configure). НЕ вызывается из `tests/helm-validate.yaml`.
 
 ---
 
@@ -281,7 +281,7 @@ spec:
 
 ### 5.3 ExternalSecret — canonical chart template (identical across all 10 components)
 
-All 8 `charts/<c>/pre/templates/eso-external-secret.yaml` files are now identical (modulo the banner comment). The entire `spec` body of each `ExternalSecret` comes from inventory via `$secret.body`:
+All 10 `charts/<c>/pre/templates/eso-external-secret.yaml` files are now identical (modulo the banner comment). The entire `spec` body of each `ExternalSecret` comes from inventory via `$secret.body`:
 
 ```yaml
 # =============================================================================
