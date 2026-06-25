@@ -75,6 +75,9 @@
 информация по policy
 `echo "s3.policy -list" | kubectl -n seaweedfs exec -i deploy/seaweedfs-s3 -- weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888`
 
+информация по volumes
+`kubectl -n seaweedfs exec -i seaweedfs-master-0 -- sh -c 'echo "volume.fix.replication -verbose" | weed shell'`
+
 1. Что такое volumes.<group>.replicas и что будет при replicas=10 на 5 серверах
 replicas группы → это spec.replicas StatefulSet'а (volume-statefulset.yaml:26) = число pod'ов volume-сервера в этой группе. Каждый pod — отдельный volume-сервер, со своим PVC (через volumeClaimTemplates) на своей ноде.
 
