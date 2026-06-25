@@ -1,16 +1,19 @@
 # =============================================================================
 # Install HashiCorp Vault via bank-vaults operator
-# Steps:
-#   1. vault/pre: NetworkPolicies
-#   2. vault-operator: bank-vaults operator via OCI helm chart
-#   3. vault-cr: Vault CR (full spec) — operator creates StatefulSet + sidecars
-#   4. vault/post: Ingress
+# Steps (tag):
+#   1. pre         — NetworkPolicies
+#   2. operator    — bank-vaults operator via OCI helm chart
+#   3. vault-cr    — Vault CR (full spec); operator creates StatefulSet + sidecars
+#   4. unseal-keys — wait for unsealer Secret, distribute creds to all managers
+#   5. post        — Ingress
 #
 # Usage (tags):
-#   ansible-playbook vault-install.yaml              # full install
-#   ansible-playbook vault-install.yaml --tags pre   # only pre (NetworkPolicies)
-#   ansible-playbook vault-install.yaml --tags install
-#   ansible-playbook vault-install.yaml --tags post  # only post (Ingress)
+#   ansible-playbook vault-install.yaml                     # full install
+#   ansible-playbook vault-install.yaml --tags pre         # only NetworkPolicies
+#   ansible-playbook vault-install.yaml --tags operator    # only bank-vaults operator
+#   ansible-playbook vault-install.yaml --tags vault-cr    # only Vault CR + StatefulSet rollout
+#   ansible-playbook vault-install.yaml --tags unseal-keys # only distribute creds (requires Vault CR already up)
+#   ansible-playbook vault-install.yaml --tags post        # only Ingress
 #
 # Credentials (unseal keys + root_token) are stored in K8s Secret:
 #   kubectl get secret {{ vault_unsealer_secret_name }} -n {{ vault_namespace }} -o json
@@ -217,41 +220,45 @@
           - "statefulset/vault"
       tags: [vault-cr]
 
-    - name: "[vault-cr] Wait for unsealer K8s Secret"
+    # =========================================================================
+    # STEP 4: UNSEAL-KEYS (wait for unsealer Secret + distribute creds)
+    # =========================================================================
+
+    - name: "[unseal-keys] Wait for unsealer K8s Secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
-        dto_label_name: "vault-cr"
+        dto_label_name: "unseal-keys"
         dto_wait_secret_name: "{{ vault_unsealer_secret_name }}"
         dto_wait_secret_namespace: "{{ vault_namespace }}"
-      tags: [vault-cr]
+      tags: [unseal-keys]
 
-    - name: "[vault-cr] Read vault-root field from unsealer secret"
+    - name: "[unseal-keys] Read vault-root field from unsealer secret"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-secret-get.yaml"
       vars:
-        dto_label_name: "vault-cr"
+        dto_label_name: "unseal-keys"
         dto_secret_namespace: "{{ vault_namespace }}"
         dto_secret_name: "{{ vault_unsealer_secret_name }}"
         dto_secret_field: "vault-root"
         dto_secret_res_fact_name: "{{ _local_vault_cr_root_token_key }}"
         dto_secret_res_exists_fact_name: "{{ _local_vault_cr_root_token_exists_key }}"
-      tags: [vault-cr]
+      tags: [unseal-keys]
 
-    - name: "[vault-cr] Assert vault-root field is populated"
+    - name: "[unseal-keys] Assert vault-root field is populated"
       assert:
         that: lookup('vars', _local_vault_cr_root_token_exists_key)
         fail_msg: "vault-root field is empty in secret {{ vault_unsealer_secret_name }} (bank-vaults may still be initializing)"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      tags: [vault-cr]
+      tags: [unseal-keys]
 
-    - name: "[vault-cr] Distribute credentials to all managers"
+    - name: "[unseal-keys] Distribute credentials to all managers"
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-distribute-creds.yaml"
       vars:
-        dto_label_name: "vault-cr"
-      tags: [vault-cr]
+        dto_label_name: "unseal-keys"
+      tags: [unseal-keys]
 
     # =========================================================================
-    # STEP 4: POST (Ingress)
+    # STEP 5: POST (Ingress)
     # =========================================================================
 
     - name: "[vault-post] Copy chart to remote"

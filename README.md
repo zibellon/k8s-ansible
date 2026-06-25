@@ -336,7 +336,7 @@
 ## Есть volume -> требуется работа с СХД (dynamic PVC)
 ## Ожидание готовности deployment/daemonset
 ## ---
-## `--tags pre, operator, vault-cr, post`
+## `--tags pre, operator, vault-cr, unseal-keys, post`
 ## ---
 ##
 - установка (обновление) + конфигурация + синхронизация политик = ОДИН playbook
