@@ -68,18 +68,27 @@ def _validate_creds_exist(target_accounts, mirror):
                 "--tags accounts-sync' first.".format(name)
             )
 
-def _compute_distribution_pairs(target_accounts, mirror):
-    """Build (path, username, password) pairs for the Phase A vault-put loop —
-    one per (account-with-vault_paths, path). Accounts without vault_paths skipped."""
+def _compute_distribution_pairs(target_accounts, mirror, state):
+    """(path, username, password) pairs for the Phase A vault-put loop — only NEW paths
+    plus ALL paths of accounts whose passwordMtime changed vs `state`. Accounts without
+    vault_paths skipped. `state` = list of {account_name, vault_paths, passwordMtime}."""
+    state_by_account = {e.get('account_name'): e for e in state}
     pairs = []
     for account in target_accounts:
         name = account['name']
-        for path in account.get('vault_paths', []):
-            pairs.append({
-                'path': path,
-                'username': name,
-                'password': mirror.get(name, {}).get('plaintext', ''),
-            })
+        paths = account.get('vault_paths', [])
+        if not paths:
+            continue
+        entry = state_by_account.get(name)
+        state_paths = set(entry.get('vault_paths', [])) if entry else set()
+        rotated = (entry is None) or (entry.get('passwordMtime') != account['passwordMtime'])
+        for path in paths:
+            if rotated or path not in state_paths:
+                pairs.append({
+                    'path': path,
+                    'username': name,
+                    'password': mirror.get(name, {}).get('plaintext', ''),
+                })
     return pairs
 
 def _compute_state_paths_to_delete(state, target_paths):
@@ -146,7 +155,8 @@ def argocd_accounts_distribute_paths_to_add(mirror, target_accounts, configmap_r
     Args:
         mirror: dict — {name: {plaintext, hash, passwordMtime}} (Vault mirror).
         target_accounts: list — full target accounts from inventory (base + extra).
-        configmap_raw_json: ignored — kept for shape consistency.
+        configmap_raw_json: str — per-item ConfigMap state (used for change-detection:
+            skip paths already distributed with an unchanged passwordMtime).
 
     Returns:
         list of {path, username, password} dicts.
@@ -157,7 +167,8 @@ def argocd_accounts_distribute_paths_to_add(mirror, target_accounts, configmap_r
     """
     _validate_paths_unique(_flatten_target_paths(target_accounts))
     _validate_creds_exist(target_accounts, mirror)
-    return _compute_distribution_pairs(target_accounts, mirror)
+    state = _parse_configmap_state(configmap_raw_json)
+    return _compute_distribution_pairs(target_accounts, mirror, state)
 
 
 def argocd_accounts_distribute_paths_to_delete(mirror, target_accounts, configmap_raw_json):
@@ -185,7 +196,7 @@ def argocd_accounts_distribute_configmaps_to_apply(target_accounts):
     """Per-item state ConfigMap descriptors for account-distribution.
 
     Stateless filter: validate (paths-unique), then one {name, content} per account
-    WITH non-empty vault_paths. content = {account_name, vault_paths} (sort_keys=True)
+    WITH non-empty vault_paths. content = {account_name, vault_paths, passwordMtime} (sort_keys=True)
     — same shape as one element of the distribution state array consumed by
     argocd_accounts_distribute_paths_to_delete.
 
@@ -205,9 +216,32 @@ def argocd_accounts_distribute_configmaps_to_apply(target_accounts):
         if account.get('vault_paths'):
             result.append(_item_configmap_entry(
                 _CM_PREFIX_DISTRIBUTIONS, account['name'],
-                {'account_name': account['name'], 'vault_paths': account['vault_paths']},
+                {'account_name': account['name'], 'vault_paths': account['vault_paths'],
+                 'passwordMtime': account['passwordMtime']},
             ))
     return result
+
+
+def argocd_accounts_distribute_configmaps_to_apply_changed(target_accounts, configmap_raw_json):
+    """Subset of argocd_accounts_distribute_configmaps_to_apply whose desired content
+    differs from the current per-item ConfigMap state — new account, changed vault_paths,
+    or changed passwordMtime. Phase C applies ONLY these; unchanged accounts' ConfigMaps
+    are skipped.
+    Args:
+        target_accounts: list — full target accounts from inventory.
+        configmap_raw_json: str — combined per-item ConfigMap state (may be '', None).
+    Returns:
+        list of {name, content} — subset of configmaps_to_apply(target_accounts).
+    """
+    desired = argocd_accounts_distribute_configmaps_to_apply(target_accounts)
+    state = _parse_configmap_state(configmap_raw_json)
+    stored_by_name = {e.get('account_name'): json.dumps(e, sort_keys=True) for e in state}
+    changed = []
+    for d in desired:
+        account_name = json.loads(d['content']).get('account_name')
+        if stored_by_name.get(account_name) != d['content']:
+            changed.append(d)
+    return changed
 
 
 def argocd_accounts_state_configmaps_to_combined_json(configmaplist_raw):
@@ -271,6 +305,7 @@ class FilterModule(object):
             'argocd_accounts_distribute_paths_to_add': argocd_accounts_distribute_paths_to_add,
             'argocd_accounts_distribute_paths_to_delete': argocd_accounts_distribute_paths_to_delete,
             'argocd_accounts_distribute_configmaps_to_apply': argocd_accounts_distribute_configmaps_to_apply,
+            'argocd_accounts_distribute_configmaps_to_apply_changed': argocd_accounts_distribute_configmaps_to_apply_changed,
             'argocd_accounts_state_configmaps_to_combined_json': argocd_accounts_state_configmaps_to_combined_json,
             'argocd_accounts_state_configmaps_to_delete': argocd_accounts_state_configmaps_to_delete,
         }

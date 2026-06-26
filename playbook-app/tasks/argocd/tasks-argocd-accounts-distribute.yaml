@@ -83,6 +83,13 @@
   run_once: true
   tags: [always]
 
+- name: "[{{ dto_label_name }}] Compute changed state ConfigMaps to apply (vs current state)"
+  set_fact:
+    _local_cms_to_apply_changed: "{{ argocd_local_accounts | argocd_accounts_distribute_configmaps_to_apply_changed(_local_state_combined) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[{{ dto_label_name }}] Compute paths_to_add via filter (Phase A iteration list)"
   set_fact:
     _local_paths_to_add: "{{ (_local_mirror | default({})) | argocd_accounts_distribute_paths_to_add(argocd_local_accounts, _local_state_combined) }}"
@@ -137,7 +144,7 @@
       --dry-run=client -o yaml | \
       kubectl label --local -f - -o yaml argocd-accounts-state=distributions | \
       kubectl apply -f -
-  loop: "{{ _local_cms_to_apply }}"
+  loop: "{{ _local_cms_to_apply_changed }}"
   loop_control:
     label: "{{ item.name }}"
   delegate_to: "{{ master_manager_fact }}"
