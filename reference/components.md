@@ -42,7 +42,7 @@ Template fields:
 - **ESO integration.** No.
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium (CNI). Traefik (if using HTTP-01).
-- **Non-install playbooks.** None.
+- **Non-install playbooks.** cert-manager-restart.yaml.
 - **Notes.** `cert_manager_cluster_issuers` provides cluster-wide raw `ClusterIssuer` resources as operator infrastructure — standard ingress components no longer consume it; each defines its own namespaced `Issuer` via `<c>_cert_manager_issuer` (see [`networking.md`](networking.md) §4).
 
 ## 3. `external-secrets`
@@ -196,6 +196,7 @@ Template fields:
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, traefik.
 - **Enable flag.** `teleport_enabled` (opt-in, default `false`): guards install + restart.
+- **Non-install playbooks.** teleport-restart.yaml.
 - **Notes.** `configure/` phase runs after the server is up and applies the declarative resource list.
 
 ## 15. `stakater-reloader`
@@ -263,7 +264,7 @@ Consolidated monitoring stack: Prometheus Operator + Prometheus + Alertmanager +
 - **ServiceMonitor.** Three SMs in `mon-system/post/` (loki, ksm, node-exporter), plus 6 system-component SMs (kube-apiserver, kubelet, kube-controller-manager, kube-scheduler, etcd, coredns) in `system-service-monitors.yaml` always-rendered. Vector by design has no SM (no metrics endpoint). Grafana and Prometheus-Operator self-SMs are not currently shipped.
 - **Ingress + Certificate.** UI Ingresses for grafana, prometheus, alertmanager rendered in `post/` with composite gates (operator + per-UI flag for prometheus/alertmanager; just grafana flag for grafana). Per-UI VPN allow-list flags: `mon_system_<c>_vpn_only_enabled`.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault (for grafana ESO + Loki S3 creds), traefik (for UIs), longhorn (for Prometheus + grafana-postgresql PVCs), seaweedfs (default Loki S3 object store), zitadel (optional — for grafana OIDC).
-- **Non-install playbooks.** None.
+- **Non-install playbooks.** mon-system-restart.yaml.
 - **Notes.** Prometheus-operator phase renders pristine upstream `prometheus-operator.yaml` через kustomize (`mon_system_prometheus_operator_kustomize_patches`) на master_manager_fact перед helm install — см. [`playbook-conventions.md`](playbook-conventions.md) §21. Single namespace eliminates the cross-namespace coupling that previously required: `vector-allow-loki` cross-ns NetworkPolicy in the `loki` namespace; `grafana-allow-prometheus` / `grafana-allow-alertmanager` cross-ns NetworkPolicies in the `mon` namespace; cross-ns Vector→Loki DNS endpoint. The consolidated NetworkPolicy in `mon-system/pre/` covers all intra-namespace traffic with a single `allow-internal-traffic` rule plus per-component egress rules (operator/ksm to apiserver, vector to apiserver:443, grafana external HTTP/HTTPS, loki to SeaweedFS S3 + external S3), and one cross-ns NetworkPolicy in `traefik-lb` for UI ingress.
 
 ---
