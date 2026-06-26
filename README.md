@@ -310,15 +310,25 @@
 ## Решение: зайти на github (https://github.com/hashicorp/vault-helm) в раздел с релизами
 ## Скачать ZIP архив последнего релиза, достать все templates, Chart.yaml и values.yaml
 ## ---
+## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть volume -> требуется работа с СХД (dynamic PVC)
+## Ожидание готовности deployment/daemonset
+## ---
 ## Важно_1. Установка идет через helm-chart: bank-vaults (https://bank-vaults.dev, https://github.com/bank-vaults)
 ## Для хранения ключей используется `k8s-secret`
 ## Есть playbook, для доставки ключей k8s.Secrets -> manager-nodes (как json файл)
 ## ---
-## Важно_2. Работа с конфигурацией идет через Operator + CRDs
+## Важно_2. Работа с конфигурацией идет через `Operator + CRDs`
 ## все политики, роли, методы авторизации и так далее - определяются в Vault (CRDs)
 ## Для их синхронизации с Vaul-instance, надо вызвать `... playbook-app/vault-install.yaml --tags vault-cr`
 ## ---
-## Важно_3. Добавление пользователей с userpass (Auth method)
+## Важно_3. Пользоваться root-token = нужно только один раз, для создания админа
+## Есть политика - `vault-admin` (`./hosts-vars/vault.yaml`). Она дает все права, для всего
+## после установки vault, зайти в UI или CLI под root-token, открыть AuthMethod = UserPass (он уже активирован)
+## Добавить нового пользователя: Например `admin-rw`, создать пароль и указать политику `vault-admin`
+## Выйти из `root-token` и авторизоваться под новый пользователем: `admin-rw`
+## ---
+## Важно_4. Добавление пользователей с userpass (Auth method)
 ## - зашли в UI (под root token)
 ## - добавили нового пользователя + указали ему пароль (без этого - нельзя создать пользоватяеля)
 ## - переали логин + пароль сотруднику и просим его сменить пароль
@@ -331,10 +341,6 @@
 ## - зайти в UI -> access -> userpass -> confugure. и там будет поле типа: auth_userpass_1q2w3e4r. Это ACCESSOR
 ## - зайти в CLI и выполнить команду: `vault read -field=accessor sys/auth/userpass`
 ## Пример политики: `user-self-service` (`./hosts-vars/vault.yaml`)
-## ---
-## Есть web-ui, который доступен по URL -> требуется Certificate (cert-manager-CRD)
-## Есть volume -> требуется работа с СХД (dynamic PVC)
-## Ожидание готовности deployment/daemonset
 ## ---
 ## `--tags pre, operator, vault-cr, unseal-keys, post`
 ## ---
