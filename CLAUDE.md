@@ -72,7 +72,7 @@ k8s-ansible/
 ├── Makefile, .yamllint.yaml, .ansible-lint.yml  ← test runner + lint configs
 ├── .claude/prompts/           ← cold-start prompt for manual chat workflow
 ├── playbook-system/  (+ tasks/, benchmark/, utils/)  ← node-scoped, imperative
-├── playbook-app/     (+ tasks/, charts/) ← cluster-scoped, declarative; charts/ = 18 local Helm-chart dirs
+├── playbook-app/     (+ tasks/, charts/) ← cluster-scoped, declarative; charts/ = 19 local Helm-chart dirs
 ├── tests/                     ← Docker-based test runner
 ├── hosts-vars/                ← base defaults (in git)
 ├── hosts-vars-override/       ← secrets + real inventory (gitignored)

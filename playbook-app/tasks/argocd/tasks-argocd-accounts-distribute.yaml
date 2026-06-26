@@ -1,0 +1,163 @@
+# =============================================================================
+# ArgoCD account secret distribution — declarative account creds → extra Vault paths
+# =============================================================================
+# Reusable task include. Invoked from playbook with:
+#   - include_tasks: tasks-argocd-accounts-distribute.yaml
+#     vars:
+#       dto_label_name: "<caller-prefix>"
+#
+# Distributes ArgoCD local-account credentials (read from the Vault mirror written by
+# accounts-sync at <kv>/argocd/accounts/creds) into operator-declared extra Vault paths
+# (argocd_local_accounts[].vault_paths). Per-path payload (fixed keys, HARD-CODED):
+#   username — account name
+#   password — account plaintext (mirror[name].plaintext)
+#
+# State: per-item ConfigMaps 'argocd-accounts-distributions-<account>' (one per account with
+# non-empty vault_paths), grouped by label 'argocd-accounts-state=distributions'. Each stores
+# JSON {account_name, vault_paths}. Tracks last-distributed paths so prune works when an
+# account loses vault_paths. Compute logic — filter_plugins/argocd_accounts_distribute.py.
+# Phases:
+#   - Phase A: vault-put for each (account, path) target pair (full replace, idempotent).
+#   - Phase B: vault-delete for each state path no longer in target paths.
+#   - Phase C: apply per-item state ConfigMaps for target accounts (with vault_paths).
+#   - Phase D: delete stale per-item state ConfigMaps (account dropped vault_paths).
+# =============================================================================
+- name: "[{{ dto_label_name }}] Assert dto_label_name provided"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+    fail_msg: >-
+      tasks-argocd-accounts-distribute: dto_label_name required (string, non-empty).
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute per-item state ConfigMaps to apply (target-only)"
+  set_fact:
+    _local_cms_to_apply: "{{ argocd_local_accounts | argocd_accounts_distribute_configmaps_to_apply }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute has_target flag (any account with vault_paths)"
+  set_fact:
+    _local_has_target: "{{ (_local_cms_to_apply | length) > 0 }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- READ: account credentials from the Vault mirror (only if target non-empty) ---
+- name: "[{{ dto_label_name }}] Read accounts creds (all per-account fields) from Vault"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get-all.yaml"
+  vars:
+    dto_vault_get_path: "{{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_accounts_vault_path }}"
+    dto_vault_get_res_fact_name: "_local_argocd_vault_fields"
+    dto_vault_get_res_exists_fact_name: "_local_argocd_creds_exists"
+  when: _local_has_target
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Reconstruct mirror — keep per-account fields only"
+  set_fact:
+    _local_mirror: "{{ _local_argocd_vault_fields | default({}) | dict2items | selectattr('value', 'mapping') | items2dict }}"
+  no_log: true
+  when: _local_has_target
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Read current state ConfigMaps (labeled, may be none)"
+  command: >-
+    kubectl get configmap -n {{ argocd_namespace }}
+    -l argocd-accounts-state=distributions -o json
+  register: _local_cmlist_reg
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Reconstruct combined state from labeled ConfigMaps"
+  set_fact:
+    _local_state_combined: "{{ _local_cmlist_reg.stdout | argocd_accounts_state_configmaps_to_combined_json }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute changed state ConfigMaps to apply (vs current state)"
+  set_fact:
+    _local_cms_to_apply_changed: "{{ argocd_local_accounts | argocd_accounts_distribute_configmaps_to_apply_changed(_local_state_combined) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute paths_to_add via filter (Phase A iteration list)"
+  set_fact:
+    _local_paths_to_add: "{{ (_local_mirror | default({})) | argocd_accounts_distribute_paths_to_add(argocd_local_accounts, _local_state_combined) }}"
+  no_log: true
+  when: _local_has_target
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute paths_to_delete via filter (Phase B iteration list)"
+  set_fact:
+    _local_paths_to_delete: "{{ (_local_mirror | default({})) | argocd_accounts_distribute_paths_to_delete(argocd_local_accounts, _local_state_combined) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute stale state ConfigMaps to delete"
+  set_fact:
+    _local_cms_to_delete: "{{ _local_cmlist_reg.stdout | argocd_accounts_state_configmaps_to_delete(_local_cms_to_apply | map(attribute='name') | list) }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE A: vault-put for each (account, path) target pair ---
+- name: "[{{ dto_label_name }}] Phase A — vault-put for each (account, path) target pair"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+  vars:
+    dto_vault_put_path: "{{ item.path }}"
+    dto_vault_put_data:
+      username: "{{ item.username }}"
+      password: "{{ item.password }}"
+  loop: "{{ _local_paths_to_add | default([]) }}"
+  loop_control:
+    label: "{{ item.username }}: {{ item.path }}"
+  tags: [always]
+
+# --- PHASE B: vault-delete for each state path not in target paths ---
+- name: "[{{ dto_label_name }}] Phase B — vault-delete for each state path not in target paths"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-delete.yaml"
+  vars:
+    dto_vault_delete_path: "{{ item.path }}"
+  loop: "{{ _local_paths_to_delete | default([]) }}"
+  loop_control:
+    label: "{{ item.account_name }}: {{ item.path }}"
+  tags: [always]
+
+# --- PHASE C: Apply per-item state ConfigMaps (labeled argocd-accounts-state=distributions) ---
+- name: "[{{ dto_label_name }}] Phase C — Apply per-item state ConfigMaps"
+  shell: |
+    kubectl create configmap {{ item.name }} -n {{ argocd_namespace }} \
+      --from-literal=state='{{ item.content }}' \
+      --dry-run=client -o yaml | \
+      kubectl label --local -f - -o yaml argocd-accounts-state=distributions | \
+      kubectl apply -f -
+  loop: "{{ _local_cms_to_apply_changed }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+# --- PHASE D: Delete stale per-item state ConfigMaps (account dropped vault_paths) ---
+- name: "[{{ dto_label_name }}] Phase D — Delete stale state ConfigMaps"
+  command: >-
+    kubectl delete configmap {{ item }} -n {{ argocd_namespace }} --ignore-not-found
+  loop: "{{ _local_cms_to_delete }}"
+  loop_control:
+    label: "{{ item }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]

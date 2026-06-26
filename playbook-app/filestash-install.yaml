@@ -1,0 +1,292 @@
+# =============================================================================
+# Install Filestash (S3 web UI, local Helm chart)
+# Steps:
+#   1. filestash/pre:     ESO resources (SA, SecretStore, ExternalSecret) + NetworkPolicies + cert-manager Issuer
+#   2. filestash:         StatefulSet + PVC + headless Service
+#   3. filestash/post:    Ingress (Traefik) + cert-manager Certificate
+#
+# Usage (tags):
+#   ansible-playbook filestash-install.yaml              # full install
+#   ansible-playbook filestash-install.yaml --tags pre
+#   ansible-playbook filestash-install.yaml --tags install
+#   ansible-playbook filestash-install.yaml --tags post
+#
+# Prerequisites:
+#   - Vault installed/unsealed; Vault policies+roles synced (filestash.eso-main)
+#   - External Secrets Operator installed
+#   - Storage (linstor/longhorn) installed
+#   - SeaweedFS installed (S3 backend; dev enters endpoint+AK/SK in /admin)
+#
+# NOTE: admin password is operator-seeded in Vault BEFORE install (both
+#       admin_password plaintext + admin_password_hash bcrypt at
+#       eso-secret/filestash/app). The playbook does NOT generate it.
+# =============================================================================
+
+---
+- name: Install Filestash (S3 web UI, local Helm chart)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[filestash-install] Assert component enabled"
+      assert:
+        that:
+          - filestash_enabled | default(false) | bool
+        fail_msg: "filestash is disabled (filestash_enabled=false). Set filestash_enabled: true in hosts-vars-override/ to install it."
+      run_once: true
+      tags: [always]
+
+    - name: "[filestash-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "filestash-pre-check"
+      tags: [always]
+
+    - name: "[filestash-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "filestash-pre-check"
+        dto_target_namespace: "{{ filestash_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Verify Vault + ESO config
+    # =========================================================================
+
+    - name: "[filestash-install-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "filestash-install-init"
+      tags: [always]
+
+    - name: "[filestash-install-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "filestash-install-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_filestash_secrets + (eso_vault_integration_filestash_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_filestash }}"
+        dto_namespace: "{{ filestash_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (ESO Resources, NetworkPolicies, Issuer)
+    # =========================================================================
+
+    - name: "[filestash-pre] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "filestash-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/filestash/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/filestash/pre"
+      tags: [pre]
+
+    - name: "[filestash-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "filestash-pre"
+        dto_dir: "{{ remote_charts_dir }}/filestash/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ filestash_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[filestash-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "filestash-pre"
+        dto_release_name: "filestash-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/filestash/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/filestash/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/filestash/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/filestash/pre-k"
+        dto_patches_list: "{{ filestash_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ filestash_namespace }}"
+      tags: [pre]
+
+    - name: "[filestash-pre] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "filestash-pre"
+        dto_helm_command: >
+          helm upgrade --install filestash-pre {{ remote_charts_dir }}/filestash/pre-k
+          --namespace {{ filestash_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ filestash_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: INSTALL (StatefulSet + PVC + Service)
+    # =========================================================================
+
+    - name: "[filestash-install] Trigger ESO sync (admin password seeded in Vault by operator)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "filestash-install"
+        dto_eso_sync_namespace: "{{ filestash_namespace }}"
+      tags: [install]
+
+    - name: "[filestash-install] Wait for admin secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "filestash-install"
+        dto_wait_secret_name: "{{ filestash_secret_app.body.target.name }}"
+        dto_wait_secret_namespace: "{{ filestash_namespace }}"
+      tags: [install]
+
+    - name: "[filestash-install] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "filestash-install"
+        dto_chart_name: "install"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/filestash/install/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/filestash/install"
+      tags: [install]
+
+    - name: "[filestash-install] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "filestash-install"
+        dto_dir: "{{ remote_charts_dir }}/filestash/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ filestash_install_helm_values | to_nice_yaml }}"
+      tags: [install]
+
+    - name: "[filestash-install] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "filestash-install"
+        dto_release_name: "filestash"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/filestash/install"
+        dto_values_file_path: "{{ remote_charts_dir }}/filestash/install/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/filestash/install-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/filestash/install-k"
+        dto_patches_list: "{{ filestash_install_kustomize_patches }}"
+        dto_target_namespace: "{{ filestash_namespace }}"
+      tags: [install]
+
+    - name: "[filestash-install] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "filestash-install"
+        dto_helm_command: >
+          helm upgrade --install filestash {{ remote_charts_dir }}/filestash/install-k
+          --namespace {{ filestash_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ filestash_install_helm_timeout }}
+      tags: [install]
+
+    - name: "[filestash-install] Wait for rollout to be ready"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "filestash-install"
+        dto_rollout_namespace: "{{ filestash_namespace }}"
+        dto_rollout_timeout: "{{ filestash_install_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - statefulset.apps/filestash
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: POST (Ingress + Certificate)
+    # =========================================================================
+
+    - name: "[filestash-post] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "filestash-post"
+        dto_chart_name: "post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/filestash/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/filestash/post"
+      tags: [post]
+
+    - name: "[filestash-post] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "filestash-post"
+        dto_dir: "{{ remote_charts_dir }}/filestash/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ filestash_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[filestash-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "filestash-post"
+        dto_release_name: "filestash-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/filestash/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/filestash/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/filestash/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/filestash/post-k"
+        dto_patches_list: "{{ filestash_post_kustomize_patches }}"
+        dto_target_namespace: "{{ filestash_namespace }}"
+      tags: [post]
+
+    - name: "[filestash-post] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "filestash-post"
+        dto_helm_command: >
+          helm upgrade --install filestash-post {{ remote_charts_dir }}/filestash/post-k
+          --namespace {{ filestash_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ filestash_post_helm_timeout }}
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[filestash-verify] Verify Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_label_name: "filestash-verify"
+        dto_helm_namespace: "{{ filestash_namespace }}"
+      tags: [always]
+
+    - name: "[filestash-verify] Show pods in {{ filestash_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "filestash-verify"
+        dto_pods_namespace: "{{ filestash_namespace }}"
+      tags: [always]
+
+    - name: "[filestash-verify] Show NetworkPolicies in {{ filestash_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "filestash-verify"
+        dto_np_namespace: "{{ filestash_namespace }}"
+      tags: [always]
+
+    - name: "[filestash-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "FILESTASH INSTALLATION COMPLETE"
+          - "=============================================="
+          - "UI: https://{{ filestash_domain }}"
+          - ""
+          - "Admin password (plaintext) in Vault:"
+          - "  {{ eso_vault_integration_filestash.kv_engine_path }}{{ filestash_secret_app.vault_path }} (key: admin_password)"
+          - ""
+          - "First-time setup: log into /admin, then add the S3 connection"
+          - "  (endpoint http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333)."
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[filestash-verify] Installation complete"
+      debug:
+        msg: "filestash-pre + filestash + filestash-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

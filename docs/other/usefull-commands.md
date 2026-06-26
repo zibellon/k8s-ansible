@@ -324,3 +324,7 @@ REVISION	UPDATED                 	STATUS         	CHART                   	APP V
 
 посмотреть пароль + логин по одному registry
 `echo "https://ghcr.io" | docker-credential-desktop get`
+
+# Как проверить IP, который увидит приемни
+`https://api.ipify.org`
+`https://ifconfig.me/`

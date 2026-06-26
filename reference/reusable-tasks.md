@@ -12,7 +12,9 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (34 tasks)
+## 1. `playbook-app/tasks/` (40 tasks)
+
+Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-app/tasks/` (verify: `find playbook-app/tasks -name 'tasks-*.yaml' | wc -l`), not the count of catalogued entries below — not every file has a dedicated entry.
 
 The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-get-all.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
@@ -354,6 +356,15 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Callers.** `playbook-app/argocd-install.yaml` STEP 3.5 (tag `[accounts-sync]`, **after** install rollout — нужен живой argocd-server + argocd-secret).
 - **Idempotent.** Yes — diff каждый run; bcrypt только на реальную смену; resync копирует Vault→secret при дрейфе (no-rotation).
 
+### 1.31a `tasks-argocd-accounts-distribute.yaml`
+
+- **Purpose.** Declarative ArgoCD account credentials distribution (mirrors SeaweedFS Layer 3). Reads per-account creds из Vault-зеркала (`eso-secret/argocd/accounts/creds`, gated `when: has_target`; источник plaintext); для каждого аккаунта с непустым `argocd_local_accounts[].vault_paths` (full Vault paths с mount engine prefix) distribute creds через fixed keys `username` (account name) / `password` (plaintext из зеркала) — HARD-CODED. has_target gate = `argocd_accounts_distribute_configmaps_to_apply | length > 0` (target-only, без зеркала-read). State — **per-item ConfigMaps** `argocd-accounts-distributions-<account>` (label `argocd-accounts-state=distributions`), content `{account_name, vault_paths, passwordMtime}`: read = `kubectl get cm -l ... -o json` → reconstruct в combined-array JSON (`argocd_accounts_state_configmaps_to_combined_json`) → diff. Phase A: vault-put ТОЛЬКО для новых путей + всех путей аккаунта со сменившимся passwordMtime (change-detection vs ConfigMap state; full replace per path). Phase B: vault-delete per state path не в target. Phase C: apply ТОЛЬКО изменённых per-item state ConfigMaps (content отличается от текущего). Phase D: delete стейл per-item state ConfigMaps. **Stateless filter API** (`filter_plugins/argocd_accounts_distribute.py`; signature `(mirror, target_accounts, configmap_raw_json)`): `argocd_accounts_distribute_paths_to_add` (creds из зеркала; diff vs state — только new/rotated по passwordMtime) + `argocd_accounts_distribute_paths_to_delete` (mirror игнор — diff target vs ConfigMap state) + state-CM filters (`argocd_accounts_state_configmaps_to_combined_json`, `argocd_accounts_distribute_configmaps_to_apply`, `argocd_accounts_distribute_configmaps_to_apply_changed`, `argocd_accounts_state_configmaps_to_delete`); validations (paths-unique, creds-exist-in-mirror, DNS-name) внутри compute функций — fail-fast.
+- **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation; nested includes (`tasks-vault-get-all`, `tasks-vault-put`, `tasks-vault-delete`) inherit via Ansible variable scope.
+- **Validates (assert).** `dto_label_name` defined + non-empty. Target paths unique across all accounts. Each account с `vault_paths` существует в Vault-зеркале с непустым plaintext (иначе «run accounts-sync first»). Computed ConfigMap name DNS-compatible. (последние три — внутри фильтра, `AnsibleFilterError`.)
+- **Output.** Account credentials распределены в Vault paths (via `tasks-vault-put`, fixed keys `username`/`password`), стейл state paths удалены (via `tasks-vault-delete`), ConfigMap state updated.
+- **Callers.** `playbook-app/argocd-install.yaml` STEP 3.6 (tag `[accounts-distribute]`, after accounts-sync — **after** install rollout).
+- **Idempotent.** Yes — change-detection через passwordMtime в ConfigMap state: прогон без изменений = 0 vault-put / 0 CM-apply; put только new/rotated пути, apply только изменённые CM; vault-delete idempotent на missing path.
+
 ### 1.32 `tasks-seaweedfs-bucket-sync.yaml`
 
 - **Purpose.** Declarative SeaweedFS Layer 2 buckets + quotas + owner (v18 filer-driven; bucket policies удалены). Schema per bucket: `{name, owner, replication, rack, dataCenter, quota_size?}` (name/owner/replication/rack/dataCenter обязательны, quota_size optional). READ current state из **живого filer** двумя командами — `fs.configure` (location config: replication/rack/dataCenter) + `s3.bucket.list` (existence + owner + quota) → diff vs target (`seaweedfs_sync_buckets + _extra`) by name primary key. Validate replication format + rack/dataCenter/owner required внутри каждой compute функции. **Pre-phase fail-fast ASSERT** (после compute calls, до Phase A): если ЛЮБОЕ из immutable полей (**owner, replication, rack, dataCenter**) changed на kept bucket vs filer → sync aborts с detailed message, cluster intact. Sync order: A) delete стейл buckets via `s3.bucket.delete -name=<n>`; B) create new via `s3.bucket.create -name=<n> -owner=<owner>`; C) `fs.configure -locationPrefix=/buckets/<n> -replication=<r> -rack=<rk> -dataCenter=<dc> -apply` для new (все три всегда); D) quota upsert (target с quota_size, чья квота отличается от filer — diff vs `s3.bucket.list` quota, unchanged скипаются) via `s3.bucket.quota -op=set -sizeMB=<n>` (size_mib pre-computed Python-side); E) quota delete (target без quota_size, у кого в filer квота ЕСТЬ) via `s3.bucket.quota -op=remove` (unlimited; уже-без-квоты скипаются). Owner immutable — owner-reconcile фаза удалена в v18. NO ConfigMap state. **Stateless filter API** (`filter_plugins/seaweedfs_bucket.py`; signature `(fs_configure_raw, bucket_list_raw, target_buckets)`): `seaweedfs_buckets_to_delete` + `_to_create` + `_immutable_violations` + `seaweedfs_buckets_quota_to_upsert` + `seaweedfs_buckets_quota_to_delete`.
@@ -384,6 +395,8 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 ---
 
 ## 2. `playbook-system/tasks/` (20 tasks)
+
+Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-system/tasks/` (verify: `find playbook-system/tasks -name 'tasks-*.yaml' | wc -l`), not the count of catalogued entries below — not every file has a dedicated entry.
 
 ### 2.1 Guard / preflight
 
