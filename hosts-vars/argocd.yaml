@@ -178,7 +178,8 @@ all:
     # Install-phase kustomize patches: base = operator patches + generated accounts/RBAC patches.
     # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure) + generated argocd-cm
     # (accounts.<name>: <capabilities> + accounts.<name>.enabled из argocd_local_accounts + admin.enabled) + argocd-rbac-cm
-    # (policy.csv из argocd_policy_csv_list). kustomize мержит несколько патчей на один target.
+    # (policy.csv из argocd_policy_csv_list) + argocd-server ClusterRole (pods/exec для web-terminal).
+    # kustomize мержит несколько патчей на один target.
     argocd_kustomize_patches_base:
       - target:
           kind: ConfigMap
@@ -240,6 +241,20 @@ all:
           {% for line in argocd_policy_csv_list %}
               {{ line }}
           {% endfor %}
+      # argocd-server ClusterRole — grant pods/exec (create) for the web terminal (exec.enabled above).
+      # JSON6902 (rules has no merge-key → strategic-merge would replace it); k8s 1.35+ needs create even on the WebSocket path.
+      - target:
+          group: rbac.authorization.k8s.io
+          version: v1
+          kind: ClusterRole
+          name: argocd-server
+        patch: |-
+          - op: add
+            path: /rules/-
+            value:
+              apiGroups: [""]
+              resources: ["pods/exec"]
+              verbs: ["create"]
     # Operator-side extra patches — задаются в hosts-vars-override/ (напр. argocd-ssh-known-hosts-cm). Default пусто.
     argocd_install_kustomize_patches_extra: []
     # Consumed by the install phase (named like other components): base + operator extra.
