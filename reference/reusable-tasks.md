@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (34 tasks)
+## 1. `playbook-app/tasks/` (35 tasks)
 
 The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-get-all.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
@@ -353,6 +353,15 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Output.** `accounts.<name>.password`/`.passwordMtime` в `argocd-secret`; per-account fields (`{plaintext, hash, passwordMtime}`) в Vault `eso-secret/argocd/accounts/creds`. Идентичность (`accounts.<name>: login`) и RBAC применяются отдельно — install-фаза kustomize-патчами.
 - **Callers.** `playbook-app/argocd-install.yaml` STEP 3.5 (tag `[accounts-sync]`, **after** install rollout — нужен живой argocd-server + argocd-secret).
 - **Idempotent.** Yes — diff каждый run; bcrypt только на реальную смену; resync копирует Vault→secret при дрейфе (no-rotation).
+
+### 1.31a `tasks-argocd-accounts-distribute.yaml`
+
+- **Purpose.** Declarative ArgoCD account credentials distribution (mirrors SeaweedFS Layer 3). Reads per-account creds из Vault-зеркала (`eso-secret/argocd/accounts/creds`, gated `when: has_target`; источник plaintext); для каждого аккаунта с непустым `argocd_local_accounts[].vault_paths` (full Vault paths с mount engine prefix) distribute creds через fixed keys `username` (account name) / `password` (plaintext из зеркала) — HARD-CODED. has_target gate = `argocd_accounts_distribute_configmaps_to_apply | length > 0` (target-only, без зеркала-read). State — **per-item ConfigMaps** `argocd-accounts-distributions-<account>` (label `argocd-accounts-state=distributions`), content `{account_name, vault_paths}`: read = `kubectl get cm -l ... -o json` → reconstruct в combined-array JSON (`argocd_accounts_state_configmaps_to_combined_json`) → diff. Phase A: vault-put per (account, path) target pair (full replace, idempotent). Phase B: vault-delete per state path не в target. Phase C: apply per-item state ConfigMaps. Phase D: delete стейл per-item state ConfigMaps. **Stateless filter API** (`filter_plugins/argocd_accounts_distribute.py`; signature `(mirror, target_accounts, configmap_raw_json)`): `argocd_accounts_distribute_paths_to_add` (creds из зеркала) + `argocd_accounts_distribute_paths_to_delete` (mirror игнор — diff target vs ConfigMap state) + state-CM filters (`argocd_accounts_state_configmaps_to_combined_json`, `argocd_accounts_distribute_configmaps_to_apply`, `argocd_accounts_state_configmaps_to_delete`); validations (paths-unique, creds-exist-in-mirror, DNS-name) внутри compute функций — fail-fast.
+- **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation; nested includes (`tasks-vault-get-all`, `tasks-vault-put`, `tasks-vault-delete`) inherit via Ansible variable scope.
+- **Validates (assert).** `dto_label_name` defined + non-empty. Target paths unique across all accounts. Each account с `vault_paths` существует в Vault-зеркале с непустым plaintext (иначе «run accounts-sync first»). Computed ConfigMap name DNS-compatible. (последние три — внутри фильтра, `AnsibleFilterError`.)
+- **Output.** Account credentials распределены в Vault paths (via `tasks-vault-put`, fixed keys `username`/`password`), стейл state paths удалены (via `tasks-vault-delete`), ConfigMap state updated.
+- **Callers.** `playbook-app/argocd-install.yaml` STEP 3.6 (tag `[accounts-distribute]`, after accounts-sync — **after** install rollout).
+- **Idempotent.** Yes — vault-put full replace, vault-delete idempotent на missing path, diff vs ConfigMap state.
 
 ### 1.32 `tasks-seaweedfs-bucket-sync.yaml`
 
