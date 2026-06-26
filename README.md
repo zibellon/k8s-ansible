@@ -584,6 +584,8 @@
   - Версия указывается в `hosts-vars/` | `hosts-vars-override/` -> внутри `*.yaml` надо не потерять щаблонизацию
 - обновление (версия: node-exporter, ksm, loki, vector, grafana)
   - просто обновить версии в hosts-vars
+- Есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-restart.yaml`
 
 ## ---------------------
 ## ---------------------
