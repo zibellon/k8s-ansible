@@ -17,9 +17,13 @@
 #   - Storage (linstor/longhorn) installed
 #   - SeaweedFS installed (S3 backend; dev enters endpoint+AK/SK in /admin)
 #
-# NOTE: admin password is operator-seeded in Vault BEFORE install (both
-#       admin_password plaintext + admin_password_hash bcrypt at
-#       eso-secret/filestash/app). The playbook does NOT generate it.
+# NOTE: admin password is auto-generated at first install (seed-if-missing,
+#       like zitadel): generates a random plaintext, bcrypt-hashes it via the
+#       password_hash('bcrypt') filter (passlib), and stores BOTH admin_password
+#       (plaintext) + admin_password_hash (bcrypt) at eso-secret/filestash/app.
+#       The ExternalSecret extracts only the hash. Operator reads the plaintext
+#       from Vault to log into /admin. No rotation (vault-exists guard).
+#       Control node requires passlib + bcrypt<4.1 (see tests/Dockerfile).
 # =============================================================================
 
 ---
@@ -27,6 +31,14 @@
   hosts: managers
   become: true
   gather_facts: false
+
+  vars:
+    # Local fact names for admin-password seed-if-missing
+    _local_filestash_admin_vault_key: "_local_filestash_admin_vault"
+    _local_filestash_admin_vault_exists_key: "_local_filestash_admin_vault_exists"
+    _local_filestash_admin_plaintext_key: "_local_filestash_admin_plaintext"
+    _local_filestash_admin_hash_key: "_local_filestash_admin_hash"
+    _local_filestash_admin_put_data_key: "_local_filestash_admin_put_data"
 
   tasks:
     - name: "[filestash-install] Assert component enabled"
@@ -122,7 +134,58 @@
     # STEP 2: INSTALL (StatefulSet + PVC + Service)
     # =========================================================================
 
-    - name: "[filestash-install] Trigger ESO sync (admin password seeded in Vault by operator)"
+    # ----- Admin password: auto-generate at first install (seed-if-missing). -----
+    # Both plaintext + bcrypt hash stored in Vault; ESO extracts only the hash.
+    - name: "[filestash-admin-secrets] Get admin password from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "filestash-admin-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_filestash.kv_engine_path }}{{ filestash_secret_app.vault_path }}"
+        dto_vault_get_field: "{{ filestash_admin_password_plaintext_key }}"
+        dto_vault_get_res_fact_name: "{{ _local_filestash_admin_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_filestash_admin_vault_exists_key }}"
+      tags: [install]
+
+    - name: "[filestash-admin-secrets] Generate admin password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "filestash-admin-secrets"
+        dto_generate_fact_name: "{{ _local_filestash_admin_plaintext_key }}"
+      when: not lookup('vars', _local_filestash_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[filestash-admin-secrets] Bcrypt the admin password"
+      set_fact:
+        "{{ _local_filestash_admin_hash_key }}": "{{ lookup('vars', _local_filestash_admin_plaintext_key) | password_hash('bcrypt') }}"
+      when: not lookup('vars', _local_filestash_admin_vault_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[filestash-admin-secrets] Prepare admin Vault put data"
+      set_fact:
+        "{{ _local_filestash_admin_put_data_key }}": >-
+          {{ {
+               filestash_admin_password_plaintext_key: lookup('vars', _local_filestash_admin_plaintext_key),
+               filestash_admin_password_secret_key: lookup('vars', _local_filestash_admin_hash_key)
+             } }}
+      when: not lookup('vars', _local_filestash_admin_vault_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[filestash-admin-secrets] Store admin credentials in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "filestash-admin-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_filestash.kv_engine_path }}{{ filestash_secret_app.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_filestash_admin_put_data_key) }}"
+      when: not lookup('vars', _local_filestash_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[filestash-install] Trigger ESO sync (sync auto-generated admin secret)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
       vars:
         dto_label_name: "filestash-install"
