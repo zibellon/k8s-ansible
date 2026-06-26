@@ -1,0 +1,125 @@
+# =============================================================================
+# MON-SYSTEM RESTART
+# Restarts all mon-system components to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-restart.yaml
+#
+# Some components (Vector, Loki) mount their config via ConfigMap subPath and
+# do not reload it automatically. This playbook performs a graceful rolling
+# restart of all workloads in the namespace.
+# =============================================================================
+
+- name: Restart mon-system components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[mon-system-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "mon-system-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify mon-system is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[mon-system-restart] Check if mon-system namespace exists"
+      command: kubectl get namespace {{ mon_system_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[mon-system-restart] Fail if mon-system is not installed"
+      fail:
+        msg: "mon-system namespace '{{ mon_system_namespace }}' not found. Install mon-system first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[mon-system-restart] Show pods in {{ mon_system_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "mon-system-restart"
+        dto_pods_namespace: "{{ mon_system_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART STATEFULSETS
+    # -------------------------------------------------------------------------
+
+    - name: "[mon-system-restart] Restart mon-system StatefulSets"
+      command: kubectl rollout restart statefulset/{{ item }} -n {{ mon_system_namespace }}
+      loop:
+        - alertmanager-alertmanager-instance
+        - mon-system-grafana-postgresql
+        - prometheus-prometheus-instance
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: "[mon-system-restart] Restart mon-system Deployments"
+      command: kubectl rollout restart deployment/{{ item }} -n {{ mon_system_namespace }}
+      loop:
+        - grafana
+        - kube-state-metrics
+        - loki
+        - prometheus-operator
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # RESTART DAEMONSETS
+    # -------------------------------------------------------------------------
+
+    - name: "[mon-system-restart] Restart mon-system DaemonSets"
+      command: kubectl rollout restart daemonset/{{ item }} -n {{ mon_system_namespace }}
+      loop:
+        - node-exporter
+        - vector
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[mon-system-restart] Wait for rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "mon-system-restart"
+        dto_rollout_namespace: "{{ mon_system_namespace }}"
+        dto_rollout_timeout: "{{ mon_system_restart_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - statefulset/alertmanager-alertmanager-instance
+          - statefulset/mon-system-grafana-postgresql
+          - statefulset/prometheus-prometheus-instance
+          - deployment/grafana
+          - deployment/kube-state-metrics
+          - deployment/loki
+          - deployment/prometheus-operator
+          - daemonset/node-exporter
+          - daemonset/vector
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[mon-system-verify] Show pods in {{ mon_system_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "mon-system-verify"
+        dto_pods_namespace: "{{ mon_system_namespace }}"
+
+    - name: "[mon-system-verify] Restart completed"
+      debug:
+        msg:
+          - "=== mon-system Restart Complete ==="
+          - "All components have been restarted and are ready."
+          - "ConfigMap changes are now applied."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
