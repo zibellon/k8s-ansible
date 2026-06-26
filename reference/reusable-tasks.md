@@ -12,7 +12,9 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (35 tasks)
+## 1. `playbook-app/tasks/` (40 tasks)
+
+Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-app/tasks/` (verify: `find playbook-app/tasks -name 'tasks-*.yaml' | wc -l`), not the count of catalogued entries below — not every file has a dedicated entry.
 
 The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, `tasks-vault-get-all.yaml`, `tasks-vault-delete.yaml`, `tasks-vault-distribute-creds.yaml`, `tasks-vault-config-verify.yaml` — live in the `playbook-app/tasks/vault/` subdirectory; include paths to them are `{{ project_root }}/playbook-app/tasks/vault/<name>.yaml`.
 
@@ -393,6 +395,8 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 ---
 
 ## 2. `playbook-system/tasks/` (20 tasks)
+
+Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-system/tasks/` (verify: `find playbook-system/tasks -name 'tasks-*.yaml' | wc -l`), not the count of catalogued entries below — not every file has a dedicated entry.
 
 ### 2.1 Guard / preflight
 
