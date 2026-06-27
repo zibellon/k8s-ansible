@@ -50,7 +50,7 @@
   - eso_vault_integration_argocd_git_ops_secrets_extra
 ##
 - vault_policies + vault_policies_extra
-- vault_roles + vault_roles_extra
+- vault_auth_kubernetes_roles + vault_auth_kubernetes_roles_extra
 
 ## Немного терминов и правил
 1. vault-policy
@@ -90,7 +90,7 @@
 ## Пример_2
 ## Нужно добавит новые k8s.secrets для компонентов в NS = gitlab + их нужно достать из вообще других путей в VAULT
 1. Добавить новые политики в `vault_policies_extra`
-2. Добавить новую роль (например - gitlab.eso-extra) в `vault_roles_extra`
+2. Добавить новую роль (например - gitlab.eso-extra) в `vault_auth_kubernetes_roles_extra`
    1. namespace: gitlab
    2. sa_name: eso-main
    3. policies = вот тут указать новую политику (которая была добавлена выше)
@@ -108,7 +108,7 @@
 2. Првоерка на дубликаты
    1. по полю = name
    2. Если есть дубликаты = ошибка
-3. Соединяет роли (два массива) = vault_roles + vault_roles_extra
+3. Соединяет роли (два массива) = vault_auth_kubernetes_roles + vault_auth_kubernetes_roles_extra
 4. Првоерка на дубликаты
    1. по полю = name
    2. Если есть дубликаты = ошибка
@@ -147,7 +147,7 @@
 6. Сначала, надо подготовить vault
    1. Знаем, какие нужны namespace - их 3 штуки
    2. Добавляем политики в массив = `vault_policies_extra`
-   3. Добавляем роли в массив = `vault_roles_extra`
+   3. Добавляем роли в массив = `vault_auth_kubernetes_roles_extra`
    4. Вызываем синронизацию политик VAULT: `... playbook-app/vault-install.yaml --tags vault-cr`
    5. все, vault готов
 7. Vault + значения секретов

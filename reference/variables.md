@@ -101,7 +101,7 @@ Known `_extra` names:
 
 ```
 vault_policies_extra
-vault_roles_extra
+vault_auth_kubernetes_roles_extra
 eso_vault_integration_<c>_secrets_extra    # for each of the 8 ESO-integrated components
 teleport_configure_<resource>_extra        # roles, users, bots, apps, databases, oidc, saml, access-lists, trusted-clusters, ...
 ```
@@ -261,7 +261,7 @@ Per-file source of truth in parentheses.
 | `vault_creds_host_path` | `/etc/kubernetes/vault-unseal.json` — unseal creds on every manager |
 | `vault_rekey_temp_file_path` | Temp-файл на `master_manager_fact`, куда `vault-rotate.yaml` пишет новые unseal keys + root token между `vault operator rekey` и обновлением K8s Secret. Default `/etc/kubernetes/vault-rekey-in-progress.json`. Формат — как у `vault_creds_host_path`. Удаляется в конце успешного rotate. Наличие при старте playbook'а = recovery-режим. |
 | `vault_policies` / `vault_policies_extra` | Vault ACL policy definitions |
-| `vault_roles` / `vault_roles_extra` | Kubernetes-auth role bindings (SA + ns → policies) |
+| `vault_auth_kubernetes_roles` / `vault_auth_kubernetes_roles_extra` | Kubernetes-auth role bindings (SA + ns → policies) |
 | `eso_vault_integration_<c>` | One object per ESO-integrated component; lives in `hosts-vars/<c>.yaml` (not `vault.yaml`) — see `secrets-and-eso.md` |
 
 ### 2.7 VPN allowlist (`hosts-vars/vpn-rules.yaml`)

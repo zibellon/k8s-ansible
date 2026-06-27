@@ -101,11 +101,11 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 
 ### 1.8a `tasks-vault-config-verify.yaml`
 
-- **Purpose.** Тонкий wrapper над Python-фильтром `vault_config_verify` (`filter_plugins/vault_config_verify.py`) — pre-check для Vault policies + roles. Wrapper: Rule-19 input-assert + `set_fact` `_local_error_item_list` (вызов фильтра с merged policies/roles) + `assert length == 0` (fail с полным отчётом). Фильтр возвращает `list[str]` нарушений, не кидает; raise — в wrapper'е. Каждый caller передаёт только `dto_label_name`; `vault_policies/_extra` и `vault_roles/_extra` мёрджатся в wrapper'е и передаются фильтру.
+- **Purpose.** Тонкий wrapper над Python-фильтром `vault_config_verify` (`filter_plugins/vault_config_verify.py`) — pre-check для Vault policies + roles. Wrapper: Rule-19 input-assert + `set_fact` `_local_error_item_list` (вызов фильтра с merged policies/roles) + `assert length == 0` (fail с полным отчётом). Фильтр возвращает `list[str]` нарушений, не кидает; raise — в wrapper'е. Каждый caller передаёт только `dto_label_name`; `vault_policies/_extra` и `vault_auth_kubernetes_roles/_extra` мёрджатся в wrapper'е и передаются фильтру.
 - **Input.** `dto_label_name` (required string).
 - **Validates.**
   - Unique `name` в merged `vault_policies + (vault_policies_extra | default([]))`.
-  - Unique `name` в merged `vault_roles + (vault_roles_extra | default([]))`.
+  - Unique `name` в merged `vault_auth_kubernetes_roles + (vault_auth_kubernetes_roles_extra | default([]))`.
   - Referential integrity: каждая role в merged_roles → каждая policy в `role.policies` существует в merged_policies (fail с указанием missing policy + role name).
 - **Output.** `_local_error_item_list` (local throwaway fact — `list[str]` нарушений; `[]` = OK).
 - **Callers.** `vault-install.yaml` + 9 ESO-install + 2 ESO-configure playbook'ов + `tests/helm-validate.yaml` (13 callers total) — вызывают **первым**, перед `tasks-eso-verify.yaml`.
@@ -119,7 +119,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
   - `dto_eso_secrets_list` (required sequence — финальный массив base + extra после Ansible Jinja resolution).
   - `dto_eso_integration_object` (required mapping — `eso_vault_integration_<c>` со всеми полями: `sa_name`, `role_name`, `secret_store_name`, `kv_engine_path`).
   - `dto_namespace` (required string — K8s namespace компонента).
-- **Reads (inventory).** `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (merge в wrapper'е, merged списки передаются фильтру).
+- **Reads (inventory).** `vault_policies`, `vault_policies_extra`, `vault_auth_kubernetes_roles`, `vault_auth_kubernetes_roles_extra` (merge в wrapper'е, merged списки передаются фильтру).
 - **Validates (4 groups).** A — в wrapper'е (Rule-19 assert); B/C/D — в Python-фильтре `eso_verify`.
   - **A. Input asserts.**
   - **B. SecretStore→Vault connectivity (scoped к role этого компонента):** role exists, SA binding, namespace binding, policies count > 0, each role.policies exists.

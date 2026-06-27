@@ -64,12 +64,12 @@ vault_policies:
 
 Extension: `vault_policies_extra` (overrides can append policies without forking base).
 
-### 2.2 `vault_roles` (list of dicts)
+### 2.2 `vault_auth_kubernetes_roles` (list of dicts)
 
 Each entry binds a Kubernetes ServiceAccount + namespace to one or more policies via the `kubernetes` auth method:
 
 ```yaml
-vault_roles:
+vault_auth_kubernetes_roles:
   - name: "eso-argocd"
     bound_service_account_names: "argocd-eso-sa"
     bound_service_account_namespaces: "argocd"
@@ -78,7 +78,7 @@ vault_roles:
     ttl: "1h"
 ```
 
-Extension: `vault_roles_extra`.
+Extension: `vault_auth_kubernetes_roles_extra`.
 
 ### 2.3 `eso_vault_integration_<c>` (object, per component)
 
@@ -87,7 +87,7 @@ Lives **exclusively** in `hosts-vars/<c>.yaml` (per-component file). The former 
 ```yaml
 eso_vault_integration_<c>:
   sa_name: "eso-main"                # constant — same SA name in every namespace
-  role_name: "<c>.eso-main"          # `<namespace>.eso-main` — must exist in merged `vault_roles + vault_roles_extra`
+  role_name: "<c>.eso-main"          # `<namespace>.eso-main` — must exist in merged `vault_auth_kubernetes_roles + vault_auth_kubernetes_roles_extra`
   secret_store_name: "eso-main.vault"  # constant — same SecretStore name in every namespace
   kv_engine_path: "eso-secret"       # referenced via Jinja in _secrets entries
 ```
@@ -195,7 +195,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 
 **Input (dto):** `dto_label_name` (log prefix).
 
-**Reads (inventory):** `vault_policies`, `vault_policies_extra`, `vault_roles`, `vault_roles_extra` (merge в wrapper'е, merged списки передаются фильтру).
+**Reads (inventory):** `vault_policies`, `vault_policies_extra`, `vault_auth_kubernetes_roles`, `vault_auth_kubernetes_roles_extra` (merge в wrapper'е, merged списки передаются фильтру).
 
 **Validates:**
 - Unique `name` in merged policies.
@@ -214,7 +214,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - `dto_eso_integration_object` (mapping — `eso_vault_integration_<c>`).
 - `dto_namespace` (K8s namespace компонента).
 
-**Reads (inventory):** `vault_policies/_extra`, `vault_roles/_extra` (merge в wrapper'е, merged списки передаются фильтру).
+**Reads (inventory):** `vault_policies/_extra`, `vault_auth_kubernetes_roles/_extra` (merge в wrapper'е, merged списки передаются фильтру).
 
 **Validates (4 groups):**
 - A. Input asserts.
@@ -390,7 +390,7 @@ Checklist — keep strictly in order.
        path "eso-secret/metadata/<c>/*" { capabilities = ["read"] }
    ```
 
-6. **Add the Vault role** in `hosts-vars/vault.yaml` → `vault_roles`:
+6. **Add the Vault role** in `hosts-vars/vault.yaml` → `vault_auth_kubernetes_roles`:
    ```yaml
    - name: "eso-<c>"
      bound_service_account_names: "<c>-eso-sa"
@@ -474,7 +474,7 @@ All under `eso-secret/` KV engine.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `ExternalSecret` stuck in `SecretSyncedError` | Vault policy missing `read` on the path, or role doesn't bind the SA | Run `vault-install.yaml --tags install` after updating policies; inspect `ExternalSecret` status for error detail |
-| `SecretStore` shows `ValidationFailed` | `role_name` missing in Vault or `kubernetes` auth mount path wrong | Confirm merged `vault_roles + vault_roles_extra` has the role (run `tasks-vault-config-verify.yaml`); check bank-vaults logs |
+| `SecretStore` shows `ValidationFailed` | `role_name` missing in Vault or `kubernetes` auth mount path wrong | Confirm merged `vault_auth_kubernetes_roles + vault_auth_kubernetes_roles_extra` has the role (run `tasks-vault-config-verify.yaml`); check bank-vaults logs |
 | K8s Secret exists but pod doesn't see new value | Pod was not restarted after Secret change | `<c>-restart.yaml` (Reloader will automate this in future) |
 | Vault sealed after reboot | Auto-unseal CronJob didn't run | Run manually on a manager: `kubectl -n vault exec vault-0 -- vault operator unseal <key>` × threshold |
 | New manager can't unseal | `/etc/kubernetes/vault-unseal.json` missing | Re-run `tasks-vault-distribute-creds.yaml` (part of `manager-join.yaml`) |
