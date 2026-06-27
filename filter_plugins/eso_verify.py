@@ -112,7 +112,7 @@ def eso_verify(eso_secrets_list, integration_object, namespace, policies, roles)
         integration_object: eso_vault_integration_<c> mapping (role_name, sa_name, ...).
         namespace: K8s namespace компонента (string).
         policies: list of policy dicts (merged vault_policies + vault_policies_extra).
-        roles: list of role dicts (merged vault_roles + vault_roles_extra).
+        roles: list of role dicts (merged vault_auth_kubernetes_roles + vault_auth_kubernetes_roles_extra).
     Returns:
         list[str]: violation messages. Empty list means no violations.
     """
@@ -126,8 +126,8 @@ def eso_verify(eso_secrets_list, integration_object, namespace, policies, roles)
     if role is None:
         all_role_names = [r.get('name') for r in roles]
         violations.append(
-            "role '{}' NOT found in merged vault_roles. Available roles: {}. "
-            "Define this role in vault_roles or vault_roles_extra.".format(role_name, all_role_names))
+            "role '{}' NOT found in merged vault_auth_kubernetes_roles. Available roles: {}. "
+            "Define this role in vault_auth_kubernetes_roles or vault_auth_kubernetes_roles_extra.".format(role_name, all_role_names))
     else:
         # B2: SA binding + ns binding + >=1 policy (одна violation если что-то из трёх не так)
         sa_field = _as_list(role.get('bound_service_account_names'))

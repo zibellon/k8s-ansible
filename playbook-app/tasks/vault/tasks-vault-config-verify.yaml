@@ -4,7 +4,7 @@
 # Pure validation pre-check для Vault policies + roles. Тонкий wrapper: делегирует
 # валидацию в Python-фильтр vault_config_verify (filter_plugins/vault_config_verify.py).
 # Каждый caller передаёт только dto_label_name; vault_policies/_extra и
-# vault_roles/_extra читаются inline из inventory, merge base + (extra | default([]))
+# vault_auth_kubernetes_roles/_extra читаются inline из inventory, merge base + (extra | default([]))
 # делается в set_fact и передаётся фильтру. Фильтр возвращает list нарушений;
 # wrapper делает assert length == 0 (fail с полным отчётом при непустом списке).
 #
@@ -14,12 +14,12 @@
 # Reads (from inventory):
 #   - vault_policies        (list of dicts with 'name' field)
 #   - vault_policies_extra  (list, default: [])
-#   - vault_roles           (list of dicts with 'name', 'policies' fields)
-#   - vault_roles_extra     (list, default: [])
+#   - vault_auth_kubernetes_roles           (list of dicts with 'name', 'policies' fields)
+#   - vault_auth_kubernetes_roles_extra     (list, default: [])
 #
 # Validates (3 groups):
 #   1. Unique `name` in merged vault_policies.
-#   2. Unique `name` in merged vault_roles.
+#   2. Unique `name` in merged vault_auth_kubernetes_roles.
 #   3. Referential integrity: each role.policies references existing policy.
 #
 # Output: _local_error_item_list (local fact — list[str] нарушений; [] = OK).
@@ -33,9 +33,9 @@
       - dto_label_name | length > 0
       - vault_policies is defined
       - vault_policies is sequence
-      - vault_roles is defined
-      - vault_roles is sequence
-    fail_msg: "tasks-vault-config-verify: dto_label_name required + vault_policies/vault_roles must be sequences in inventory"
+      - vault_auth_kubernetes_roles is defined
+      - vault_auth_kubernetes_roles is sequence
+    fail_msg: "tasks-vault-config-verify: dto_label_name required + vault_policies/vault_auth_kubernetes_roles must be sequences in inventory"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]
@@ -44,7 +44,7 @@
   set_fact:
     _local_error_item_list: >-
       {{ (vault_policies + (vault_policies_extra | default([])))
-         | vault_config_verify(vault_roles + (vault_roles_extra | default([]))) }}
+         | vault_config_verify(vault_auth_kubernetes_roles + (vault_auth_kubernetes_roles_extra | default([]))) }}
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   tags: [always]

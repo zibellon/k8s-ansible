@@ -153,7 +153,7 @@ all:
     vault_unsealer_secret_name: "vault-unseal-keys"
     # Vault Kubernetes Auth
     vault_kubernetes_host: "https://kubernetes.default.svc:443"
-    vault_roles_default_ttl: "1h"
+    vault_auth_kubernetes_roles_default_ttl: "1h"
 
     # ---------
     # VAULT POLICIES
@@ -371,7 +371,7 @@ all:
     # VAULT ROLES
     # bank-vaults externalConfig format: bound_service_account_names/namespaces + policies + ttl
     # ---------
-    vault_roles:
+    vault_auth_kubernetes_roles:
       # ---------
       # ESO: Traefik
       # ---------
@@ -380,7 +380,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - traefik.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: HAProxy
       # ---------
@@ -389,7 +389,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - haproxy.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: Longhorn
       # ---------
@@ -398,7 +398,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - longhorn.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: SeaweedFS
       # ---------
@@ -407,7 +407,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - seaweedfs.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: Filestash
       # ---------
@@ -416,7 +416,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - filestash.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: GitLab
       # ---------
@@ -425,7 +425,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - gitlab.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: GitLab Runner
       # ---------
@@ -434,7 +434,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - gitlab-runner.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: ZITADEL
       # ---------
@@ -443,7 +443,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - zitadel.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: ArgoCD
       # ---------
@@ -452,7 +452,7 @@ all:
         bound_service_account_names: eso-main
         policies:
           - argocd.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: mon-system
       # ---------
@@ -461,9 +461,9 @@ all:
         bound_service_account_names: eso-main
         policies:
           - mon-system.eso-main
-        ttl: "{{ vault_roles_default_ttl }}"
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
 
-    vault_roles_extra: []
+    vault_auth_kubernetes_roles_extra: []
 
     # ---------
     # VAULT SPEC
@@ -474,7 +474,7 @@ all:
       - type: kubernetes
         config:
           kubernetes_host: "{{ vault_kubernetes_host }}"
-        roles: "{{ vault_roles + (vault_roles_extra | default([])) }}"
+        roles: "{{ vault_auth_kubernetes_roles + (vault_auth_kubernetes_roles_extra | default([])) }}"
       # userpass — человеческий логин в vault-ui (метод «Username & Password»).
       # Включаем ТОЛЬКО метод; пользователей заводим вручную через UI/CLI и НЕ держим в конфиге
       # (пароли не в git; auth исключён из purgeUnmanagedConfig → ручные юзеры/пароли не затираются).
@@ -564,7 +564,7 @@ all:
     # CR-phase kustomize patches (operator-side customization, default empty)
     vault_cr_kustomize_patches: []
     # CR-phase values (Vault Custom Resource chart)
-    # vault_spec использует inline merge vault_policies/vault_roles + extras;
+    # vault_spec использует inline merge vault_policies/vault_auth_kubernetes_roles + extras;
     # validation выполняется через tasks-vault-config-verify.yaml.
     vault_cr_helm_values:
       namespace: "{{ vault_namespace }}"

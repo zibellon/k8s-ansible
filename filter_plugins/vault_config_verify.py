@@ -40,7 +40,7 @@ def vault_config_verify(policies, roles):
     Args:
         policies: list of policy dicts (merged vault_policies + vault_policies_extra).
                   Each dict expected to have a 'name' key.
-        roles: list of role dicts (merged vault_roles + vault_roles_extra).
+        roles: list of role dicts (merged vault_auth_kubernetes_roles + vault_auth_kubernetes_roles_extra).
                Each dict expected to have 'name' and 'policies' keys.
     Returns:
         list[str]: violation messages. Empty list means no violations.
@@ -62,7 +62,7 @@ def vault_config_verify(policies, roles):
     dup_roles = _find_duplicates(role_names)
     if dup_roles:
         violations.append(
-            "duplicate role names in merged vault_roles (base + extra)."
+            "duplicate role names in merged vault_auth_kubernetes_roles (base + extra)."
             " Duplicates: {}".format(dup_roles)
         )
 
