@@ -350,6 +350,46 @@ all:
     seaweedfs_helm_values_master_data_storage_class: "lnstr-major-local"
     seaweedfs_helm_values_admin_data_storage_size: "2Gi"
     seaweedfs_helm_values_admin_data_storage_class: "lnstr-major-multi-sync"
+    # Component resources (requests+limits) — blast-radius cap после инцидента
+    # 1520-tech-prod-1 (filer/master spin при resources:{} душил ноду, в т.ч. CoreDNS).
+    # cpu-limit кэпит runaway, mem-limit = OOMKill-защита, requests = scheduling/QoS
+    # (Burstable). Активный default (не {}) — применяется на всех кластерах.
+    # Override заменяет значение ЦЕЛИКОМ (НЕ _extra, не concat — см. variables.md §1.5).
+    seaweedfs_helm_values_master_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    seaweedfs_helm_values_filer_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    seaweedfs_helm_values_s3_resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    seaweedfs_helm_values_admin_resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    seaweedfs_helm_values_worker_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "2Gi"
     # --- Operator-overridable blocks (extracted from seaweedfs_helm_values) ---
     seaweedfs_helm_values_volumes:
       # 3 control-plane (диск 100GB, делят с OS/etcd/containerd/LINSTOR/Vault).
@@ -398,6 +438,7 @@ all:
       replicas: "{{ seaweedfs_helm_values_filer_replica_count }}"
       # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
       logs: {}
+      resources: "{{ seaweedfs_helm_values_filer_resources }}"
       # PostgreSQL backend (postgres2, table-per-bucket) через env vars — отключаем leveldb,
       # включаем postgres2. WEED_POSTGRES2_CREATETABLE → filer создаёт filemeta + per-bucket
       # таблицы сам. WEED_LEVELDB2_ENABLED:"false" обязателен (иначе два enabled-стора →
@@ -434,6 +475,7 @@ all:
       # live-reload подхватывает без рестарта.
       enableAuth: true
       existingConfigSecret: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
+      resources: "{{ seaweedfs_helm_values_s3_resources }}"
     seaweedfs_helm_values_admin:
       enabled: true
       replicas: "{{ seaweedfs_helm_values_admin_replica_count }}"
@@ -450,6 +492,7 @@ all:
       # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
       logs:
         type: ""
+      resources: "{{ seaweedfs_helm_values_admin_resources }}"
     seaweedfs_helm_values_worker:
       enabled: true
       replicas: "{{ seaweedfs_helm_values_worker_replica_count }}"
@@ -459,6 +502,7 @@ all:
       # Логи в stdout (logs.type="" → -logtostderr=true): kubectl logs + Vector→Loki.
       logs:
         type: ""
+      resources: "{{ seaweedfs_helm_values_worker_resources }}"
     # ---------
     # Helm chart values — структура соответствует upstream chart 4.35.0
     seaweedfs_helm_values:
@@ -478,6 +522,7 @@ all:
           storageClass: "{{ seaweedfs_helm_values_master_data_storage_class }}"
         # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
         logs: {}
+        resources: "{{ seaweedfs_helm_values_master_resources }}"
         # Размер одного volume file в MB. По достижению — volume автоматически
         # seal'ится в read-only, дальнейшие writes идут в новый volume.
         # Cealed volumes становятся eligible для EC encoding через weed shell.
