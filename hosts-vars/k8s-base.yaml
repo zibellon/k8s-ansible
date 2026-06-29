@@ -288,8 +288,9 @@ all:
     #   * replicas: 3
     #   * ЖЁСТКУЮ podAntiAffinity (requiredDuringSchedulingIgnoredDuringExecution)
     #     по k8s-app=kube-dns / hostname → два пода CoreDNS не встанут на одну ноду.
-    # Рассчитан на кластер из >= 3 нод. Strategic merge сохраняет мягкое правило
-    # kubeadm и ДОБАВЛЯЕТ жёсткое (жёсткое гарантирует разнос; мягкое — избыточно).
+    # Рассчитан на кластер из >= 3 нод. Через strategic-merge директиву
+    # `$patch: replace` ключ podAntiAffinity заменяется ЦЕЛИКОМ: мягкое
+    # (preferred) правило kubeadm удаляется, остаётся только наше жёсткое.
     #
     # Чтобы вернуть kubeadm-дефолт на конкретном кластере — override на `{}`:
     #   coredns_deployment_patch: {}
@@ -300,6 +301,10 @@ all:
           spec:
             affinity:
               podAntiAffinity:
+                # $patch: replace — strategic-merge директива: ПОЛНАЯ замена
+                # ключа podAntiAffinity (не merge). Иначе мягкое (preferred)
+                # правило kubeadm осталось бы рядом с нашим жёстким.
+                $patch: replace
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
                       matchLabels:
