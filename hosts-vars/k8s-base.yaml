@@ -272,6 +272,40 @@ all:
     node_port_start: 1
     node_port_end: 50000
 
+    # ------
+    # CoreDNS Deployment patch (kube-system) — hardening control-plane DNS
+    # ------
+    # Применяется на post-init этапе cluster-init.yaml (tasks-coredns-patch.yaml)
+    # через `kubectl patch deployment coredns -n kube-system --patch-file`
+    # (strategic merge). Re-runnable. Override в
+    # hosts-vars-override/<cluster>/k8s-base.yaml заменяет это значение ЦЕЛИКОМ
+    # (НЕ _extra, не concat — см. variables.md §1.5).
+    #
+    # Default здесь АКТИВНЫЙ (не {}): kubeadm ставит replicas=2 + только МЯГКУЮ
+    # (preferred) podAntiAffinity, поэтому оба пода CoreDNS могут оказаться на
+    # одной ноде — если нода падает, DNS ложится на весь кластер (prod-инцидент).
+    # Этот default фиксирует:
+    #   * replicas: 3
+    #   * ЖЁСТКУЮ podAntiAffinity (requiredDuringSchedulingIgnoredDuringExecution)
+    #     по k8s-app=kube-dns / hostname → два пода CoreDNS не встанут на одну ноду.
+    # Рассчитан на кластер из >= 3 нод. Strategic merge сохраняет мягкое правило
+    # kubeadm и ДОБАВЛЯЕТ жёсткое (жёсткое гарантирует разнос; мягкое — избыточно).
+    #
+    # Чтобы вернуть kubeadm-дефолт на конкретном кластере — override на `{}`:
+    #   coredns_deployment_patch: {}
+    coredns_deployment_patch:
+      spec:
+        replicas: 3
+        template:
+          spec:
+            affinity:
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchLabels:
+                        k8s-app: kube-dns
+                    topologyKey: kubernetes.io/hostname
+
     # kube-controller-manager settings
     node_monitor_grace_period: "30s" # default: 40s (for faster node failure detection)
 
