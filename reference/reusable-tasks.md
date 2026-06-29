@@ -394,7 +394,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 
 ---
 
-## 2. `playbook-system/tasks/` (20 tasks)
+## 2. `playbook-system/tasks/` (21 tasks)
 
 Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-system/tasks/` (verify: `find playbook-system/tasks -name 'tasks-*.yaml' | wc -l`), not the count of catalogued entries below — not every file has a dedicated entry.
 
@@ -463,6 +463,15 @@ Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-system/task
 - **Purpose.** `kubectl label node <host> <label>=<value>` for each entry in the host's `node_labels` list.
 - **Callers.** `cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`.
 - **Idempotent.** `--overwrite` used.
+
+#### `tasks-coredns-patch.yaml`
+
+- **Purpose.** Apply `coredns_deployment_patch` (whole strategic-merge patch) to Deployment `coredns` in `kube-system` via `kubectl patch --patch-file`. Active default hardens CoreDNS (`replicas: 3` + hard podAntiAffinity); empty/`{}`/null variable → no-op (kubeadm default kept).
+- **Input.** `coredns_deployment_patch` (dict, from `hosts-vars/k8s-base.yaml`).
+- **Validates (assert).** `coredns_deployment_patch is mapping` (passes when empty). Tag `[always]`.
+- **Output.** Patched `coredns` Deployment.
+- **Callers.** `cluster-init.yaml` (post-init block).
+- **Idempotent.** Yes — `changed_when` on `(no change)`; re-runnable (e.g. after `kubeadm upgrade` re-applies the addon).
 
 #### `tasks-untaint-control-plane.yaml`
 

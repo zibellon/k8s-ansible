@@ -200,6 +200,7 @@ Per-file source of truth in parentheses.
 | `pod_subnet` | `"10.64.0.0/10"` | Pod CIDR (Cilium IPAM) |
 | `cluster_dns_domain` | `"cluster.local"` | Cluster DNS suffix |
 | `node_port_start`, `node_port_end` | `1`, `50000` | NodePort range (apiserver `service-node-port-range`) |
+| `coredns_deployment_patch` | replicas=3 + hard podAntiAffinity (`$patch: replace`) | Whole-object strategic-merge patch applied to Deployment `coredns` (`kube-system`) post-init by `cluster-init.yaml` (`tasks-coredns-patch.yaml`). Active default pins CoreDNS to 3 replicas + a hard `requiredDuringScheduling` podAntiAffinity (`k8s-app=kube-dns` / hostname) so both pods can't collapse onto one node; `$patch: replace` drops kubeadm's default soft rule. Empty (`{}`/null) → no-op. Override replaces wholesale (NOT `_extra`). Full doc + example in `hosts-vars/k8s-base.yaml`. |
 | `node_monitor_grace_period` | `"30s"` | kube-controller-manager flag |
 | `node_drain_timeout` | `"10m"` | Default `kubectl drain --timeout` |
 | `softdog_timeout` | `30` | Watchdog (softdog) reboot timeout in seconds |
