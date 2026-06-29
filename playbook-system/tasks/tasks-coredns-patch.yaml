@@ -1,0 +1,45 @@
+# =============================================================================
+# Patch CoreDNS Deployment (kube-system) — opt-in hardening
+# =============================================================================
+# Requires:
+#   - coredns_deployment_patch (dict) — full body of a `kubectl patch` for
+#     Deployment/coredns in kube-system. Empty ({} / null / undefined) → no-op
+#     (kubeadm default kept). Override replaces base wholesale (NOT _extra).
+# =============================================================================
+
+- name: Assert coredns_deployment_patch is a mapping
+  assert:
+    that:
+      - (coredns_deployment_patch | default({}, true)) is mapping
+    fail_msg: >-
+      coredns_deployment_patch must be a mapping (dict) — the body of a
+      `kubectl patch` for Deployment/coredns. Got type:
+      {{ (coredns_deployment_patch | default({}, true)) | type_debug }}.
+  tags: [always]
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+
+- name: Apply CoreDNS deployment patch
+  when: (coredns_deployment_patch | default({}, true)) | length > 0
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  block:
+    - name: Write CoreDNS patch file to /tmp
+      copy:
+        dest: /tmp/coredns-deployment-patch.yaml
+        content: "{{ coredns_deployment_patch | to_nice_yaml }}"
+        mode: '0600'
+
+    - name: Patch CoreDNS deployment via kubectl (strategic merge)
+      command:
+        argv:
+          - kubectl
+          - patch
+          - deployment
+          - coredns
+          - -n
+          - kube-system
+          - --patch-file
+          - /tmp/coredns-deployment-patch.yaml
+      register: coredns_patch_result
+      changed_when: "'(no change)' not in coredns_patch_result.stdout"
