@@ -393,6 +393,27 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-restart.yaml`
 
 ## ---
+## FileStash (S3). Официальный helm-chart
+## ---
+## Есть web-ui (/admin) + web-ui (клиентский, на корне). Доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть volume -> требуется работа с СХД
+## Ожидание готовности `StatefulSet`
+## ---
+## Важно_1. Установка - НЕ ДЕКЛАРАТИВНАЯ. Декларативно задается (через ENV) только: пароль админа и external-url для доступа
+## - ADMIN_PASSWORD = из ESO-секрета (bcrypt-хэш)
+## - APPLICATION_URL = значение из hosts-vars
+## Эти env Filestash сам на старте пишет в config.json (auth.admin и general.host). НА КАЖДОМ СТАРТЕ
+## То есть: поменяли пароль админа в VAULT, сработал ESO, перезапустили контейнер = новый пароль
+## Все остальные настройки: подключения, плагины и так далее - нужно делать в UI
+## Config (config.json) где хранятся все настройки - лежит в PVC, и мутируется приложением (при старте и при любых изменениях в admin-ui)
+## ---
+## `--tags pre, install, post`
+## ---
+##
+- установка + обновление (версия + конфиг)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/filestash-install.yaml`
+
+## ---
 ## Teleport. Официальный helm-chart
 ## ---
 ## что устанавливается: (proxy + auth + operator)
