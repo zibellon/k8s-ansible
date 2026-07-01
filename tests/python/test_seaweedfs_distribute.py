@@ -77,6 +77,58 @@ def test_distribute_paths_to_add_raises_on_duplicate_paths(sample_s3configure_ra
     with pytest.raises(AnsibleFilterError, match='Duplicate'):
         sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, '')
 
+
+def test_distribute_paths_to_add_noop_state(sample_s3configure_raw, sample_configmap_state_distribute):
+    """No-op: target identical to prior state (alice ALICE_AK -> .../old) -> empty delta
+    (unchanged distributions skipped; no Vault version churn)."""
+    target = [{'name': 'alice',
+               'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['eso-secret/team/alice/old']}]}]
+    result = sw.seaweedfs_distribute_paths_to_add(
+        sample_s3configure_raw, target, sample_configmap_state_distribute)
+    assert result == []
+
+
+def test_distribute_paths_to_add_new_path_only(sample_s3configure_raw, sample_configmap_state_distribute):
+    """Added path on an existing key -> only the new path emitted; the recorded one skipped."""
+    target = [{'name': 'alice', 'keys': [{'access_key': 'ALICE_AK', 'vault_paths': [
+        'eso-secret/team/alice/old', 'eso-secret/team/alice/new']}]}]
+    result = sw.seaweedfs_distribute_paths_to_add(
+        sample_s3configure_raw, target, sample_configmap_state_distribute)
+    assert result == [{'path': 'eso-secret/team/alice/new', 'name': 'alice',
+                       'accessKey': 'ALICE_AK', 'secretKey': 'ALICE_SK'}]
+
+
+def test_distribute_paths_to_add_rotated_access_key(sample_s3configure_raw, sample_configmap_state_distribute):
+    """Same path, different access_key (rotation) -> re-emitted with the new key's creds."""
+    target = [{'name': 'alice',
+               'keys': [{'access_key': 'ALICE_AK2', 'vault_paths': ['eso-secret/team/alice/old']}]}]
+    result = sw.seaweedfs_distribute_paths_to_add(
+        sample_s3configure_raw, target, sample_configmap_state_distribute)
+    assert result == [{'path': 'eso-secret/team/alice/old', 'name': 'alice',
+                       'accessKey': 'ALICE_AK2', 'secretKey': 'ALICE_SK2'}]
+
+
+def test_distribute_paths_to_add_new_identity_only(sample_s3configure_raw, sample_configmap_state_distribute):
+    """Existing identity (alice/old) unchanged -> skipped; a brand-new identity's path emitted."""
+    target = [
+        {'name': 'alice', 'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['eso-secret/team/alice/old']}]},
+        {'name': 'admin', 'keys': [{'access_key': 'ADMIN_AK', 'vault_paths': ['eso-secret/admin/s3']}]},
+    ]
+    result = sw.seaweedfs_distribute_paths_to_add(
+        sample_s3configure_raw, target, sample_configmap_state_distribute)
+    assert result == [{'path': 'eso-secret/admin/s3', 'name': 'admin',
+                       'accessKey': 'ADMIN_AK', 'secretKey': 'ADMIN_SK'}]
+
+
+def test_distribute_paths_to_add_malformed_state_emits_all(sample_s3configure_raw):
+    """Fail-safe: malformed state -> treated as empty -> every pair emitted (never silent
+    skip; also the greenfield first-run path)."""
+    target = [{'name': 'alice',
+               'keys': [{'access_key': 'ALICE_AK', 'vault_paths': ['eso-secret/team/alice/old']}]}]
+    result = sw.seaweedfs_distribute_paths_to_add(sample_s3configure_raw, target, 'garbage {')
+    assert result == [{'path': 'eso-secret/team/alice/old', 'name': 'alice',
+                       'accessKey': 'ALICE_AK', 'secretKey': 'ALICE_SK'}]
+
 # =============================================================================
 # per-item ConfigMap state split — helpers
 # =============================================================================

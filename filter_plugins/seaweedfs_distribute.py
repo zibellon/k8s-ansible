@@ -151,6 +151,33 @@ def _compute_distribution_pairs(target_identities, creds_by_name):
                 })
     return pairs
 
+
+def _distribution_state_path_map(state):
+    """{path: (identity_name, access_key)} from the reconstructed per-identity
+    distribution state ([{identity_name, keys: [{access_key, vault_paths}]}]). Drives
+    paths_to_add change-detection. _validate_paths_unique guarantees each path maps to
+    exactly one (identity, access_key), so the map is unambiguous."""
+    path_map = {}
+    for entry in state:
+        identity_name = entry.get('identity_name')
+        for k in entry.get('keys', []):
+            access_key = k.get('access_key')
+            for path in k.get('vault_paths', []):
+                path_map[path] = (identity_name, access_key)
+    return path_map
+
+
+def _distribution_pair_needs_write(pair, state_map):
+    """True when a distribution pair must be vault-put: its path is absent from the prior
+    state, or the recorded (identity_name, access_key) differs from the target pair
+    (new key/identity, added path, rotated access_key, renamed identity). A matching pair
+    is skipped so unchanged distributions incur no Vault KV-v2 version churn. secret_key
+    drift under an unchanged access_key is intentionally NOT detected (filer creds stable
+    per access_key)."""
+    prev = state_map.get(pair['path'])
+    return prev is None or prev != (pair['name'], pair['accessKey'])
+
+
 def _compute_state_paths_to_delete(state, target_paths):
     """Build list of state paths to vault-delete (not in target paths set). State is the
     per-identity distribution state: [{identity_name, keys: [{access_key, vault_paths}]}]."""
@@ -195,20 +222,30 @@ def seaweedfs_distribute_paths_to_delete(s3configure_raw, target_identities, con
 
 
 def seaweedfs_distribute_paths_to_add(s3configure_raw, target_identities, configmap_raw_json):
-    """List of {path, name, accessKey, secretKey} pairs for the Phase A vault-put loop —
-    one per (identity, key-with-vault_paths, path).
+    """Change-detection list of {path, name, accessKey, secretKey} pairs for the Phase A
+    vault-put loop — one per (identity, key-with-vault_paths, path) that NEEDS a write.
 
-    Stateless filter: validation + creds extraction + pairs computation inside.
-    (v20: per-key — each key carries its own access_key + vault_paths; the secret comes
-    from the filer s3.configure dump, not the Vault combined JSON.)
+    A pair is emitted only when the path is absent from the prior-run state OR its recorded
+    (identity_name, access_key) differs from the target — i.e. new key/identity, an added
+    path, a rotated access_key, or a renamed identity. Unchanged pairs are skipped so a
+    no-op run performs zero vault-puts (avoids Vault KV-v2 version churn). secret_key drift
+    under an unchanged access_key is intentionally NOT detected (filer creds are stable per
+    access_key — no-rotation; see hosts-vars/seaweedfs-sync.yaml SECTION 2). Empty/malformed
+    state → every target pair is emitted (fail-safe toward re-delivery, never a silent skip;
+    also the greenfield first-run path).
+
+    Stateless filter: validation + creds extraction + pairs computation + state diff inside.
+    (v20: per-key — each key carries its own access_key + vault_paths; the secret comes from
+    the filer s3.configure dump, not the Vault combined JSON.)
 
     Args:
         s3configure_raw: str — `s3.configure` dump (source of identity credentials).
         target_identities: list — full target from inventory (base + extra).
-        configmap_raw_json: ignored — kept for shape consistency.
+        configmap_raw_json: str — reconstructed per-item ConfigMap state (prior-run
+            distributions); '' / None / malformed → treated as empty (all pairs emitted).
 
     Returns:
-        list of {path, name, accessKey, secretKey} dicts.
+        list of {path, name, accessKey, secretKey} dicts — only pairs needing a write.
 
     Raises:
         AnsibleFilterError if anonymous has a key with vault_paths OR paths not unique OR any
@@ -219,7 +256,9 @@ def seaweedfs_distribute_paths_to_add(s3configure_raw, target_identities, config
     parsed = _parse_s3_configure_identities(s3configure_raw)
     creds_by_name = _creds_by_name_from_identities(parsed)
     _validate_creds_exist(target_identities, creds_by_name)
-    return _compute_distribution_pairs(target_identities, creds_by_name)
+    all_pairs = _compute_distribution_pairs(target_identities, creds_by_name)
+    state_map = _distribution_state_path_map(_parse_configmap_state(configmap_raw_json))
+    return [p for p in all_pairs if _distribution_pair_needs_write(p, state_map)]
 
 # =============================================================================
 # Private helpers (per-item ConfigMap state split)
