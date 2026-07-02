@@ -280,6 +280,22 @@ ansible-playbook ... playbook-app/seaweedfs-install.yaml --tags policy-sync,user
 
 **Quota enforcement** — нативный в SeaweedFS 4.31+: s3-gateway сам переключает bucket read-only в обе стороны (~раз в минуту, leader-locked на одной из реплик). Отдельного крона / ручного `s3.bucket.quota.enforce` не требуется — квоты задаёт `bucket-sync` (Phase D `s3.bucket.quota -op=set`), энфорсит gateway.
 
+### 4.10 Bastion-proxy (external HAProxy edge) provisioning
+
+`playbook-system/bastion-proxy-install.yaml` provisions the external bastion-proxy servers (group `bastion_proxy`). NO `--limit` (targets all edge servers, not node-scoped). Tags run **linearly** — `node-install` → `haproxy-install` → `haproxy-config` → `verify` — NOT the pre/install/post phase model. Requires `bastion_proxy_haproxy_l7_target_ip` / `_l4_target_ip` set in `hosts-vars-override/<cluster>/` (empty default → `haproxy -c` fails). See [`bastion-proxy.md`](bastion-proxy.md).
+
+```bash
+# Full run (node-install → haproxy-install → haproxy-config → verify):
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
+  playbook-system/bastion-proxy-install.yaml
+
+# Single-tag re-run:
+ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags node-install
+ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags haproxy-install
+ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags haproxy-config
+ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags verify
+```
+
 ---
 
 ## 5. Debugging one-liners

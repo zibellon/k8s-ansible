@@ -20,6 +20,7 @@ Violating any of these will break the cluster or leak secrets.
 - **Single-node system playbooks require `--limit`**. Forgetting `--limit` on `cluster-init.yaml` / `manager-join.yaml` / `worker-join.yaml` / `node-drain-on.yaml` / `node-drain-off.yaml` / `node-remove.yaml` / `node-clean.yaml` will fail a `tasks-require-limit.yaml` gate (by design). `full-node-install.yaml` is **bulk-friendly** by design: `--limit` is optional — use without `--limit` for bulk preparation of multiple nodes (sub-plays are idempotent: `apt`, kernel modules, sysctls, HAProxy on `127.0.0.1`); use with `--limit <host>` to prepare a single node added to an already-running cluster. Cluster-wide rolling-update plays (`apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`) intentionally have **no** `--limit` requirement — they iterate over all nodes via `serial: 1`.
 - Exactly **one** manager in inventory must have `is_master: true`. That host becomes `master_manager_fact` — the single delegation target for every cluster-scope operation.
 - **Optional:** if bastion-схема используется и bastion — один из узлов кластера (manager или worker), на нём ставится `is_bastion: true`. Этот хост становится `bastion_host_fact` и ребутится последним в `tasks-reboot-cluster.yaml` (избегаем self-kill ProxyJump tunnel'а). Подробности — [`variables.md`](reference/variables.md) §2.14.
+- **Терминология bastion (не путать):** `is_bastion` (выше) — SSH-ProxyJump jump-host. Inventory-группа `bastion_proxy` — внешний HAProxy edge-прокси, ДРУГОЕ. Хост `bastion_proxy` **никогда** не ставит `is_bastion` (коллизия с `Find bastion host` в `tasks-set-master-manager.yaml`); cluster-wide плейбуки сужены до `managers:workers`, чтобы его исключить. См. [`bastion-proxy.md`](reference/bastion-proxy.md).
 - Before adding a new node to the cluster, run `playbook-app/cilium-install.yaml --tags post` first — it refreshes the Cilium host firewall with the new node's IPs, otherwise the join handshake is blocked.
 - ArgoCD's **`argocd-secret` must stay empty** (no `data:`) in every helm render. Local-account passwords (`accounts.<name>.password`/`.passwordMtime`) and `server.secretkey` are written out-of-band — by the accounts-sync reconcile (`kubectl patch`) and by argocd-server — and the upstream `install.yaml` ships `argocd-secret` with no `data:` so helm's 3-way merge never prunes those keys. Templating ANY `data:` key into `argocd-secret` makes helm own the data map and delete the out-of-band keys (helm#12886) → lost passwords + broken auth. See [`components.md`](reference/components.md) §9.
 
@@ -97,6 +98,7 @@ k8s-ansible/
 |---|---|
 | [`bootstrap-and-ha.md`](reference/bootstrap-and-ha.md) | Cluster lifecycle: 4-step bootstrap, ETCD key rotation (state-file resume), apiserver SANs update, HAProxy LB update, node drain/remove/clean, `serial: 1` pattern, recovery matrix |
 | [`networking.md`](reference/networking.md) | Cilium CNI + kube-proxy replacement, `CiliumClusterwideNetworkPolicy` host firewall, VPN allowlist middleware, per-component cert-manager `Issuer` + ACME HTTP-01 solver NetworkPolicies, cross-namespace consumer-owned NP pattern |
+| [`bastion-proxy.md`](reference/bastion-proxy.md) | External HAProxy edge-proxy (L7 + L4, PROXY v2): `bastion_proxy` inventory group, single all-inline playbook, vars model, traffic flow, why NO Cilium CCNP change is needed, git-ops scope boundary. NOT the SSH-ProxyJump `is_bastion`. |
 | [`observability.md`](reference/observability.md) | mon-system consolidated stack: install phases, centralized ServiceMonitors in `post/`, Grafana ESO + Postgres, Loki S3, Alertmanager routing |
 | [`components.md`](reference/components.md) | Per-component reference — chart path, namespace, releases, required vars, ESO, dependencies, ServiceMonitor. One section per component. Namespaces matrix + dependency tiers |
 | [`playbook-conventions.md`](reference/playbook-conventions.md) | Authoring rules (numbered): file location/naming, play header, guards, delegation, 3-phase structure, include strategy, values-override, chart copy, ESO, ACME, rollout verify, anti-patterns, commit checklist, param-validation asserts, helm-template+kustomize pattern (§21), extraObjects (§22) |
@@ -121,6 +123,7 @@ One long-lived Opus chat (TeamLead) + a fresh Sonnet chat per SUB-task (DevOps =
 | Add a Vault-backed secret | [`secrets-and-eso.md`](reference/secrets-and-eso.md) §7 |
 | Bootstrap a fresh cluster | [`commands-reference.md`](reference/commands-reference.md) §2 + [`bootstrap-and-ha.md`](reference/bootstrap-and-ha.md) §1 |
 | Add a node to existing cluster | [`bootstrap-and-ha.md`](reference/bootstrap-and-ha.md) §1.5 + [`networking.md`](reference/networking.md) §2 |
+| Setup / understand bastion-proxy | [`bastion-proxy.md`](reference/bastion-proxy.md) |
 | Rotate a credential / ETCD key | [`bootstrap-and-ha.md`](reference/bootstrap-and-ha.md) §3 or [`secrets-and-eso.md`](reference/secrets-and-eso.md) §8 |
 | Understand a variable suffix | [`variables.md`](reference/variables.md) §1 |
 | Find a task include by function | [`reusable-tasks.md`](reference/reusable-tasks.md) |
@@ -139,6 +142,7 @@ One long-lived Opus chat (TeamLead) + a fresh Sonnet chat per SUB-task (DevOps =
 | Term | Definition |
 |---|---|
 | **`master_manager_fact`** | Ansible fact = hostname of the inventory manager with `is_master: true`. All `kubectl`/`helm` delegate here. |
+| **`bastion_proxy`** | Inventory group of external HAProxy edge-proxies in front of the cluster (L7 + L4, PROXY v2). NOT the SSH-ProxyJump `is_bastion` flag. See [`bastion-proxy.md`](reference/bastion-proxy.md). |
 | **`*_extra`** | Array-var naming convention: values **concatenate** with their base. Base in `hosts-vars/`, override in `hosts-vars-override/`. |
 | **phase release** | Helm release of one standard phase: `<c>-pre`, `<c>`, `<c>-post`. |
 | **ESO** | [External Secrets Operator](https://external-secrets.io) — pulls secrets from Vault into K8s `Secret` objects. |

@@ -4,6 +4,8 @@ Lifecycle procedures for a bare-metal cluster: bootstrapping from scratch, joini
 
 For the high-level mental model, see `CLAUDE.md` §3 and §10. For the individual task includes used below, see [`reusable-tasks.md`](reusable-tasks.md) §2.
 
+> **Out of scope:** bastion-proxy (external edge HAProxy, group `bastion_proxy`) is deliberately NOT a lifecycle op here — it is not an in-cluster node and has no join / quorum / reboot role. See [`bastion-proxy.md`](bastion-proxy.md).
+
 ---
 
 ## 1. Four-step Bootstrap

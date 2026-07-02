@@ -18,6 +18,7 @@ Imperative rules for writing or modifying playbooks. For the *why* behind the ru
 2.1 `playbook-app/` plays MUST use `hosts: managers`, `become: true`, `gather_facts: false`.
 2.2 `playbook-system/` plays target specific groups (`managers`, `workers`, or ad-hoc) and SHOULD use `gather_facts: false` — enable gathering only inside specific tasks that need it.
 2.3 Include a top-of-file comment banner documenting purpose, steps, and `--tags` usage (see §11).
+2.4 Never use bare `hosts: all` — scope to `hosts: managers:workers` (colon, no space) so the external `bastion_proxy` group ([`variables.md`](variables.md) §2.15) is excluded from node / cluster / reboot operations. Per-host `playbook-app/` plays that must serve every node use `managers:workers`; those fully `delegate_to` master use `managers`.
 
 ## 3. Required Guards (per play)
 
@@ -79,6 +80,8 @@ Relative forms (`tasks/X.yaml`, `tasks-X.yaml` sibling) are an anti-pattern (see
 import_playbook: setup-ssh-keys.yaml   # OK — sibling-form is the only working option
 ```
 This is a fundamental Ansible limitation, not a project choice. The single user of `import_playbook` in this repo is `playbook-system/full-node-install.yaml`.
+
+8.5 **Exception — bastion-proxy all-inline.** `playbook-system/bastion-proxy-install.yaml` deliberately forgoes reusable task extraction: ALL tasks are inline / hardcoded (no `include_tasks` / shared `tasks-*`). The edge-proxy is a standalone off-cluster subsystem sharing no reusable task surface with cluster plays; extraction into utilities is a later step. See [`bastion-proxy.md`](bastion-proxy.md).
 
 ## 9. values-override.yaml Pattern
 
@@ -157,7 +160,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 17.7 Secrets in `hosts-vars/` (committed). Always `hosts-vars-override/`.
 17.8 Editing chart templates without running through `--tags <phase>` afterwards — Helm diff may not detect the change.
 17.9 Hard-coded numeric ports inside `NetworkPolicy` / `CiliumNetworkPolicy` / `CiliumClusterwideNetworkPolicy` templates — always source ports from chart `values.yaml` using camelCase, component-grouped keys (`vault.apiPort`, `argocd.serverPort`). Common ports (DNS, apiserver, ACME solver, external HTTP/HTTPS, kubelet) live in shared per-chart buckets (`dns.port: 53`, `apiserver.port: 6443`, etc.). Reference: `playbook-app/charts/teleport/pre/values.yaml`. See [`networking.md`](networking.md) §7 for the full convention.
-17.10 Relative `include_tasks: tasks/X.yaml` or sibling-form `include_tasks: tasks-X.yaml` (no prefix) — always use `{{ project_root }}/<dir>/tasks/<name>.yaml` (rule §8.3). Relative forms silently depend on Ansible's `playbook_dir` resolution rule and break when a playbook is included from a different working directory (e.g. tests reusing a production task via `include_tasks` from `tests/` directory). Exception: `import_playbook` (see §8.4 — parse-time evaluation precludes variable use).
+17.10 Relative `include_tasks: tasks/X.yaml` or sibling-form `include_tasks: tasks-X.yaml` (no prefix) — always use `{{ project_root }}/<dir>/tasks/<name>.yaml` (rule §8.3). Relative forms silently depend on Ansible's `playbook_dir` resolution rule and break when a playbook is included from a different working directory (e.g. tests reusing a production task via `include_tasks` from `tests/` directory). Exception: `import_playbook` (see §8.4 — parse-time evaluation precludes variable use). The fully-inline `bastion-proxy-install.yaml` (no includes at all, §8.5) is likewise not a violation here.
 17.11 Cross-namespace NetworkPolicy к backend managed by **backend** chart — должно managed by **consumer** chart. Backend (seaweedfs, traefik, haproxy, gitlab — те что ставятся раньше в bootstrap sequence) не знает о future consumer'ах, поэтому coupling consumer→backend выражается в consumer chart'е через пару NPs: egress в consumer ns + ingress в backend ns. См. [`networking.md`](networking.md) §8 (precedents в репо + naming convention).
 
 ## 18. Checklist Before Commit

@@ -41,6 +41,8 @@ Defined in `playbook-app/charts/cilium/post/`. The policy's `nodeIpsList` array 
 - Traffic from IPs outside `nodeIpsList` at the host interface level
 - Includes: random external IPs, even the public internet
 
+**Scope — what it does NOT gate.** The policy binds the **host endpoint** — host processes + hostNetwork pods only. NodePort → non-hostNetwork pod traffic (Traefik DaemonSet+NodePort, haproxy-ingress) is **not** gated (empirically: external HTTPS reaches Traefik even though ingress allows `world` only on SSH+ICMP). So **bastion-proxy needs ZERO CCNP changes** — see [`bastion-proxy.md`](bastion-proxy.md) §5. The L4 anti-bypass is a pod-level NetworkPolicy `ipBlock` on the ingress pod (git-ops repo), not the host firewall.
+
 **Critical for node lifecycle.** Adding a new node requires updating the policy BEFORE the new node tries to join the cluster, otherwise the kubelet↔apiserver handshake is blocked at L3 by Cilium. See [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §1.5 for the exact ordering.
 
 **Adding a node — correct procedure:**
@@ -150,6 +152,7 @@ From `hosts-vars/k8s-base.yaml` (see [`variables.md`](variables.md) §2.1):
 | Ingress works inside VPN but not outside (expected) or outside but not inside (not expected) | Middleware attachment inverted, or `vpn_ips` misconfigured | Check `hosts-vars/vpn-rules.yaml` and `<c>_vpn_only_enabled` flag |
 | Cilium agent pods fail with "kube-proxy conflict" | Someone re-enabled kube-proxy addon | Re-run `kubeadm init` after flipping `proxy.disabled` to `false`? — NO, remove kube-proxy DaemonSet instead. See `CLAUDE.md` §0 |
 | `kubectl` to apiserver fails with TLS verification error | certSANs missing a manager's IP/DNS | `apiserver-sans-update.yaml` (see [`bootstrap-and-ha.md`](bootstrap-and-ha.md) §2) |
+| External NodePort traffic (Traefik / bastion-proxy) reaches pods though the host firewall allows `world` only on SSH | Expected — host firewall gates only host/hostNetwork endpoints, not NodePort→pod | No action; bastion-proxy needs no CCNP change (§2, [`bastion-proxy.md`](bastion-proxy.md) §5) |
 
 ---
 
