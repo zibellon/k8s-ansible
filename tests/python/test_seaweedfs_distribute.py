@@ -10,6 +10,13 @@ import json
 import pytest
 import seaweedfs_distribute as sw
 from ansible.errors import AnsibleFilterError
+
+
+def _live_cm_list(cms):
+    """Build a `kubectl get cm -l ... -o json` stdout from [{name, content}] descriptors."""
+    return json.dumps({'items': [
+        {'metadata': {'name': cm['name']}, 'data': {'state': cm['content']}} for cm in cms
+    ]})
 # =============================================================================
 # identity-distribute (Layer 3) — seaweedfs_distribute_* (stateless)
 # =============================================================================
@@ -219,6 +226,72 @@ def test_state_configmaps_to_delete_empty_list():
 def test_state_configmaps_to_delete_empty_target(sample_configmaplist_raw):
     result = sw.seaweedfs_state_configmaps_to_delete(sample_configmaplist_raw, [])
     assert set(result) == {'seaweedfs-sync-buckets-b1', 'seaweedfs-sync-buckets-b2'}
+
+
+def test_state_configmaps_to_apply_changed_noop():
+    """No-op: live == target -> nothing to apply."""
+    target = [{'name': 'gitlab', 'keys': [{'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3']}]},
+              {'name': 'loki', 'keys': [{'access_key': 'loki-1', 'vault_paths': ['eso-secret/mon/loki/s3']}]}]
+    cms = sw.seaweedfs_distribute_configmaps_to_apply(target)
+    assert sw.seaweedfs_state_configmaps_to_apply_changed(_live_cm_list(cms), cms) == []
+
+
+def test_state_configmaps_to_apply_changed_new_identity():
+    """New identity absent from live -> only that CM returned."""
+    base = [{'name': 'gitlab', 'keys': [{'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3']}]}]
+    extended = base + [{'name': 'loki', 'keys': [{'access_key': 'loki-1', 'vault_paths': ['eso-secret/mon/loki/s3']}]}]
+    live = _live_cm_list(sw.seaweedfs_distribute_configmaps_to_apply(base))
+    result = sw.seaweedfs_state_configmaps_to_apply_changed(
+        live, sw.seaweedfs_distribute_configmaps_to_apply(extended))
+    assert [cm['name'] for cm in result] == ['seaweedfs-sync-identity-distributions-loki']
+
+
+def test_state_configmaps_to_apply_changed_content_changed():
+    """Existing identity's content changed (path added) -> only that CM returned."""
+    t0 = [{'name': 'pol', 'keys': [{'access_key': 'pol-1', 'vault_paths': ['eso-secret/pol/s3']}]}]
+    t1 = [{'name': 'pol', 'keys': [{'access_key': 'pol-1',
+                                    'vault_paths': ['eso-secret/pol/s3', 'eso-secret/pol/s3-dev']}]}]
+    live = _live_cm_list(sw.seaweedfs_distribute_configmaps_to_apply(t0))
+    result = sw.seaweedfs_state_configmaps_to_apply_changed(
+        live, sw.seaweedfs_distribute_configmaps_to_apply(t1))
+    assert [cm['name'] for cm in result] == ['seaweedfs-sync-identity-distributions-pol']
+
+
+def test_state_configmaps_to_apply_changed_drift_reapplied():
+    """Live .data.state tampered out-of-band -> CM re-applied (self-heal)."""
+    target = [{'name': 'gitlab', 'keys': [{'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3']}]}]
+    cms = sw.seaweedfs_distribute_configmaps_to_apply(target)
+    live = json.dumps({'items': [
+        {'metadata': {'name': 'seaweedfs-sync-identity-distributions-gitlab'},
+         'data': {'state': '{"identity_name": "gitlab", "keys": [{"access_key": "TAMPERED", "vault_paths": ["x"]}]}'}}]})
+    assert sw.seaweedfs_state_configmaps_to_apply_changed(live, cms) == cms
+
+
+def test_state_configmaps_to_apply_changed_deleted_recreated():
+    """CM deleted from live -> returned for recreate; unchanged sibling skipped."""
+    target = [{'name': 'gitlab', 'keys': [{'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3']}]},
+              {'name': 'loki', 'keys': [{'access_key': 'loki-1', 'vault_paths': ['eso-secret/mon/loki/s3']}]}]
+    cms = sw.seaweedfs_distribute_configmaps_to_apply(target)
+    live = _live_cm_list([cm for cm in cms if cm['name'] != 'seaweedfs-sync-identity-distributions-gitlab'])
+    result = sw.seaweedfs_state_configmaps_to_apply_changed(live, cms)
+    assert [cm['name'] for cm in result] == ['seaweedfs-sync-identity-distributions-gitlab']
+
+
+def test_state_configmaps_to_apply_changed_greenfield_and_malformed():
+    """Empty / '' / malformed configmaplist -> all target returned (fail-safe)."""
+    target = [{'name': 'gitlab', 'keys': [{'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3']}]}]
+    cms = sw.seaweedfs_distribute_configmaps_to_apply(target)
+    assert sw.seaweedfs_state_configmaps_to_apply_changed('{"items": []}', cms) == cms
+    assert sw.seaweedfs_state_configmaps_to_apply_changed('', cms) == cms
+    assert sw.seaweedfs_state_configmaps_to_apply_changed('garbage {', cms) == cms
+
+
+def test_state_configmaps_to_apply_changed_missing_data_state():
+    """Live CM without .data.state -> treated as differing -> re-applied."""
+    target = [{'name': 'gitlab', 'keys': [{'access_key': 'gl-1', 'vault_paths': ['eso-secret/gitlab/s3']}]}]
+    cms = sw.seaweedfs_distribute_configmaps_to_apply(target)
+    live = json.dumps({'items': [{'metadata': {'name': 'seaweedfs-sync-identity-distributions-gitlab'}}]})
+    assert sw.seaweedfs_state_configmaps_to_apply_changed(live, cms) == cms
 # =============================================================================
 # per-item ConfigMap state split — per-group apply
 # =============================================================================

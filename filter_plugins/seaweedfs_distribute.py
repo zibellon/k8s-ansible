@@ -355,6 +355,36 @@ def seaweedfs_state_configmaps_to_delete(configmaplist_raw, target_cm_names):
     return result
 
 
+def seaweedfs_state_configmaps_to_apply_changed(configmaplist_raw, target_configmaps):
+    """Subset of target per-item state ConfigMaps that need `kubectl apply` — those whose
+    content differs from the LIVE cluster (CM absent, its .data.state missing, or its stored
+    .data.state != the target content). Lets a caller apply only what actually changed, so a
+    no-op run touches zero ConfigMaps and the apply loop is O(changes) not O(total).
+
+    Stateless generic filter: compares target {name, content} descriptors (from
+    <group>_configmaps_to_apply) against the live `kubectl get cm -l ... -o json` stdout read
+    each run. Because it diffs against LIVE state, it also re-applies drift / manual deletion,
+    not a cached marker. Both sides are json.dumps(sort_keys=True) strings → byte-exact
+    compare. '' / None / malformed configmaplist → every target CM returned (fail-safe toward
+    apply, never a silent skip; also the greenfield first-run path).
+
+    Args:
+        configmaplist_raw: str — `kubectl get cm -l ... -o json` stdout (live state).
+        target_configmaps: list of {name, content} — full target set (e.g. from
+            seaweedfs_distribute_configmaps_to_apply).
+
+    Returns:
+        list of {name, content} — subset needing apply (new or changed), order-preserving.
+    """
+    items = _parse_configmaplist(configmaplist_raw)
+    stored = {}
+    for item in items:
+        name = (item.get('metadata') or {}).get('name')
+        if name is not None:
+            stored[name] = (item.get('data') or {}).get('state')
+    return [cm for cm in target_configmaps if stored.get(cm['name']) != cm['content']]
+
+
 def seaweedfs_distribute_configmaps_to_apply(target_identities):
     """Per-item state ConfigMap descriptors for identity-distribution.
 
@@ -402,4 +432,5 @@ class FilterModule(object):
             'seaweedfs_state_configmaps_to_combined_json': seaweedfs_state_configmaps_to_combined_json,
             'seaweedfs_state_configmaps_to_delete': seaweedfs_state_configmaps_to_delete,
             'seaweedfs_distribute_configmaps_to_apply': seaweedfs_distribute_configmaps_to_apply,
+            'seaweedfs_state_configmaps_to_apply_changed': seaweedfs_state_configmaps_to_apply_changed,
         }
