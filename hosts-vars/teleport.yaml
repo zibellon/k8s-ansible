@@ -20,14 +20,20 @@ all:
     # Used in teleport-ssh-agent-install.yaml
     teleport_web_public_addr: "{{ teleport_cluster_name }}:443"
     # SSH / tunnel ports (HAProxy TCP NodePort)
+    # accept PROXY protocol v2 per HAProxy TCP bind (true = за bastion-proxy). Default false = прямой доступ.
     teleport_ssh_port: 3023
     teleport_ssh_listen_addr: "0.0.0.0:{{ teleport_ssh_port }}"
+    teleport_ssh_accept_proxy: false
+    # ---
     teleport_reverse_tunnel_port: 3024 # Другой телепорт или агент подключается к ЭТОМУ teleport. Другой - под NAT, и этот не может до него достучаться
     teleport_reverse_tunnel_listen_addr: "0.0.0.0:{{ teleport_reverse_tunnel_port }}"
+    teleport_reverse_tunnel_accept_proxy: false
+    # ---
     teleport_internal_connect_port: 3025 # Auth-server общается с Proxy-server
     teleport_kube_listen_port: 3026
     teleport_kube_listen_addr: "0.0.0.0:{{ teleport_kube_listen_port }}"
     teleport_kube_public_addr: "{{ teleport_cluster_name }}:{{ teleport_kube_listen_port }}"
+    teleport_kube_accept_proxy: false
 
     # ------
     # ------
@@ -205,8 +211,11 @@ all:
       certificateConfig: "{{ teleport_ui_certificate }}"
       webServicePort: "{{ teleport_web_service_port }}"
       sshPort: "{{ teleport_ssh_port }}"
+      sshAcceptProxy: "{{ teleport_ssh_accept_proxy }}"
       reverseTunnelPort: "{{ teleport_reverse_tunnel_port }}"
+      reverseTunnelAcceptProxy: "{{ teleport_reverse_tunnel_accept_proxy }}"
       kubeApiPort: "{{ teleport_kube_listen_port }}"
+      kubeApiAcceptProxy: "{{ teleport_kube_accept_proxy }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
