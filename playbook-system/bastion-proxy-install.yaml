@@ -32,6 +32,25 @@
     # =========================================================================
     # NODE-INSTALL — Linux-пакеты + безопасность
     # =========================================================================
+    - name: "[bastion-proxy-node] Current hostname"
+      command: hostname
+      register: bastion_proxy_current_hostname
+      changed_when: false
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Set hostname"
+      command: hostnamectl set-hostname {{ new_hostname }}
+      when: bastion_proxy_current_hostname.stdout != new_hostname
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Install SSH public keys (before key-only auth)"
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', item) }}"
+      loop: "{{ ssh_public_key_paths }}"
+      tags: [node-install]
+
     - name: "[bastion-proxy-node] Install base packages + fail2ban"
       apt:
         name: "{{ bastion_proxy_haproxy_base_packages }}"
@@ -121,6 +140,13 @@
     - name: "[bastion-proxy-haproxy] Hold haproxy version"
       command: apt-mark hold haproxy
       changed_when: false
+      tags: [haproxy-install]
+
+    - name: "[bastion-proxy-haproxy] Ensure haproxy.service.d override dir"
+      file:
+        path: /etc/systemd/system/haproxy.service.d
+        state: directory
+        mode: '0755'
       tags: [haproxy-install]
 
     - name: "[bastion-proxy-haproxy] systemd override LimitNOFILE"
