@@ -84,7 +84,7 @@ Template fields:
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
 - **Non-install playbooks.** `haproxy-restart.yaml`.
-- **Notes.** This is the **in-cluster** HAProxy ingress — NOT to be confused with the systemd-level apiserver LB in `playbook-system/install-haproxy-apiserver-lb.yaml`.
+- **Notes.** This is the **in-cluster** HAProxy ingress — NOT to be confused with (1) the systemd-level apiserver LB in `playbook-system/install-haproxy-apiserver-lb.yaml`, nor (2) the **external** bastion edge-proxy in `playbook-system/bastion-proxy-install.yaml` (see [`bastion-proxy.md`](bastion-proxy.md)).
 
 ## 6. `traefik`
 

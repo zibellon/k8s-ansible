@@ -1,0 +1,225 @@
+# =============================================================================
+# bastion-proxy — единый playbook (HAProxy + PROXY Protocol v2, L7 + L4)
+# =============================================================================
+# Внешний edge-прокси перед кластером: скрывает реальные IP worker-нод,
+# обходит лимит Cloudflare 100 MB (grey-cloud -> bastion-proxy).
+#   L7 (80/443): mode tcp -> send-proxy-v2 -> Traefik NodePort (Traefik роутит по SNI/Host).
+#   L4 (диапазон): bind *:START-END 1-1 -> send-proxy-v2 -> внутренний HAProxy accept_proxy.
+#
+# Вся декларативная начинка (пакеты, конфиги, haproxy.cfg) — в
+# hosts-vars/bastion-proxy-haproxy.yaml. Здесь только структура задач.
+# По требованию — без общих tasks-* / include-директив (всё в одном файле).
+#
+# Серверов может быть несколько (группа bastion_proxy). Всегда белый IP (прямой SSH).
+#
+# Теги (линейно): node-install -> haproxy-install -> haproxy-config -> verify
+# verify — тег `verify` (НЕ always).
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<c>/ playbook-system/bastion-proxy-install.yaml
+#   ansible-playbook ... --tags node-install
+#   ansible-playbook ... --tags haproxy-install
+#   ansible-playbook ... --tags haproxy-config
+#   ansible-playbook ... --tags verify
+# =============================================================================
+
+---
+- name: Setup bastion-proxy (HAProxy edge, L7 + L4)
+  hosts: bastion_proxy
+  become: true
+  gather_facts: false
+
+  tasks:
+    # =========================================================================
+    # NODE-INSTALL — Linux-пакеты + безопасность
+    # =========================================================================
+    - name: "[bastion-proxy-node] Install base packages + fail2ban"
+      apt:
+        name: "{{ bastion_proxy_haproxy_base_packages }}"
+        state: present
+        update_cache: true
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Configure fail2ban sshd jail"
+      copy:
+        dest: /etc/fail2ban/jail.d/sshd.local
+        content: "{{ bastion_proxy_haproxy_fail2ban_jail }}"
+        mode: '0644'
+      register: bastion_proxy_fail2ban_jail_result
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Enable and start fail2ban"
+      systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Restart fail2ban if jail changed"
+      systemd:
+        name: fail2ban
+        state: restarted
+      when: bastion_proxy_fail2ban_jail_result.changed
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Harden sshd (key-only auth)"
+      copy:
+        dest: /etc/ssh/sshd_config.d/10-bastion-proxy-hardening.conf
+        content: "{{ bastion_proxy_haproxy_sshd_hardening }}"
+        mode: '0644'
+      register: bastion_proxy_sshd_result
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Validate sshd config"
+      command: sshd -t
+      changed_when: false
+      when: bastion_proxy_sshd_result.changed
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Reload ssh if config changed"
+      systemd:
+        name: ssh
+        state: reloaded
+      when: bastion_proxy_sshd_result.changed
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Sysctl for HAProxy range bind (fd limits)"
+      copy:
+        dest: /etc/sysctl.d/99-bastion-proxy-haproxy.conf
+        content: "{{ bastion_proxy_haproxy_sysctl_conf }}"
+        mode: '0644'
+      register: bastion_proxy_sysctl_result
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Apply sysctl if changed"
+      command: sysctl --system
+      changed_when: false
+      when: bastion_proxy_sysctl_result.changed
+      tags: [node-install]
+
+    # =========================================================================
+    # HAPROXY-INSTALL — пакет HAProxy (PPA vbernat; версия из bastion-proxy-haproxy.yaml)
+    # =========================================================================
+    - name: "[bastion-proxy-haproxy] Install software-properties-common"
+      apt:
+        name: software-properties-common
+        state: present
+        install_recommends: false
+      tags: [haproxy-install]
+
+    - name: "[bastion-proxy-haproxy] Add HAProxy PPA"
+      command: add-apt-repository -y ppa:vbernat/haproxy-{{ bastion_proxy_haproxy_package_version }}
+      changed_when: false
+      tags: [haproxy-install]
+
+    - name: "[bastion-proxy-haproxy] Install haproxy"
+      apt:
+        name: "haproxy={{ bastion_proxy_haproxy_package_version }}*"
+        state: present
+        update_cache: true
+      tags: [haproxy-install]
+
+    - name: "[bastion-proxy-haproxy] Hold haproxy version"
+      command: apt-mark hold haproxy
+      changed_when: false
+      tags: [haproxy-install]
+
+    - name: "[bastion-proxy-haproxy] systemd override LimitNOFILE"
+      copy:
+        dest: /etc/systemd/system/haproxy.service.d/override.conf
+        content: "{{ bastion_proxy_haproxy_systemd_override }}"
+        mode: '0644'
+      register: bastion_proxy_haproxy_override_result
+      tags: [haproxy-install]
+
+    - name: "[bastion-proxy-haproxy] Enable haproxy (+ daemon-reload)"
+      systemd:
+        name: haproxy
+        enabled: true
+        daemon_reload: true
+      tags: [haproxy-install]
+
+    - name: "[bastion-proxy-haproxy] Restart haproxy to apply LimitNOFILE"
+      systemd:
+        name: haproxy
+        state: restarted
+      when: bastion_proxy_haproxy_override_result.changed
+      tags: [haproxy-install]
+
+    # =========================================================================
+    # HAPROXY-CONFIG — рендер /etc/haproxy/haproxy.cfg -> validate -> reload
+    # =========================================================================
+    - name: "[bastion-proxy-config] Render /etc/haproxy/haproxy.cfg"
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: "{{ bastion_proxy_haproxy_config }}"
+        mode: '0644'
+      register: bastion_proxy_haproxy_config_result
+      tags: [haproxy-config]
+
+    - name: "[bastion-proxy-config] Validate haproxy.cfg"
+      command: haproxy -c -f /etc/haproxy/haproxy.cfg
+      changed_when: false
+      tags: [haproxy-config]
+
+    - name: "[bastion-proxy-config] Graceful reload haproxy (hitless)"
+      systemd:
+        name: haproxy
+        state: reloaded
+      when: bastion_proxy_haproxy_config_result.changed
+      tags: [haproxy-config]
+
+    # =========================================================================
+    # VERIFY (тег verify — НЕ always)
+    # =========================================================================
+    - name: "[bastion-proxy-verify] HAProxy version"
+      command: haproxy -v
+      changed_when: false
+      register: bastion_proxy_haproxy_version
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] HAProxy is active"
+      command: systemctl is-active haproxy
+      changed_when: false
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] HAProxy open-files limit"
+      shell: "cat /proc/$(systemctl show -p MainPID --value haproxy)/limits"
+      changed_when: false
+      register: bastion_proxy_haproxy_limits
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] Assert LimitNOFILE applied to running haproxy"
+      assert:
+        that:
+          - "bastion_proxy_haproxy_limits.stdout is search('Max open files\\s+' ~ bastion_proxy_haproxy_limit_nofile)"
+        fail_msg: "haproxy Max open files != {{ bastion_proxy_haproxy_limit_nofile }}"
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] Effective sshd config"
+      command: sshd -T
+      changed_when: false
+      register: bastion_proxy_sshd_effective
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] Assert sshd password auth disabled"
+      assert:
+        that:
+          - "'passwordauthentication no' in bastion_proxy_sshd_effective.stdout"
+        fail_msg: "sshd still allows password authentication"
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] Listening sockets"
+      command: ss -ltn
+      changed_when: false
+      register: bastion_proxy_ss
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] Assert L7 + L4 ports are listening"
+      assert:
+        that:
+          - "':80 ' in bastion_proxy_ss.stdout"
+          - "':443 ' in bastion_proxy_ss.stdout"
+          - "(':' ~ bastion_proxy_haproxy_l4_range_start ~ ' ') in bastion_proxy_ss.stdout"
+          - "(':' ~ bastion_proxy_haproxy_l4_range_end ~ ' ') in bastion_proxy_ss.stdout"
+        fail_msg: "expected haproxy to listen on 80, 443 and the L4 range endpoints"
+      tags: [verify]

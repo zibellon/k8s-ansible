@@ -309,7 +309,7 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `api_server_advertise_address` | manager host | kubeadm `--apiserver-advertise-address` |
 | `api_server_bind_port` | manager host | kubeadm apiserver bind port (default `6443`) |
 | `node_labels` | host | List of labels applied at `cluster-init` / join via `tasks-apply-node-labels.yaml` |
-| Groups: `managers`, `workers` | inventory | Defined in `hosts-vars/hosts.yaml` group vars |
+| Groups: `managers`, `workers`, `bastion_proxy` | inventory | Defined in `hosts-vars/hosts.yaml`. `bastion_proxy` = внешние edge-прокси, исключены из cluster-wide плейбуков — см. §2.15 |
 
 ### 2.11 Output facts (runtime-only, produced by tasks)
 
@@ -390,6 +390,44 @@ Notes:
 Эффект: `tasks-set-master-manager.yaml` (он же ищет и bastion) устанавливает `bastion_host_fact`, и `tasks-reboot-cluster.yaml` упорядочивает reboot — сначала non-bastion (parallel через bastion), затем bastion (direct connection, ProxyJump уже не нужен). Без этого reboot всех хостов параллельно убивал бы bastion первым, разрывая ProxyJump для остальных.
 
 Если `is_bastion` не задан ни на одном host'е (external bastion, public-IP scheme, single-host) — `bastion_host_fact` undefined, reboot работает старым параллельным способом (backward-compat).
+
+### 2.15 bastion_proxy inventory group (внешний edge-прокси — НЕ SSH `is_bastion`)
+
+Отдельная inventory-группа для внешних HAProxy edge-прокси перед кластером — см. [`bastion-proxy.md`](bastion-proxy.md). Полностью независима от SSH-ProxyJump `is_bastion` (§2.14/§2.14.1): хост `bastion_proxy` — НЕ узел кластера, НЕ jump-host, и **никогда** не ставит `is_bastion` (иначе коллизия с `Find bastion host` в `tasks-set-master-manager.yaml`, фильтрующим `groups['all']` по `is_bastion`). `bastion_host_fact` / reboot-ordering не затрагиваются.
+
+| Variable | Scope | Purpose |
+|---|---|---|
+| Group `bastion_proxy` | inventory | Внешние HAProxy edge-прокси. НЕ входит в `managers`/`workers`; исключён из всех cluster-wide плейбуков (сужены до `managers:workers`). N хостов |
+| `ansible_host` | host | Публичный (белый) IP — прямой SSH, БЕЗ ProxyJump |
+| `ansible_user`, `ansible_password` | host | SSH-креды |
+| `new_hostname` | host | Hostname хоста |
+
+Notes:
+- **Rule 1 (N серверов).** Все хосты группы получают одинаковый декларативный HAProxy-конфиг из одного playbook'а; cluster-side allowlist'ы (NetworkPolicy `ipBlock`, git-ops) перечисляют IP всех bastion_proxy — список.
+- **Rule 2 (белый IP).** Каждый хост доступен по публичному IP напрямую — БЕЗ ProxyJump / `ansible_ssh_common_args`.
+- **MUST NOT set:** `is_master`, `is_bastion`, `api_server_*`, `internal_ip`, `longhorn_*`, `node_labels` (bastion_proxy — не k8s-нода).
+- **Skeleton.** Закомментированный пример в [`hosts-vars/hosts.yaml`](../hosts-vars/hosts.yaml); синтетический `bp1` в `hosts-vars-test/hosts.yaml`.
+
+### 2.15a HAProxy edge-proxy settings (`hosts-vars/bastion-proxy-haproxy.yaml`)
+
+Декларативная начинка bastion-proxy (пакеты + конфиги + `haproxy.cfg`) — все `bastion_proxy_haproxy_*`. Playbook `bastion-proxy-install.yaml` держит только структуру задач. Полное описание фичи — [`bastion-proxy.md`](bastion-proxy.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `bastion_proxy_haproxy_package_version` | `"3.3"` | Версия HAProxy (PPA vbernat), своя для bastion (НЕ переиспользует `haproxy_apiserver_lb_package_version`) |
+| `bastion_proxy_haproxy_maxconn` | `250000` | HAProxy global `maxconn` |
+| `bastion_proxy_haproxy_limit_nofile` | `1048576` | systemd `LimitNOFILE` (критично для range bind) |
+| `bastion_proxy_haproxy_l7_target_ip` | `""` | **REQUIRED override.** Worker/VIP IP для L7 backend (Traefik NodePort) |
+| `bastion_proxy_haproxy_l7_http_nodeport` | `80` | Backend-порт Traefik HTTP NodePort |
+| `bastion_proxy_haproxy_l7_https_nodeport` | `443` | Backend-порт Traefik HTTPS NodePort |
+| `bastion_proxy_haproxy_l4_range_start` / `_l4_range_end` | `10000` / `30000` | L4 range bind (1-1 dst-порт) |
+| `bastion_proxy_haproxy_l4_target_ip` | `""` | **REQUIRED override.** Worker/VIP IP для L4 backend |
+| `bastion_proxy_haproxy_base_packages` | `[ca-certificates, curl, fail2ban]` | apt-пакеты (node-install) |
+| `bastion_proxy_haproxy_fail2ban_jail` | multiline | `/etc/fail2ban/jail.d/sshd.local` — тело в источнике |
+| `bastion_proxy_haproxy_sshd_hardening` | multiline | `/etc/ssh/sshd_config.d/10-bastion-proxy-hardening.conf` (key-only) |
+| `bastion_proxy_haproxy_sysctl_conf` | multiline | `/etc/sysctl.d/99-bastion-proxy-haproxy.conf` (fd limits) |
+| `bastion_proxy_haproxy_systemd_override` | multiline | `haproxy.service.d/override.conf` (`LimitNOFILE`); nested `{{ ..._limit_nofile }}` |
+| `bastion_proxy_haproxy_config` | multiline | Полный `/etc/haproxy/haproxy.cfg`; nested `{{ }}` refs на maxconn/target_ip/nodeports/range |
 
 ---
 

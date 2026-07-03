@@ -1,0 +1,95 @@
+# =============================================================================
+# hosts-vars/bastion-proxy-haproxy.yaml — bastion-proxy config (committed base)
+# Реальные target-IP — в hosts-vars-override/<cluster>/. Секретов нет.
+# =============================================================================
+all:
+  vars:
+    # --- HAProxy пакет (PPA vbernat) ---
+    bastion_proxy_haproxy_package_version: "3.3"
+    bastion_proxy_haproxy_maxconn: 250000
+    bastion_proxy_haproxy_limit_nofile: 1048576
+
+    # --- L7 (домены -> Traefik NodePort). l7_target_ip — REQUIRED override ---
+    bastion_proxy_haproxy_l7_target_ip: ""
+    bastion_proxy_haproxy_l7_http_nodeport: 80
+    bastion_proxy_haproxy_l7_https_nodeport: 443
+
+    # --- L4 (диапазон -> worker/VIP). l4_target_ip — REQUIRED override ---
+    bastion_proxy_haproxy_l4_range_start: 20000
+    bastion_proxy_haproxy_l4_range_end: 22000
+    bastion_proxy_haproxy_l4_target_ip: ""
+
+    # --- Base packages (node-install) ---
+    bastion_proxy_haproxy_base_packages:
+      - ca-certificates
+      - curl
+      - fail2ban
+
+    # --- fail2ban sshd jail -> /etc/fail2ban/jail.d/sshd.local ---
+    bastion_proxy_haproxy_fail2ban_jail: |
+      [sshd]
+      enabled = true
+      port = ssh
+      maxretry = 5
+      bantime = 1h
+      findtime = 10m
+
+    # --- sshd hardening -> /etc/ssh/sshd_config.d/10-bastion-proxy-hardening.conf ---
+    bastion_proxy_haproxy_sshd_hardening: |
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+      PubkeyAuthentication yes
+
+    # --- sysctl (fd limits для range bind) -> /etc/sysctl.d/99-bastion-proxy-haproxy.conf ---
+    bastion_proxy_haproxy_sysctl_conf: |
+      fs.file-max = 2097152
+      fs.nr_open = 1048576
+
+    # --- systemd override -> /etc/systemd/system/haproxy.service.d/override.conf ---
+    bastion_proxy_haproxy_systemd_override: |
+      [Service]
+      LimitNOFILE={{ bastion_proxy_haproxy_limit_nofile }}
+
+    # --- /etc/haproxy/haproxy.cfg (бастион принимает ВСЁ — без src ACL) ---
+    bastion_proxy_haproxy_config: |
+      # Managed by Ansible (playbook-system/bastion-proxy-install.yaml). Do NOT edit by hand.
+      global
+          log /dev/log local0
+          maxconn {{ bastion_proxy_haproxy_maxconn }}
+
+      defaults
+          mode tcp
+          log global
+          option tcplog
+          timeout connect 5s
+          timeout client 1h
+          timeout server 1h
+
+      # ---- L7: 80/443 -> Traefik NodePort (send-proxy-v2; Traefik роутит по SNI/Host) ----
+      frontend l7_http_front
+          bind *:80
+          mode tcp
+          default_backend l7_http_back
+
+      backend l7_http_back
+          mode tcp
+          server traefik_http {{ bastion_proxy_haproxy_l7_target_ip }}:{{ bastion_proxy_haproxy_l7_http_nodeport }} send-proxy-v2
+
+      frontend l7_https_front
+          bind *:443
+          mode tcp
+          default_backend l7_https_back
+
+      backend l7_https_back
+          mode tcp
+          server traefik_https {{ bastion_proxy_haproxy_l7_target_ip }}:{{ bastion_proxy_haproxy_l7_https_nodeport }} send-proxy-v2
+
+      # ---- L4: диапазон 1-1 -> worker/VIP (send-proxy-v2, dst-порт из входящего) ----
+      frontend l4_range_front
+          bind *:{{ bastion_proxy_haproxy_l4_range_start }}-{{ bastion_proxy_haproxy_l4_range_end }}
+          mode tcp
+          default_backend l4_range_back
+
+      backend l4_range_back
+          mode tcp
+          server l4_target {{ bastion_proxy_haproxy_l4_target_ip }} send-proxy-v2
