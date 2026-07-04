@@ -2,7 +2,6 @@
 # Configure GitLab root credentials
 # Steps:
 #   1. Resolve root password: check Vault → check k8s secret → validate → save to Vault → delete k8s initial secret
-#   2. Resolve root PAT: check Vault → validate → create new if invalid → save to Vault
 #
 # Usage:
 #   ansible-playbook gitlab-configure.yaml
@@ -27,13 +26,6 @@
     _local_k8s_gitlab_initial_password_exists_key: "_local_k8s_gitlab_initial_password_exists"
     _local_active_root_password_key: "_local_active_root_password"
     _local_root_password_source_key: "_local_root_password_source"
-    _local_gitlab_root_username_vault_key: "_local_gitlab_root_username_vault"
-    _local_gitlab_root_username_vault_exists_key: "_local_gitlab_root_username_vault_exists"
-    _local_gitlab_root_password_vault_key: "_local_gitlab_root_password_vault"
-    _local_gitlab_root_password_vault_exists_key: "_local_gitlab_root_password_vault_exists"
-    _local_gitlab_root_pat_vault_key: "_local_gitlab_root_pat_vault"
-    _local_gitlab_root_pat_vault_exists_key: "_local_gitlab_root_pat_vault_exists"
-    _local_pat_needs_rotation_key: "_local_pat_needs_rotation"
 
   tasks:
     - name: "[gitlab-configure] Assert component enabled"
@@ -200,114 +192,6 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 2: RESOLVE ROOT PAT
-    # If exists in Vault → validate. If invalid or absent → create new and save.
-    # Note: PAT is stored in the same root secret alongside username/password.
-    # On rotation we re-read the full secret and PUT all fields to preserve them.
-    # =========================================================================
-
-    - name: "[gitlab-root-pat] Get root username from Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
-      vars:
-        dto_label_name: "gitlab-root-pat"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_get_field: "{{ gitlab_root_secret_key_username }}"
-        dto_vault_get_res_fact_name: "{{ _local_gitlab_root_username_vault_key }}"
-        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_root_username_vault_exists_key }}"
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Get root password from Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
-      vars:
-        dto_label_name: "gitlab-root-pat"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_get_field: "{{ gitlab_root_secret_key_password }}"
-        dto_vault_get_res_fact_name: "{{ _local_gitlab_root_password_vault_key }}"
-        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_root_password_vault_exists_key }}"
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Get PAT field from Vault"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
-      vars:
-        dto_label_name: "gitlab-root-pat"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_get_field: "{{ gitlab_root_secret_key_token }}"
-        dto_vault_get_res_fact_name: "{{ _local_gitlab_root_pat_vault_key }}"
-        dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_root_pat_vault_exists_key }}"
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Validate existing PAT via gitlab-rails"
-      shell: |
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_gitlab_toolbox_pod.stdout }} -- \
-          gitlab-rails runner \
-          "t = PersonalAccessToken.find_by_token('{{ lookup('vars', _local_gitlab_root_pat_vault_key) }}'); puts(t && !t.revoked? && !t.expired? ? 'valid' : 'invalid')"
-      register: _local_pat_valid_result
-      when: lookup('vars', _local_gitlab_root_pat_vault_exists_key)
-      failed_when: false
-      changed_when: false
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Set pat_needs_rotation fact"
-      set_fact:
-        "{{ _local_pat_needs_rotation_key }}": >-
-          {{
-            not lookup('vars', _local_gitlab_root_pat_vault_exists_key)
-            or (_local_pat_valid_result.stdout is defined and _local_pat_valid_result.stdout | trim != 'valid')
-          }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Create new PAT via gitlab-rails runner"
-      shell: |
-        kubectl exec -n {{ gitlab_namespace }} {{ _local_gitlab_toolbox_pod.stdout }} -- \
-          gitlab-rails runner \
-          "token = User.find_by_username('{{ gitlab_root_username }}').personal_access_tokens.create(scopes: ['api'], name: 'gitlab-root', expires_at: 365.days.from_now); puts token.token"
-      register: _local_new_pat_result
-      when: lookup('vars', _local_pat_needs_rotation_key) | bool
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Save new PAT to Vault (full replace preserving username/password)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
-      vars:
-        dto_label_name: "gitlab-root-pat"
-        dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-        dto_vault_put_data: >-
-          {{ {
-               gitlab_root_secret_key_username: lookup('vars', _local_gitlab_root_username_vault_key) | default(gitlab_root_username),
-               gitlab_root_secret_key_password: lookup('vars', _local_gitlab_root_password_vault_key) | default(lookup('vars', _local_active_root_password_key)),
-               gitlab_root_secret_key_token: _local_new_pat_result.stdout | trim
-             } }}
-      when:
-        - lookup('vars', _local_pat_needs_rotation_key) | bool
-        - _local_new_pat_result.stdout is defined
-        - _local_new_pat_result.stdout | trim | length > 0
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Trigger ESO sync"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
-      vars:
-        dto_label_name: "gitlab-root-pat"
-        dto_eso_sync_namespace: "{{ gitlab_namespace }}"
-      tags: [always]
-
-    - name: "[gitlab-root-pat] Print PAT resolution result"
-      debug:
-        msg: >-
-          {{
-            'PAT already valid in Vault — no rotation needed'
-            if not lookup('vars', _local_pat_needs_rotation_key) | bool
-            else 'New PAT created and saved to Vault'
-          }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
-    # =========================================================================
     # VERIFY
     # =========================================================================
 
@@ -321,10 +205,9 @@
           - ""
           - "Root credentials stored in Vault:"
           - "  Path: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_root_creds.vault_path }}"
-          - "  Fields: username, password, token"
+          - "  Fields: username, password"
           - ""
           - "Password source: {{ lookup('vars', _local_root_password_source_key) }}"
-          - "PAT rotated: {{ lookup('vars', _local_pat_needs_rotation_key) | bool }}"
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true

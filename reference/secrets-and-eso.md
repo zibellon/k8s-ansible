@@ -459,7 +459,7 @@ All under `eso-secret/` KV engine.
 | `traefik` | `eso-secret/traefik/*` | user-defined (TLS, basic-auth via `_extra`) |
 | `haproxy` | `eso-secret/haproxy/*` | user-defined |
 | `longhorn` | `eso-secret/longhorn/*` | S3 backup creds (access key, secret key, endpoint) |
-| `gitlab` | `eso-secret/gitlab/*` | `postgresql/creds`, `redis/creds`, `s3-storage` (single path, fields `username`/`accessKey`/`secretKey` — provisioned by SeaweedFS sync OR manual `vault kv put`), `gitlab-root`, PATs |
+| `gitlab` | `eso-secret/gitlab/*` | `postgresql/creds`, `redis/creds`, `s3-storage` (single path, fields `username`/`accessKey`/`secretKey` — provisioned by SeaweedFS sync OR manual `vault kv put`), `gitlab-root` |
 | `gitlab-runner` | `eso-secret/gitlab-runner/*` | registration token (`/token`), `s3-storage` (single path для runner cache, same fields format as gitlab) |
 | `zitadel` | `eso-secret/zitadel/*` | `postgresql`, `masterkey` |
 | `argocd` | `eso-secret/argocd/*` (+ per-account operator-configurable Vault paths via `argocd_local_accounts[].vault_paths`, fixed keys `username`/`password` — distribute via `tasks-argocd-accounts-distribute.yaml`) | `accounts/creds` — ONE FIELD PER ACCOUNT (field name = account name), value `{plaintext, hash, passwordMtime}` (nested) incl. the custom admin, written by `tasks-argocd-accounts-sync.yaml` (NOT via ESO); git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` via `_extra` |
