@@ -370,7 +370,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
       vars:
         dto_label_name: "gitlab-s3-validate"
-        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
+        dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_object_store_connection_config.vault_path }}"
         dto_vault_get_field: "{{ gitlab_s3_secret_key_access_key }}"
         dto_vault_get_res_fact_name: "{{ _local_gitlab_s3_access_key_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_gitlab_s3_access_key_vault_exists_key }}"
@@ -381,7 +381,7 @@
         that:
           - lookup('vars', _local_gitlab_s3_access_key_vault_exists_key)
         fail_msg: |
-          ERROR: GitLab S3 creds missing в Vault path '{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}'.
+          ERROR: GitLab S3 creds missing в Vault path '{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_object_store_connection_config.vault_path }}'.
           Друг оператор, нет данных для авторизации в S3-storage.
 
           Вариант A (SeaweedFS sync) — раскомментируй opt-in блоки в своём
@@ -392,7 +392,7 @@
               --tags user-sync,identity-distribute,bucket-sync
 
           Вариант B (внешний S3 — cloud/etc.):
-            vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }} \
+            vault kv put {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_object_store_connection_config.vault_path }} \
               {{ gitlab_s3_secret_key_username }}=<username> \
               {{ gitlab_s3_secret_key_access_key }}=<accessKey> \
               {{ gitlab_s3_secret_key_secret_key }}=<secretKey>
@@ -409,11 +409,11 @@
         dto_eso_sync_namespace: "{{ gitlab_namespace }}"
       tags: [install]
 
-    - name: "[gitlab-s3-validate] Wait for K8s Secret eso-gitlab-s3-creds materialized"
+    - name: "[gitlab-s3-validate] Wait for K8s Secret eso-gitlab-object-store-connection-config materialized"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "gitlab-s3-validate"
-        dto_wait_secret_name: "{{ gitlab_secret_s3_creds.body.target.name }}"
+        dto_wait_secret_name: "{{ gitlab_secret_object_store_connection_config.body.target.name }}"
         dto_wait_secret_namespace: "{{ gitlab_namespace }}"
       tags: [install]
 
@@ -578,7 +578,7 @@
           - "Credentials stored in Vault:"
           - "  PostgreSQL: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
           - "  Redis: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
-          - "  S3 storage: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_s3_creds.vault_path }}"
+          - "  S3 storage: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_object_store_connection_config.vault_path }}"
           - ""
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."
