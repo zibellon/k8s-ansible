@@ -399,6 +399,102 @@ all:
     # Per-pod parallelism (capacity)
     gitlab_helm_values_webservice_worker_processes: 2
     gitlab_helm_values_sidekiq_concurrency: 10
+    # --- Component resources (requests+limits) — активные default'ы (blast-radius cap;
+    #     НИКОГДА не {}: пустые resources = BestEffort QoS → runaway душит ноду,
+    #     см. hosts-vars/seaweedfs.yaml инцидент 1520-tech-prod-1). Override заменяет
+    #     dict ЦЕЛИКОМ (НЕ _extra, не concat — variables.md §1.5). Значения — demo-scale;
+    #     prod задаётся в hosts-vars-override/<cluster>/gitlab.yaml.
+    #     Policy: webservice/sidekiq/gitaly — только mem-limit (throttle-sensitive
+    #     критический путь); прочие — cpu+mem limit.
+    gitlab_helm_values_webservice_resources:
+      requests:
+        cpu: "250m"
+        memory: "2Gi"
+      limits:
+        memory: "4Gi"
+    gitlab_helm_values_sidekiq_resources:
+      requests:
+        cpu: "250m"
+        memory: "1Gi"
+      limits:
+        memory: "3Gi"
+    gitlab_helm_values_gitaly_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        memory: "1Gi"
+    gitlab_helm_values_registry_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    gitlab_helm_values_shell_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    gitlab_helm_values_pages_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    gitlab_helm_values_gitlab_exporter_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    gitlab_helm_values_toolbox_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "512Mi"
+    gitlab_helm_values_migrations_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    # --- Component node placement — per-component nodeSelector (default: worker-ноды)
+    #     + tolerations (default: []). Все GitLab-компоненты пиннятся на worker'ы.
+    gitlab_helm_values_webservice_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_sidekiq_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_gitaly_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_registry_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_shell_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_pages_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_gitlab_exporter_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_toolbox_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_migrations_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_helm_values_webservice_tolerations: []
+    gitlab_helm_values_sidekiq_tolerations: []
+    gitlab_helm_values_gitaly_tolerations: []
+    gitlab_helm_values_registry_tolerations: []
+    gitlab_helm_values_shell_tolerations: []
+    gitlab_helm_values_pages_tolerations: []
+    gitlab_helm_values_gitlab_exporter_tolerations: []
+    gitlab_helm_values_toolbox_tolerations: []
+    gitlab_helm_values_migrations_tolerations: []
     # --- round-3 blocks (extracted from gitlab_helm_values) ---
     gitlab_helm_values_global:
       edition: ce
@@ -481,9 +577,9 @@ all:
       install: false
     gitlab_helm_values_registry:
       enabled: true
-      tolerations: []
-      nodeSelector: {}
-      resources: {}
+      tolerations: "{{ gitlab_helm_values_registry_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_registry_node_selector }}"
+      resources: "{{ gitlab_helm_values_registry_resources }}"
       metrics:
         enabled: true
         serviceMonitor:
@@ -504,8 +600,8 @@ all:
         redirect:
           disable: true
     gitlab_helm_values_webservice:
-      tolerations: []
-      nodeSelector: {}
+      tolerations: "{{ gitlab_helm_values_webservice_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_webservice_node_selector }}"
       minReplicas: "{{ gitlab_helm_values_webservice_min_replicas }}"
       maxReplicas: "{{ gitlab_helm_values_webservice_max_replicas }}"
       maxUnavailable: 1
@@ -514,12 +610,7 @@ all:
           type: Recreate
       workerProcesses: "{{ gitlab_helm_values_webservice_worker_processes }}"
       workerTimeout: 180
-      resources:
-        requests:
-          memory: "2Gi"
-          cpu: "250m"
-        limits:
-          memory: "4Gi"
+      resources: "{{ gitlab_helm_values_webservice_resources }}"
       metrics:
         serviceMonitor:
           enabled: true
@@ -535,8 +626,8 @@ all:
               interval: "30s"
               scrapeTimeout: "10s"
     gitlab_helm_values_sidekiq:
-      tolerations: []
-      nodeSelector: {}
+      tolerations: "{{ gitlab_helm_values_sidekiq_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_sidekiq_node_selector }}"
       minReplicas: "{{ gitlab_helm_values_sidekiq_min_replicas }}"
       maxReplicas: "{{ gitlab_helm_values_sidekiq_max_replicas }}"
       maxUnavailable: 1
@@ -544,12 +635,7 @@ all:
         strategy:
           type: Recreate
       concurrency: "{{ gitlab_helm_values_sidekiq_concurrency }}"
-      resources:
-        requests:
-          memory: "1Gi"
-          cpu: "250m"
-        limits:
-          memory: "3Gi"
+      resources: "{{ gitlab_helm_values_sidekiq_resources }}"
       metrics:
         enabled: true
         podMonitor:
@@ -558,9 +644,9 @@ all:
             interval: "30s"
             scrapeTimeout: "10s"
     gitlab_helm_values_gitlab_shell:
-      tolerations: []
-      nodeSelector: {}
-      resources: {}
+      tolerations: "{{ gitlab_helm_values_shell_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_shell_node_selector }}"
+      resources: "{{ gitlab_helm_values_shell_resources }}"
       minReplicas: "{{ gitlab_helm_values_shell_min_replicas }}"
       maxReplicas: "{{ gitlab_helm_values_shell_max_replicas }}"
       maxUnavailable: 1
@@ -568,9 +654,9 @@ all:
         strategy:
           type: Recreate
     gitlab_helm_values_gitaly:
-      tolerations: []
-      nodeSelector: {}
-      resources: {}
+      tolerations: "{{ gitlab_helm_values_gitaly_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_gitaly_node_selector }}"
+      resources: "{{ gitlab_helm_values_gitaly_resources }}"
       persistence:
         size: "{{ gitlab_gitaly_storage_size }}"
         storageClass: "{{ gitlab_gitaly_storage_class }}"
@@ -582,9 +668,9 @@ all:
             interval: "30s"
             scrapeTimeout: "10s"
     gitlab_helm_values_gitlab_exporter:
-      tolerations: []
-      nodeSelector: {}
-      resources: {}
+      tolerations: "{{ gitlab_helm_values_gitlab_exporter_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_gitlab_exporter_node_selector }}"
+      resources: "{{ gitlab_helm_values_gitlab_exporter_resources }}"
       deployment:
         strategy:
           type: Recreate
@@ -595,9 +681,9 @@ all:
             interval: "30s"
             scrapeTimeout: "10s"
     gitlab_helm_values_gitlab_pages:
-      tolerations: []
-      nodeSelector: {}
-      resources: {}
+      tolerations: "{{ gitlab_helm_values_pages_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_pages_node_selector }}"
+      resources: "{{ gitlab_helm_values_pages_resources }}"
       hpa:
         minReplicas: "{{ gitlab_helm_values_pages_min_replicas }}"
         maxReplicas: "{{ gitlab_helm_values_pages_max_replicas }}"
@@ -612,17 +698,17 @@ all:
             scrapeTimeout: "10s"
     gitlab_helm_values_toolbox:
       enabled: true
-      tolerations: []
-      nodeSelector: {}
-      resources: {}
+      tolerations: "{{ gitlab_helm_values_toolbox_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_toolbox_node_selector }}"
+      resources: "{{ gitlab_helm_values_toolbox_resources }}"
       deployment:
         strategy:
           type: Recreate
     gitlab_helm_values_migrations:
       enabled: true
-      tolerations: []
-      nodeSelector: {}
-      resources: {}
+      tolerations: "{{ gitlab_helm_values_migrations_tolerations }}"
+      nodeSelector: "{{ gitlab_helm_values_migrations_node_selector }}"
+      resources: "{{ gitlab_helm_values_migrations_resources }}"
     gitlab_helm_values_gitlab_runner:
       install: false
     gitlab_helm_values_upgrade_check:
