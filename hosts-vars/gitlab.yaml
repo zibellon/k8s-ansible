@@ -335,6 +335,17 @@ all:
     gitlab_postgresql_image: "docker.io/postgres:17.9-alpine3.23"
     gitlab_postgresql_storage_class: "lnstr-major-multi-sync"
     gitlab_postgresql_storage_size: "4Gi"
+    # Resources / placement (активные default'ы; override заменяет значение ЦЕЛИКОМ).
+    gitlab_postgresql_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    gitlab_postgresql_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_postgresql_tolerations: []
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_postgresql_extra_objects: []
     # Postgresql-phase kustomize patches (operator-side customization, default empty)
@@ -347,6 +358,9 @@ all:
       image: "{{ gitlab_postgresql_image }}"
       storageClass: "{{ gitlab_postgresql_storage_class }}"
       storageSize: "{{ gitlab_postgresql_storage_size }}"
+      resources: "{{ gitlab_postgresql_resources }}"
+      nodeSelector: "{{ gitlab_postgresql_node_selector }}"
+      tolerations: "{{ gitlab_postgresql_tolerations }}"
       credentials:
         secretName: "{{ gitlab_secret_postgresql_creds.body.target.name }}"
         usernameKey: "{{ gitlab_postgresql_secret_key_username }}"
@@ -358,6 +372,17 @@ all:
     gitlab_redis_image: "docker.io/redis/redis-stack-server:latest"
     gitlab_redis_storage_class: "lnstr-major-local"
     gitlab_redis_storage_size: "1Gi"
+    # Resources / placement (активные default'ы; override заменяет значение ЦЕЛИКОМ).
+    gitlab_redis_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    gitlab_redis_node_selector:
+      node-role.kubernetes.io/worker: ""
+    gitlab_redis_tolerations: []
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     gitlab_redis_extra_objects: []
     # Redis-phase kustomize patches (operator-side customization, default empty)
@@ -371,6 +396,9 @@ all:
       credentialsSecretKey: "{{ gitlab_redis_secret_key_redis_args }}"
       storageClass: "{{ gitlab_redis_storage_class }}"
       storageSize: "{{ gitlab_redis_storage_size }}"
+      resources: "{{ gitlab_redis_resources }}"
+      nodeSelector: "{{ gitlab_redis_node_selector }}"
+      tolerations: "{{ gitlab_redis_tolerations }}"
       extraObjects: "{{ gitlab_redis_extra_objects }}"
     # --- PHASE: install ---
     gitlab_install_helm_timeout: "30m"
