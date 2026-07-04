@@ -328,3 +328,12 @@ REVISION	UPDATED                 	STATUS         	CHART                   	APP V
 # Как проверить IP, который увидит приемни
 `https://api.ipify.org`
 `https://ifconfig.me/`
+
+
+# Postgres, backup + restore
+
+## Backup
+kubectl -n ns-drawapp exec deployment.apps/drawapp-pg-prod-old --   sh -c 'pg_dumpall -U postgres --no-role-passwords --quote-all-identifiers'   > ~/drawapp-pg-dumpall.sql
+
+## restore
+kubectl -n drawapp-prod-old exec -i drawapp-pg-0 --   sh -c 'psql -U postgres -d postgres -v ON_ERROR_STOP=0'   < ~/drawapp-pg-dumpall.sql
