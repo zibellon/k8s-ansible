@@ -10,13 +10,14 @@
 #   ansible-playbook gitlab-install.yaml --tags pre   # only pre (Vault secrets + ESO resources)
 #   ansible-playbook gitlab-install.yaml --tags install
 #   ansible-playbook gitlab-install.yaml --tags post  # only post (Ingress + HAProxy SSH)
+#   ansible-playbook gitlab-install.yaml --tags config-root  # reconcile root password vs Vault (seed/rotate/enforce)
 #
 # Prerequisites:
 #   - Vault must be installed and unsealed
 #   - Vault policies and roles must be synced (... playbook-app/vault-install.yaml --tags vault-cr)
 #   - External Secrets Operator must be installed
 #
-# NOTE: Root password management → gitlab-configure.yaml
+# NOTE: Root password management → this playbook, --tags config-root (Vault = source of truth)
 # =============================================================================
 
 ---
@@ -490,6 +491,16 @@
       run_once: true
       tags: [install]
 
+    - name: "[gitlab-install] Delete initial root password secret (root managed via config-root)"
+      command: >
+        kubectl delete secret gitlab-gitlab-initial-root-password
+        --namespace {{ gitlab_namespace }} --ignore-not-found=true
+      register: _local_gitlab_initial_secret_delete
+      changed_when: "'deleted' in _local_gitlab_initial_secret_delete.stdout"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
     # =========================================================================
     # STEP 7: INSTALL POST CHART (Ingress, HAProxy SSH)
     # =========================================================================
@@ -540,6 +551,14 @@
       tags: [post]
 
     # =========================================================================
+    # STEP 7.5: CONFIGURE ROOT PASSWORD (Vault = source of truth)
+    # =========================================================================
+
+    - name: "[gitlab-config-root] Reconcile root password against Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/gitlab/tasks-gitlab-config-root.yaml"
+      tags: [config-root]
+
+    # =========================================================================
     # STEP 8: VERIFICATION
     # =========================================================================
 
@@ -579,11 +598,12 @@
           - "  PostgreSQL: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_postgresql_creds.vault_path }}"
           - "  Redis: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_redis_creds.vault_path }}"
           - "  S3 storage: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_object_store_connection_config.vault_path }}"
+          - "  Root: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_root_creds.vaultPath }}"
           - ""
           - "GitLab Runner: Installed but NOT registered."
           - "  Register manually via UI or CLI."
           - ""
-          - "Run gitlab-configure.yaml to set root password in Vault."
+          - "Root password: managed via --tags config-root (Vault = source of truth)."
           - "=============================================="
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
