@@ -283,19 +283,15 @@ all:
 
     gitlab_root_secret_key_username: "username"
     gitlab_root_secret_key_password: "password"
+    gitlab_root_secret_key_password_mtime: "passwordMtime"
     # PINNED — GitLab root user фиксирован, менять нельзя
     gitlab_root_username: "root"
-    # never rendered (is_need_eso: false) — body присутствует для консистентности схемы
-    gitlab_secret_root_creds:
-      external_secret_name: "eso-gitlab-root-creds"
-      vault_path: "/gitlab/root/creds"
-      is_need_eso: false
-      body:
-        target:
-          name: "eso-gitlab-root-creds"
-        dataFrom:
-          - extract:
-              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/root/creds"
+    # Root creds — Vault-source-of-truth, управляются ТОЛЬКО через ansible (gitlab-install.yaml --tags config-root).
+    # НЕ ESO-секрет: пароль + passwordMtime живут в Vault (eso_vault_integration_gitlab.kv_engine_path + vaultPath)
+    # и пишутся out-of-band task'ом config-root. passwordMtime — ОБЯЗАТЕЛЬНО, RFC3339; смена = триггер ротации.
+    gitlab_root_creds:
+      passwordMtime: "2026-07-06T00:00:00Z"
+      vaultPath: "/gitlab/root/creds"
 
     eso_vault_integration_gitlab_secrets:
       - "{{ gitlab_secret_postgresql_creds }}"
@@ -303,7 +299,6 @@ all:
       - "{{ gitlab_secret_registry_connection_config }}"
       - "{{ gitlab_secret_object_store_connection_config }}"
       - "{{ gitlab_secret_backup_s3cfg }}"
-      - "{{ gitlab_secret_root_creds }}"
 
     eso_vault_integration_gitlab_secrets_extra: []
 
