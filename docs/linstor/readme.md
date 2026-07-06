@@ -111,6 +111,13 @@ kubectl -n linstor exec -t linstor-satellite.k8s-worker-1-hg4p6 -- drbdsetup sho
 - Удалить PV
   - `kubectl -n linstor exec deploy/linstor-controller -- linstor resource-definition delete <имя_pv>`
 
+## ОТсоединение и присоединение PVC
+`kubectl exec -n linstor linstor-satellite.k8s-worker-1-dkxjh -c linstor-satellite -- drbdadm disconnect pvc-f4c73cfc-793c-4bbe-9766-55d28283df27`
+
+`kubectl exec -n linstor linstor-satellite.k8s-worker-1-dkxjh -c linstor-satellite -- drbdadm connect pvc-f4c73cfc-793c-4bbe-9766-55d28283df27`
+
+`kubectl exec -n linstor linstor-satellite.k8s-worker-1-dkxjh -c linstor-satellite -- timeout 15 drbdsetup events2 pvc-f4c73cfc-793c-4bbe-9766-55d28283df27`
+
 ## CheckSum данных, перед отправкой и на стороне приемника
 - `data-integrity-alg`
 
