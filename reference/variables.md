@@ -71,7 +71,7 @@ eso_vault_integration_<c>:
   kv_engine_path: "eso-secret"
 ```
 
-**Named dict-variables** (`<c>_secret_<logical>`) — one per base secret. Each variable is a full dict with fields matching `secrets-and-eso.md` §2.4 (`external_secret_name`, `vault_path`, `body`, optional `is_need_eso`, `refresh_interval`). Example:
+**Named dict-variables** (`<c>_secret_<logical>`) — one per base secret. Each variable is a full dict with fields matching `secrets-and-eso.md` §2.4 (`external_secret_name`, `vault_path`, `body`, optional `refresh_interval`). Example:
 ```yaml
 zitadel_secret_postgresql_creds:
   external_secret_name: "eso-zitadel-postgresql-creds"
@@ -85,7 +85,7 @@ zitadel_secret_postgresql_creds:
 ```
 These variables serve two purposes: (1) referenced by name in the base `eso_vault_integration_<c>_secrets` array (a list of Jinja-string-references `"{{ <c>_secret_<logical> }}"`), and (2) accessed directly from `*_helm_values` and `<c>-{install,configure}.yaml` playbooks via `<c>_secret_<logical>.body.target.name` and `<c>_secret_<logical>.vault_path`.
 
-**Secrets list** (`eso_vault_integration_<c>_secrets`) and **extension layer** (`eso_vault_integration_<c>_secrets_extra`). Base is a list of Jinja-string-references to named dict-variables (e.g. `- "{{ <c>_secret_<logical> }}"`). `_extra` is a list of full dict-items (operator extension, same format but inline). Inline merge `base + (extra | default([]))` is done at usage sites (`<c>_pre_helm_values.eso.secrets`); store-level gating (`is_need_eso` on the integration object) was removed — only item-level gating via `body.is_need_eso` per-secret remains. For field schema see [`secrets-and-eso.md`](secrets-and-eso.md) §2.4.
+**Secrets list** (`eso_vault_integration_<c>_secrets`) and **extension layer** (`eso_vault_integration_<c>_secrets_extra`). Base is a list of Jinja-string-references to named dict-variables (e.g. `- "{{ <c>_secret_<logical> }}"`). `_extra` is a list of full dict-items (operator extension, same format but inline). Inline merge `base + (extra | default([]))` is done at usage sites (`<c>_pre_helm_values.eso.secrets`). For field schema see [`secrets-and-eso.md`](secrets-and-eso.md) §2.4.
 
 ### 1.5 The `*_extra` concat-merge pattern
 

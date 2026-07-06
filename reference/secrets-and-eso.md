@@ -103,7 +103,6 @@ Also lives in `hosts-vars/<c>.yaml`. Each **base secret** is a separate top-leve
 | `external_secret_name` | yes | `metadata.name` of the `ExternalSecret` CR. Conventionally matches `body.target.name`. |
 | `vault_path` | yes | Path in Vault (without `kv_engine_path` prefix). Used directly by playbooks via `<c>_secret_<logical>.vault_path` for `tasks-vault-put`/`tasks-vault-get`. |
 | `body` | yes | Full `spec` content starting from `target:`. Passed to the chart as `toYaml $secret.body`. Contains `target.name`, and either `dataFrom` (simple extract) or `data` (field remapping) or `target.template.*` (ESO template rendering). |
-| `is_need_eso` | no | If `false`, the chart skips this entry entirely. |
 | `refresh_interval` | no | Overrides the chart-level default from `esoResourcesConfig.externalSecretRefreshInterval`. |
 
 **Minimal flat example (simple `dataFrom.extract`):**
@@ -288,7 +287,6 @@ All 10 `charts/<c>/pre/templates/eso-external-secret.yaml` files are now identic
 # EXTERNAL SECRETS FOR <COMPONENT> (from Vault)
 # =============================================================================
 {{- range $secret := .Values.eso.secrets }}
-{{- if and (not (eq $.Values.eso.isNeedEso false)) (not (eq $secret.is_need_eso false)) }}
 ---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -303,14 +301,11 @@ spec:
     name: {{ $.Values.eso.secretStoreName }}
 {{ toYaml $secret.body | indent 2 }}
 {{- end }}
-{{- end }}
 ```
 
 The chart no longer contains any knowledge of `type`, data shapes, or ArgoCD labels. All of that is expressed in `body` within the inventory.
 
 **Key properties:**
-- `$.Values.eso.isNeedEso false` — gates the entire component. If the integration object has `is_need_eso: false`, no ExternalSecrets are rendered.
-- `$secret.is_need_eso false` — gates a single item (a base secret defined for schema consistency but not rendered as an ExternalSecret).
 - `$secret.refresh_interval` — per-item override; falls back to `esoResourcesConfig.externalSecretRefreshInterval` from values.
 - `toYaml $secret.body | indent 2` — dumps the entire `body` dict as YAML indented under `spec:`. The `body` must contain at minimum a `target.name` and either `dataFrom` or `data`.
 
@@ -348,7 +343,7 @@ Idempotency: if `tasks-vault-get.yaml` reports the Vault path already exists, sk
 
 Checklist — keep strictly in order.
 
-1. **Add named dict-variables** in `hosts-vars/<c>.yaml` — one per base secret. Each variable is a full dict with fields `external_secret_name`, `vault_path`, `body` (and optional `is_need_eso`, `refresh_interval`). Example (see §2.4 for full schema):
+1. **Add named dict-variables** in `hosts-vars/<c>.yaml` — one per base secret. Each variable is a full dict with fields `external_secret_name`, `vault_path`, `body` (and optional `refresh_interval`). Example (see §2.4 for full schema):
    ```yaml
    <c>_secret_admin:
      external_secret_name: "eso-<c>-admin"
@@ -368,7 +363,6 @@ Checklist — keep strictly in order.
      role_name: "eso-<c>"
      secret_store_name: "<c>-eso-secret-store"
      kv_engine_path: "eso-secret"
-     is_need_eso: true
    ```
 
 3. **Define the base secrets list** in `hosts-vars/<c>.yaml` as an array of Jinja-string-references to the named dict-variables from Step 1:

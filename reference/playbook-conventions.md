@@ -121,7 +121,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 12.1 Add `eso_vault_integration_<c>` object in the component's vars file (see `secrets-and-eso.md` for schema).
 12.2 Include two sequential pre-check task blocks (tag `[always]`): `tasks-vault-config-verify.yaml` (only `dto_label_name`) and `tasks-eso-verify.yaml` (`dto_label_name`, `dto_eso_secrets_list` = inline merge `eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([]))`, `dto_eso_integration_object`, `dto_namespace`). See [`reusable-tasks.md`](reusable-tasks.md) §3.1 for the canonical template.
 12.3 In the `pre/` chart, render `ServiceAccount` and `SecretStore`. Copy the canonical `eso-external-secret.yaml` template from any existing component — it is identical across all 8 and uses `toYaml $secret.body | indent 2` to emit whatever body is defined in inventory.
-12.4 If the component installs before Vault exists (bootstrap-time), gate ESO resources with `<c>_is_need_eso: false` in the chart templates and seed the secret via `tasks-vault-put.yaml` from a `-configure` playbook afterwards.
+12.4 For a credential that must live in Vault but must NOT be materialized as a K8s Secret via ESO (e.g. a root password managed out-of-band), omit it from `eso_vault_integration_<c>_secrets` entirely — the chart renders ExternalSecrets only for listed entries, so no chart-side gate is needed. Seed and reconcile it via `tasks-vault-put.yaml` from a dedicated tagged step in the install playbook (pattern: gitlab `--tags config-root`, see [`components.md`](components.md) §11).
 
 ## 13. ACME / cert-manager Integration
 

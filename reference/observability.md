@@ -77,7 +77,6 @@ eso_vault_integration_mon_system:
   role_name: "mon-system.eso-main"
   secret_store_name: "eso-main.vault"
   kv_engine_path: "eso-secret"
-  is_need_eso: true
 ```
 
 The grafana phase of `mon-system-install.yaml` runs the full Vault/ESO lifecycle before the Helm install: lookup ExternalSecret → vault-get current password → generate-if-missing → vault-put → eso-force-sync → wait-secret. The Grafana Deployment then mounts the K8s Secret `eso-mon-system-grafana-admin-creds` (rendered by the ExternalSecret in `mon-system/pre/`) for `GF_SECURITY_ADMIN_USER` + `GF_SECURITY_ADMIN_PASSWORD` env vars.
