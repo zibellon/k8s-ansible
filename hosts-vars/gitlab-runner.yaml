@@ -112,8 +112,8 @@ all:
         component: "{{ gitlab_runner_job_label_component }}"
       extraObjects: "{{ gitlab_runner_pre_extra_objects }}"
     # --- PHASE: install ---
-    gitlab_runner_install_helm_timeout: "5m"
-    gitlab_runner_rollout_timeout: "180s"
+    gitlab_runner_install_helm_timeout: "10m"
+    gitlab_runner_rollout_timeout: "300s"
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     gitlab_runner_helm_is_oci: false
     gitlab_runner_helm_url: "https://charts.gitlab.io"
@@ -190,6 +190,13 @@ all:
       app.kubernetes.io/component: runner
       app.kubernetes.io/part-of: gitlab
       app.kubernetes.io/managed-by: helm
+    gitlab_runner_helm_values_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2048Mi"
     # ---------
     # Helm chart values
     gitlab_runner_helm_values:
@@ -217,12 +224,7 @@ all:
         capabilities:
           drop:
             - ALL
-      resources:
-        requests:
-          memory: "256Mi"
-          cpu: "100m"
-        limits:
-          memory: "512Mi"
+      resources: "{{ gitlab_runner_helm_values_resources }}"
       metrics:
         enabled: true
         port: 9252
