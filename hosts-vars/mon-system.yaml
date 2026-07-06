@@ -328,7 +328,13 @@ all:
     # Prometheus hot knobs (SCALE / capacity)
     mon_system_prometheus_spec_replica_count: 1
     mon_system_prometheus_spec_retention: "60d"
-    mon_system_prometheus_spec_storage_size: "4Gi"
+    # Size-based retention cap — жёсткий предохранитель от ENOSPC. Prometheus удаляет
+    # старейшие блоки, когда суммарный размер (блоки + WAL + head) подходит к лимиту.
+    # retention (время) и retentionSize (байты) — что сработает раньше. Единицы —
+    # Prometheus-байты, ОБЯЗАТЕЛЕН суффикс B ("4GiB", НЕ "4Gi" — CRD-паттерн отвергнет).
+    # Правило: держать < storage_size с запасом на WAL-пики + scratch компакции.
+    mon_system_prometheus_spec_retention_size: "4GiB"
+    mon_system_prometheus_spec_storage_size: "6Gi"
     mon_system_prometheus_spec_storage_class: "lnstr-major-local"
     # ---------
     mon_system_prometheus_spec:
@@ -350,6 +356,7 @@ all:
       logLevel: info
       logFormat: json
       retention: "{{ mon_system_prometheus_spec_retention }}"
+      retentionSize: "{{ mon_system_prometheus_spec_retention_size }}"
       walCompression: true
       enableAdminAPI: false
       enableOTLPReceiver: false
