@@ -1,0 +1,143 @@
+# =============================================================================
+# GitLab root-password — config-root reconcile (Vault = source of truth)
+# =============================================================================
+# Reconciles the GitLab root user's password against Vault, mirroring the
+# argocd passwordMtime rotation model. Vault path (kv_engine_path + vaultPath)
+# holds {username, password, passwordMtime}. Three actions:
+#   seed    — Vault has no password         -> generate, set in GitLab, write Vault
+#   rotate  — desired passwordMtime differs  -> generate, set in GitLab, write Vault
+#   enforce — passwordMtime matches          -> validate; reset GitLab only on drift
+#
+# passwordMtime (hosts-vars gitlab_root_creds.passwordMtime) is the rotation
+# trigger: bump it to force a new password. Mandatory, RFC3339.
+#
+# Included by gitlab-install.yaml under tags: [config-root]. Inner tasks are
+# tagged [always] (argocd accounts-sync convention) so they run when the
+# config-root-tagged include is reached (--tags config-root or a full run) and
+# are skipped entirely under other phase tags (--tags install/pre/post never
+# touch the root password).
+#
+# Required vars (hosts-vars/gitlab.yaml + install always-preamble):
+#   gitlab_root_creds.{passwordMtime, vaultPath}
+#   gitlab_root_username
+#   gitlab_root_secret_key_{username, password, password_mtime}
+#   eso_vault_integration_gitlab.kv_engine_path, gitlab_namespace
+#   master_manager_fact (set by tasks-pre-check in the install preamble)
+# =============================================================================
+
+- name: "[gitlab-config-root] Assert passwordMtime is set and RFC3339"
+  assert:
+    that:
+      - "gitlab_root_creds.passwordMtime is defined"
+      - "(gitlab_root_creds.passwordMtime | default('') | string | length) > 0"
+      - "(gitlab_root_creds.passwordMtime | default('') | string) is match('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$')"
+    fail_msg: "gitlab_root_creds.passwordMtime is REQUIRED and must be RFC3339 (e.g. 2026-07-06T00:00:00Z). Got: {{ gitlab_root_creds.passwordMtime | default('<undefined>') }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[gitlab-config-root] Read current root creds from Vault"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get-all.yaml"
+  vars:
+    dto_label_name: "gitlab-config-root"
+    dto_vault_get_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_root_creds.vaultPath }}"
+    dto_vault_get_res_fact_name: "_local_gitlab_root_vault"
+    dto_vault_get_res_exists_fact_name: "_local_gitlab_root_vault_exists"
+  tags: [always]
+
+- name: "[gitlab-config-root] Extract Vault password + mtime"
+  set_fact:
+    _local_root_vault_password: "{{ _local_gitlab_root_vault[gitlab_root_secret_key_password] | default('') }}"
+    _local_root_vault_mtime: "{{ _local_gitlab_root_vault[gitlab_root_secret_key_password_mtime] | default('') }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[gitlab-config-root] Determine reconcile action (seed/rotate/enforce)"
+  set_fact:
+    _local_root_action: >-
+      {{ 'seed' if (_local_root_vault_password | length == 0)
+         else ('rotate' if (_local_root_vault_mtime != (gitlab_root_creds.passwordMtime | string))
+               else 'enforce') }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[gitlab-config-root] Generate new root password (seed/rotate)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+  vars:
+    dto_label_name: "gitlab-config-root"
+    dto_generate_fact_name: "_local_root_new_password"
+  when: _local_root_action in ['seed', 'rotate']
+  tags: [always]
+
+- name: "[gitlab-config-root] Get GitLab toolbox pod name"
+  command: >
+    kubectl get pods -n {{ gitlab_namespace }} -l app=toolbox
+    -o jsonpath='{.items[0].metadata.name}'
+  register: _local_toolbox_pod
+  changed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[gitlab-config-root] Validate Vault password against GitLab (enforce branch)"
+  shell: |
+    kubectl exec -n {{ gitlab_namespace }} {{ _local_toolbox_pod.stdout }} -- \
+      gitlab-rails runner \
+      "puts User.find_by_username('{{ gitlab_root_username }}').valid_password?('{{ _local_root_vault_password }}')"
+  register: _local_enforce_valid
+  when: _local_root_action == 'enforce'
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[gitlab-config-root] Resolve target password + whether to (re)set"
+  set_fact:
+    _local_root_apply_password: >-
+      {{ (_local_root_new_password | default('')) if (_local_root_action in ['seed', 'rotate'])
+         else _local_root_vault_password }}
+    _local_root_do_set: >-
+      {{ (_local_root_action in ['seed', 'rotate'])
+         or ((_local_root_action == 'enforce')
+             and ((_local_enforce_valid.stdout | default('') | trim) != 'true')) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[gitlab-config-root] Set GitLab root password (Vault = source of truth)"
+  shell: |
+    kubectl exec -n {{ gitlab_namespace }} {{ _local_toolbox_pod.stdout }} -- \
+      gitlab-rails runner \
+      "user = User.find_by_username('{{ gitlab_root_username }}'); user.password = '{{ _local_root_apply_password }}'; user.password_confirmation = '{{ _local_root_apply_password }}'; user.password_automatically_set = false; user.save!"
+  when: _local_root_do_set | bool
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[gitlab-config-root] Persist root creds to Vault (seed/rotate)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+  vars:
+    dto_label_name: "gitlab-config-root"
+    dto_vault_put_path: "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_root_creds.vaultPath }}"
+    dto_vault_put_data: >-
+      {{ {
+           gitlab_root_secret_key_username: gitlab_root_username,
+           gitlab_root_secret_key_password: (_local_root_new_password | default('')),
+           gitlab_root_secret_key_password_mtime: (gitlab_root_creds.passwordMtime | string)
+         } }}
+  when: _local_root_action in ['seed', 'rotate']
+  tags: [always]
+
+- name: "[gitlab-config-root] Summary"
+  debug:
+    msg:
+      - "GitLab root config-root: action = {{ _local_root_action }}"
+      - "Result: {{ 'generated + set in GitLab + written to Vault' if _local_root_action in ['seed', 'rotate'] else ('drift detected - re-set from Vault' if (_local_root_do_set | bool) else 'in sync - no change') }}"
+      - "Vault path: {{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_root_creds.vaultPath }}"
+      - "passwordMtime (desired): {{ gitlab_root_creds.passwordMtime }}"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
