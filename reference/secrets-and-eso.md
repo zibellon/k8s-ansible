@@ -201,7 +201,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - Unique `name` in merged roles.
 - Referential integrity: each role's `policies` references existing policy.
 
-**Callers:** `vault-install.yaml` + 10 ESO-install + 1 ESO-configure playbook'ов + `tests/helm-validate.yaml` (13 callers total).
+**Callers:** `vault-install.yaml` + 10 ESO-install playbook'ов + `tests/helm-validate.yaml` (12 callers total).
 
 ### 3.2 `tasks-eso-verify.yaml`
 
@@ -221,7 +221,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - C. ESO uniqueness: `external_secret_name`, `body.target.name`.
 - D. Policy path coverage scoped к role's policies: каждый Vault path (из `body.dataFrom[].extract.key` и `body.data[].remoteRef.key`) должен быть substring какого-либо path-prefix из policies этой role (после stripping `/*`).
 
-**Callers:** 11 ESO-integrated install/configure playbook'ов (10 install + 1 configure). НЕ вызывается из `tests/helm-validate.yaml`.
+**Callers:** 10 ESO-integrated install playbook'ов. НЕ вызывается из `tests/helm-validate.yaml`.
 
 ---
 
@@ -313,17 +313,18 @@ The chart no longer contains any knowledge of `type`, data shapes, or ArgoCD lab
 
 ## 6. Secret Flow — Seed vs. Rotation
 
-### 6.1 First-seed (example: `gitlab` root password at install time)
+### 6.1 First-seed (example: `gitlab` Postgres password at install time)
 
 ```
-1. <c>-install.yaml calls tasks-generate-secret.yaml  → new_password fact
-2. tasks-vault-put.yaml: vault kv put eso-secret/gitlab/gitlab-root password=<new_password>
-   tasks-eso-force-sync.yaml: kubectl annotate externalsecret gitlab-root force-sync=<epoch>
-3. Main gitlab chart installs; pods mount the now-present Secret
-4. (optional) verify: log in to GitLab with the new password from Vault
+1. gitlab-install.yaml calls tasks-generate-secret.yaml  → new_password fact
+   (only if tasks-vault-get.yaml reports the Vault path absent)
+2. tasks-vault-put.yaml: vault kv put eso-secret/gitlab/postgresql/creds username=gitlab password=<new_password>
+   tasks-eso-force-sync.yaml: kubectl annotate externalsecret eso-gitlab-postgresql-creds force-sync=<epoch>
+   tasks-wait-secret.yaml: wait for the materialized K8s Secret
+3. PostgreSQL sub-release installs; pods mount the now-present Secret
 ```
 
-Idempotency: if `tasks-vault-get.yaml` reports the Vault path already exists, skip step 1–2.
+Idempotency: if `tasks-vault-get.yaml` reports the Vault path already exists, skip steps 1–2.
 
 ### 6.2 Rotation (example: `gitlab` Postgres password)
 
@@ -453,7 +454,7 @@ All under `eso-secret/` KV engine.
 | `traefik` | `eso-secret/traefik/*` | user-defined (TLS, basic-auth via `_extra`) |
 | `haproxy` | `eso-secret/haproxy/*` | user-defined |
 | `longhorn` | `eso-secret/longhorn/*` | S3 backup creds (access key, secret key, endpoint) |
-| `gitlab` | `eso-secret/gitlab/*` | `postgresql/creds`, `redis/creds`, `s3-storage` (single path, fields `username`/`accessKey`/`secretKey` — provisioned by SeaweedFS sync OR manual `vault kv put`), `gitlab-root` |
+| `gitlab` | `eso-secret/gitlab/*` | `postgresql/creds`, `redis/creds`, `s3-storage` (single path, fields `username`/`accessKey`/`secretKey` — provisioned by SeaweedFS sync OR manual `vault kv put`), `root/creds` (username/password/passwordMtime — Vault-only, NOT synced via ESO; managed by `gitlab-install.yaml --tags config-root`) |
 | `gitlab-runner` | `eso-secret/gitlab-runner/*` | registration token (`/token`), `s3-storage` (single path для runner cache, same fields format as gitlab) |
 | `zitadel` | `eso-secret/zitadel/*` | `postgresql`, `masterkey` |
 | `argocd` | `eso-secret/argocd/*` (+ per-account operator-configurable Vault paths via `argocd_local_accounts[].vault_paths`, fixed keys `username`/`password` — distribute via `tasks-argocd-accounts-distribute.yaml`) | `accounts/creds` — ONE FIELD PER ACCOUNT (field name = account name), value `{plaintext, hash, passwordMtime}` (nested) incl. the custom admin, written by `tasks-argocd-accounts-sync.yaml` (NOT via ESO); git-ops repo credentials (pattern + direct) under `eso-secret/argocd/git-ops/*` via `_extra` |

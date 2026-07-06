@@ -158,7 +158,7 @@ All three use `serial: 1` internally to preserve quorum. Safe to run on a health
 | Rotate Vault root + unseal shares | `ansible-playbook ... playbook-app/vault-rotate.yaml` | [`secrets-and-eso.md`](secrets-and-eso.md) §8.1 |
 | Force ESO re-sync (all / single) | `ansible-playbook ... playbook-app/eso-force-sync.yaml` | [`reusable-tasks.md`](reusable-tasks.md) §1.11 |
 | Rotate `argocd` local-account password | bump that account's `passwordMtime` in `argocd_local_accounts`, then `ansible-playbook ... playbook-app/argocd-install.yaml --tags accounts-sync` | [`secrets-and-eso.md`](secrets-and-eso.md) §8.3 |
-| Rotate `gitlab` creds | `ansible-playbook ... playbook-app/gitlab-configure.yaml` | same |
+| Rotate `gitlab` root password | bump `gitlab_root_creds.passwordMtime`, then `ansible-playbook ... playbook-app/gitlab-install.yaml --tags config-root` | [`components.md`](components.md) §11 |
 
 ### 4.4 Component restart
 

@@ -108,7 +108,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
   - Unique `name` в merged `vault_auth_kubernetes_roles + (vault_auth_kubernetes_roles_extra | default([]))`.
   - Referential integrity: каждая role в merged_roles → каждая policy в `role.policies` существует в merged_policies (fail с указанием missing policy + role name).
 - **Output.** `_local_error_item_list` (local throwaway fact — `list[str]` нарушений; `[]` = OK).
-- **Callers.** `vault-install.yaml` + 9 ESO-install + 2 ESO-configure playbook'ов + `tests/helm-validate.yaml` (13 callers total) — вызывают **первым**, перед `tasks-eso-verify.yaml`.
+- **Callers.** `vault-install.yaml` + 10 ESO-install playbook'ов + `tests/helm-validate.yaml` (12 callers total) — вызывают **первым**, перед `tasks-eso-verify.yaml`.
 - **Idempotent.** Read-only.
 
 ### 1.8b `tasks-eso-verify.yaml`
@@ -126,7 +126,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
   - **C. ESO uniqueness:** `external_secret_name` + `body.target.name` unique в `dto_eso_secrets_list`.
   - **D. Policy path coverage (scoped к role's policies):** каждый item Vault path (`body.dataFrom[].extract.key` + `body.data[].remoteRef.key`) должен быть substring хотя бы одного path-prefix из policies этой role (после stripping `/*`).
 - **Output.** `_local_error_item_list` (local throwaway fact — `list[str]` нарушений; `[]` = OK).
-- **Callers.** 11 ESO-integrated install/configure playbook'ов (9 install + 2 configure). NOT called from `tests/helm-validate.yaml` (test driver рендерит upstream charts — нет component scope).
+- **Callers.** 10 ESO-integrated install playbook'ов. NOT called from `tests/helm-validate.yaml` (test driver рендерит upstream charts — нет component scope).
 - **Idempotent.** Read-only.
 
 ### 1.10 `tasks-k8s-list-helm.yaml`
@@ -227,7 +227,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Output (runtime facts, set on all hosts).**
   - `{{ dto_secret_res_fact_name }}` — decoded string value (`''` if missing).
   - `{{ dto_secret_res_exists_fact_name }}` — bool (true only if field is non-empty).
-- **Callers.** `gitlab-configure.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `vault-install.yaml`.
+- **Callers.** `vault-install.yaml`.
 - **Idempotent.** Read-only; safe to call repeatedly.
 
 ### 1.18 `tasks-k8s-list-pods.yaml`
