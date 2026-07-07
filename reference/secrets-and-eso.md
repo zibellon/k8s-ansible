@@ -331,7 +331,7 @@ Idempotency: if `tasks-vault-get.yaml` reports the Vault path already exists, sk
 ```
 1. tasks-generate-secret.yaml             → new_pg_password
 2. (optional) write to /tmp on DB host, ALTER USER in running postgres
-3. tasks-vault-put.yaml: vault kv put eso-secret/gitlab/postgresql password=<new_pg_password>
+3. tasks-vault-put.yaml: vault kv put eso-secret/gitlab/postgresql/creds username=gitlab password=<new_pg_password>
    tasks-eso-force-sync.yaml: annotate
 4. (future) Reloader restarts pods that mount the Secret
    — until Reloader is installed, manually run `gitlab-restart.yaml`
