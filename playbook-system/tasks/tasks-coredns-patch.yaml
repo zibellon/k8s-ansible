@@ -24,9 +24,15 @@
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
   block:
-    - name: Write CoreDNS patch file to /tmp
+    - name: Ensure /opt/yaml directory exists
+      file:
+        path: /opt/yaml
+        state: directory
+        mode: '0755'
+
+    - name: Write CoreDNS patch file to /opt/yaml
       copy:
-        dest: /tmp/coredns-deployment-patch.yaml
+        dest: /opt/yaml/coredns-deployment-patch.yaml
         content: "{{ coredns_deployment_patch | to_nice_yaml }}"
         mode: '0600'
 
@@ -40,6 +46,6 @@
           - -n
           - kube-system
           - --patch-file
-          - /tmp/coredns-deployment-patch.yaml
+          - /opt/yaml/coredns-deployment-patch.yaml
       register: coredns_patch_result
       changed_when: "'(no change)' not in coredns_patch_result.stdout"

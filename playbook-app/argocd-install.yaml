@@ -296,9 +296,19 @@
     # STEP 5: ARGOCD/GITOPS (AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications)
     # =========================================================================
 
+    - name: "[argocd-gitops-default-project] Ensure /opt/yaml directory exists"
+      file:
+        path: /opt/yaml
+        state: directory
+        mode: "0755"
+      when: argocd_gitops_default_project_update | length > 0
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [gitops]
+
     - name: "[argocd-gitops-default-project] Render default-project lockdown manifest"
       copy:
-        dest: "/tmp/argocd-default-appproject.yaml"
+        dest: "/opt/yaml/argocd-default-appproject.yaml"
         mode: "0644"
         content: "{{ argocd_gitops_default_project_update | to_nice_yaml }}"
       when: argocd_gitops_default_project_update | length > 0
@@ -307,7 +317,7 @@
       tags: [gitops]
 
     - name: "[argocd-gitops-default-project] Apply default-project lockdown (ArgoCD-owned, raw apply)"
-      command: kubectl apply -f /tmp/argocd-default-appproject.yaml
+      command: kubectl apply -f /opt/yaml/argocd-default-appproject.yaml
       when: argocd_gitops_default_project_update | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
