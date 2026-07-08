@@ -488,6 +488,16 @@
 ## - `gitaly` - StatefulSet, количество реплик определяется через global.gitaly.internal.names. По дефолту = 1. RollingUpdate + StatefulSet = убить, а потом создать
 ##   - Но если их больше чем 1 - там какая-то возня начинается с Praefect (репликация git-данных между узлами)
 ## ---
+## Важно_2: про root user password
+## - сразу после установки GitLab - создается k8s.secret = `gitlab-initial-root-password`. Это создает сам HELM-CHART
+## - этот пароль сразу же удаляется. Получить доступ к gitlab = нельзя никак. На текущий момент
+## - запускает tag = `rppt-config`. Он проверяет - есть ли пароль для root в VAULT
+## - если в VAULT нет пароля или его passwordMTume !== ansibleConfig.gitlab.passwordMTime = генерируется новый пароль
+## - потом этот пароль проверяется в GitLab = подходит или нет
+## - Если не подходит, то пароль в GitLab обновляется на этот пароль
+## - Если root user, поменяет пароль в Gitlab-UI = то при следующем прогоне ansible = пароль сбросится на тот, который в VAULT
+## То есть правило: Пароль root-user, управляется полностью через ansible
+## ---
 ## `--tags pre, postgresql, redis, minio, install, post`
 ## ---
 ## 
