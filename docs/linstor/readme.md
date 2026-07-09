@@ -167,3 +167,41 @@ kubectl -n linstor exec deploy/linstor-controller -- \
 При обнаружении расхождения DRBD логирует в dmesg номера блоков, и можно запустить drbdadm disconnect/connect чтобы re-sync проблемные блоки.
 
 Рекомендация: ставь оба — data-integrity-alg crc32c + verify-alg crc32c, и periodic verify раз в неделю/месяц через cron внутри кластера.
+
+# Пока-что тут, но не уверен
+
+## Все работает стабильно и исправно. 1 control-plane + 5 worker
+## Потом случается сбой = 4 worker выходят из строя. потом 2 из них возвращаются (минут через 10)
+## потом падает control-plane и последгний worker
+## Потом пдают все сервера вообще
+## спустя минут 40 - этот сбой заканчивается, и все сервера восстаналиваются и работают в штатном режиме
+
+## НО = некоторые поды не запустились. Pod, у которых есть PVC (replica-2, Protocol-C)
+
+## postgres зависает в состояни - ContainerCreating (например)
+
+## Заходим в его decribe и видим в events
+
+  Warning  FailedMount  6s (x7 over 12m)  kubelet            MountVolume.WaitForAttach failed for volume "pvc-59c8a195-e1f1-40e8-8116-c2604cd6c83e" : volume pvc-59c8a195-e1f1-40e8-8116-c2604cd6c83e has GET error for volume attachment csi-ca090d3c530aa38deeb179ab275c7f928f898251192e88e0f12a7e0ab98b5082: volumeattachments.storage.k8s.io "csi-ca090d3c530aa38deeb179ab275c7f928f898251192e88e0f12a7e0ab98b5082" is forbidden: User "system:node:k8s-worker-2" cannot get resource "volumeattachments" in API group "storage.k8s.io" at the cluster scope: no relationship found between node 'k8s-worker-2' and this object
+
+## Идем в kube-controller-manager и смотрим логи
+
+kubectl -n kube-system logs kube-controller-manager-k8s-manager-1 --tail=400 \
+  | grep -iE "attach|pvc-59c8a195|vault-data|desiredState|csinode|csidriver|informer|sync|leaderelection|fail|error" \
+  | tail -80
+
+## Если видим такое добро +-, это завис КЭШ на api-server и его надо сбросить
+
+E0708 23:10:44.137700       1 operation_generator.go:176] VerifyVolumesAreAttached.GenerateVolumesAreAttachedFunc: nil spec for volume kubernetes.io/csi/linstor.csi.linbit.com^pvc-59c8a195-e1f1-40e8-8116-c2604cd6c83e
+
+E0708 23:02:04.746957       1 stateful_set.go:509] "Error syncing StatefulSet, requeuing" err="read version: 7904338 is not as new as written version: 7904340 for group resource statefulsets.apps" logger="UnhandledError" key="vault-warden/vault-warden-pg"
+
+## перезапуск kube-api + kube-controller-manager
+
+sudo mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/kube-apiserver.yaml
+sleep 25
+sudo mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+
+sudo mv /etc/kubernetes/manifests/kube-controller-manager.yaml /tmp/kube-controller-manager.yaml
+sleep 15
+sudo mv /tmp/kube-controller-manager.yaml /etc/kubernetes/manifests/
