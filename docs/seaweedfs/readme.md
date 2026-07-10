@@ -96,3 +96,59 @@ helm --wait / tasks-wait-rollout ждут готовности всего Statef
 Правило: replicas ≤ числа нод, которые матчит nodeSelector. 5 worker'ов → replicas: 5. 3 manager'а → replicas: 3.
 
 (Если отключить anti-affinity — affinity: "" — то 10 pod'ов упакуются по 2 на ноду → 2 volume-сервера на одном физическом диске = конкуренция за I/O + падение ноды убивает сразу 2 «реплики». Для хранилища так делать не надо.)
+
+# Сжать volumes
+
+# 1. dry-run — посмотреть план
+fs.mergeVolumes -collection=vikunja-files
+# 2. применить перекладку
+fs.mergeVolumes -collection=vikunja-files -apply
+# 3. опустошённые source-volume компактнуть и снять
+volume.vacuum -garbageThreshold=0.01
+lock
+volume.deleteEmpty -quietFor=1h -apply
+unlock
+
+# вывод информации
+kubectl -n seaweedfs exec -i seaweedfs-master-0 -- weed shell <<'EOF'
+collection.list
+volume.list                           
+EOF
+
+# Слияние volumes (перенос файлов ф один целевой volume)
+kubectl -n seaweedfs exec -i seaweedfs-master-0 -- weed shell <<'EOF'
+fs.mergeVolumes -collection=gitlab-artifacts -apply
+collection.list
+EOF
+
+# Сжатие volumes
+kubectl -n seaweedfs exec -i seaweedfs-master-0 -- weed shell <<'EOF'
+lock
+volume.vacuum -collection=gitlab-artifacts -garbageThreshold=0.01
+unlock
+volume.list -collectionPattern gitlab-artifacts
+EOF
+
+# Удаление лишних volumes
+kubectl -n seaweedfs exec -i seaweedfs-master-0 -- weed shell <<'EOF'
+lock
+volume.deleteEmpty -quietFor=1m -apply
+unlock
+collection.list
+EOF
+
+# Раскрываем Erause_Coding -> replicated
+kubectl -n seaweedfs exec -i seaweedfs-master-0 -- weed shell <<'EOF'
+lock
+ec.decode -collection=loki-logs
+unlock
+volume.list -collectionPattern loki-logs
+EOF
+
+# Восстановление репликации (Если слетели числа, 001)
+kubectl -n seaweedfs exec -i seaweedfs-master-0 -- weed shell <<'EOF'
+lock
+volume.fix.replication -collectionPattern=loki-logs -apply
+unlock
+volume.list -collectionPattern loki-logs
+EOF
