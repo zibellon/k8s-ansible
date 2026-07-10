@@ -282,8 +282,9 @@ all:
     #   A. DELETE стейл buckets (filer не в target): 's3.bucket.delete -name=<n>'.
     #   B. CREATE new buckets (target не в filer): 's3.bucket.create -name=<n> -owner=<owner>'.
     #   C. fs.configure для new buckets: '-replication=<r> -rack=<rk> -dataCenter=<dc> -apply' (все три всегда).
-    #   D. QUOTA upsert (target с quota_size, чья квота ≠ filer — diff vs s3.bucket.list quota:): 's3.bucket.quota -op=set -sizeMB=<X>' (unchanged скипаются).
-    #   E. QUOTA delete (target без quota_size, у кого в filer квота ЕСТЬ): 's3.bucket.quota -op=remove' (unlimited; уже-без-квоты скипаются).
+    #   D. VOLUME-GROWTH upsert (target, чей volumeGrowthCount ≠ filer — ВКЛЮЧАЯ новые: live 0 ≠ target): full-field fs.configure re-apply '-replication=<r> -rack=<rk> -dataCenter=<dc> -volumeGrowthCount=<N> -apply' (все поля обязательны — fs.configure перезаписывает локацию целиком; unchanged скипаются).
+    #   E. QUOTA upsert (target с quota_size, чья квота ≠ filer — diff vs s3.bucket.list quota:): 's3.bucket.quota -op=set -sizeMB=<X>' (unchanged скипаются).
+    #   F. QUOTA delete (target без quota_size, у кого в filer квота ЕСТЬ): 's3.bucket.quota -op=remove' (unlimited; уже-без-квоты скипаются).
     #
     # NOTE про bucket delete: в SeaweedFS shell command 's3.bucket.delete' нет
     # флага -force. Команда сама по себе делает hard delete — CollectionDelete
@@ -316,6 +317,14 @@ all:
     #                ВНИМАНИЕ при rack-преференсе: используй формат 00Z (реплики в том же
     #                тире, e.g. '001'), НЕ 0Y0 ('010') — иначе копия форсится в другой тир,
     #                ломая rack-преференс. Лимиты: workers до '004' (5 нод), managers до '002' (3).
+    #   volumeGrowthCount: REQUIRED положительное целое — сколько ЛОГИЧЕСКИХ volume SeaweedFS
+    #                создаёт за один grow-event для этого бакета (collection). Единственное
+    #                MUTABLE-поле бакета: reconcile'ится Phase D через fs.configure (drift
+    #                target vs filer → full-field re-apply). Должен ровно делиться на copy-count
+    #                репликации (= 1 + сумма 3 цифр replication; для '001' = 2) — та же проверка,
+    #                что в самом fs.configure. Для '001' → чётный, минимум 2 (2 логич. × 2 реплики
+    #                = 4 слота вместо дефолтных 6×2=12 почти пустых). Больше vGC = больше запас
+    #                пустых слотов на bucket.
     #   IMPORTANT — owner, replication, rack, dataCenter immutable post-creation:
     #                Change post-create технически работает (fs.configure applies к новым writes),
     #                НО existing data остаётся в old configuration → data fragmentation.
@@ -338,6 +347,7 @@ all:
     #   - name: bucket-1
     #     owner: "alice"       # SeaweedFS identity (REQUIRED, IMMUTABLE), access через её managed policy
     #     replication: "001"   # +1 копия в том же тире
+    #     volumeGrowthCount: 2 # REQUIRED, MUTABLE; кратно copy-count ('001'→2)
     #     rack: "workers-1"    # preferred tier (soft), IMMUTABLE
     #     dataCenter: "dc-1"   # preferred DC (soft), IMMUTABLE
     #     quota_size: "100GiB"
@@ -355,32 +365,38 @@ all:
     #   - name: gitlab-registry
     #     owner: "gitlab"
     #     replication: "001"
+    #     volumeGrowthCount: 2
     #     rack: "workers-1"
     #     dataCenter: "dc-1"
     #   - name: gitlab-artifacts
     #     owner: "gitlab"
     #     replication: "001"
+    #     volumeGrowthCount: 2
     #     rack: "workers-1"
     #     dataCenter: "dc-1"
     #   - name: gitlab-uploads
     #     owner: "gitlab"
     #     replication: "001"
+    #     volumeGrowthCount: 2
     #     rack: "workers-1"
     #     dataCenter: "dc-1"
     #   - name: gitlab-packages
     #     owner: "gitlab"
     #     replication: "001"
+    #     volumeGrowthCount: 2
     #     rack: "workers-1"
     #     dataCenter: "dc-1"
     #   - name: gitlab-backups
     #     owner: "gitlab"
     #     replication: "001"
+    #     volumeGrowthCount: 2
     #     rack: "workers-1"
     #     dataCenter: "dc-1"
     #   # --- GitLab-Runner cache (1) — owner 'gitlab-runner' (managed policy gitlab-runner-rw) ---
     #   - name: gitlab-runner-cache
     #     owner: "gitlab-runner"
     #     replication: "001"
+    #     volumeGrowthCount: 2
     #     rack: "workers-1"
     #     dataCenter: "dc-1"
     # ------
@@ -394,5 +410,6 @@ all:
     #   - name: loki-logs
     #     owner: "loki"
     #     replication: "001"
+    #     volumeGrowthCount: 2
     #     rack: "workers-1"
     #     dataCenter: "dc-1"
