@@ -2,8 +2,9 @@
 SeaweedFS bucket sync — pure Python filter plugin (Layer 2).
 Used by playbook-app/tasks/seaweedfs/tasks-seaweedfs-bucket-sync.yaml.
 Diffs the live filer (fs.configure + s3.bucket.list) against the inventory target
-(seaweedfs_sync_buckets + _extra) → delete / create / quota-upsert / quota-delete deltas
-+ immutable_violations (owner/replication/rack/dataCenter) for the fail-fast assert.
+(seaweedfs_sync_buckets + _extra) → delete / create / quota-upsert / quota-delete /
+volume-growth-upsert deltas + immutable_violations (owner/replication/rack/dataCenter)
+for the fail-fast assert.
 Self-contained (no cross-file imports — v18 split из монолита seaweedfs_sync.py).
 Lives in repo-root filter_plugins/; discovered via ansible.cfg
 [defaults] filter_plugins = filter_plugins.
@@ -18,9 +19,9 @@ except ImportError:
 
 
 def _parse_fs_configure_locations(raw):
-    """Parse `fs.configure` (no-arg) protojson → {bucket_name: {'replication', 'rack'?, 'dataCenter'?}}.
-    Only locationPrefix under '/buckets/'; name = suffix (skip bare '/buckets/'). Empty rack/
-    dataCenter (protojson EmitUnpopulated) → key absent. {} for ''/None/malformed. Never raises."""
+    """Parse `fs.configure` (no-arg) protojson → {bucket_name: {'replication', 'volumeGrowthCount', 'rack'?, 'dataCenter'?}}.
+    Only locationPrefix under '/buckets/'; name = suffix (skip bare '/buckets/'). volumeGrowthCount
+    absent (protojson EmitUnpopulated) → 0. Empty rack/dataCenter → key absent. {} for ''/None/malformed. Never raises."""
     if not raw:
         return {}
     try:
@@ -40,7 +41,8 @@ def _parse_fs_configure_locations(raw):
         name = lp[len(prefix):]
         if not name:
             continue
-        entry = {'replication': loc.get('replication', '') or ''}
+        entry = {'replication': loc.get('replication', '') or '',
+                 'volumeGrowthCount': int(loc.get('volumeGrowthCount') or 0)}
         if loc.get('rack'):
             entry['rack'] = loc['rack']
         if loc.get('dataCenter'):
@@ -94,6 +96,7 @@ def _merge_bucket_state(fs_locs, bucket_list):
         loc = fs_locs.get(name)
         if loc:
             entry['replication'] = loc.get('replication', '')
+            entry['volumeGrowthCount'] = loc.get('volumeGrowthCount', 0)
             if loc.get('rack'):
                 entry['rack'] = loc['rack']
             if loc.get('dataCenter'):
@@ -151,7 +154,8 @@ def _validate_replication_format(value):
 
 def _validate_buckets(target_buckets):
     """Validate each target bucket: replication (required, 3-digit) + rack + dataCenter + owner
-    (v18: all REQUIRED non-empty strings). Called by every public Layer 2 filter."""
+    (REQUIRED non-empty strings) + volumeGrowthCount (REQUIRED positive int, divisible by the
+    replication copy count). Called by every public Layer 2 filter."""
     for bucket in target_buckets:
         name = bucket.get('name', '<unnamed>')
         replication = bucket.get('replication')
@@ -170,6 +174,19 @@ def _validate_buckets(target_buckets):
                     "See hosts-vars/seaweedfs-sync.yaml SECTION 2 schema "
                     "documentation.".format(name, field)
                 )
+        vgc = bucket.get('volumeGrowthCount')
+        if not isinstance(vgc, int) or isinstance(vgc, bool) or vgc <= 0:
+            raise AnsibleFilterError(
+                "Bucket '{0}' field 'volumeGrowthCount' is REQUIRED (positive integer). "
+                "See hosts-vars/seaweedfs-sync.yaml SECTION 3 schema documentation.".format(name)
+            )
+        copy_count = sum(int(d) for d in replication) + 1
+        if vgc % copy_count != 0:
+            raise AnsibleFilterError(
+                "Bucket '{0}' volumeGrowthCount {1} must be divisible by replication '{2}' "
+                "copy count {3} (= 1 + sum of digits). See hosts-vars/seaweedfs-sync.yaml "
+                "SECTION 3 schema documentation.".format(name, vgc, replication, copy_count)
+            )
 
 
 def _compute_bucket_diff(current_state, target_buckets):
@@ -274,6 +291,31 @@ def seaweedfs_buckets_quota_to_delete(fs_configure_raw, bucket_list_raw, target_
             if 'quota_size' not in b and current.get(b['name'], 0) > 0]
 
 
+def seaweedfs_buckets_volume_growth_to_upsert(fs_configure_raw, bucket_list_raw, target_buckets):
+    """Target buckets whose REQUIRED volumeGrowthCount DIFFERS from the live filer →
+    [{name, replication, rack, dataCenter, volumeGrowthCount}] for a FULL-field fs.configure
+    re-apply. fs.configure overwrites the whole location, so the immutable replication/rack/
+    dataCenter MUST be re-sent alongside the mutable volumeGrowthCount (else they'd be wiped).
+    Live volumeGrowthCount read from the filer (fs.configure location; absent → 0). New buckets
+    (absent in filer → 0) always differ → emitted (Phase B/C create them, Phase D re-applies
+    with vGC). Buckets whose vGC already matches are skipped (no-op).
+    (diff-based: only changed/new volumeGrowthCount is re-applied.)"""
+    _validate_buckets(target_buckets)
+    current = {b['name']: b.get('volumeGrowthCount', 0)
+               for b in _current_buckets(fs_configure_raw, bucket_list_raw)}
+    result = []
+    for b in target_buckets:
+        if current.get(b['name'], 0) != b['volumeGrowthCount']:
+            result.append({
+                'name': b['name'],
+                'replication': b['replication'],
+                'rack': b['rack'],
+                'dataCenter': b['dataCenter'],
+                'volumeGrowthCount': b['volumeGrowthCount'],
+            })
+    return result
+
+
 # =============================================================================
 # Ansible FilterModule registration
 # =============================================================================
@@ -286,4 +328,5 @@ class FilterModule(object):
             'seaweedfs_buckets_immutable_violations': seaweedfs_buckets_immutable_violations,
             'seaweedfs_buckets_quota_to_upsert': seaweedfs_buckets_quota_to_upsert,
             'seaweedfs_buckets_quota_to_delete': seaweedfs_buckets_quota_to_delete,
+            'seaweedfs_buckets_volume_growth_to_upsert': seaweedfs_buckets_volume_growth_to_upsert,
         }
