@@ -163,7 +163,7 @@ def _validate_buckets(target_buckets):
             raise AnsibleFilterError(
                 "Bucket '{0}' missing required 'replication' field. "
                 "Must be 3-digit string. See hosts-vars/seaweedfs-sync.yaml "
-                "SECTION 2 schema documentation.".format(name)
+                "SECTION 3 schema documentation.".format(name)
             )
         _validate_replication_format(replication)
         for field in ('rack', 'dataCenter', 'owner'):
@@ -171,7 +171,7 @@ def _validate_buckets(target_buckets):
             if not isinstance(value, str) or not value:
                 raise AnsibleFilterError(
                     "Bucket '{0}' field '{1}' is REQUIRED (non-empty string in v18). "
-                    "See hosts-vars/seaweedfs-sync.yaml SECTION 2 schema "
+                    "See hosts-vars/seaweedfs-sync.yaml SECTION 3 schema "
                     "documentation.".format(name, field)
                 )
         vgc = bucket.get('volumeGrowthCount')
