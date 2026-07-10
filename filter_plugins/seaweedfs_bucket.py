@@ -244,6 +244,20 @@ def seaweedfs_buckets_to_delete(fs_configure_raw, bucket_list_raw, target_bucket
                                 target_buckets)['to_delete_buckets']
 
 
+def seaweedfs_buckets_to_delete_fs(fs_configure_raw, bucket_list_raw, target_buckets):
+    """fs.configure `/buckets/<name>` locations whose <name> is absent from the inventory
+    target → orphan location config to delete via `fs.configure -locationPrefix=/buckets/<name>
+    -delete -apply`. Independent of s3.bucket.list: an orphan has a location config but no live
+    bucket dir, so `s3.bucket.delete` must NOT touch it (it would error 'bucket not found') —
+    that stays seaweedfs_buckets_to_delete's job. Only single-segment names (no '/'); nested
+    sub-path configs (/buckets/<b>/<sub>) are left untouched. bucket_list_raw is unused
+    (signature parity with the sibling filters). Sorted by name. Returns [{name}]."""
+    _validate_buckets(target_buckets)
+    target_names = {b['name'] for b in target_buckets}
+    return [{'name': n} for n in sorted(_parse_fs_configure_locations(fs_configure_raw))
+            if '/' not in n and n not in target_names]
+
+
 def seaweedfs_buckets_to_create(fs_configure_raw, bucket_list_raw, target_buckets):
     """Target buckets not in the filer → create via `s3.bucket.create -owner`. (v18.)"""
     _validate_buckets(target_buckets)
@@ -324,6 +338,7 @@ class FilterModule(object):
     def filters(self):
         return {
             'seaweedfs_buckets_to_delete': seaweedfs_buckets_to_delete,
+            'seaweedfs_buckets_to_delete_fs': seaweedfs_buckets_to_delete_fs,
             'seaweedfs_buckets_to_create': seaweedfs_buckets_to_create,
             'seaweedfs_buckets_immutable_violations': seaweedfs_buckets_immutable_violations,
             'seaweedfs_buckets_quota_to_upsert': seaweedfs_buckets_quota_to_upsert,

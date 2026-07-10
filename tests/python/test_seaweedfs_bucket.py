@@ -81,6 +81,45 @@ def test_buckets_to_create_empty_target():
     assert sw.seaweedfs_buckets_to_create('', '', []) == []
 
 
+# --- delete fs.configure locations (orphan location cleanup) ---
+def test_buckets_to_delete_fs_orphan_location():
+    """fs.configure location whose bucket is gone from s3.bucket.list and not in target →
+    flagged for fs.configure -delete (bucket_list_raw irrelevant)."""
+    fs = json.dumps({'locations': [{'locationPrefix': '/buckets/orphan-x', 'replication': '001'}]})
+    assert sw.seaweedfs_buckets_to_delete_fs(fs, '', []) == [{'name': 'orphan-x'}]
+
+
+def test_buckets_to_delete_fs_kept_bucket_skipped(sample_fs_configure_raw, sample_target_buckets):
+    """b1/b2 locations are in target → not flagged; bare /buckets/ already dropped by the parser."""
+    assert sw.seaweedfs_buckets_to_delete_fs(sample_fs_configure_raw, '', sample_target_buckets) == []
+
+
+def test_buckets_to_delete_fs_nested_location_ignored():
+    """Nested sub-path config /buckets/<b>/<sub> (name contains '/') is not a bucket → never flagged."""
+    fs = json.dumps({'locations': [{'locationPrefix': '/buckets/keep/index', 'replication': '001'}]})
+    assert sw.seaweedfs_buckets_to_delete_fs(fs, '', []) == []
+
+
+def test_buckets_to_delete_fs_sorted_and_target_subtracted():
+    """(fs.configure /buckets/ names − target), sorted; kept bucket excluded."""
+    fs = json.dumps({'locations': [
+        {'locationPrefix': '/buckets/z-orphan', 'replication': '001'},
+        {'locationPrefix': '/buckets/a-orphan', 'replication': '001'},
+        {'locationPrefix': '/buckets/keep', 'replication': '001'}]})
+    target = [{'name': 'keep', 'replication': '001', 'rack': 'r', 'dataCenter': 'd', 'owner': 'o', 'volumeGrowthCount': 2}]
+    assert sw.seaweedfs_buckets_to_delete_fs(fs, '', target) == [{'name': 'a-orphan'}, {'name': 'z-orphan'}]
+
+
+def test_buckets_to_delete_fs_empty_filer():
+    assert sw.seaweedfs_buckets_to_delete_fs('', '', []) == []
+
+
+def test_buckets_to_delete_fs_validates_target():
+    """Parity with siblings — malformed target raises before any diff."""
+    with pytest.raises(AnsibleFilterError, match='missing required .replication'):
+        sw.seaweedfs_buckets_to_delete_fs('', '', [{'name': 'b1'}])
+
+
 # --- quota split ---
 def test_buckets_quota_to_upsert(sample_target_buckets):
     r = sw.seaweedfs_buckets_quota_to_upsert('', '', sample_target_buckets)
