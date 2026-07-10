@@ -28,6 +28,8 @@
 #                                         (diff vs s3.bucket.list quota:) → -op=set -sizeMB.
 #   seaweedfs_buckets_quota_to_delete   — target без quota_size, у кого в filer квота ЕСТЬ
 #                                         → -op=remove (уже-без-квоты скипаются).
+#   seaweedfs_buckets_volume_growth_to_upsert — target, чей volumeGrowthCount ≠ filer (incl
+#                                         new) → full-field fs.configure re-apply.
 #
 # Convention: dto_label_name passed ONLY at playbook-level invocation.
 #
@@ -37,14 +39,15 @@
 #     (owner/replication/rack/dataCenter REQUIRED; quota_size optional).
 #   - seaweedfs_namespace (from hosts-vars/seaweedfs.yaml).
 #
-# Sync flow (2 reads + immutable assert + 5 resource loops):
+# Sync flow (2 reads + immutable assert + 6 resource loops):
 #   READ. fs.configure + s3.bucket.list (live filer) → capture stdout (x2).
 #   ASSERT. immutable (owner/replication/rack/dataCenter) на kept buckets → fail-fast.
 #   A. Delete стейл buckets (s3.bucket.delete).
 #   B. Create new buckets (s3.bucket.create -owner).
 #   C. fs.configure для new buckets (-replication -rack -dataCenter -apply, всегда).
-#   D. Quota upsert (s3.bucket.quota -op=set -sizeMB).
-#   E. Quota delete (s3.bucket.quota -op=remove).
+#   D. Volume-growth upsert (fs.configure full-field re-apply -volumeGrowthCount, incl new).
+#   E. Quota upsert (s3.bucket.quota -op=set -sizeMB).
+#   F. Quota delete (s3.bucket.quota -op=remove).
 #
 # NOTE про bucket delete: 's3.bucket.delete' в SeaweedFS shell не имеет флага
 # -force, но команда сама делает hard delete — CollectionDelete sweeps все
@@ -71,6 +74,7 @@
     _local_to_create_buckets_key: "_local_to_create_buckets"
     _local_quota_to_upsert_key: "_local_quota_to_upsert"
     _local_quota_to_delete_key: "_local_quota_to_delete"
+    _local_volume_growth_to_upsert_key: "_local_volume_growth_to_upsert"
     _local_immutable_violations_key: "_local_immutable_violations"
   delegate_to: "{{ master_manager_fact }}"
   run_once: true
@@ -145,6 +149,17 @@
   run_once: true
   tags: [always]
 
+- name: "[{{ dto_label_name }}] Compute volume_growth_to_upsert via filter (buckets with volumeGrowthCount drift, incl new)"
+  set_fact:
+    "{{ _local_volume_growth_to_upsert_key }}": >-
+      {{ lookup('vars', _local_fs_configure_raw_key) | seaweedfs_buckets_volume_growth_to_upsert(
+           lookup('vars', _local_bucket_list_raw_key),
+           lookup('vars', _local_target_buckets_key)
+         ) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
 - name: "[{{ dto_label_name }}] Compute bucket immutable_violations via filter (owner + replication + rack + dataCenter)"
   set_fact:
     "{{ _local_immutable_violations_key }}": >-
@@ -207,8 +222,19 @@
   run_once: true
   tags: [always]
 
-# --- PHASE D: Quota upsert (buckets with quota_size) ---
-- name: "[{{ dto_label_name }}] Phase D — Quota upsert via weed shell (s3.bucket.quota -op=set)"
+# --- PHASE D: Apply mutable settings (volumeGrowthCount) — full-field fs.configure re-apply (incl new buckets) ---
+- name: "[{{ dto_label_name }}] Phase D — Apply fs.configure volumeGrowthCount (full-field: replication + rack + dataCenter + volumeGrowthCount)"
+  include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
+  vars:
+    dto_weed_command: "fs.configure -locationPrefix=/buckets/{{ item.name }} -replication={{ item.replication }} -rack={{ item.rack }} -dataCenter={{ item.dataCenter }} -volumeGrowthCount={{ item.volumeGrowthCount }} -apply"
+  loop: "{{ lookup('vars', _local_volume_growth_to_upsert_key) }}"
+  loop_control:
+    label: "{{ item.name }} → volumeGrowthCount={{ item.volumeGrowthCount }} (replication={{ item.replication }}, rack={{ item.rack }}, dataCenter={{ item.dataCenter }})"
+  run_once: true
+  tags: [always]
+
+# --- PHASE E: Quota upsert (buckets with quota_size) ---
+- name: "[{{ dto_label_name }}] Phase E — Quota upsert via weed shell (s3.bucket.quota -op=set)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
     dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op=set -sizeMB={{ item._quota_size_mib }}"
@@ -218,8 +244,8 @@
   run_once: true
   tags: [always]
 
-# --- PHASE E: Quota delete (buckets without quota_size → unlimited) ---
-- name: "[{{ dto_label_name }}] Phase E — Quota delete via weed shell (s3.bucket.quota -op=remove)"
+# --- PHASE F: Quota delete (buckets without quota_size → unlimited) ---
+- name: "[{{ dto_label_name }}] Phase F — Quota delete via weed shell (s3.bucket.quota -op=remove)"
   include_tasks: "{{ project_root }}/playbook-app/tasks/seaweedfs/tasks-seaweedfs-weed-shell.yaml"
   vars:
     dto_weed_command: "s3.bucket.quota -name={{ item.name }} -op=remove"
