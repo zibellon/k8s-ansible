@@ -216,6 +216,10 @@ all:
     zitadel_helm_chart_version: "9.30.0"
     # Replica count (SCALE).
     zitadel_helm_values_replica_count: 1
+    zitadel_helm_values_login_replica_count: 1
+    # Affinity (pod scheduling) — пусто {} по умолчанию; переопределяется в hosts-vars-override/ (напр. podAntiAffinity).
+    zitadel_helm_values_affinity: {}
+    zitadel_helm_values_login_affinity: {}
     # --- round-4 blocks (extracted from zitadel_helm_values) ---
     zitadel_helm_values_zitadel:
       masterkeySecretName: "{{ zitadel_secret_masterkey.body.target.name }}"
@@ -280,7 +284,7 @@ all:
       resources: {}
       nodeSelector: {}
       tolerations: []
-      affinity: {}
+      affinity: "{{ zitadel_helm_values_affinity }}"
       zitadel: "{{ zitadel_helm_values_zitadel }}"
       env: "{{ zitadel_helm_values_env }}"
       service: "{{ zitadel_helm_values_service }}"
@@ -294,6 +298,9 @@ all:
         enabled: true
         serviceMonitor:
           enabled: true
+      login:
+        replicaCount: "{{ zitadel_helm_values_login_replica_count }}"
+        affinity: "{{ zitadel_helm_values_login_affinity }}"
       setupJob:
         # --init-projections=true переехал из initJob → setupJob (chart 9.x default)
         # --masterkeyFile убран: chart 9.x сам пробрасывает --masterkeyFromEnv из secret
