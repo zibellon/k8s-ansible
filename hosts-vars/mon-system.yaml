@@ -64,15 +64,12 @@ all:
     mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
     mon_system_grafana_vpn_only_enabled: false
 
-    # OIDC/SSO (ZITADEL) — выключено по умолчанию. Флипать в true в
-    # hosts-vars-override/<cluster>/mon-system.yaml только после того как в ZITADEL Console создано
-    # Application grafana и путь eso-secret/mon-system/grafana/oidc заполнен в Vault (ключи clientId + clientSecret).
+    # OIDC/SSO (ZITADEL) — выключатель. Default false (база рендерится с выключенным OIDC).
+    # Полная per-cluster конфигурация (mon_system_grafana_oidc_name / _scopes / блок
+    # mon_system_grafana_oidc) живёт в hosts-vars-override/<cluster>/mon-system.yaml.
+    # Чтобы включить: в override выставить true И задать блок mon_system_grafana_oidc,
+    # плюс secret в Vault: eso-secret/mon-system/grafana/oidc (ключи clientId/clientSecret).
     mon_system_grafana_oidc_enabled: false
-    # Отображаемое имя кнопки входа на странице логина Grafana.
-    mon_system_grafana_oidc_name: "ZITADEL"
-    # Полная строка scopes (space-separated) — оператор задаёт целиком. Для org-pin добавить
-    # " urn:zitadel:iam:org:id:<orgId>" в hosts-vars-override/ (OrgID из ZITADEL Console).
-    mon_system_grafana_oidc_scopes: "openid email profile"
 
     mon_system_prometheus_domain: "prom-k8s-v2.drawapp.ru"
     mon_system_prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
@@ -893,25 +890,11 @@ all:
       resources: {}
       extraObjects: "{{ mon_system_grafana_postgresql_extra_objects }}"
 
-    # OIDC-блок для Grafana generic_oauth (вынесен из mon_system_grafana_helm_values — снижаем вложенность).
-    # Все значения — явные параметры (без условной логики); name/scopes задаёт оператор переменными выше.
-    # k8sSecretName — имя K8s Secret, созданного ESO, с ключами clientId/clientSecret.
+    # OIDC-блок для Grafana generic_oauth — база держит только выключенный дефолт, чтобы рендер
+    # mon-system не падал без override. Полный блок (name/endpoints/scopes/attribute-paths) —
+    # в hosts-vars-override/<cluster>/mon-system.yaml (override заменяет этот дефолт целиком).
     mon_system_grafana_oidc:
       enabled: "{{ mon_system_grafana_oidc_enabled }}"
-      name: "{{ mon_system_grafana_oidc_name }}"
-      k8sSecretName: "{{ mon_system_secret_grafana_oidc_creds.body.target.name }}"
-      clientIdKey: "clientId"
-      clientSecretKey: "clientSecret"
-      authUrl: "https://{{ zitadel_domain }}/oauth/v2/authorize"
-      tokenUrl: "https://{{ zitadel_domain }}/oauth/v2/token"
-      apiUrl: "https://{{ zitadel_domain }}/oidc/v1/userinfo"
-      scopes: "{{ mon_system_grafana_oidc_scopes }}"
-      allowSignUp: "true"
-      usePkce: "true"
-      loginAttributePath: "preferred_username"
-      emailAttributePath: "email"
-      nameAttributePath: "name"
-      skipOrgRoleSync: "true"
 
     # --- PHASE: grafana ---
     mon_system_grafana_helm_timeout: "3m"
