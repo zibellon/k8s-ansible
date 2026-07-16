@@ -111,6 +111,25 @@ all:
     # Vault-зеркало аккаунтов: один path, ПОЛЕ НА АККАУНТ = {plaintext, hash, passwordMtime} (nested object).
     # Полный путь = eso_vault_integration_argocd.kv_engine_path + argocd_accounts_vault_path.
     argocd_accounts_vault_path: "/argocd/accounts/creds"
+
+    # === SECTION: OIDC / SSO (ZITADEL) ===
+    # Аддитивно к локальным аккаунтам (те остаются break-glass). Включать: в override
+    # argocd_oidc_enabled: true + реальный client_id + org-pin scope + гранты в argocd_policy_csv_list
+    # (g, <email>, role:...). ClientSecret — ТОЛЬКО через ESO (argocd-oidc-secret), НИКОГДА в
+    # argocd-secret (инвариант). Секрет в Vault: eso-secret/argocd/oidc (ключи clientId/clientSecret).
+    argocd_oidc_enabled: false
+    argocd_oidc_name: "ZITADEL"
+    # clientID (НЕ секрет) = <appId>@cluster-tools — реальное значение в override.
+    argocd_oidc_client_id: ""
+    argocd_oidc_issuer: "https://{{ zitadel_domain }}"
+    # requestedScopes — inline YAML-список, оператор задаёт целиком. offline_access ОБЯЗАТЕЛЕН для
+    # refresh-token (без него refreshTokenThreshold не работает). groups НЕ добавляем (нет group-маппинга).
+    # Для org-pin в override добавить ", \"urn:zitadel:iam:org:id:<orgId>\"".
+    argocd_oidc_requested_scopes: '["openid", "profile", "email", "offline_access"]'
+    # Окно превентивного refresh id_token'а. ДОЛЖНО быть < ID Token Lifetime в ZITADEL.
+    argocd_oidc_refresh_token_threshold: "2h"
+    argocd_oidc_logout_url: "https://{{ zitadel_domain }}/oidc/v1/end_session"
+
     # === SECTION 2: ESO ===
     # ---------
     # ESO integration: Vault → K8s Secrets
@@ -127,10 +146,27 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
-    # Base ESO secrets list is empty: local-account passwords are written to argocd-secret
-    # by accounts-sync (kubectl patch), not via ESO. Operators add git-ops repo credentials
-    # through eso_vault_integration_argocd_secrets_extra in hosts-vars-override/.
-    eso_vault_integration_argocd_secrets: []
+    # OIDC client-secret → ОТДЕЛЬНЫЙ секрет argocd-oidc-secret (метка part-of: argocd для резолва
+    # $argocd-oidc-secret:clientSecret). НЕ argocd-secret (инвариант).
+    argocd_secret_oidc_creds:
+      external_secret_name: "argocd-oidc-secret"
+      vault_path: "/argocd/oidc"
+      body:
+        target:
+          name: "argocd-oidc-secret"
+          template:
+            engineVersion: v2
+            metadata:
+              labels:
+                app.kubernetes.io/part-of: argocd
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/oidc"
+
+    # Base ESO secrets list: OIDC client-secret добавляется только при argocd_oidc_enabled: true
+    # (при false → [] → рендер идентичен прежнему). Local-account passwords пишутся в argocd-secret
+    # accounts-sync'ом (kubectl patch), не через ESO. Git-ops repo creds — через _extra в override.
+    eso_vault_integration_argocd_secrets: "{{ [argocd_secret_oidc_creds] if argocd_oidc_enabled | bool else [] }}"
 
     eso_vault_integration_argocd_secrets_extra: []
     # === SECTION 3 ===
@@ -237,6 +273,7 @@ all:
           metadata:
             name: argocd-rbac-cm
           data:
+            policy.default: ''
             policy.csv: |
           {% for line in argocd_policy_csv_list %}
               {{ line }}
@@ -257,8 +294,39 @@ all:
               verbs: ["create"]
     # Operator-side extra patches — задаются в hosts-vars-override/ (напр. argocd-ssh-known-hosts-cm). Default пусто.
     argocd_install_kustomize_patches_extra: []
-    # Consumed by the install phase (named like other components): base + operator extra.
-    argocd_install_kustomize_patches: "{{ argocd_kustomize_patches_base + argocd_install_kustomize_patches_extra }}"
+    # OIDC-патчи — отдельными объектами, добавляются в список только при argocd_oidc_enabled: true.
+    # kustomize мержит их поверх base-патчей argocd-cm / argocd-rbac-cm.
+    argocd_oidc_cm_patch:
+      target:
+        kind: ConfigMap
+        name: argocd-cm
+      patch: |-
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: argocd-cm
+        data:
+          oidc.config: |
+            name: {{ argocd_oidc_name }}
+            issuer: {{ argocd_oidc_issuer }}
+            clientID: {{ argocd_oidc_client_id }}
+            clientSecret: "$argocd-oidc-secret:clientSecret"
+            requestedScopes: {{ argocd_oidc_requested_scopes }}
+            refreshTokenThreshold: "{{ argocd_oidc_refresh_token_threshold }}"
+            logoutURL: {{ argocd_oidc_logout_url }}
+    argocd_oidc_rbac_patch:
+      target:
+        kind: ConfigMap
+        name: argocd-rbac-cm
+      patch: |-
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: argocd-rbac-cm
+        data:
+          scopes: '[email]'
+    # Consumed by the install phase: base + OIDC-патчи (если включено) + operator extra.
+    argocd_install_kustomize_patches: "{{ argocd_kustomize_patches_base + ([argocd_oidc_cm_patch, argocd_oidc_rbac_patch] if argocd_oidc_enabled | bool else []) + argocd_install_kustomize_patches_extra }}"
     # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
     argocd_install_helm_values:
       extraObjects: "{{ argocd_install_extra_objects }}"
