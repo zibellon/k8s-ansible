@@ -159,6 +159,21 @@ all:
     gitlab_s3_secret_key_access_key: "accessKey"
     gitlab_s3_secret_key_secret_key: "secretKey"
 
+    # === SECTION: OIDC / SSO (ZITADEL) ===
+    # Выключено по умолчанию (default false). Флипать в true в hosts-vars-override/<cluster>/gitlab.yaml
+    # после создания Application gitlab в ZITADEL Console и заполнения eso-secret/gitlab/oidc в Vault
+    # (ключи clientId + clientSecret). Локальный root/пароль остаётся (break-glass). Перенос
+    # существующих юзеров — link-by-email (autoLinkUser + blockAutoCreatedUsers): поле Email юзера
+    # в ZITADEL = email GitLab-аккаунта + verified.
+    # ВНИМАНИЕ: GitLab НЕ ре-валидирует сессию у IdP — отзыв юзера = block в GitLab Admin Area,
+    # НЕ через ZITADEL; поэтому offline_access в scope не нужен.
+    gitlab_oidc_enabled: false
+    gitlab_oidc_label: "ZITADEL"
+    gitlab_oidc_issuer: "https://{{ zitadel_domain }}"
+    # scope — inline JSON-список, оператор задаёт целиком. Для org-pin в override добавить
+    # ", \"urn:zitadel:iam:org:id:<orgId>\"".
+    gitlab_oidc_scopes: '["openid", "profile", "email"]'
+
     # === SECTION 2: ESO ===
     # ---------
     # ESO integration: Vault → K8s Secrets
@@ -281,6 +296,43 @@ all:
               key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/s3-storage"
               property: "{{ gitlab_s3_secret_key_secret_key }}"
 
+    # OIDC omniauth-провайдер (ZITADEL) — ESO template-секрет с полным omniauth-конфигом.
+    # clientId/clientSecret инъектятся ESO из Vault eso-secret/gitlab/oidc (escape {% raw %}).
+    # Добавляется в eso_vault_integration_gitlab_secrets только при gitlab_oidc_enabled: true.
+    gitlab_secret_zitadel_omniauth:
+      external_secret_name: "eso-gitlab-zitadel-omniauth"
+      vault_path: "/gitlab/oidc"
+      body:
+        target:
+          name: "eso-gitlab-zitadel-omniauth"
+          template:
+            engineVersion: v2
+            data:
+              provider: |
+                name: openid_connect
+                label: {{ gitlab_oidc_label }}
+                args:
+                  name: openid_connect
+                  scope: {{ gitlab_oidc_scopes }}
+                  response_type: code
+                  issuer: {{ gitlab_oidc_issuer }}
+                  discovery: true
+                  client_auth_method: basic
+                  uid_field: sub
+                  client_options:
+                    identifier: "{% raw %}{{ .clientId }}{% endraw +%}"
+                    secret: "{% raw %}{{ .clientSecret }}{% endraw +%}"
+                    redirect_uri: https://{{ gitlab_ui_domain }}/users/auth/openid_connect/callback
+        data:
+          - secretKey: clientId
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/oidc"
+              property: clientId
+          - secretKey: clientSecret
+            remoteRef:
+              key: "{{ eso_vault_integration_gitlab.kv_engine_path }}/data/gitlab/oidc"
+              property: clientSecret
+
     gitlab_root_secret_key_username: "username"
     gitlab_root_secret_key_password: "password"
     gitlab_root_secret_key_password_mtime: "passwordMtime"
@@ -293,12 +345,15 @@ all:
       passwordMtime: "2026-07-06T00:00:00Z"
       vaultPath: "/gitlab/root/creds"
 
-    eso_vault_integration_gitlab_secrets:
-      - "{{ gitlab_secret_postgresql_creds }}"
-      - "{{ gitlab_secret_redis_creds }}"
-      - "{{ gitlab_secret_registry_connection_config }}"
-      - "{{ gitlab_secret_object_store_connection_config }}"
-      - "{{ gitlab_secret_backup_s3cfg }}"
+    # OIDC omniauth-секрет добавляется в список только при gitlab_oidc_enabled: true
+    # (при false ExternalSecret не создаётся — Vault-путь /gitlab/oidc ещё пуст).
+    eso_vault_integration_gitlab_secrets: >-
+      {{ [gitlab_secret_postgresql_creds,
+          gitlab_secret_redis_creds,
+          gitlab_secret_registry_connection_config,
+          gitlab_secret_object_store_connection_config,
+          gitlab_secret_backup_s3cfg]
+         + ([gitlab_secret_zitadel_omniauth] if gitlab_oidc_enabled | bool else []) }}
 
     eso_vault_integration_gitlab_secrets_extra: []
 
@@ -605,6 +660,16 @@ all:
         backups:
           bucket: "{{ gitlab_backups_bucket }}"
           tmpBucket: "{{ gitlab_backups_stage_bucket }}"
+        # OIDC omniauth (ZITADEL). providers ГЕЙТИТСЯ toggle'ом (пустой при OFF): чарт монтирует
+        # provider-секрет по НЕПУСТОМУ providers, не по enabled (_omniauth.tpl) — при OFF секрета нет.
+        omniauth:
+          enabled: "{{ gitlab_oidc_enabled | bool }}"
+          allowSingleSignOn:
+            - openid_connect
+          blockAutoCreatedUsers: true
+          autoLinkUser:
+            - openid_connect
+          providers: "{{ [{'secret': gitlab_secret_zitadel_omniauth.body.target.name, 'key': 'provider'}] if gitlab_oidc_enabled | bool else [] }}"
       smtp:
         enabled: false
       monitoring:
