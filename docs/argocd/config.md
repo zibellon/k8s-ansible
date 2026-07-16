@@ -443,3 +443,9 @@ ignoreDifferences:
    jqPathExpressions:
       - '.spec.template.metadata.annotations."kubectl.kubernetes.io/restartedAt"'
       - '.spec.template.metadata.annotations."reloader.stakater.com/last-reloaded-from"'
+
+# Приложения зависли после удаления
+## Вот так их можно почистить (удаляем finalizers)
+for a in $(kubectl get application -n argocd -o name); do
+  kubectl patch "$a" -n argocd --type merge -p '{"metadata":{"finalizers":null}}'
+done
