@@ -200,8 +200,8 @@ Per-file source of truth in parentheses.
 | `k9s_download_host` | `"https://github.com"` | Download host for k9s .deb — AirGap override |
 | `k9s_install_method` | `"url"` | Install method: `"url"` (default — download from `k9s_url`) or `"local_deb"` (offline; path relative to `project_root`, file kept in `pkgs-sources/`) |
 | `k9s_local_deb_path` | `""` | Path to local k9s `.deb` file relative to `project_root` (used only when `k9s_install_method: local_deb`) |
-| `service_subnet` | `"10.128.0.0/12"` | Kubernetes Service CIDR |
-| `pod_subnet` | `"10.64.0.0/10"` | Pod CIDR (Cilium IPAM) |
+| `service_subnet` | `"10.4.0.0/18"` | Kubernetes Service CIDR |
+| `pod_subnet` | `"10.2.0.0/15"` | Pod CIDR (Cilium IPAM) |
 | `cluster_dns_domain` | `"cluster.local"` | Cluster DNS suffix |
 | `node_port_start`, `node_port_end` | `1`, `50000` | NodePort range (apiserver `service-node-port-range`) |
 | `coredns_deployment_patch` | replicas=3 + hard podAntiAffinity (`$patch: replace`) | Whole-object strategic-merge patch applied to Deployment `coredns` (`kube-system`) post-init by `cluster-init.yaml` (`tasks-coredns-patch.yaml`). Active default pins CoreDNS to 3 replicas + a hard `requiredDuringScheduling` podAntiAffinity (`k8s-app=kube-dns` / hostname) so both pods can't collapse onto one node; `$patch: replace` drops kubeadm's default soft rule. Empty (`{}`/null) → no-op. Override replaces wholesale (NOT `_extra`). Full doc + example in `hosts-vars/k8s-base.yaml`. |
@@ -210,11 +210,11 @@ Per-file source of truth in parentheses.
 | `softdog_timeout` | `30` | Watchdog (softdog) reboot timeout in seconds |
 | `apt_additional_configs` | `[]` | List of ansible-managed apt files. Each entry: `{filePath, content}` where `filePath` is path under `/etc/apt/` (subdir + name, basename must start with `ansible-`; allowed subdirs: `sources.list.d/`, `apt.conf.d/`). Auto-cleanup: removing entry from variable deletes the file on next run. Implemented via `tasks-sync-managed-files.yaml` (one call per managed subdir). |
 | `apt_preferences` | `[]` | List of ansible-managed apt pinning files in `/etc/apt/preferences.d/`. Each entry: `{name, content}` where `name` must start with `ansible-`. Auto-cleanup: same as `apt_additional_configs`. Implemented via `tasks-sync-managed-files.yaml`. |
-| `crds_wait` | `{timeout: "60s", retries: 15, delay: 5}` | CRD wait config — used by `tasks-wait-crds.yaml` |
-| `secret_wait` | `{retries: 15, delay: 5}` | K8s Secret wait config — used by ESO sync tasks |
-| `rollout_wait` | `{retries: 15, delay: 5}` | Rollout wait config — used by `tasks-wait-rollout.yaml` |
+| `crds_wait` | `{timeout: "60s", retries: 50, delay: 5}` | CRD wait config — used by `tasks-wait-crds.yaml` |
+| `secret_wait` | `{retries: 50, delay: 5}` | K8s Secret wait config — used by ESO sync tasks |
+| `rollout_wait` | `{retries: 50, delay: 5}` | Rollout wait config — used by `tasks-wait-rollout.yaml` |
 | `helm_async` | `{timeout: 1800, poll: 5}` | Async Helm upgrade config — resilient to SSH disconnects on long upgrades |
-| `system_async` | `{timeout: 900, poll: 10}` | Async system playbook config — resilient to SSH disconnects on long imperative ops in `playbook-system/` (kubeadm init/join, node drain) |
+| `system_async` | `{timeout: 1800, poll: 5}` | Async system playbook config — resilient to SSH disconnects on long imperative ops in `playbook-system/` (kubeadm init/join, node drain) |
 
 ### 2.2 HAProxy apiserver LB (`hosts-vars/k8s-base.yaml`)
 
