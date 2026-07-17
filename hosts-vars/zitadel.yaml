@@ -251,6 +251,21 @@ all:
               Username: "{{ zitadel_postgresql_username }}"
               SSL:
                 Mode: disable
+        # Instance-level defaults — применяются setup-job'ом ТОЛЬКО при создании инстанса
+        # (первый greenfield-bootstrap); на живом инстансе НЕ реконсилятся (только Console/API).
+        # OIDCSettings — все 4 длительности обязательны, иначе setup падает (defaults.yaml §OIDCSettings).
+        DefaultInstance:
+          LoginPolicy:
+            ForceMFA: true                    # 2FA обязателен всем (нужен доступный метод: OTP/passkey — вкл. по дефолту)
+            AllowRegister: false              # self-registration запрещён
+            MfaInitSkipLifetime: "0s"         # окно «пропустить настройку MFA» = 0 → enrollment сразу на первом входе
+          DomainPolicy:
+            UserLoginMustBeDomain: true       # loginName = username@<org-domain> (суффикс org в loginnames)
+          OIDCSettings:
+            AccessTokenLifetime: "1h"
+            IdTokenLifetime: "4h"
+            RefreshTokenIdleExpiration: "720h"   # 30d (дефолт, задаём явно — правило all-or-nothing)
+            RefreshTokenExpiration: "2160h"      # 90d (дефолт, задаём явно)
         FirstInstance:
           Org:
             Name: "{{ zitadel_org_name }}"
