@@ -246,6 +246,75 @@
         - cni_plugins_install_method == "local_tarball"
 
     # =========================================================================
+    # CRICTL (cri-tools)
+    # =========================================================================
+    - name: Pre-Check if crictl is installed
+      command: which crictl
+      register: crictl_pre_check
+      changed_when: false
+      failed_when: false
+
+    - name: "[main-components] assert crictl install method"
+      assert:
+        that:
+          - crictl_install_method in ["url", "local_tarball"]
+          - (crictl_install_method != "local_tarball") or (crictl_local_tarball_path is defined and crictl_local_tarball_path | length > 0)
+
+    # ----- url branch -----
+    - name: Download crictl
+      get_url:
+        url: "{{ crictl_url }}"
+        dest: /tmp/crictl.tar.gz
+      when:
+        - crictl_pre_check.rc != 0
+        - crictl_install_method == "url"
+
+    - name: Extract crictl to /usr/local/bin
+      unarchive:
+        src: /tmp/crictl.tar.gz
+        dest: /usr/local/bin
+        remote_src: yes
+      when:
+        - crictl_pre_check.rc != 0
+        - crictl_install_method == "url"
+
+    # ----- local_tarball branch (offline, AirGap-friendly) -----
+    - name: Copy crictl tarball to /tmp
+      copy:
+        src: "{{ project_root }}/{{ crictl_local_tarball_path }}"
+        dest: /tmp/crictl.tar.gz
+        mode: '0644'
+      when:
+        - crictl_pre_check.rc != 0
+        - crictl_install_method == "local_tarball"
+
+    - name: Extract crictl from local tarball to /usr/local/bin
+      unarchive:
+        src: /tmp/crictl.tar.gz
+        dest: /usr/local/bin
+        remote_src: yes
+      when:
+        - crictl_pre_check.rc != 0
+        - crictl_install_method == "local_tarball"
+
+    - name: Cleanup crictl tarball
+      file:
+        path: /tmp/crictl.tar.gz
+        state: absent
+      when:
+        - crictl_pre_check.rc != 0
+
+    # ----- config -----
+    - name: Write /etc/crictl.yaml
+      copy:
+        dest: /etc/crictl.yaml
+        content: |
+          runtime-endpoint: unix:///run/containerd/containerd.sock
+          image-endpoint: unix:///run/containerd/containerd.sock
+          timeout: 10
+        mode: '0644'
+
+    # =========================================================================
     # CONTAINERD CONFIG
     # =========================================================================
 
@@ -445,6 +514,22 @@
         success_msg: "runc: OK"
 
     # ======
+    # CRICTL
+    # ======
+    - name: Check crictl version
+      command: crictl --version
+      register: crictl_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert crictl is installed
+      assert:
+        that:
+          - crictl_check.rc == 0
+        fail_msg: "crictl is NOT installed!"
+        success_msg: "crictl: OK"
+
+    # ======
     # KUBEADM
     # ======
     - name: Check kubeadm version
@@ -498,6 +583,7 @@
           - "=== Kubernetes Components Installed ==="
           - "containerd: {{ containerd_check.stdout }}"
           - "runc: {{ runc_check.stdout_lines[0] }}"
+          - "crictl: {{ crictl_check.stdout }}"
           - "kubeadm: {{ kubeadm_check.stdout }}"
           - "kubelet: {{ kubelet_check.stdout }}"
           - "kubectl: {{ kubectl_check.stdout }}"
