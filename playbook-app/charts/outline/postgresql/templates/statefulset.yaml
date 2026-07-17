@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: outline-postgresql
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: outline-postgresql
+    app.kubernetes.io/instance: outline-postgresql-{{ .Values.namespace }}
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: outline
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  serviceName: outline-postgresql
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: outline-postgresql
+      app.kubernetes.io/instance: outline-postgresql-{{ .Values.namespace }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: outline-postgresql
+        app.kubernetes.io/instance: outline-postgresql-{{ .Values.namespace }}
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: outline
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: postgresql
+          image: {{ .Values.image }}
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentials.secretName }}
+                  key: {{ .Values.credentials.usernameKey }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentials.secretName }}
+                  key: {{ .Values.credentials.passwordKey }}
+            - name: POSTGRES_DB
+              value: {{ .Values.databaseName | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgresql
+              containerPort: 5432
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: outline-postgresql
