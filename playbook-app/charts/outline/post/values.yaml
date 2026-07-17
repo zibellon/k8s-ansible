@@ -1,0 +1,45 @@
+---
+namespace: ""
+
+# Ingress config (Traefik). tlsEnabled → websecure + router.tls (ACME); false → web (TLS у Cloudflare).
+ingressConfig:
+  enabled: false
+  domain: ""
+  ingressClass: ""
+  tlsEnabled: false
+  tlsSecretName: ""
+  vpnOnlyEnabled: false
+  vpnIngressMiddlewares: ""
+
+# cert-manager Certificate — плоский объект {enabled, name, spec}
+certificateConfig:
+  enabled: false
+  name: ""
+  spec: {}
+
+traefik:
+  namespace: ""
+  entryPoints:
+    web: ""
+    websecure: ""
+
+# Outline service (install phase)
+service:
+  port: 3000
+
+# Scheduled jobs. Outline's `cron` service не в дефолтном SERVICES — дёргаем HTTP-эндпоинт.
+cron:
+  enabled: true
+  image: "busybox:1.36"
+  targetHost: "outline"
+  targetPort: 3000
+  utilsSecretName: ""      # eso-outline-app
+  utilsSecretKey: "utilsSecret"
+  jobs:
+    - period: "hourly"
+      schedule: "5 * * * *"
+    - period: "daily"
+      schedule: "15 3 * * *"
+
+# Custom K8s objects to render (operator-side, default empty)
+extraObjects: []
