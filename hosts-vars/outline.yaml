@@ -1,0 +1,117 @@
+all:
+  vars:
+    # =========================================================================
+    # Outline wiki — часть 1/2 inventory: identity + secrets (ESO/Vault) + S3/OIDC config.
+    # Workload / ingress / phases (helm_values, sidecars, kustomize_patches) — в SUB-2b (тот же файл).
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start + gates cross-ns NetworkPolicies.
+    outline_enabled: false
+
+    outline_namespace: "outline"
+
+    # ------
+    # OIDC / SSO (ZITADEL) — toggle + provider identity. Реальный enable + org-pin scope — в override.
+    # clientId/clientSecret — ТОЛЬКО в Vault eso-secret/outline/oidc, в inventory НЕ кладём.
+    # Endpoints (authorize/token/userinfo из zitadel_domain) + env-проводка — в SUB-2b.
+    # ------
+    outline_oidc_enabled: false
+    outline_oidc_name: "ZITADEL"
+    outline_oidc_scopes: "openid profile email offline_access"
+
+    # ------
+    # ESO integration: Vault → K8s Secrets. sa/role/store — стандартные (role совпадает с vault-ролью outline.eso-main).
+    # ------
+    eso_vault_integration_outline:
+      sa_name: "eso-main"
+      role_name: "outline.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    # ------
+    # Field-name vars (§2.5) — единый источник истины для имён Vault-полей.
+    # app/postgresql/redis — пишутся playbook'ом (tasks-vault-put) seed-if-missing.
+    # s3 — фиксированные ключи identity-distribute Layer 3 (username/accessKey/secretKey).
+    # ------
+    outline_app_secret_key_secret_key: "secretKey"
+    outline_app_secret_key_utils_secret: "utilsSecret"
+    outline_postgresql_secret_key_username: "username"
+    outline_postgresql_secret_key_password: "password"
+    outline_redis_secret_key_password: "password"
+    outline_s3_secret_key_username: "username"
+    outline_s3_secret_key_access_key: "accessKey"
+    outline_s3_secret_key_secret_key: "secretKey"
+
+    # ------
+    # S3 (SeaweedFS) — bucket/region/path-style. AWS_S3_UPLOAD_BUCKET_URL обязан быть
+    # browser-reachable (браузер грузит напрямую) — реальный публичный хост задаётся в override.
+    # ------
+    outline_s3_bucket: "outline"
+    outline_s3_region: "us-east-1"
+    outline_s3_force_path_style: true
+    outline_s3_upload_bucket_url: "https://s3-k8s-v2.drawapp.ru"
+
+    # ------
+    # Secret dicts (simple dataFrom.extract — тянет все поля пути в K8s Secret с теми же ключами).
+    # ------
+    outline_secret_app:
+      external_secret_name: "eso-outline-app"
+      vault_path: "/outline/app"
+      body:
+        target:
+          name: "eso-outline-app"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/app"
+
+    outline_secret_postgresql_creds:
+      external_secret_name: "eso-outline-postgresql-creds"
+      vault_path: "/outline/postgresql"
+      body:
+        target:
+          name: "eso-outline-postgresql-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/postgresql"
+
+    outline_secret_redis_creds:
+      external_secret_name: "eso-outline-redis-creds"
+      vault_path: "/outline/redis"
+      body:
+        target:
+          name: "eso-outline-redis-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/redis"
+
+    outline_secret_s3_creds:
+      external_secret_name: "eso-outline-s3-creds"
+      vault_path: "/outline/s3-storage"
+      body:
+        target:
+          name: "eso-outline-s3-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/s3-storage"
+
+    # OIDC client-creds — заполняются оператором вручную в Vault (vault kv put eso-secret/outline/oidc).
+    outline_secret_oidc_creds:
+      external_secret_name: "eso-outline-oidc-creds"
+      vault_path: "/outline/oidc"
+      body:
+        target:
+          name: "eso-outline-oidc-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/oidc"
+
+    # OIDC-секрет добавляется в список ТОЛЬКО при outline_oidc_enabled = true
+    # (при false ExternalSecret не создаётся — Vault-путь /outline/oidc ещё пуст).
+    eso_vault_integration_outline_secrets: >-
+      {{ [outline_secret_app,
+          outline_secret_postgresql_creds,
+          outline_secret_redis_creds,
+          outline_secret_s3_creds]
+         + ([outline_secret_oidc_creds] if outline_oidc_enabled | bool else []) }}
+
+    eso_vault_integration_outline_secrets_extra: []
