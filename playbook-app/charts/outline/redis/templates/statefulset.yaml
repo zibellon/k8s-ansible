@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: outline-redis
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: outline-redis
+    app.kubernetes.io/instance: outline-redis-{{ .Values.namespace }}
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: outline
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  serviceName: outline-redis
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: outline-redis
+      app.kubernetes.io/instance: outline-redis-{{ .Values.namespace }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: outline-redis
+        app.kubernetes.io/instance: outline-redis-{{ .Values.namespace }}
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: outline
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: redis
+          image: {{ .Values.image }}
+          # requirepass через args; $(OUTLINE_REDIS_PASSWORD) подставляет kubelet из env ниже.
+          # Plain redis-образ: entrypoint добавляет `redis-server` перед args, начинающимися с '-'.
+          args:
+            - "--requirepass"
+            - "$(OUTLINE_REDIS_PASSWORD)"
+          env:
+            - name: OUTLINE_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentialsSecretName }}
+                  key: {{ .Values.credentialsSecretKey }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: outline-redis
