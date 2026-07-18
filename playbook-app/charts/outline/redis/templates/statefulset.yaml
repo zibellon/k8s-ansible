@@ -26,9 +26,24 @@ spec:
         app.kubernetes.io/managed-by: Helm
     spec:
       automountServiceAccountToken: false
+      # non-root: redis:alpine стартует root и дропает к redis (uid 999). Форсим на уровне k8s.
+      # fsGroup=1000 → /data group-writable под gid 1000.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
           image: {{ .Values.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           # requirepass через args; $(OUTLINE_REDIS_PASSWORD) подставляет kubelet из env ниже.
           # Plain redis-образ: entrypoint добавляет `redis-server` перед args, начинающимися с '-'.
           args:
@@ -47,6 +62,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+              subPath: data
+            - name: tmp
+              mountPath: /tmp
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -63,3 +81,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: outline-redis
+        # writable /tmp для readOnlyRootFilesystem (данные — в /data=PVC)
+        - name: tmp
+          emptyDir: {}

@@ -26,9 +26,25 @@ spec:
         app.kubernetes.io/managed-by: Helm
     spec:
       automountServiceAccountToken: false
+      # non-root: postgres:alpine стартует root и дропает к postgres (uid 70) через su-exec.
+      # Форсим на уровне k8s. fsGroup=70 → свежий PVC group-writable; PGDATA=.../pgdata (subdir)
+      # создаётся initdb'ом 0700 под uid 70. drop ALL безопасен — su-exec уже не нужен.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgresql
           image: {{ .Values.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: POSTGRES_USER
               valueFrom:
@@ -51,6 +67,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+              subPath: data
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /var/run/postgresql
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -67,3 +88,8 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: outline-postgresql
+        # writable dirs для readOnlyRootFilesystem: socket/lock (/var/run/postgresql) + temp (/tmp)
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
