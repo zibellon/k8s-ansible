@@ -368,6 +368,29 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn/linstor (storage), seaweedfs (S3 backend, functional).
 - **Enable flag.** `filestash_enabled` (opt-in, default `false`): guards install + gates cross-ns NetworkPolicies.
 
+## 17.8. `outline`
+
+- **Chart path.** `charts/outline/{pre,postgresql,redis,install,post}/` (local handwritten charts; официального upstream-чарта нет — community-charts/outline сторонний, не принят).
+- **Install playbook.** `outline-install.yaml`.
+- **Namespace.** `outline`.
+- **Releases.** `outline-pre`, `outline-postgresql`, `outline-redis`, `outline`, `outline-post`.
+- **Image.** `outline_image` (full URI:tag, default `docker.io/outlinewiki/outline:1.8.1`). Port `3000`. Outline 1.8.1 — BSL 1.1 (бесплатно для внутреннего self-hosting).
+- **Workload.** Main = **Deployment (1 реплика, без PVC)** — S3-backed, stateless (состояние в Postgres + S3); `strategy: Recreate` (нет гонки двух подов за миграции). Сайдкары `outline-postgresql` + `outline-redis` (StatefulSet + headless + static PVC, §23). PostgreSQL user = superuser (`POSTGRES_USER` образа) → миграции создают `uuid-ossp`/`pg_trgm`/`unaccent`. Redis = plain `redis:7.4-alpine`, `--requirepass` через `$(VAR)`-args. Probes: startupProbe `/_health` (30×10s под медленный диск + миграции) + readiness + liveness.
+- **Required vars.** `outline_namespace`, `outline_enabled`, `outline_image`, `outline_ui_domain`, S3 (`outline_s3_bucket`/`_region`/`_force_path_style`/`_upload_bucket_url`), сайдкары (`outline_postgresql_*`, `outline_redis_*`), OIDC (`outline_oidc_enabled`/`_name`/`_scopes` + endpoints из `zitadel_domain`), cron (`outline_cron_enabled`/`_image`/`_hourly_schedule`/`_daily_schedule`). Ingress-тумблеры: `outline_cert_manager_issuer_enabled`, `outline_ui_ingress_tls_enabled`, `outline_ui_certificate_enabled`, `outline_ui_vpn_only_enabled` (ACME vs за Cloudflare). Kustomize patches (default `[]`): `outline_{pre,postgresql,redis,install,post}_kustomize_patches`.
+- **ESO integration.** Yes (`eso_vault_integration_outline`). Vault `eso-secret/outline/*`: `app` (`secretKey` + `utilsSecret` — авто-генерятся seed-if-missing), `postgresql` (`username`/`password` — seed-if-missing), `redis` (`password` — seed-if-missing), `s3-storage` (`username`/`accessKey`/`secretKey` — SeaweedFS identity-distribute), `oidc` (`clientId`/`clientSecret` — ручной seed, только при `outline_oidc_enabled`). Всё через `secretKeyRef`; `DATABASE_URL`/`REDIS_URL` собираются в Deployment через `$(VAR)`-подстановку.
+- **SECRET_KEY — never rotate.** AES-ключ at-rest (шифрует auth-токены/OAuth-секреты в Postgres). Рассинхрон фатален (процесс выходит на первом чтении зашифрованной колонки). Playbook сеет один раз (seed-if-missing, both-or-nothing с `UTILS_SECRET`) и НЕ перезаписывает — нет `passwordMtime`-триггера. Держать break-glass-копию вне Vault.
+- **Auth (OIDC / ZITADEL).** Локального логина у Outline **нет** — только OIDC через `outline_oidc_enabled` (grafana-паттерн: clientId/clientSecret из Vault → env через secretKeyRef; три endpoint'а из `zitadel_domain`, НЕ `OIDC_ISSUER_URL`; `OIDC_SCOPES` строкой + org-пин в override; `OIDC_DISABLE_REDIRECT=true`). ZITADEL-app: тип Web, auth Post, гранты Authorization Code + **Refresh Token** (без refresh выкидывает через ~1ч), redirect `https://<domain>/auth/oidc.callback`, все email verified. `prompt=select_account` добавить нельзя (как argocd — passport-oauth2 клеит свой query через `?`).
+- **Bootstrap.** OIDC-first: ПЕРВЫЙ OIDC-логин создаёт workspace и делает юзера админом (НЕ использовать `installation.create`). Сразу привязать passkey (break-glass — passkey-логин не требует IdP/SMTP). Caveat: при `vpn_only=false` незащищённый `installation.create` публичен до первого логина — сделать первый OIDC-логин сразу, либо bootstrap за `vpn_only=true`.
+- **S3 (browser-direct).** У Outline v1.8.1 **нет server-side S3-proxy** (в отличие от GitLab) — браузер грузит вложения **напрямую** в `AWS_S3_UPLOAD_BUCKET_URL` (presigned POST). Значит S3-эндпоинт обязан быть **публичным, browser-reachable** (напр. `s3-…drawapp.ru` → Traefik → seaweedfs S3), а бакету `outline` нужна CORS-политика на origin wiki. SeaweedFS 4.38 принимает presigned POST + `ACL: private` (path-style); CORS применяется эмпирически после первого теста загрузки (глобальный `cors.allowed_origins: *` покрывает preflight; per-bucket правило — только если POST-ответ без ACAO).
+- **Cron.** Сервис `cron` не в дефолтном `SERVICES` — `post/` рендерит CronJob'ы (hourly + daily), бьющие `/api/cron.<period>` с `UTILS_SECRET` по внутреннему сервису. Расписания — inventory (`outline_cron_hourly_schedule`/`_daily_schedule`). Выключить: `outline_cron_enabled: false`.
+- **NetworkPolicy.** deny-all + DNS + intra-ns (outline↔postgres/redis) + ingress от Traefik (`:3000`) + **external HTTPS/HTTP egress** (публичный S3 + ZITADEL OIDC — НЕ cross-ns seaweedfs `:8333`, т.к. Outline ходит по публичному URL) + ACME HTTP-01 solver-пара (gated by issuer).
+- **Ingress.** Plain `kind: Ingress` (Traefik). Тумблеры: cert-manager ACME (`websecure` + Certificate) или за Cloudflare (`web`, без TLS). `vpn-only` middleware. **WebAuthn/passkey требует HTTPS на реальном домене** — TLS обязателен.
+- **ServiceMonitor.** No (Outline не отдаёт Prometheus-метрик, только `/_health`).
+- **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn/linstor (сайдкар-PVC), seaweedfs (S3), zitadel (OIDC — при включении).
+- **Enable flag.** `outline_enabled` (opt-in, default `false`): guards install.
+- **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` (политика/роль `outline.eso-main`); (2) `seaweedfs-install.yaml --tags policy-sync,user-sync,identity-distribute,bucket-sync` (бакет `outline` + identity + креды → `eso-secret/outline/s3-storage`); (3) при OIDC: создать ZITADEL Web-app + `vault kv put eso-secret/outline/oidc clientId=… clientSecret=…`; (4) DNS для домена wiki + публичного S3-хоста → ingress кластера. Install fail-fast если S3 (или OIDC-при-включении) кредов нет в Vault.
+- **Limitations (upstream Outline).** Русский FTS деградирован (захардкожен `english` regconfig — однословный префикс работает, многословный/словоформы нет; фикс — форк образа). Workspace-админ читает/экспортирует любую приватную коллекцию, на self-hosted это НЕ видно в UI audit-log (компенсация: webhook `fileOperations.create` → Loki). Группы из OIDC не синкаются (руками, либо будущий Ansible-реконсайлер).
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -390,6 +413,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `seaweedfs` | seaweedfs (central S3 storage: master, volume, filer, s3 gateway + filer's PostgreSQL backend) | no |
 | `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
 | `filestash` | filestash | no |
+| `outline` | outline | no |
 
 ## 19. Cross-cutting Dependency Order
 
