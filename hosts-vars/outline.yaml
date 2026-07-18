@@ -344,13 +344,9 @@ all:
       extraObjects: "{{ outline_install_extra_objects }}"
 
     # ------
-    # PHASE: post (Ingress + Certificate + CronJob). Cron-расписания — inventory-переменные.
+    # PHASE: post (Ingress + Certificate)
     # ------
     outline_post_helm_timeout: "5m"
-    outline_cron_enabled: true
-    outline_cron_image: "docker.io/busybox:1.36"
-    outline_cron_hourly_schedule: "5 * * * *"
-    outline_cron_daily_schedule: "15 3 * * *"
     outline_post_extra_objects: []
     outline_post_kustomize_patches: []
     outline_post_helm_values:
@@ -364,6 +360,20 @@ all:
           websecure: "{{ traefik_websecure_entrypoint }}"
       service:
         port: "{{ outline_container_port }}"
+      extraObjects: "{{ outline_post_extra_objects }}"
+
+    # ------
+    # PHASE: cronjob (Scheduled jobs). Cron-расписания — inventory-переменные.
+    # ------
+    outline_cronjob_helm_timeout: "5m"
+    outline_cron_enabled: true
+    outline_cron_image: "docker.io/busybox:1.36"
+    outline_cron_hourly_schedule: "5 * * * *"
+    outline_cron_daily_schedule: "15 3 * * *"
+    outline_cronjob_extra_objects: []
+    outline_cronjob_kustomize_patches: []
+    outline_cronjob_helm_values:
+      namespace: "{{ outline_namespace }}"
       cron:
         enabled: "{{ outline_cron_enabled }}"
         image: "{{ outline_cron_image }}"
@@ -376,4 +386,4 @@ all:
             schedule: "{{ outline_cron_hourly_schedule }}"
           - period: "daily"
             schedule: "{{ outline_cron_daily_schedule }}"
-      extraObjects: "{{ outline_post_extra_objects }}"
+      extraObjects: "{{ outline_cronjob_extra_objects }}"

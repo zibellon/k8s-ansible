@@ -5,7 +5,8 @@
 #   2. outline/postgresql: sidecar PostgreSQL (StatefulSet + headless + PVC) + seed PG creds
 #   3. outline/redis:      sidecar Redis (StatefulSet + headless + PVC) + seed Redis creds
 #   4. outline/install:    main Deployment + Service (+ seed app SECRET_KEY/UTILS_SECRET, S3/OIDC fail-fast)
-#   5. outline/post:       Ingress (Traefik) + cert-manager Certificate + CronJob
+#   5. outline/post:       Ingress (Traefik) + cert-manager Certificate
+#   6. outline/cronjob:    Scheduled jobs (CronJob)
 #
 # Usage (tags):
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/outline-install.yaml
@@ -14,6 +15,7 @@
 #   ansible-playbook ... --tags redis
 #   ansible-playbook ... --tags install
 #   ansible-playbook ... --tags post
+#   ansible-playbook ... --tags cronjob
 #
 # Prerequisites:
 #   - Vault installed/unsealed; Vault policies+roles synced (outline.eso-main)
@@ -543,7 +545,7 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 5: POST (Ingress + Certificate + CronJob)
+    # STEP 5: POST (Ingress + Certificate)
     # =========================================================================
 
     - name: "[outline-post] Copy chart to remote"
@@ -592,6 +594,55 @@
       tags: [post]
 
     # =========================================================================
+    # STEP 6: CRONJOB (Scheduled jobs)
+    # =========================================================================
+
+    - name: "[outline-cronjob] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_chart_name: "cronjob"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/outline/cronjob/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/cronjob"
+      tags: [cronjob]
+
+    - name: "[outline-cronjob] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_dir: "{{ remote_charts_dir }}/outline/cronjob"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ outline_cronjob_helm_values | to_nice_yaml }}"
+      tags: [cronjob]
+
+    - name: "[outline-cronjob] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_release_name: "outline-cronjob"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/cronjob"
+        dto_values_file_path: "{{ remote_charts_dir }}/outline/cronjob/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/outline/cronjob-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/outline/cronjob-k"
+        dto_patches_list: "{{ outline_cronjob_kustomize_patches }}"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [cronjob]
+
+    - name: "[outline-cronjob] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_helm_command: >
+          helm upgrade --install outline-cronjob {{ remote_charts_dir }}/outline/cronjob-k
+          --namespace {{ outline_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ outline_cronjob_helm_timeout }}
+      tags: [cronjob]
+
+    # =========================================================================
     # VERIFICATION
     # =========================================================================
 
@@ -633,7 +684,7 @@
 
     - name: "[outline-verify] Installation complete"
       debug:
-        msg: "outline-pre + outline-postgresql + outline-redis + outline + outline-post: OK"
+        msg: "outline-pre + outline-postgresql + outline-redis + outline + outline-post + outline-cronjob: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
