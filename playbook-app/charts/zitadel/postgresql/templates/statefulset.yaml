@@ -26,6 +26,14 @@ spec:
         app.kubernetes.io/managed-by: Helm
     spec:
       automountServiceAccountToken: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       # non-root: postgres:alpine стартует root и дропает к postgres (uid 70) через su-exec.
       # Форсим на уровне k8s. fsGroup=70 → свежий PVC group-writable; PGDATA=.../pgdata (subdir)
       # создаётся initdb'ом 0700 под uid 70. drop ALL безопасен — su-exec уже не нужен.
@@ -72,6 +80,10 @@ spec:
               mountPath: /tmp
             - name: run
               mountPath: /var/run/postgresql
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
       volumes:
         - name: data
           persistentVolumeClaim:
