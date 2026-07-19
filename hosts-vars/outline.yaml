@@ -13,13 +13,19 @@ all:
     # ------
     # OIDC / SSO (ZITADEL) — toggle + provider identity. Реальный enable + org-pin scope — в override.
     # clientId/clientSecret — ТОЛЬКО в Vault eso-secret/outline/oidc, в inventory НЕ кладём.
-    # Endpoints (authorize/token/userinfo из zitadel_domain) + env-проводка — в SUB-2b.
+    # Endpoints (authorize/token/userinfo) — из zitadel_domain, три URI руками (НЕ через ISSUER_URL).
     # ------
     outline_oidc_enabled: false
     outline_oidc_name: "ZITADEL"
     # Claim из OIDC-токена, используемый как username в Outline.
     outline_oidc_username_claim: "preferred_username"
     outline_oidc_scopes: "openid profile email offline_access"
+    # disableRedirect=true → не редиректить сразу на IdP (кнопка passkey остаётся видимой).
+    outline_oidc_disable_redirect: true
+    # OIDC endpoints — из zitadel_domain (глобальный факт).
+    outline_oidc_auth_uri: "https://{{ zitadel_domain }}/oauth/v2/authorize"
+    outline_oidc_token_uri: "https://{{ zitadel_domain }}/oauth/v2/token"
+    outline_oidc_userinfo_uri: "https://{{ zitadel_domain }}/oidc/v1/userinfo"
 
     # ------
     # ESO integration: Vault → K8s Secrets. sa/role/store — стандартные (role совпадает с vault-ролью outline.eso-main).
@@ -189,13 +195,6 @@ all:
           kind: "Issuer"
 
     # ------
-    # OIDC endpoints — из zitadel_domain (глобальный факт). Три URI руками, НЕ через ISSUER_URL.
-    # ------
-    outline_oidc_auth_uri: "https://{{ zitadel_domain }}/oauth/v2/authorize"
-    outline_oidc_token_uri: "https://{{ zitadel_domain }}/oauth/v2/token"
-    outline_oidc_userinfo_uri: "https://{{ zitadel_domain }}/oidc/v1/userinfo"
-
-    # ------
     # PHASE: pre
     # ------
     outline_pre_helm_timeout: "5m"
@@ -338,7 +337,7 @@ all:
         authUri: "{{ outline_oidc_auth_uri }}"
         tokenUri: "{{ outline_oidc_token_uri }}"
         userInfoUri: "{{ outline_oidc_userinfo_uri }}"
-        disableRedirect: true
+        disableRedirect: "{{ outline_oidc_disable_redirect }}"
         credsSecretName: "{{ outline_secret_oidc_creds.body.target.name }}"
         clientIdKey: "clientId"
         clientSecretKey: "clientSecret"
