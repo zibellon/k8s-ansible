@@ -115,7 +115,7 @@ all:
     # === SECTION: OIDC / SSO (ZITADEL) ===
     # Аддитивно к локальным аккаунтам (те остаются break-glass). Включать: в override
     # argocd_oidc_enabled: true + реальный client_id + org-pin scope + гранты в argocd_policy_csv_list
-    # (g, <email>, role:...). ClientSecret — ТОЛЬКО через ESO (argocd-oidc-secret), НИКОГДА в
+    # (g, <email>, role:...). ClientSecret — ТОЛЬКО через ESO (eso-argocd-oidc-creds), НИКОГДА в
     # argocd-secret (инвариант). Секрет в Vault: eso-secret/argocd/oidc (ключи clientId/clientSecret).
     argocd_oidc_enabled: false
     argocd_oidc_name: "ZITADEL"
@@ -145,14 +145,14 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
-    # OIDC client-secret → ОТДЕЛЬНЫЙ секрет argocd-oidc-secret (метка part-of: argocd для резолва
-    # $argocd-oidc-secret:clientSecret). НЕ argocd-secret (инвариант).
+    # OIDC client-secret → ОТДЕЛЬНЫЙ секрет eso-argocd-oidc-creds (метка part-of: argocd для резолва
+    # $eso-argocd-oidc-creds:clientSecret). НЕ argocd-secret (инвариант).
     argocd_secret_oidc_creds:
-      external_secret_name: "argocd-oidc-secret"
+      external_secret_name: "eso-argocd-oidc-creds"
       vault_path: "/argocd/oidc"
       body:
         target:
-          name: "argocd-oidc-secret"
+          name: "eso-argocd-oidc-creds"
           template:
             engineVersion: v2
             metadata:
@@ -309,7 +309,7 @@ all:
             name: {{ argocd_oidc_name }}
             issuer: {{ argocd_oidc_issuer }}
             clientID: "{{ argocd_oidc_client_id }}"
-            clientSecret: "$argocd-oidc-secret:clientSecret"
+            clientSecret: "$eso-argocd-oidc-creds:clientSecret"
             requestedScopes: {{ argocd_oidc_requested_scopes }}
             refreshTokenThreshold: "{{ argocd_oidc_refresh_token_threshold }}"
     argocd_oidc_rbac_patch:

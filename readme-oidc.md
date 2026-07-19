@@ -148,7 +148,7 @@ oidc.config:
   name: ZITADEL
   issuer: https://<zitadel_domain>
   clientID: "<appId>" # КАВЫЧКИ обязательны (числовой ID) — в override argocd_oidc_client_id
-  clientSecret: $argocd-oidc-secret:clientSecret
+  clientSecret: $eso-argocd-oidc-creds:clientSecret
   requestedScopes: ["openid","profile","email","offline_access","urn:zitadel:iam:org:id:<ORG_ID>"]
   refreshTokenThreshold: "2h"
 
