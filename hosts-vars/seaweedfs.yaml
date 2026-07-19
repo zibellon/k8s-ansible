@@ -521,10 +521,17 @@ all:
     # ---------
     # Helm chart values
     seaweedfs_helm_values:
-      # Включить upstream Prometheus ServiceMonitor для всех компонентов
-      # (master/volume/filer/s3/worker/admin). gatewayHost остаётся null → pull-only.
       global:
         seaweedfs:
+          # SECURITY: НЕ создавать cluster-wide ClusterRole+ClusterRoleBinding
+          # (<fullname>-rw-cr / -rw-crb), дающие ServiceAccount seaweedfs полный CRUD
+          # над Pods во ВСЕХ namespace (kube-system, linstor, ...). Upstream default = true —
+          # legacy migration-хак 2020 года; бинарь weed в Kubernetes API не ходит, поэтому
+          # в runtime это право никем не используется. false убирает вектор privilege-
+          # escalation (компрометация seaweedfs-пода → privileged/hostPath pod → выход на ноду).
+          createClusterRole: false
+          # Включить upstream Prometheus ServiceMonitor для всех компонентов
+          # (master/volume/filer/s3/worker/admin). gatewayHost остаётся null → pull-only.
           monitoring:
             enabled: true
       master:
