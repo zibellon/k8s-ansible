@@ -1,0 +1,81 @@
+---
+# Namespace
+namespace: "outline"
+
+# Container image (full URI:tag)
+image: "docker.io/outlinewiki/outline:1.8.1"
+
+replicaCount: 1
+
+# HTTP port
+port: 3000
+
+# Outline core
+outline:
+  url: ""                 # env URL — https://<wiki-domain>
+  uploadMaxSize: "262144000"
+
+# App secret (ESO) — SECRET_KEY (never-rotate) + UTILS_SECRET
+app:
+  secretName: ""          # eso-outline-app
+  secretKeyKey: "secretKey"
+  utilsSecretKey: "utilsSecret"
+
+# Database (sidecar PostgreSQL). Пароль из ESO; URL собирается в deployment через $(VAR).
+database:
+  host: ""                # outline-postgresql-0.outline-postgresql
+  port: "5432"
+  name: "outline"
+  user: "outline"
+  sslMode: "disable"
+  passwordSecretName: ""   # eso-outline-postgresql-creds
+  passwordKey: "password"
+
+# Redis (sidecar). Пароль из ESO; URL собирается через $(VAR).
+redis:
+  host: ""                # outline-redis-0.outline-redis
+  passwordSecretName: ""   # eso-outline-redis-creds
+  passwordKey: "password"
+
+# S3 (SeaweedFS). Креды из ESO; uploadBucketUrl обязан быть browser-reachable (публичный).
+s3:
+  bucket: "outline"
+  region: "us-east-1"
+  forcePathStyle: true
+  uploadBucketUrl: ""      # https://<public-s3-host>
+  acl: "private"
+  credsSecretName: ""      # eso-outline-s3-creds
+  accessKeyKey: "accessKey"
+  secretKeyKey: "secretKey"
+
+# OIDC (ZITADEL). Рендерится только при enabled. Креды из ESO; endpoints строятся в inventory из zitadel_domain.
+oidc:
+  enabled: false
+  displayName: "ZITADEL"
+  usernameClaim: "preferred_username"
+  scopes: "openid profile email offline_access"
+  authUri: ""
+  tokenUri: ""
+  userInfoUri: ""
+  disableRedirect: true
+  credsSecretName: ""      # eso-outline-oidc-creds
+  clientIdKey: "clientId"
+  clientSecretKey: "clientSecret"
+
+# Pod/container securityContext. readOnlyRootFilesystem=false: пути записи Outline (Node/sharp tmp)
+# не верифицированы эмпирически; харденинг до RO=true + /tmp emptyDir — отдельная задача.
+securityContext:
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  readOnlyRootFilesystem: false
+
+# Resource requests/limits (operator-overridable)
+resources: {}
+
+# Scheduling (operator-overridable)
+nodeSelector: {}
+tolerations: []
+
+# Custom K8s objects to render (operator-side, default empty)
+extraObjects: []

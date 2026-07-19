@@ -71,7 +71,7 @@ ansible-playbook ... --limit w1,w2,w3
 for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader longhorn \
          seaweedfs \
          mon-system \
-         argocd gitlab gitlab-runner zitadel teleport filestash haproxy; do
+         argocd gitlab gitlab-runner zitadel teleport filestash outline haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
 ```
@@ -86,6 +86,7 @@ done
 - `zitadel` before `mon-system` (for Grafana OIDC inside mon-system stack)
 - `argocd` / `gitlab` / `gitlab-runner` / `seaweedfs` / `filestash` требуют `<c>_enabled: true` (дефолт `false`, opt-in) — иначе install падает с guard'ом. Cross-ns NP между этими компонентами гейтятся флагами цели; фиксированный порядок установки не требуется — см. [`networking.md`](networking.md) §8.5
 - `filestash`: admin-пароль **авто-генерится** при install (seed-if-missing; оба ключа `admin_password` plaintext + `admin_password_hash` bcrypt пишутся в Vault) — ручной seed НЕ нужен. Plaintext читать `vault kv get eso-secret/filestash/app` (поле `admin_password`). Control node требует `passlib` + `bcrypt<4.1` для фильтра `password_hash('bcrypt')` (см. `tests/Dockerfile`). После старта — войти в `/admin` и добавить S3-подключение (endpoint `http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333`); девы логинятся своими AK/SK.
+- `outline`: OIDC-only (локального логина нет) — bootstrap OIDC-first (первый ZITADEL-логин = админ), сразу привязать passkey (break-glass). SECRET_KEY/UTILS_SECRET/PG/Redis-пароли авто-генерятся seed-if-missing; SECRET_KEY НЕ ротируется. Preflight: seaweedfs bucket+identity (S3-креды → `eso-secret/outline/s3-storage`) + ZITADEL app + `vault kv put eso-secret/outline/oidc clientId=… clientSecret=…`. Браузер грузит вложения НАПРЯМУЮ в публичный S3-хост (server-side proxy у Outline нет). См. [`components.md`](components.md) §17.8.
 - **Альтернатива** `longhorn` → `linstor` (Piraeus Operator + LINSTOR; ставится через `ansible-playbook ... playbook-app/linstor-install.yaml`). Только один из двух storage stack'ов в кластере, не оба параллельно. См. [`components.md`](components.md) §16.5.
 
 ---

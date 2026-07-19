@@ -93,11 +93,19 @@ all:
     # Пример: zitadel-admin@zitadel.zitadel-k8s-v2.drawapp.ru
     # Дополнительно возможен вход по реальному email (zitadel_admin_email).
     zitadel_admin_username: "zitadel-admin"
-    zitadel_org_name: "ZITADEL"
+    zitadel_org_name: "zitadel"
+    # Производный loginName (по формуле в комментарии выше) — пишется в Vault admin/creds.
+    zitadel_admin_login_name: "{{ zitadel_admin_username }}@{{ zitadel_org_name | lower }}.{{ zitadel_domain }}"
     # Placeholder — реальный email оператор задаёт в hosts-vars-override/zitadel.yaml
     zitadel_admin_email: "zitadel-admin@example.com"
+    # Отображаемое имя bootstrap-админа (FirstName + LastName → claim `name` в OIDC).
+    # Дефолты совпадают с тем, что ZITADEL подставляет сам. Реальное имя — в
+    # hosts-vars-override/<cluster>/zitadel.yaml; действует ТОЛЬКО при первом bootstrap.
+    zitadel_admin_first_name: "zitadel"
+    zitadel_admin_last_name: "Admin"
     zitadel_admin_secret_key_username: "username"
     zitadel_admin_secret_key_password: "password"
+    zitadel_admin_secret_key_login_name: "loginName"
     # === SECTION 2: ESO ===
     # ---------
     # ESO integration: Vault → K8s Secrets
@@ -188,6 +196,9 @@ all:
     zitadel_postgresql_image: "docker.io/postgres:17.9-alpine3.23"
     zitadel_postgresql_storage_class: "lnstr-major-multi-sync"
     zitadel_postgresql_storage_size: "4Gi"
+    zitadel_postgresql_resources: {}
+    zitadel_postgresql_node_selector: {}
+    zitadel_postgresql_tolerations: []
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     zitadel_postgresql_extra_objects: []
     # Postgresql-phase kustomize patches (operator-side customization, default empty)
@@ -200,6 +211,9 @@ all:
       image: "{{ zitadel_postgresql_image }}"
       storageClass: "{{ zitadel_postgresql_storage_class }}"
       storageSize: "{{ zitadel_postgresql_storage_size }}"
+      resources: "{{ zitadel_postgresql_resources }}"
+      nodeSelector: "{{ zitadel_postgresql_node_selector }}"
+      tolerations: "{{ zitadel_postgresql_tolerations }}"
       credentials:
         secretName: "{{ zitadel_secret_postgresql_creds.body.target.name }}"
         usernameKey: "{{ zitadel_postgresql_secret_key_username }}"
@@ -213,47 +227,75 @@ all:
     zitadel_helm_url: "https://charts.zitadel.com"
     zitadel_helm_repo_name: "zitadel"
     zitadel_helm_chart_name: "zitadel"
-    zitadel_helm_chart_version: "9.30.0"
+    zitadel_helm_chart_version: "9.34.1"
     # Replica count (SCALE).
     zitadel_helm_values_replica_count: 1
     zitadel_helm_values_login_replica_count: 1
     # Affinity (pod scheduling) — пусто {} по умолчанию; переопределяется в hosts-vars-override/ (напр. podAntiAffinity).
     zitadel_helm_values_affinity: {}
     zitadel_helm_values_login_affinity: {}
+    zitadel_helm_values_resources: {}
+    zitadel_helm_values_node_selector: {}
+    zitadel_helm_values_tolerations: []
+    zitadel_helm_values_login_resources: {}
+    zitadel_helm_values_login_node_selector: {}
+    zitadel_helm_values_login_tolerations: []
+    # --- round-5 blocks (extracted from zitadel_helm_values_zitadel.configmapConfig) ---
+    zitadel_helm_values_zitadel_database:
+      Postgres:
+        Host: zitadel-postgresql-0.zitadel-postgresql
+        Port: 5432
+        Database: "{{ zitadel_postgresql_database_name }}"
+        MaxOpenConns: 20
+        MaxIdleConns: 10
+        ConnMaxLifetime: "30m"
+        Admin:
+          Username: "{{ zitadel_postgresql_username }}"
+          SSL:
+            Mode: disable
+        User:
+          Username: "{{ zitadel_postgresql_username }}"
+          SSL:
+            Mode: disable
+    # Instance-level defaults — применяются setup-job'ом ТОЛЬКО при создании инстанса
+    # (первый greenfield-bootstrap); на живом инстансе НЕ реконсилятся (только Console/API).
+    # OIDCSettings — все 4 длительности обязательны, иначе setup падает (defaults.yaml §OIDCSettings).
+    zitadel_helm_values_zitadel_default_instance:
+      LoginPolicy:
+        ForceMFA: true                    # 2FA обязателен всем (нужен доступный метод: OTP/passkey — вкл. по дефолту)
+        AllowRegister: false              # self-registration запрещён
+        MfaInitSkipLifetime: "0s"         # окно «пропустить настройку MFA» = 0 → enrollment сразу на первом входе
+      DomainPolicy:
+        UserLoginMustBeDomain: true       # loginName = username@<org-domain> (суффикс org в loginnames)
+      OIDCSettings:
+        AccessTokenLifetime: "1h"
+        IdTokenLifetime: "4h"
+        RefreshTokenIdleExpiration: "720h"   # 30d (дефолт, задаём явно — правило all-or-nothing)
+        RefreshTokenExpiration: "2160h"      # 90d (дефолт, задаём явно)
+    zitadel_helm_values_zitadel_first_instance:
+      Org:
+        Name: "{{ zitadel_org_name }}"
+        Human:
+          Username: "{{ zitadel_admin_username }}"
+          FirstName: "{{ zitadel_admin_first_name }}"
+          LastName: "{{ zitadel_admin_last_name }}"
+          Email:
+            Address: "{{ zitadel_admin_email }}"
+            Verified: true
+    zitadel_helm_values_zitadel_configmap:
+      ExternalDomain: "{{ zitadel_domain }}"
+      ExternalPort: 443
+      ExternalSecure: true
+      TLS:
+        Enabled: false
+      Database: "{{ zitadel_helm_values_zitadel_database }}"
+      DefaultInstance: "{{ zitadel_helm_values_zitadel_default_instance }}"
+      FirstInstance: "{{ zitadel_helm_values_zitadel_first_instance }}"
     # --- round-4 blocks (extracted from zitadel_helm_values) ---
     zitadel_helm_values_zitadel:
       masterkeySecretName: "{{ zitadel_secret_masterkey.body.target.name }}"
       # masterkeySecretKeyName удалён — в chart 9.x ключ в secret hardcoded: "masterkey"
-      configmapConfig:
-        ExternalDomain: "{{ zitadel_domain }}"
-        ExternalPort: 443
-        ExternalSecure: true
-        TLS:
-          Enabled: false
-        Database:
-          Postgres:
-            Host: zitadel-postgresql-0.zitadel-postgresql
-            Port: 5432
-            Database: "{{ zitadel_postgresql_database_name }}"
-            MaxOpenConns: 20
-            MaxIdleConns: 10
-            ConnMaxLifetime: "30m"
-            Admin:
-              Username: "{{ zitadel_postgresql_username }}"
-              SSL:
-                Mode: disable
-            User:
-              Username: "{{ zitadel_postgresql_username }}"
-              SSL:
-                Mode: disable
-        FirstInstance:
-          Org:
-            Name: "{{ zitadel_org_name }}"
-            Human:
-              Username: "{{ zitadel_admin_username }}"
-              Email:
-                Address: "{{ zitadel_admin_email }}"
-                Verified: true
+      configmapConfig: "{{ zitadel_helm_values_zitadel_configmap }}"
     zitadel_helm_values_env:
       - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
         valueFrom:
@@ -281,9 +323,9 @@ all:
     # Helm chart values
     zitadel_helm_values:
       replicaCount: "{{ zitadel_helm_values_replica_count }}"
-      resources: {}
-      nodeSelector: {}
-      tolerations: []
+      resources: "{{ zitadel_helm_values_resources }}"
+      nodeSelector: "{{ zitadel_helm_values_node_selector }}"
+      tolerations: "{{ zitadel_helm_values_tolerations }}"
       affinity: "{{ zitadel_helm_values_affinity }}"
       zitadel: "{{ zitadel_helm_values_zitadel }}"
       env: "{{ zitadel_helm_values_env }}"
@@ -300,6 +342,9 @@ all:
           enabled: true
       login:
         replicaCount: "{{ zitadel_helm_values_login_replica_count }}"
+        resources: "{{ zitadel_helm_values_login_resources }}"
+        nodeSelector: "{{ zitadel_helm_values_login_node_selector }}"
+        tolerations: "{{ zitadel_helm_values_login_tolerations }}"
         affinity: "{{ zitadel_helm_values_login_affinity }}"
       setupJob:
         # --init-projections=true переехал из initJob → setupJob (chart 9.x default)
@@ -313,8 +358,6 @@ all:
     # Post-phase kustomize patches (operator-side customization, default empty)
     zitadel_post_kustomize_patches: []
     # Post-phase values (Ingress chart)
-    # zitadel_resources / zitadel_node_selector / zitadel_tolerations / zitadel_affinity
-    # не определены в hosts-vars/ — берутся из hosts-vars-override/zitadel.yaml
     zitadel_post_helm_values:
       namespace: "{{ zitadel_namespace }}"
       ingressConfig: "{{ zitadel_ui_ingress_config }}"

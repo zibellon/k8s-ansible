@@ -1,0 +1,397 @@
+all:
+  vars:
+    # =========================================================================
+    # Outline wiki — часть 1/2 inventory: identity + secrets (ESO/Vault) + S3/OIDC config.
+    # Workload / ingress / phases (helm_values, sidecars, kustomize_patches) — в SUB-2b (тот же файл).
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start + gates cross-ns NetworkPolicies.
+    outline_enabled: false
+
+    outline_namespace: "outline"
+
+    # ------
+    # OIDC / SSO (ZITADEL) — toggle + provider identity. Реальный enable + org-pin scope — в override.
+    # clientId/clientSecret — ТОЛЬКО в Vault eso-secret/outline/oidc, в inventory НЕ кладём.
+    # Endpoints (authorize/token/userinfo) — из zitadel_domain, три URI руками (НЕ через ISSUER_URL).
+    # ------
+    outline_oidc_enabled: false
+    outline_oidc_name: "ZITADEL"
+    # Claim из OIDC-токена, используемый как username в Outline.
+    outline_oidc_username_claim: "preferred_username"
+    outline_oidc_scopes: "openid profile email offline_access"
+    # disableRedirect=true → не редиректить сразу на IdP (кнопка passkey остаётся видимой).
+    outline_oidc_disable_redirect: true
+    # OIDC endpoints — из zitadel_domain (глобальный факт).
+    outline_oidc_auth_uri: "https://{{ zitadel_domain }}/oauth/v2/authorize"
+    outline_oidc_token_uri: "https://{{ zitadel_domain }}/oauth/v2/token"
+    outline_oidc_userinfo_uri: "https://{{ zitadel_domain }}/oidc/v1/userinfo"
+
+    # ------
+    # ESO integration: Vault → K8s Secrets. sa/role/store — стандартные (role совпадает с vault-ролью outline.eso-main).
+    # ------
+    eso_vault_integration_outline:
+      sa_name: "eso-main"
+      role_name: "outline.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    # ------
+    # Field-name vars (§2.5) — единый источник истины для имён Vault-полей.
+    # app/postgresql/redis — пишутся playbook'ом (tasks-vault-put) seed-if-missing.
+    # s3 — фиксированные ключи identity-distribute Layer 3 (username/accessKey/secretKey).
+    # ------
+    outline_app_secret_key_secret_key: "secretKey"
+    outline_app_secret_key_utils_secret: "utilsSecret"
+    outline_postgresql_secret_key_username: "username"
+    outline_postgresql_secret_key_password: "password"
+    outline_redis_secret_key_password: "password"
+    outline_s3_secret_key_username: "username"
+    outline_s3_secret_key_access_key: "accessKey"
+    outline_s3_secret_key_secret_key: "secretKey"
+
+    # ------
+    # S3 (SeaweedFS) — bucket/region/path-style. AWS_S3_UPLOAD_BUCKET_URL обязан быть
+    # browser-reachable (браузер грузит напрямую) — реальный публичный хост задаётся в override.
+    # ------
+    outline_s3_bucket: "outline"
+    outline_s3_region: "us-east-1"
+    outline_s3_force_path_style: true
+    outline_s3_upload_bucket_url: "https://s3-k8s-v2.drawapp.ru"
+
+    # ------
+    # Secret dicts (simple dataFrom.extract — тянет все поля пути в K8s Secret с теми же ключами).
+    # ------
+    outline_secret_app:
+      external_secret_name: "eso-outline-app"
+      vault_path: "/outline/app"
+      body:
+        target:
+          name: "eso-outline-app"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/app"
+
+    outline_secret_postgresql_creds:
+      external_secret_name: "eso-outline-postgresql-creds"
+      vault_path: "/outline/postgresql"
+      body:
+        target:
+          name: "eso-outline-postgresql-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/postgresql"
+
+    outline_secret_redis_creds:
+      external_secret_name: "eso-outline-redis-creds"
+      vault_path: "/outline/redis"
+      body:
+        target:
+          name: "eso-outline-redis-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/redis"
+
+    outline_secret_s3_creds:
+      external_secret_name: "eso-outline-s3-creds"
+      vault_path: "/outline/s3-storage"
+      body:
+        target:
+          name: "eso-outline-s3-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/s3-storage"
+
+    # OIDC client-creds — заполняются оператором вручную в Vault (vault kv put eso-secret/outline/oidc).
+    outline_secret_oidc_creds:
+      external_secret_name: "eso-outline-oidc-creds"
+      vault_path: "/outline/oidc"
+      body:
+        target:
+          name: "eso-outline-oidc-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_outline.kv_engine_path }}/data/outline/oidc"
+
+    # OIDC-секрет добавляется в список ТОЛЬКО при outline_oidc_enabled = true
+    # (при false ExternalSecret не создаётся — Vault-путь /outline/oidc ещё пуст).
+    eso_vault_integration_outline_secrets: >-
+      {{ [outline_secret_app,
+          outline_secret_postgresql_creds,
+          outline_secret_redis_creds,
+          outline_secret_s3_creds]
+         + ([outline_secret_oidc_creds] if outline_oidc_enabled | bool else []) }}
+
+    eso_vault_integration_outline_secrets_extra: []
+
+    # =========================================================================
+    # Часть 2/2: ingress + OIDC endpoints + helm_values проводка 5 фаз + cron.
+    # =========================================================================
+
+    # Порт приложения (используется pre/install/post helm_values).
+    outline_container_port: 3000
+
+    # ------
+    # Ingress + TLS. Домен — placeholder; реальный в hosts-vars-override/<cluster>/.
+    # ------
+    outline_ui_domain: "wiki-k8s-v2.drawapp.ru"
+    outline_ui_tls_secret_name: "cert-outline"
+    outline_ingress_class_name: "traefik-lb"
+    outline_ui_vpn_only_enabled: true
+
+    # cert-manager Issuer (per-component, namespaced)
+    outline_cert_manager_issuer_enabled: true
+    outline_acme_issuer_name: "outline-acme"
+    outline_acme_private_key_name: "outline-acme-account-key"
+    outline_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    outline_acme_email: "some-email-123@gmail.com"
+    outline_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    outline_cert_manager_issuer:
+      enabled: "{{ outline_cert_manager_issuer_enabled }}"
+      name: "{{ outline_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ outline_acme_server }}"
+          email: "{{ outline_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ outline_acme_private_key_name }}"
+          solvers: "{{ outline_acme_solvers }}"
+
+    outline_ui_ingress_enabled: true
+    outline_ui_ingress_tls_enabled: true
+    outline_ui_certificate_enabled: true
+    outline_ui_ingress_config:
+      enabled: "{{ outline_ui_ingress_enabled }}"
+      domain: "{{ outline_ui_domain }}"
+      ingressClass: "{{ outline_ingress_class_name }}"
+      tlsEnabled: "{{ outline_ui_ingress_tls_enabled }}"
+      tlsSecretName: "{{ outline_ui_tls_secret_name }}"
+      vpnOnlyEnabled: "{{ outline_ui_vpn_only_enabled }}"
+      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+    outline_ui_certificate:
+      enabled: "{{ outline_ui_certificate_enabled }}"
+      name: "{{ outline_ui_tls_secret_name }}"
+      spec:
+        secretName: "{{ outline_ui_tls_secret_name }}"
+        dnsNames:
+          - "{{ outline_ui_domain }}"
+        issuerRef:
+          name: "{{ outline_acme_issuer_name }}"
+          kind: "Issuer"
+
+    # ------
+    # PHASE: pre
+    # ------
+    outline_pre_helm_timeout: "5m"
+    outline_pre_extra_objects: []
+    outline_pre_kustomize_patches: []
+    outline_pre_helm_values:
+      namespace: "{{ outline_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      outline:
+        port: "{{ outline_container_port }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_outline.sa_name }}"
+        roleName: "{{ eso_vault_integration_outline.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_outline.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_outline.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_outline_secrets + (eso_vault_integration_outline_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      issuer: "{{ outline_cert_manager_issuer }}"
+      extraObjects: "{{ outline_pre_extra_objects }}"
+
+    # ------
+    # PHASE: postgresql (сайдкар)
+    # ------
+    outline_postgresql_helm_timeout: "5m"
+    outline_postgresql_rollout_timeout: "300s"
+    outline_postgresql_image: "docker.io/postgres:17.9-alpine3.23"
+    outline_postgresql_storage_class: "lnstr-major-multi-sync"
+    outline_postgresql_storage_size: "5Gi"
+    outline_postgresql_username: "outline"
+    outline_postgresql_database_name: "outline"
+    outline_postgresql_resources: {}
+    outline_postgresql_node_selector: {}
+    outline_postgresql_tolerations: []
+    outline_postgresql_extra_objects: []
+    outline_postgresql_kustomize_patches: []
+    outline_postgresql_helm_values:
+      namespace: "{{ outline_namespace }}"
+      databaseName: "{{ outline_postgresql_database_name }}"
+      image: "{{ outline_postgresql_image }}"
+      storageClass: "{{ outline_postgresql_storage_class }}"
+      storageSize: "{{ outline_postgresql_storage_size }}"
+      resources: "{{ outline_postgresql_resources }}"
+      nodeSelector: "{{ outline_postgresql_node_selector }}"
+      tolerations: "{{ outline_postgresql_tolerations }}"
+      creds:
+        secretName: "{{ outline_secret_postgresql_creds.body.target.name }}"
+        usernameKey: "{{ outline_postgresql_secret_key_username }}"
+        passwordKey: "{{ outline_postgresql_secret_key_password }}"
+      extraObjects: "{{ outline_postgresql_extra_objects }}"
+
+    # ------
+    # PHASE: redis (сайдкар)
+    # ------
+    outline_redis_helm_timeout: "5m"
+    outline_redis_rollout_timeout: "300s"
+    outline_redis_image: "docker.io/redis:7.4-alpine"
+    outline_redis_storage_class: "lnstr-major-multi-sync"
+    outline_redis_storage_size: "1Gi"
+    outline_redis_resources: {}
+    outline_redis_node_selector: {}
+    outline_redis_tolerations: []
+    outline_redis_extra_objects: []
+    outline_redis_kustomize_patches: []
+    outline_redis_helm_values:
+      namespace: "{{ outline_namespace }}"
+      image: "{{ outline_redis_image }}"
+      creds:
+        secretName: "{{ outline_secret_redis_creds.body.target.name }}"
+        passwordKey: "{{ outline_redis_secret_key_password }}"
+      storageClass: "{{ outline_redis_storage_class }}"
+      storageSize: "{{ outline_redis_storage_size }}"
+      resources: "{{ outline_redis_resources }}"
+      nodeSelector: "{{ outline_redis_node_selector }}"
+      tolerations: "{{ outline_redis_tolerations }}"
+      extraObjects: "{{ outline_redis_extra_objects }}"
+
+    # ------
+    # PHASE: install (главный workload)
+    # ------
+    outline_install_helm_timeout: "10m"
+    outline_install_rollout_timeout: "600s"
+    outline_image: "docker.io/outlinewiki/outline:1.9.1"
+    outline_replica_count: 1
+    outline_upload_max_size: "262144000"
+    outline_run_as_user: 1001
+    outline_run_as_group: 1001
+    outline_fs_group: 1001
+    outline_read_only_root_fs: false
+    outline_resources: {}
+    outline_node_selector: {}
+    outline_tolerations: []
+    outline_install_extra_objects: []
+    outline_install_kustomize_patches: []
+    outline_install_helm_values:
+      namespace: "{{ outline_namespace }}"
+      image: "{{ outline_image }}"
+      replicaCount: "{{ outline_replica_count }}"
+      port: "{{ outline_container_port }}"
+      outline:
+        url: "https://{{ outline_ui_domain }}"
+        uploadMaxSize: "{{ outline_upload_max_size }}"
+      app:
+        secretName: "{{ outline_secret_app.body.target.name }}"
+        secretKeyKey: "{{ outline_app_secret_key_secret_key }}"
+        utilsSecretKey: "{{ outline_app_secret_key_utils_secret }}"
+      database:
+        host: "outline-postgresql-0.outline-postgresql"
+        port: "5432"
+        name: "{{ outline_postgresql_database_name }}"
+        user: "{{ outline_postgresql_username }}"
+        sslMode: "disable"
+        passwordSecretName: "{{ outline_secret_postgresql_creds.body.target.name }}"
+        passwordKey: "{{ outline_postgresql_secret_key_password }}"
+      redis:
+        host: "outline-redis-0.outline-redis"
+        passwordSecretName: "{{ outline_secret_redis_creds.body.target.name }}"
+        passwordKey: "{{ outline_redis_secret_key_password }}"
+      s3:
+        bucket: "{{ outline_s3_bucket }}"
+        region: "{{ outline_s3_region }}"
+        forcePathStyle: "{{ outline_s3_force_path_style }}"
+        uploadBucketUrl: "{{ outline_s3_upload_bucket_url }}"
+        acl: "private"
+        credsSecretName: "{{ outline_secret_s3_creds.body.target.name }}"
+        accessKeyKey: "{{ outline_s3_secret_key_access_key }}"
+        secretKeyKey: "{{ outline_s3_secret_key_secret_key }}"
+      oidc:
+        enabled: "{{ outline_oidc_enabled }}"
+        displayName: "{{ outline_oidc_name }}"
+        usernameClaim: "{{ outline_oidc_username_claim }}"
+        scopes: "{{ outline_oidc_scopes }}"
+        authUri: "{{ outline_oidc_auth_uri }}"
+        tokenUri: "{{ outline_oidc_token_uri }}"
+        userInfoUri: "{{ outline_oidc_userinfo_uri }}"
+        disableRedirect: "{{ outline_oidc_disable_redirect }}"
+        credsSecretName: "{{ outline_secret_oidc_creds.body.target.name }}"
+        clientIdKey: "clientId"
+        clientSecretKey: "clientSecret"
+      securityContext:
+        runAsUser: "{{ outline_run_as_user }}"
+        runAsGroup: "{{ outline_run_as_group }}"
+        fsGroup: "{{ outline_fs_group }}"
+        readOnlyRootFilesystem: "{{ outline_read_only_root_fs }}"
+      resources: "{{ outline_resources }}"
+      nodeSelector: "{{ outline_node_selector }}"
+      tolerations: "{{ outline_tolerations }}"
+      extraObjects: "{{ outline_install_extra_objects }}"
+
+    # ------
+    # PHASE: post (Ingress + Certificate)
+    # ------
+    outline_post_helm_timeout: "5m"
+    outline_post_extra_objects: []
+    outline_post_kustomize_patches: []
+    outline_post_helm_values:
+      namespace: "{{ outline_namespace }}"
+      ingressConfig: "{{ outline_ui_ingress_config }}"
+      certificateConfig: "{{ outline_ui_certificate }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      service:
+        port: "{{ outline_container_port }}"
+      extraObjects: "{{ outline_post_extra_objects }}"
+
+    # ------
+    # PHASE: cronjob (Scheduled jobs). Cron-расписания — inventory-переменные.
+    # ------
+    outline_cronjob_helm_timeout: "5m"
+    outline_cron_enabled: true
+    outline_cron_image: "docker.io/busybox:1.36"
+    outline_cron_hourly_schedule: "5 * * * *"
+    outline_cron_daily_schedule: "15 3 * * *"
+    outline_cronjob_extra_objects: []
+    outline_cronjob_kustomize_patches: []
+    outline_cronjob_helm_values:
+      namespace: "{{ outline_namespace }}"
+      cron:
+        enabled: "{{ outline_cron_enabled }}"
+        image: "{{ outline_cron_image }}"
+        targetHost: "outline"
+        targetPort: "{{ outline_container_port }}"
+        utilsSecretName: "{{ outline_secret_app.body.target.name }}"
+        utilsSecretKey: "{{ outline_app_secret_key_utils_secret }}"
+        jobs:
+          - period: "hourly"
+            schedule: "{{ outline_cron_hourly_schedule }}"
+          - period: "daily"
+            schedule: "{{ outline_cron_daily_schedule }}"
+      extraObjects: "{{ outline_cronjob_extra_objects }}"

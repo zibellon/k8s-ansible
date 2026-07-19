@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: outline-redis
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: outline-redis
+    app.kubernetes.io/instance: outline-redis-{{ .Values.namespace }}
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: outline
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  serviceName: outline-redis
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: outline-redis
+      app.kubernetes.io/instance: outline-redis-{{ .Values.namespace }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: outline-redis
+        app.kubernetes.io/instance: outline-redis-{{ .Values.namespace }}
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: outline
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      automountServiceAccountToken: false
+      # non-root: redis:alpine стартует root и дропает к redis (uid 999). Форсим на уровне k8s.
+      # fsGroup=1000 → /data group-writable под gid 1000.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: {{ .Values.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # requirepass через args; $(OUTLINE_REDIS_PASSWORD) подставляет kubelet из env ниже.
+          # Plain redis-образ: entrypoint добавляет `redis-server` перед args, начинающимися с '-'.
+          args:
+            - "--requirepass"
+            - "$(OUTLINE_REDIS_PASSWORD)"
+          env:
+            - name: OUTLINE_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.creds.secretName }}
+                  key: {{ .Values.creds.passwordKey }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              subPath: data
+            - name: tmp
+              mountPath: /tmp
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: outline-redis
+        # writable /tmp для readOnlyRootFilesystem (данные — в /data=PVC)
+        - name: tmp
+          emptyDir: {}

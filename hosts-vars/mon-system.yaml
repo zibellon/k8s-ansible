@@ -64,6 +64,29 @@ all:
     mon_system_grafana_https_secret_name: "cert-grafana-drawapp"
     mon_system_grafana_vpn_only_enabled: false
 
+    # OIDC/SSO (ZITADEL) — выключено по умолчанию. Флипать в true в
+    # hosts-vars-override/<cluster>/mon-system.yaml только после того как в ZITADEL Console создано
+    # Application grafana и путь eso-secret/mon-system/grafana/oidc заполнен в Vault (ключи clientId + clientSecret).
+    mon_system_grafana_oidc_enabled: false
+    # Отображаемое имя кнопки входа на странице логина Grafana.
+    mon_system_grafana_oidc_name: "ZITADEL"
+    # Полная строка scopes (space-separated) — оператор задаёт целиком. offline_access нужен для
+    # refresh-token (use_refresh_token → Grafana перепроверяет сессию у ZITADEL). Для org-pin
+    # добавить " urn:zitadel:iam:org:id:<orgId>" в hosts-vars-override/ (OrgID из ZITADEL Console).
+    mon_system_grafana_oidc_scopes: "openid email profile offline_access"
+    # Прочие OIDC-параметры блока mon_system_grafana_oidc (ниже) — явные переменные (все STRING).
+    mon_system_grafana_oidc_allow_sign_up: "true"
+    mon_system_grafana_oidc_use_pkce: "false"
+    mon_system_grafana_oidc_use_refresh_token: "true"
+    mon_system_grafana_oidc_login_attribute_path: "preferred_username"
+    mon_system_grafana_oidc_email_attribute_path: "email"
+    mon_system_grafana_oidc_name_attribute_path: "name"
+    mon_system_grafana_oidc_skip_org_role_sync: "true"
+    # OIDC endpoints (generic_oauth) — из zitadel_domain.
+    mon_system_grafana_oidc_auth_url: "https://{{ zitadel_domain }}/oauth/v2/authorize?prompt=select_account"
+    mon_system_grafana_oidc_token_url: "https://{{ zitadel_domain }}/oauth/v2/token"
+    mon_system_grafana_oidc_api_url: "https://{{ zitadel_domain }}/oidc/v1/userinfo"
+
     mon_system_prometheus_domain: "prom-k8s-v2.drawapp.ru"
     mon_system_prometheus_external_url: "https://prom-k8s-v2.drawapp.ru"
     mon_system_prometheus_https_secret_name: "cert-prometheus"
@@ -204,6 +227,16 @@ all:
           - extract:
               key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/postgresql/creds"
 
+    mon_system_secret_grafana_oidc_creds:
+      external_secret_name: "eso-mon-system-grafana-oidc-creds"
+      vault_path: "/mon-system/grafana/oidc"
+      body:
+        target:
+          name: "eso-mon-system-grafana-oidc-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/grafana/oidc"
+
     mon_system_secret_loki_s3_creds:
       external_secret_name: "eso-mon-system-loki-s3-creds"
       vault_path: "/mon-system/loki/s3/creds"
@@ -214,10 +247,13 @@ all:
           - extract:
               key: "{{ eso_vault_integration_mon_system.kv_engine_path }}/data/mon-system/loki/s3/creds"
 
-    eso_vault_integration_mon_system_secrets:
-      - "{{ mon_system_secret_grafana_admin_creds }}"
-      - "{{ mon_system_secret_grafana_postgresql_creds }}"
-      - "{{ mon_system_secret_loki_s3_creds }}"
+    # OIDC-секрет добавляется в список только когда mon_system_grafana_oidc_enabled = true
+    # (при false список идентичен прежним трём — нулевая дельта рендера).
+    eso_vault_integration_mon_system_secrets: >-
+      {{ [mon_system_secret_grafana_admin_creds,
+          mon_system_secret_grafana_postgresql_creds,
+          mon_system_secret_loki_s3_creds]
+         + ([mon_system_secret_grafana_oidc_creds] if mon_system_grafana_oidc_enabled | bool else []) }}
 
     eso_vault_integration_mon_system_secrets_extra: []
 
@@ -870,6 +906,27 @@ all:
       resources: {}
       extraObjects: "{{ mon_system_grafana_postgresql_extra_objects }}"
 
+    # OIDC-блок для Grafana generic_oauth (вынесен из mon_system_grafana_helm_values — снижаем вложенность).
+    # Все значения — явные параметры (без условной логики); name/scopes задаёт оператор переменными выше.
+    # k8sSecretName — имя K8s Secret, созданного ESO, с ключами clientId/clientSecret.
+    mon_system_grafana_oidc:
+      enabled: "{{ mon_system_grafana_oidc_enabled }}"
+      name: "{{ mon_system_grafana_oidc_name }}"
+      k8sSecretName: "{{ mon_system_secret_grafana_oidc_creds.body.target.name }}"
+      clientIdKey: "clientId"
+      clientSecretKey: "clientSecret"
+      authUrl: "{{ mon_system_grafana_oidc_auth_url }}"
+      tokenUrl: "{{ mon_system_grafana_oidc_token_url }}"
+      apiUrl: "{{ mon_system_grafana_oidc_api_url }}"
+      scopes: "{{ mon_system_grafana_oidc_scopes }}"
+      allowSignUp: "{{ mon_system_grafana_oidc_allow_sign_up }}"
+      usePkce: "{{ mon_system_grafana_oidc_use_pkce }}"
+      useRefreshToken: "{{ mon_system_grafana_oidc_use_refresh_token }}"
+      loginAttributePath: "{{ mon_system_grafana_oidc_login_attribute_path }}"
+      emailAttributePath: "{{ mon_system_grafana_oidc_email_attribute_path }}"
+      nameAttributePath: "{{ mon_system_grafana_oidc_name_attribute_path }}"
+      skipOrgRoleSync: "{{ mon_system_grafana_oidc_skip_org_role_sync }}"
+
     # --- PHASE: grafana ---
     mon_system_grafana_helm_timeout: "3m"
     mon_system_grafana_rollout_timeout: "120s"
@@ -888,6 +945,7 @@ all:
         image: "{{ mon_system_grafana_image }}"
         installPlugins: "grafana-piechart-panel"
         externalUrl: "{{ mon_system_grafana_external_url }}"
+        oidc: "{{ mon_system_grafana_oidc }}"
       adminSecret:
         name: "{{ mon_system_secret_grafana_admin_creds.body.target.name }}"
         usernameKey: "{{ mon_system_grafana_admin_secret_key_username }}"

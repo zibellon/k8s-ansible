@@ -1,0 +1,173 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outline
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: outline
+    app.kubernetes.io/instance: outline-{{ .Values.namespace }}
+    app.kubernetes.io/component: app
+    app.kubernetes.io/part-of: outline
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: outline
+      app.kubernetes.io/instance: outline-{{ .Values.namespace }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: outline
+        app.kubernetes.io/instance: outline-{{ .Values.namespace }}
+        app.kubernetes.io/component: app
+        app.kubernetes.io/part-of: outline
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.fsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: outline
+          image: {{ .Values.image }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            # --- Core ---
+            - name: URL
+              value: {{ .Values.outline.url | quote }}
+            - name: PORT
+              value: {{ .Values.port | quote }}
+            - name: FORCE_HTTPS
+              value: "false"
+            - name: ENABLE_UPDATES
+              value: "false"
+            - name: FILE_STORAGE
+              value: "s3"
+            - name: FILE_STORAGE_UPLOAD_MAX_SIZE
+              value: {{ .Values.outline.uploadMaxSize | quote }}
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.secretName }}
+                  key: {{ .Values.app.secretKeyKey }}
+            - name: UTILS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.secretName }}
+                  key: {{ .Values.app.utilsSecretKey }}
+            # --- Database. OUTLINE_DB_PASSWORD — промежуточная переменная (НЕ распознаётся Outline,
+            #     не триггерит DATABASE_URL CannotUseWith); kubelet подставляет её в DATABASE_URL. ---
+            - name: OUTLINE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.passwordSecretName }}
+                  key: {{ .Values.database.passwordKey }}
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.database.user }}:$(OUTLINE_DB_PASSWORD)@{{ .Values.database.host }}:{{ .Values.database.port }}/{{ .Values.database.name }}"
+            - name: PGSSLMODE
+              value: {{ .Values.database.sslMode | quote }}
+            # --- Redis. Аналогично — пароль подставляется в REDIS_URL через $(VAR). ---
+            - name: OUTLINE_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.passwordSecretName }}
+                  key: {{ .Values.redis.passwordKey }}
+            - name: REDIS_URL
+              value: "redis://:$(OUTLINE_REDIS_PASSWORD)@{{ .Values.redis.host }}:6379"
+            # --- S3 (SeaweedFS) ---
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.credsSecretName }}
+                  key: {{ .Values.s3.accessKeyKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.credsSecretName }}
+                  key: {{ .Values.s3.secretKeyKey }}
+            - name: AWS_REGION
+              value: {{ .Values.s3.region | quote }}
+            - name: AWS_S3_UPLOAD_BUCKET_URL
+              value: {{ .Values.s3.uploadBucketUrl | quote }}
+            - name: AWS_S3_UPLOAD_BUCKET_NAME
+              value: {{ .Values.s3.bucket | quote }}
+            - name: AWS_S3_FORCE_PATH_STYLE
+              value: {{ .Values.s3.forcePathStyle | quote }}
+            - name: AWS_S3_ACL
+              value: {{ .Values.s3.acl | quote }}
+            {{- if .Values.oidc.enabled }}
+            # --- OIDC (ZITADEL) ---
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.credsSecretName }}
+                  key: {{ .Values.oidc.clientIdKey }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.credsSecretName }}
+                  key: {{ .Values.oidc.clientSecretKey }}
+            - name: OIDC_AUTH_URI
+              value: {{ .Values.oidc.authUri | quote }}
+            - name: OIDC_TOKEN_URI
+              value: {{ .Values.oidc.tokenUri | quote }}
+            - name: OIDC_USERINFO_URI
+              value: {{ .Values.oidc.userInfoUri | quote }}
+            - name: OIDC_USERNAME_CLAIM
+              value: {{ .Values.oidc.usernameClaim | quote }}
+            - name: OIDC_DISPLAY_NAME
+              value: {{ .Values.oidc.displayName | quote }}
+            - name: OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            - name: OIDC_DISABLE_REDIRECT
+              value: {{ .Values.oidc.disableRedirect | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /_health
+              port: {{ .Values.port }}
+            failureThreshold: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /_health
+              port: {{ .Values.port }}
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /_health
+              port: {{ .Values.port }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

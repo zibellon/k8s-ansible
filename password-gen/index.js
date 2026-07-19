@@ -195,7 +195,7 @@ for (let i = 0; i < 20; i++) {
       includeLowercase: true,
       includeUppercase: true,
       includeNumbers: true,
-      includeSymbols: false,
+      includeSymbols: true,
       noSimilar: true,
       beginWithLetter: false,
       noSequential: false,

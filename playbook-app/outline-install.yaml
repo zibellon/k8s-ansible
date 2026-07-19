@@ -1,0 +1,690 @@
+# =============================================================================
+# Install Outline (wiki, local Helm charts)
+# Steps:
+#   1. outline/pre:        ESO resources (SA, SecretStore, ExternalSecret) + NetworkPolicies + cert-manager Issuer
+#   2. outline/postgresql: sidecar PostgreSQL (StatefulSet + headless + PVC) + seed PG creds
+#   3. outline/redis:      sidecar Redis (StatefulSet + headless + PVC) + seed Redis creds
+#   4. outline/install:    main Deployment + Service (+ seed app SECRET_KEY/UTILS_SECRET, S3/OIDC fail-fast)
+#   5. outline/post:       Ingress (Traefik) + cert-manager Certificate
+#   6. outline/cronjob:    Scheduled jobs (CronJob)
+#
+# Usage (tags):
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/outline-install.yaml
+#   ansible-playbook ... --tags pre
+#   ansible-playbook ... --tags postgresql
+#   ansible-playbook ... --tags redis
+#   ansible-playbook ... --tags install
+#   ansible-playbook ... --tags post
+#   ansible-playbook ... --tags cronjob
+#
+# Prerequisites:
+#   - Vault installed/unsealed; Vault policies+roles synced (outline.eso-main)
+#   - External Secrets Operator installed; Storage (linstor/longhorn) installed
+#   - SeaweedFS S3 bucket + identity provisioned → creds at eso-secret/outline/s3-storage
+#     (seaweedfs-install --tags user-sync,identity-distribute,bucket-sync)
+#   - If OIDC enabled: eso-secret/outline/oidc seeded with clientId + clientSecret
+#
+# NOTE: SECRET_KEY is generated ONCE (seed-if-missing, NEVER rotated — it is an
+#       at-rest AES key; rotation bricks the install). UTILS_SECRET + DB/Redis
+#       passwords are also seed-if-missing (alphanumeric — URL-safe).
+# =============================================================================
+
+---
+- name: Install Outline (wiki, local Helm charts)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  vars:
+    # Local fact names — app secret (SECRET_KEY + UTILS_SECRET) seed-if-missing
+    _local_outline_app_exists_key: "_local_outline_app_exists"
+    _local_outline_app_check_key: "_local_outline_app_check"
+    _local_outline_secret_key_key: "_local_outline_secret_key"
+    _local_outline_utils_secret_key: "_local_outline_utils_secret"
+    _local_outline_app_put_data_key: "_local_outline_app_put_data"
+    # Local fact names — postgresql seed-if-missing
+    _local_outline_pg_exists_key: "_local_outline_pg_exists"
+    _local_outline_pg_check_key: "_local_outline_pg_check"
+    _local_outline_pg_password_key: "_local_outline_pg_password"
+    _local_outline_pg_put_data_key: "_local_outline_pg_put_data"
+    # Local fact names — redis seed-if-missing
+    _local_outline_redis_exists_key: "_local_outline_redis_exists"
+    _local_outline_redis_check_key: "_local_outline_redis_check"
+    _local_outline_redis_password_key: "_local_outline_redis_password"
+    _local_outline_redis_put_data_key: "_local_outline_redis_put_data"
+    # Local fact names — S3 + OIDC fail-fast checks
+    _local_outline_s3_check_key: "_local_outline_s3_check"
+    _local_outline_s3_exists_key: "_local_outline_s3_exists"
+    _local_outline_oidc_check_key: "_local_outline_oidc_check"
+    _local_outline_oidc_exists_key: "_local_outline_oidc_exists"
+
+  tasks:
+    - name: "[outline-install] Assert component enabled"
+      assert:
+        that:
+          - outline_enabled | default(false) | bool
+        fail_msg: "outline is disabled (outline_enabled=false). Set outline_enabled: true in hosts-vars-override/ to install it."
+      run_once: true
+      tags: [always]
+
+    - name: "[outline-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "outline-pre-check"
+      tags: [always]
+
+    - name: "[outline-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "outline-pre-check"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [always]
+
+    - name: "[outline-install-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "outline-install-init"
+      tags: [always]
+
+    - name: "[outline-install-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "outline-install-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_outline_secrets + (eso_vault_integration_outline_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_outline }}"
+        dto_namespace: "{{ outline_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (ESO Resources, NetworkPolicies, Issuer)
+    # =========================================================================
+
+    - name: "[outline-pre] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "outline-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/outline/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/pre"
+      tags: [pre]
+
+    - name: "[outline-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "outline-pre"
+        dto_dir: "{{ remote_charts_dir }}/outline/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ outline_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[outline-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "outline-pre"
+        dto_release_name: "outline-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/outline/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/outline/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/outline/pre-k"
+        dto_patches_list: "{{ outline_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [pre]
+
+    - name: "[outline-pre] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "outline-pre"
+        dto_helm_command: >
+          helm upgrade --install outline-pre {{ remote_charts_dir }}/outline/pre-k
+          --namespace {{ outline_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ outline_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: POSTGRESQL (seed creds + sidecar StatefulSet)
+    # =========================================================================
+
+    - name: "[outline-postgresql-secrets] Get PG creds from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "outline-postgresql-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_postgresql_creds.vault_path }}"
+        dto_vault_get_field: "{{ outline_postgresql_secret_key_password }}"
+        dto_vault_get_res_fact_name: "{{ _local_outline_pg_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_outline_pg_exists_key }}"
+      tags: [postgresql]
+
+    - name: "[outline-postgresql-secrets] Generate PG password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "outline-postgresql-secrets"
+        dto_generate_fact_name: "{{ _local_outline_pg_password_key }}"
+      when: not lookup('vars', _local_outline_pg_exists_key)
+      tags: [postgresql]
+
+    - name: "[outline-postgresql-secrets] Prepare PG Vault put data"
+      set_fact:
+        "{{ _local_outline_pg_put_data_key }}": >-
+          {{ {
+               outline_postgresql_secret_key_username: outline_postgresql_username,
+               outline_postgresql_secret_key_password: lookup('vars', _local_outline_pg_password_key)
+             } }}
+      when: not lookup('vars', _local_outline_pg_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [postgresql]
+
+    - name: "[outline-postgresql-secrets] Store PG creds in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "outline-postgresql-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_postgresql_creds.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_outline_pg_put_data_key) }}"
+      when: not lookup('vars', _local_outline_pg_exists_key)
+      tags: [postgresql]
+
+    - name: "[outline-postgresql-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "outline-postgresql-secrets"
+        dto_eso_sync_namespace: "{{ outline_namespace }}"
+      tags: [postgresql]
+
+    - name: "[outline-postgresql-secrets] Wait for PG secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "outline-postgresql-secrets"
+        dto_wait_secret_name: "{{ outline_secret_postgresql_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ outline_namespace }}"
+      tags: [postgresql]
+
+    - name: "[outline-postgresql] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "outline-postgresql"
+        dto_chart_name: "postgresql"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/outline/postgresql/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/postgresql"
+      tags: [postgresql]
+
+    - name: "[outline-postgresql] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "outline-postgresql"
+        dto_dir: "{{ remote_charts_dir }}/outline/postgresql"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ outline_postgresql_helm_values | to_nice_yaml }}"
+      tags: [postgresql]
+
+    - name: "[outline-postgresql] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "outline-postgresql"
+        dto_release_name: "outline-postgresql"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/postgresql"
+        dto_values_file_path: "{{ remote_charts_dir }}/outline/postgresql/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/outline/postgresql-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/outline/postgresql-k"
+        dto_patches_list: "{{ outline_postgresql_kustomize_patches }}"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [postgresql]
+
+    - name: "[outline-postgresql] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "outline-postgresql"
+        dto_helm_command: >
+          helm upgrade --install outline-postgresql {{ remote_charts_dir }}/outline/postgresql-k
+          --namespace {{ outline_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ outline_postgresql_helm_timeout }}
+      tags: [postgresql]
+
+    - name: "[outline-postgresql] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "outline-postgresql"
+        dto_rollout_namespace: "{{ outline_namespace }}"
+        dto_rollout_timeout: "{{ outline_postgresql_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - statefulset.apps/outline-postgresql
+      tags: [postgresql]
+
+    # =========================================================================
+    # STEP 3: REDIS (seed creds + sidecar StatefulSet)
+    # =========================================================================
+
+    - name: "[outline-redis-secrets] Get Redis creds from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "outline-redis-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_redis_creds.vault_path }}"
+        dto_vault_get_field: "{{ outline_redis_secret_key_password }}"
+        dto_vault_get_res_fact_name: "{{ _local_outline_redis_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_outline_redis_exists_key }}"
+      tags: [redis]
+
+    - name: "[outline-redis-secrets] Generate Redis password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "outline-redis-secrets"
+        dto_generate_fact_name: "{{ _local_outline_redis_password_key }}"
+      when: not lookup('vars', _local_outline_redis_exists_key)
+      tags: [redis]
+
+    - name: "[outline-redis-secrets] Prepare Redis Vault put data"
+      set_fact:
+        "{{ _local_outline_redis_put_data_key }}": >-
+          {{ {
+               outline_redis_secret_key_password: lookup('vars', _local_outline_redis_password_key)
+             } }}
+      when: not lookup('vars', _local_outline_redis_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [redis]
+
+    - name: "[outline-redis-secrets] Store Redis creds in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "outline-redis-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_redis_creds.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_outline_redis_put_data_key) }}"
+      when: not lookup('vars', _local_outline_redis_exists_key)
+      tags: [redis]
+
+    - name: "[outline-redis-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "outline-redis-secrets"
+        dto_eso_sync_namespace: "{{ outline_namespace }}"
+      tags: [redis]
+
+    - name: "[outline-redis-secrets] Wait for Redis secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "outline-redis-secrets"
+        dto_wait_secret_name: "{{ outline_secret_redis_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ outline_namespace }}"
+      tags: [redis]
+
+    - name: "[outline-redis] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "outline-redis"
+        dto_chart_name: "redis"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/outline/redis/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/redis"
+      tags: [redis]
+
+    - name: "[outline-redis] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "outline-redis"
+        dto_dir: "{{ remote_charts_dir }}/outline/redis"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ outline_redis_helm_values | to_nice_yaml }}"
+      tags: [redis]
+
+    - name: "[outline-redis] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "outline-redis"
+        dto_release_name: "outline-redis"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/redis"
+        dto_values_file_path: "{{ remote_charts_dir }}/outline/redis/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/outline/redis-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/outline/redis-k"
+        dto_patches_list: "{{ outline_redis_kustomize_patches }}"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [redis]
+
+    - name: "[outline-redis] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "outline-redis"
+        dto_helm_command: >
+          helm upgrade --install outline-redis {{ remote_charts_dir }}/outline/redis-k
+          --namespace {{ outline_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ outline_redis_helm_timeout }}
+      tags: [redis]
+
+    - name: "[outline-redis] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "outline-redis"
+        dto_rollout_namespace: "{{ outline_namespace }}"
+        dto_rollout_timeout: "{{ outline_redis_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - statefulset.apps/outline-redis
+      tags: [redis]
+
+    # =========================================================================
+    # STEP 4: INSTALL (S3/OIDC fail-fast, seed app secret, main Deployment)
+    # =========================================================================
+
+    - name: "[outline-install] Check S3 creds present in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_vault_get_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_s3_creds.vault_path }}"
+        dto_vault_get_field: "{{ outline_s3_secret_key_access_key }}"
+        dto_vault_get_res_fact_name: "{{ _local_outline_s3_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_outline_s3_exists_key }}"
+      tags: [install]
+
+    - name: "[outline-install] Fail if S3 creds missing"
+      assert:
+        that:
+          - lookup('vars', _local_outline_s3_exists_key)
+        fail_msg: >-
+          S3 creds not found at {{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_s3_creds.vault_path }}.
+          Provision the SeaweedFS bucket + identity first:
+          seaweedfs-install --tags user-sync,identity-distribute,bucket-sync
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[outline-install] Check OIDC creds present in Vault (when enabled)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_vault_get_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_oidc_creds.vault_path }}"
+        dto_vault_get_field: "clientId"
+        dto_vault_get_res_fact_name: "{{ _local_outline_oidc_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_outline_oidc_exists_key }}"
+      when: outline_oidc_enabled | bool
+      tags: [install]
+
+    - name: "[outline-install] Fail if OIDC enabled but creds missing"
+      assert:
+        that:
+          - lookup('vars', _local_outline_oidc_exists_key)
+        fail_msg: >-
+          outline_oidc_enabled=true but no OIDC creds at
+          {{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_oidc_creds.vault_path }}.
+          Seed them: vault kv put {{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_oidc_creds.vault_path }} clientId=<id> clientSecret=<secret>
+      when: outline_oidc_enabled | bool
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[outline-app-secrets] Get app secret from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "outline-app-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_app.vault_path }}"
+        dto_vault_get_field: "{{ outline_app_secret_key_secret_key }}"
+        dto_vault_get_res_fact_name: "{{ _local_outline_app_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_outline_app_exists_key }}"
+      tags: [install]
+
+    - name: "[outline-app-secrets] Generate SECRET_KEY (64 hex, never rotate)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "outline-app-secrets"
+        dto_generate_fact_name: "{{ _local_outline_secret_key_key }}"
+        dto_generate_count_digits: 32
+        dto_generate_count_upper: 0
+        dto_generate_count_lower: 32
+        dto_generate_count_special: 0
+        dto_generate_charset_letters: "abcdef"
+      when: not lookup('vars', _local_outline_app_exists_key)
+      tags: [install]
+
+    - name: "[outline-app-secrets] Generate UTILS_SECRET"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "outline-app-secrets"
+        dto_generate_fact_name: "{{ _local_outline_utils_secret_key }}"
+      when: not lookup('vars', _local_outline_app_exists_key)
+      tags: [install]
+
+    - name: "[outline-app-secrets] Prepare app Vault put data"
+      set_fact:
+        "{{ _local_outline_app_put_data_key }}": >-
+          {{ {
+               outline_app_secret_key_secret_key: lookup('vars', _local_outline_secret_key_key),
+               outline_app_secret_key_utils_secret: lookup('vars', _local_outline_utils_secret_key)
+             } }}
+      when: not lookup('vars', _local_outline_app_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[outline-app-secrets] Store app secret in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "outline-app-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_outline.kv_engine_path }}{{ outline_secret_app.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_outline_app_put_data_key) }}"
+      when: not lookup('vars', _local_outline_app_exists_key)
+      tags: [install]
+
+    - name: "[outline-install] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_eso_sync_namespace: "{{ outline_namespace }}"
+      tags: [install]
+
+    - name: "[outline-install] Wait for app secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_wait_secret_name: "{{ outline_secret_app.body.target.name }}"
+        dto_wait_secret_namespace: "{{ outline_namespace }}"
+      tags: [install]
+
+    - name: "[outline-install] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_chart_name: "install"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/outline/install/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/install"
+      tags: [install]
+
+    - name: "[outline-install] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_dir: "{{ remote_charts_dir }}/outline/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ outline_install_helm_values | to_nice_yaml }}"
+      tags: [install]
+
+    - name: "[outline-install] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_release_name: "outline"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/install"
+        dto_values_file_path: "{{ remote_charts_dir }}/outline/install/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/outline/install-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/outline/install-k"
+        dto_patches_list: "{{ outline_install_kustomize_patches }}"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [install]
+
+    - name: "[outline-install] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_helm_command: >
+          helm upgrade --install outline {{ remote_charts_dir }}/outline/install-k
+          --namespace {{ outline_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ outline_install_helm_timeout }}
+      tags: [install]
+
+    - name: "[outline-install] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "outline-install"
+        dto_rollout_namespace: "{{ outline_namespace }}"
+        dto_rollout_timeout: "{{ outline_install_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/outline
+      tags: [install]
+
+    # =========================================================================
+    # STEP 5: POST (Ingress + Certificate)
+    # =========================================================================
+
+    - name: "[outline-post] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "outline-post"
+        dto_chart_name: "post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/outline/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/post"
+      tags: [post]
+
+    - name: "[outline-post] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "outline-post"
+        dto_dir: "{{ remote_charts_dir }}/outline/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ outline_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[outline-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "outline-post"
+        dto_release_name: "outline-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/outline/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/outline/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/outline/post-k"
+        dto_patches_list: "{{ outline_post_kustomize_patches }}"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [post]
+
+    - name: "[outline-post] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "outline-post"
+        dto_helm_command: >
+          helm upgrade --install outline-post {{ remote_charts_dir }}/outline/post-k
+          --namespace {{ outline_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ outline_post_helm_timeout }}
+      tags: [post]
+
+    # =========================================================================
+    # STEP 6: CRONJOB (Scheduled jobs)
+    # =========================================================================
+
+    - name: "[outline-cronjob] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_chart_name: "cronjob"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/outline/cronjob/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/cronjob"
+      tags: [cronjob]
+
+    - name: "[outline-cronjob] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_dir: "{{ remote_charts_dir }}/outline/cronjob"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ outline_cronjob_helm_values | to_nice_yaml }}"
+      tags: [cronjob]
+
+    - name: "[outline-cronjob] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_release_name: "outline-cronjob"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/outline/cronjob"
+        dto_values_file_path: "{{ remote_charts_dir }}/outline/cronjob/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/outline/cronjob-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/outline/cronjob-k"
+        dto_patches_list: "{{ outline_cronjob_kustomize_patches }}"
+        dto_target_namespace: "{{ outline_namespace }}"
+      tags: [cronjob]
+
+    - name: "[outline-cronjob] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "outline-cronjob"
+        dto_helm_command: >
+          helm upgrade --install outline-cronjob {{ remote_charts_dir }}/outline/cronjob-k
+          --namespace {{ outline_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ outline_cronjob_helm_timeout }}
+      tags: [cronjob]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[outline-verify] Verify Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_label_name: "outline-verify"
+        dto_helm_namespace: "{{ outline_namespace }}"
+      tags: [always]
+
+    - name: "[outline-verify] Show pods in {{ outline_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "outline-verify"
+        dto_pods_namespace: "{{ outline_namespace }}"
+      tags: [always]
+
+    - name: "[outline-verify] Show NetworkPolicies in {{ outline_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "outline-verify"
+        dto_np_namespace: "{{ outline_namespace }}"
+      tags: [always]
+
+    - name: "[outline-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "OUTLINE INSTALLATION COMPLETE"
+          - "=============================================="
+          - "UI: https://{{ outline_ui_domain }}"
+          - ""
+          - "First login: OIDC (ZITADEL) — the first user to log in becomes admin."
+          - "Register a passkey right after (break-glass, if ZITADEL is down)."
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[outline-verify] Installation complete"
+      debug:
+        msg: "outline-pre + outline-postgresql + outline-redis + outline + outline-post + outline-cronjob: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
