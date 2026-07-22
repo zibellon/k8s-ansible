@@ -1,0 +1,43 @@
+# =============================================================================
+# KARGO EXTERNAL WEBHOOKS INGRESS (Traefik)
+#   Публичный эндпоинт для событий от GitLab и registry.
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web.
+# =============================================================================
+{{- if .Values.webhooksIngressConfig.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kargo-webhooks
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.webhooksIngressConfig.ingressClass | quote }}
+    {{- if .Values.webhooksIngressConfig.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.webhooksIngressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.webhooksIngressConfig.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.webhooksIngressConfig.ingressClass }}
+  {{- if and .Values.webhooksIngressConfig.tlsEnabled .Values.webhooksIngressConfig.tlsSecretName }}
+  tls:
+    - hosts:
+        - {{ .Values.webhooksIngressConfig.domain }}
+      secretName: {{ .Values.webhooksIngressConfig.tlsSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.webhooksIngressConfig.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.externalWebhooksService.name }}
+                port:
+                  number: {{ .Values.externalWebhooksService.port }}
+{{- end }}
