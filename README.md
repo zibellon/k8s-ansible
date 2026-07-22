@@ -394,6 +394,29 @@
 ## ---
 
 ## ---
+## Zitadel. официальный helm
+## ---
+## Параметры в `hosts-vars/` + `hosts-vars-override/`
+## ---
+## Важно_1. если в момент установки не указать login + password, то дефолтные данные для входа будут
+##   Логин: `zitadel-admin@zitadel.zitadel-k8s-v2.drawapp.ru` (zitadel-admin@<ORG_NAME>.<Zitadel_domain>)
+##   Пароль: `Password1!`
+## ---
+## Важно_2. Пароль для первого instance-admin. Этот пароль задается СТРОГО ОДИН раз в момент установки
+## Кладется в VAULT, срабатывает ESO -> запускаем саму ZITADEL
+## Никаких автоматическиз механизмов смены этого пароля в k8s-ansible = не предусмотрено
+## Зайти под этим instance-admin, сменить пароль, чтобы не забыть пароль - зайти в VAULT, и положить этот пароль в VAULT
+## То есть: тут нет механики как у GitLab - что можно ротировать пароль повторным запуском k8s-ansible
+## ---
+## `--tags pre, postgresql, install, post`
+## ---
+##
+- установка + обновление (версия + конфиг)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/zitadel-install.yaml`
+- Есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/zitadel-restart.yaml`
+
+## ---
 ## SeaweedFS (S3). Официальный helm-chart
 ## ---
 ## В файле `hosts-vars/` + `hosts-vars-override/` есть отдельная структуры для управления SeaweedFS-S3-API
@@ -413,7 +436,6 @@
 ##
 - установка + обновление (версия + конфиг)
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-install.yaml`
-  - Установится: ...
 - Есть отдельный playbook для перезапуска
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-restart.yaml`
 
@@ -646,18 +668,6 @@
 ## ---------------------
 ## ---------------------
 ## ---------------------
-
-# ---------
-# ЕЩЕ НЕ ГОТОВО
-# ---------
-
-## Zitadel. официальный helm
-## ---
-## Параметры в `hosts-vars/` + `hosts-vars-override/`
-## ---
-Логин и пароль после установки
-Логин:  zitadel-admin@zitadel.zitadel-k8s-v2.drawapp.ru
-Пароль: Password1!
 
 ## ---------
 ## ---Secrets-Rotation
