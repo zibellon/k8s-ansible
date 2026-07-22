@@ -1,0 +1,348 @@
+all:
+  vars:
+    # =========================================================================
+    # Kargo — continuous promotion platform. Центральная установка: следит за
+    # registry/git и пишет версии в git-ops репозитории. В кластеры не ходит —
+    # разворачивает ArgoCD. Фазы pre/post — локальные чарты репозитория,
+    # install — upstream helm-chart из OCI.
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start.
+    kargo_enabled: false
+
+    kargo_namespace: "kargo"
+
+    # ------
+    # Порты. containerPort используется в NetworkPolicy (NP работает по портам
+    # пода), servicePort — в Ingress backend. Service слушает 80, потому что
+    # api.tls.enabled=false (TLS терминирует Traefik, см. kargo_helm_values_api).
+    # ------
+    kargo_api_container_port: 8080
+    kargo_api_service_port: 80
+    kargo_webhooks_server_port: 9443
+
+    # ------
+    # Auth: локальный admin. В Kargo он ровно ОДИН (мультиаккаунтов нет) и он
+    # ПОЛНОСТЬЮ обходит авторизацию. Держим как break-glass на случай
+    # недоступности ZITADEL. passwordHash + tokenSigningKey живут в Vault и
+    # приезжают через ESO в Secret, имя которого передаётся чарту как
+    # api.secret.name — тогда чарт свой Secret не рендерит вообще.
+    # ------
+    kargo_admin_account_enabled: true
+    kargo_admin_username: "admin"
+    kargo_admin_token_ttl: "24h"
+
+    # ------
+    # OIDC / SSO (ZITADEL). Kargo — public PKCE-клиент: client secret не
+    # используется нигде, поэтому Vault-секрета для OIDC НЕТ; в inventory только
+    # clientId (не секрет), реальное значение — в hosts-vars-override/<cluster>/.
+    # У ZITADEL нет scope `groups` — дефолт чарта переопределяем пустым списком.
+    # Все *_claims остаются пустыми: чартовые ServiceAccount'ы (kargo-admin,
+    # kargo-project-creator, kargo-user, kargo-viewer) должны быть инертны —
+    # аннотация claims рендерится только при непустом значении. Пользовательские
+    # SA рендерит post-чарт из kargo_rbac_service_accounts.
+    # ------
+    kargo_oidc_enabled: false
+    kargo_oidc_issuer_url: "https://{{ zitadel_domain }}"
+    kargo_oidc_client_id: ""
+    kargo_oidc_cli_client_id: ""
+    kargo_oidc_username_claim: "preferred_username"
+    kargo_oidc_additional_scopes: []
+    kargo_oidc_admins_claims: {}
+    kargo_oidc_project_creators_claims: {}
+    kargo_oidc_users_claims: {}
+    kargo_oidc_viewers_claims: {}
+    kargo_oidc_global_service_account_namespaces: []
+
+    # ------
+    # Пользовательские ServiceAccount'ы: claims из ID-токена → права.
+    # Kargo матчит SA по аннотации rbac.kargo.akuity.io/claims без фильтра по
+    # метке или владельцу, поэтому свои SA работают наравне с чартовыми.
+    # Рендерит post-чарт (ClusterRole создаёт фаза install).
+    # Доступные роли upstream: kargo-admin, kargo-project-creator, kargo-user,
+    # kargo-viewer. Реальные значения — в hosts-vars-override/<cluster>/kargo.yaml.
+    # Формат элемента:
+    #   - name: "kargo-release-admin"
+    #     claims:
+    #       preferred_username: ["user@org.auth.example.com"]
+    #     clusterRoles: ["kargo-admin"]
+    # ------
+    kargo_rbac_service_accounts: []
+
+    # ------
+    # ESO integration: Vault → K8s Secrets.
+    # ------
+    eso_vault_integration_kargo:
+      sa_name: "eso-main"
+      role_name: "kargo.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    # ------
+    # Field-name vars — единый источник истины для имён полей в Vault.
+    # Пишутся playbook'ом (tasks-vault-put) seed-if-missing, ротации нет.
+    # ------
+    kargo_admin_secret_key_username: "username"
+    kargo_admin_secret_key_password: "password"
+    kargo_admin_secret_key_password_hash: "passwordHash"
+    kargo_admin_secret_key_token_signing_key: "tokenSigningKey"
+
+    # ------
+    # Secret dicts. Имена ключей в K8s Secret жёстко заданы Kargo
+    # (ADMIN_ACCOUNT_PASSWORD_HASH / ADMIN_ACCOUNT_TOKEN_SIGNING_KEY), поэтому
+    # здесь явный data[] с remoteRef.property, а не dataFrom.extract: открытый
+    # password хранится в Vault для оператора, но в K8s Secret не попадает.
+    # ------
+    kargo_secret_admin_creds:
+      external_secret_name: "eso-kargo-admin-creds"
+      vault_path: "/kargo/admin/creds"
+      body:
+        target:
+          name: "eso-kargo-admin-creds"
+        data:
+          - secretKey: "ADMIN_ACCOUNT_PASSWORD_HASH"
+            remoteRef:
+              key: "{{ eso_vault_integration_kargo.kv_engine_path }}/data/kargo/admin/creds"
+              property: "{{ kargo_admin_secret_key_password_hash }}"
+          - secretKey: "ADMIN_ACCOUNT_TOKEN_SIGNING_KEY"
+            remoteRef:
+              key: "{{ eso_vault_integration_kargo.kv_engine_path }}/data/kargo/admin/creds"
+              property: "{{ kargo_admin_secret_key_token_signing_key }}"
+
+    eso_vault_integration_kargo_secrets:
+      - "{{ kargo_secret_admin_creds }}"
+
+    eso_vault_integration_kargo_secrets_extra: []
+
+    # ------
+    # Ingress + TLS. Домен — placeholder; реальный в hosts-vars-override/<cluster>/.
+    # ------
+    kargo_ui_domain: "kargo-ui-k8s-v2.drawapp.ru"
+    kargo_ui_tls_secret_name: "cert-kargo"
+    kargo_ingress_class_name: "traefik-lb"
+    kargo_ui_vpn_only_enabled: false
+
+    # cert-manager Issuer (per-component, namespaced)
+    kargo_cert_manager_issuer_enabled: true
+    kargo_acme_issuer_name: "kargo-acme"
+    kargo_acme_private_key_name: "kargo-acme-account-key"
+    kargo_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    kargo_acme_email: "some-email-123@gmail.com"
+    kargo_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    kargo_cert_manager_issuer:
+      enabled: "{{ kargo_cert_manager_issuer_enabled }}"
+      name: "{{ kargo_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ kargo_acme_server }}"
+          email: "{{ kargo_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ kargo_acme_private_key_name }}"
+          solvers: "{{ kargo_acme_solvers }}"
+
+    kargo_ui_ingress_enabled: true
+    kargo_ui_ingress_tls_enabled: true
+    kargo_ui_certificate_enabled: true
+    kargo_ui_ingress_config:
+      enabled: "{{ kargo_ui_ingress_enabled }}"
+      domain: "{{ kargo_ui_domain }}"
+      ingressClass: "{{ kargo_ingress_class_name }}"
+      tlsEnabled: "{{ kargo_ui_ingress_tls_enabled }}"
+      tlsSecretName: "{{ kargo_ui_tls_secret_name }}"
+      vpnOnlyEnabled: "{{ kargo_ui_vpn_only_enabled }}"
+      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+    kargo_ui_certificate:
+      enabled: "{{ kargo_ui_certificate_enabled }}"
+      name: "{{ kargo_ui_tls_secret_name }}"
+      spec:
+        secretName: "{{ kargo_ui_tls_secret_name }}"
+        dnsNames:
+          - "{{ kargo_ui_domain }}"
+        issuerRef:
+          name: "{{ kargo_acme_issuer_name }}"
+          kind: "Issuer"
+
+    # ------
+    # PHASE: pre (ESO resources + NetworkPolicies + Issuer)
+    # ------
+    kargo_pre_helm_timeout: "5m"
+    kargo_pre_extra_objects: []
+    kargo_pre_kustomize_patches: []
+    kargo_pre_helm_values:
+      namespace: "{{ kargo_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      kargo:
+        apiPort: "{{ kargo_api_container_port }}"
+        webhooksServerPort: "{{ kargo_webhooks_server_port }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_kargo.sa_name }}"
+        roleName: "{{ eso_vault_integration_kargo.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_kargo.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_kargo.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_kargo_secrets + (eso_vault_integration_kargo_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      issuer: "{{ kargo_cert_manager_issuer }}"
+      extraObjects: "{{ kargo_pre_extra_objects }}"
+
+    # ------
+    # PHASE: install (upstream chart из OCI)
+    # ------
+    kargo_install_helm_timeout: "10m"
+    kargo_install_rollout_timeout: "600s"
+    # Helm chart source (переопределить в hosts-vars-override/ для airgap).
+    # ВНИМАНИЕ: v1.11 ещё НЕ выпущен (в реестре только 1.11.0-rc.*).
+    # 1.10.9 — последний GA. В 1.10.9 у Kargo нет Prometheus-метрик вообще.
+    kargo_helm_is_oci: true
+    kargo_helm_url: "oci://ghcr.io/akuity/kargo-charts/kargo"
+    kargo_helm_repo_name: ""
+    kargo_helm_chart_name: ""
+    kargo_helm_chart_version: "1.10.9"
+    # Тег образа пиним явно, не полагаясь на Chart.AppVersion.
+    kargo_image_tag: "v1.10.9"
+    kargo_api_replica_count: 1
+    # Scheduling задаём ТОЛЬКО в global.*: per-component ключи чарта не
+    # мержатся с global, а ЗАМЕЩАЮТ его.
+    kargo_node_selector: {}
+    kargo_tolerations: []
+    kargo_affinity: {}
+    kargo_api_resources: {}
+    kargo_controller_resources: {}
+    kargo_management_controller_resources: {}
+    kargo_webhooks_server_resources: {}
+    kargo_garbage_collector_resources: {}
+    # Git-идентичность коммитов, которые Kargo делает в git-ops репозиториях.
+    kargo_git_client_name: "kargo"
+    kargo_git_client_email: "kargo@example.com"
+    kargo_git_push_integration_policy: "RebaseOrMerge"
+    # Garbage collector: глубина отката ограничена этими значениями.
+    kargo_gc_schedule: "0 * * * *"
+    kargo_gc_max_retained_promotions: 20
+    kargo_gc_max_retained_freight: 20
+    kargo_gc_min_freight_deletion_age: "336h"
+    kargo_helm_values_oidc:
+      enabled: "{{ kargo_oidc_enabled }}"
+      issuerURL: "{{ kargo_oidc_issuer_url }}"
+      clientID: "{{ kargo_oidc_client_id }}"
+      cliClientID: "{{ kargo_oidc_cli_client_id }}"
+      additionalScopes: "{{ kargo_oidc_additional_scopes }}"
+      usernameClaim: "{{ kargo_oidc_username_claim }}"
+      admins:
+        claims: "{{ kargo_oidc_admins_claims }}"
+      projectCreators:
+        claims: "{{ kargo_oidc_project_creators_claims }}"
+      users:
+        claims: "{{ kargo_oidc_users_claims }}"
+      viewers:
+        claims: "{{ kargo_oidc_viewers_claims }}"
+      globalServiceAccounts:
+        namespaces: "{{ kargo_oidc_global_service_account_namespaces }}"
+      dex:
+        enabled: false
+        byo:
+          enabled: false
+    kargo_helm_values_api:
+      host: "{{ kargo_ui_domain }}"
+      replicas: "{{ kargo_api_replica_count }}"
+      resources: "{{ kargo_api_resources }}"
+      # api.secret.name → чарт свой Secret НЕ рендерит, Deployment берёт наш ESO-секрет.
+      secret:
+        name: "{{ kargo_secret_admin_creds.body.target.name }}"
+      adminAccount:
+        enabled: "{{ kargo_admin_account_enabled }}"
+        tokenTTL: "{{ kargo_admin_token_ttl }}"
+      # secret/checksum чарта при api.secret.name инертен (хеш пустоты) — ротацию
+      # секрета подхватывает только stakater-reloader по этой аннотации.
+      annotations:
+        secret.reloader.stakater.com/reload: "{{ kargo_secret_admin_creds.body.target.name }}"
+      # TLS терминирует Traefik: под слушает plain HTTP, но terminatedUpstream
+      # заставляет Kargo строить https://-URL. Без него admin-issuer станет
+      # http:// и логин сломается.
+      tls:
+        enabled: false
+        terminatedUpstream: true
+      # Ingress рендерит наш post-чарт.
+      ingress:
+        enabled: false
+      rollouts:
+        integrationEnabled: false
+      oidc: "{{ kargo_helm_values_oidc }}"
+    kargo_helm_values:
+      image:
+        tag: "{{ kargo_image_tag }}"
+      global:
+        nodeSelector: "{{ kargo_node_selector }}"
+        tolerations: "{{ kargo_tolerations }}"
+        affinity: "{{ kargo_affinity }}"
+      api: "{{ kargo_helm_values_api }}"
+      controller:
+        resources: "{{ kargo_controller_resources }}"
+        # Kargo в кластеры не ходит — интеграции выключены (меньше RBAC).
+        argocd:
+          integrationEnabled: false
+        rollouts:
+          integrationEnabled: false
+        gitClient:
+          name: "{{ kargo_git_client_name }}"
+          email: "{{ kargo_git_client_email }}"
+          pushIntegrationPolicy: "{{ kargo_git_push_integration_policy }}"
+      managementController:
+        resources: "{{ kargo_management_controller_resources }}"
+      webhooksServer:
+        resources: "{{ kargo_webhooks_server_resources }}"
+      # Входящие webhook'и от GitLab/registry выключены: обновление Warehouse
+      # инициируется из CI командой `kargo refresh warehouse`.
+      externalWebhooksServer:
+        enabled: false
+      garbageCollector:
+        resources: "{{ kargo_garbage_collector_resources }}"
+        schedule: "{{ kargo_gc_schedule }}"
+        maxRetainedPromotions: "{{ kargo_gc_max_retained_promotions }}"
+        maxRetainedFreight: "{{ kargo_gc_max_retained_freight }}"
+        minFreightDeletionAge: "{{ kargo_gc_min_freight_deletion_age }}"
+      crds:
+        install: true
+        keep: true
+
+    # ------
+    # PHASE: post (Ingress + Certificate + пользовательские RBAC-SA)
+    # ------
+    kargo_post_helm_timeout: "5m"
+    kargo_post_extra_objects: []
+    kargo_post_kustomize_patches: []
+    kargo_post_helm_values:
+      namespace: "{{ kargo_namespace }}"
+      ingressConfig: "{{ kargo_ui_ingress_config }}"
+      certificateConfig: "{{ kargo_ui_certificate }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      service:
+        name: "kargo-api"
+        port: "{{ kargo_api_service_port }}"
+      rbacServiceAccounts: "{{ kargo_rbac_service_accounts }}"
+      extraObjects: "{{ kargo_post_extra_objects }}"
