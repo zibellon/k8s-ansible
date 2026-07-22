@@ -1,0 +1,314 @@
+# =============================================================================
+# KARGO NETWORK POLICIES - HARDENED
+# =============================================================================
+
+# =============================================================================
+# BASE POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in kargo namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: {{ .Values.dns.port }}
+        - protocol: TCP
+          port: {{ .Values.dns.port }}
+
+---
+# Allow all traffic between pods inside the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+# =============================================================================
+# KARGO API SERVER
+# =============================================================================
+
+---
+# API: ingress from Traefik (plain HTTP на 8080 — TLS терминирует Traefik).
+# Egress наружу нужен для discovery + JWKS OIDC-провайдера (ZITADEL):
+# API-сервер тянет <issuerURL>/.well-known/openid-configuration и jwks_uri в рантайме.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kargo-api
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kargo
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.kargo.apiPort }}
+  egress:
+    # External HTTPS/HTTP (OIDC discovery + JWKS)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
+# KARGO CONTROLLER
+# =============================================================================
+
+---
+# Controller: ходит в открытый интернет за git (HTTPS) и за образами в registry,
+# плюс в kube-apiserver. Входящих соединений не принимает.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kargo-controller
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kargo
+      app.kubernetes.io/component: controller
+  policyTypes:
+    - Egress
+  egress:
+    # External HTTPS/HTTP (git-ops repos, container registries, Helm chart repos)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
+# KARGO MANAGEMENT CONTROLLER
+# =============================================================================
+
+---
+# Management controller: только kube-apiserver (создаёт namespace'ы и RBAC Project'ов).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kargo-management-controller
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kargo
+      app.kubernetes.io/component: management-controller
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
+# KARGO KUBERNETES WEBHOOKS SERVER
+# =============================================================================
+
+---
+# Webhooks server: ingress от kube-apiserver (port-only, без from: — apiserver
+# работает в host netns и его pod-селектором не выразить). 14 из 15 webhook'ов
+# имеют failurePolicy: Fail, поэтому без этого правила ломаются записи CR.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kargo-webhooks-server
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kargo
+      app.kubernetes.io/component: kubernetes-webhooks-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # kube-apiserver calls admission webhooks
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.kargo.webhooksServerPort }}
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
+# KARGO GARBAGE COLLECTOR (CronJob)
+# =============================================================================
+
+---
+# Garbage collector: только kube-apiserver (удаляет старые Freight и Promotion).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kargo-garbage-collector
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kargo
+      app.kubernetes.io/component: garbage-collector
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
+# =============================================================================
+{{- if .Values.issuer.enabled }}
+{{- $spec := .Values.issuer.spec | default dict }}
+{{- if hasKey $spec "acme" }}
+{{- range $i, $solver := ($spec.acme.solvers | default list) }}
+{{- if hasKey $solver "http01" }}
+{{- $ing := $solver.http01.ingress | default dict }}
+{{- $solverLabels := dig "podTemplate" "metadata" "labels" (dict "acme.cert-manager.io/http01-solver" "true") $ing }}
+---
+# http01 solver #{{ $i }} — ingress к solver-pod от traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $solverLabels | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+---
+# http01 solver #{{ $i }} — egress traefik → solver-pod (в namespace traefik)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ $.Values.namespace }}-allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $solverLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+# =============================================================================
+# TRAEFIK NAMESPACE POLICY (allow egress from Traefik to KARGO API)
+# =============================================================================
+
+---
+# Allow Traefik to reach KARGO API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-traefik
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    # To KARGO API
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kargo
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.kargo.apiPort }}
