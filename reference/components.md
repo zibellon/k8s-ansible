@@ -391,6 +391,27 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` (политика/роль `outline.eso-main`); (2) `seaweedfs-install.yaml --tags policy-sync,user-sync,identity-distribute,bucket-sync` (бакет `outline` + identity + креды → `eso-secret/outline/s3-storage`); (3) при OIDC: создать ZITADEL Web-app + `vault kv put eso-secret/outline/oidc clientId=… clientSecret=…`; (4) DNS для домена wiki + публичного S3-хоста → ingress кластера. Install fail-fast если S3 (или OIDC-при-включении) кредов нет в Vault.
 - **Limitations (upstream Outline).** Русский FTS деградирован (захардкожен `english` regconfig — однословный префикс работает, многословный/словоформы нет; фикс — форк образа). Workspace-админ читает/экспортирует любую приватную коллекцию, на self-hosted это НЕ видно в UI audit-log (компенсация: webhook `fileOperations.create` → Loki). Группы из OIDC не синкаются (руками, либо будущий Ansible-реконсайлер).
 
+## 17.9. `kargo`
+
+- **Chart path.** `charts/kargo/{pre,post}/` (local) + upstream chart из OCI для фазы `install` (`charts/kargo/install/` — только `readme.md`, как у zitadel/teleport).
+- **Install playbook.** `kargo-install.yaml`.
+- **Namespace.** `kargo`. Дополнительно сам upstream-чарт создаёт три служебных namespace: `kargo-cluster-secrets`, `kargo-shared-resources`, `kargo-system-resources` — подов в них нет, только Secret/ConfigMap/RBAC, поэтому NetworkPolicy для них не рендерятся.
+- **Releases.** `kargo-pre`, `kargo`, `kargo-post`.
+- **Chart.** `kargo_helm_chart_version` (default `1.10.9`, OCI `oci://ghcr.io/akuity/kargo-charts/kargo`), образ пинуется явно через `kargo_image_tag` (`v1.10.9`) — `Chart.AppVersion` не используется. **v1.11 на момент добавления не выпущен** (в реестре только `1.11.0-rc.*`); в 1.10.9 у Kargo **нет Prometheus-метрик вообще**, поэтому ServiceMonitor не рендерится.
+- **Workload.** 4 Deployment (`kargo-api`, `kargo-controller`, `kargo-management-controller`, `kargo-webhooks-server`) + CronJob `kargo-garbage-collector` (`0 * * * *`). Контроллер и management-controller масштабируются только шардированием, не репликами. Хранилища нет — всё состояние в CRD/etcd.
+- **Required vars.** `kargo_namespace`, `kargo_enabled`, `kargo_helm_chart_version`, `kargo_image_tag`, `kargo_ui_domain`, порты (`kargo_api_container_port` 8080 / `kargo_api_service_port` 80 / `kargo_webhooks_server_port` 9443), admin (`kargo_admin_account_enabled`/`_username`/`_token_ttl`), OIDC (`kargo_oidc_enabled`/`_issuer_url`/`_client_id`/`_username_claim`/`_additional_scopes`), права (`kargo_rbac_service_accounts`), git-идентичность (`kargo_git_client_name`/`_email`/`_push_integration_policy`), GC (`kargo_gc_schedule`/`_max_retained_promotions`/`_max_retained_freight`/`_min_freight_deletion_age`). Ingress-тумблеры: `kargo_cert_manager_issuer_enabled`, `kargo_ui_ingress_tls_enabled`, `kargo_ui_certificate_enabled`, `kargo_ui_vpn_only_enabled`. Kustomize patches (default `[]`): `kargo_{pre,post}_kustomize_patches`.
+- **ESO integration.** Yes (`eso_vault_integration_kargo`). Vault `eso-secret/kargo/admin/creds` — поля `username`/`password`/`passwordHash`/`tokenSigningKey`, генерятся seed-if-missing. `ExternalSecret` использует явный `data[]` с `remoteRef.property`, а не `dataFrom.extract`: имена ключей в K8s Secret жёстко заданы Kargo (`ADMIN_ACCOUNT_PASSWORD_HASH`, `ADMIN_ACCOUNT_TOKEN_SIGNING_KEY`), а открытый `password` в кластер не уезжает — он нужен только человеку. Control node требует `passlib` + `bcrypt<4.1` для фильтра `password_hash('bcrypt')` (см. `tests/Dockerfile`).
+- **Auth (local).** Локальный аккаунт в Kargo **ровно один** — `admin`, аналога мультиаккаунтов ArgoCD нет. Он **полностью обходит авторизацию**: сервер отдаёт свой внутренний не-авторизующий клиент без SubjectAccessReview. Держим как break-glass. Секрет передаётся чарту через `api.secret.name` — тогда чарт свой Secret не рендерит; при этом его `secret/checksum` становится инертным, поэтому на Deployment висит аннотация stakater-reloader. Ротации нет: смена `tokenSigningKey` инвалидирует все выданные admin-токены. Второй break-glass — вход сырым k8s-токеном (`kargo login --kubeconfig`).
+- **Auth (OIDC / ZITADEL).** Kargo — **public PKCE-клиент, client secret не используется вообще**, поэтому Vault-секрета для OIDC нет; в inventory только `kargo_oidc_client_id`. Redirect URI: UI — `https://<домен>/login`, CLI — `http://localhost:<порт>/auth/callback`. API-сервер тянет discovery и JWKS провайдера **в рантайме** → нужен egress наружу. **userinfo не вызывается** — все claims должны быть в ID-токене (в ZITADEL включить «User Info inside ID Token»). Dex не используется. `additionalScopes` переопределён пустым списком: дефолтного для чарта scope `groups` у ZITADEL нет.
+- **RBAC.** Не Casbin и не `policy.csv`, а обычный Kubernetes RBAC: claim из ID-токена сопоставляется с ServiceAccount по аннотации `rbac.kargo.akuity.io/claims`, дальше `SubjectAccessReview` от имени этого SA. ServiceAccount здесь — носитель прав, а не учётка: токен не выпускается, impersonation нет, операцию выполняет сам сервер. Четыре чартовых SA (`kargo-admin`/`kargo-project-creator`/`kargo-user`/`kargo-viewer`) остаются **инертными** — `api.oidc.*.claims` держим пустыми, аннотация тогда не рендерится. Права выдаются своими SA через `kargo_rbac_service_accounts` (фаза `post`: ServiceAccount + ClusterRoleBinding; ClusterRole создаёт фаза `install`). Дефолтной роли нет — без совпадающего SA пользователь получает 403 везде. Матчатся только claims-строки и плоские массивы строк; map-образные ZITADEL-роли не сматчатся. Аудит kube-apiserver показывает `kargo-api`, а не человека.
+- **NetworkPolicy.** deny-all + DNS + intra-ns + per-workload: `kargo-api` (ingress от Traefik, egress наружу 443/80 за JWKS), `kargo-controller` (**egress наружу 443/80** — git-ops репозитории и registry, основной рабочий путь), `management-controller`/`garbage-collector` (только apiserver), `kargo-webhooks-server` (**ingress на 9443 без `from:`** — kube-apiserver работает в host netns; 14 из 15 admission-webhook'ов имеют `failurePolicy: Fail`). Плюс ACME HTTP-01 solver-пара и `kargo-allow-traefik` в namespace traefik. Изменений в `CiliumClusterwideNetworkPolicy` не требуется — host-endpoint egress уже разрешает `toEntities: [cluster, host, …]`.
+- **Ingress.** Plain `kind: Ingress` (Traefik), бэкенд `kargo-api:80`. TLS терминирует Traefik: `api.tls.enabled: false` + **`api.tls.terminatedUpstream: true`** — без второго флага issuer admin-токенов станет `http://` и логин сломается.
+- **ServiceMonitor.** No (в chart 1.10.9 метрик нет; появятся при апгрейде на 1.11).
+- **Dependencies.** Cilium, cert-manager (нужен и для admission-webhook сертификата), external-secrets, vault, traefik, stakater-reloader (ротация admin-секрета), zitadel (OIDC — при включении).
+- **Enable flag.** `kargo_enabled` (opt-in, default `false`): guards install.
+- **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` (политика/роль `kargo.eso-main`); (2) при OIDC — создать в ZITADEL приложение типа User Agent/SPA с auth method NONE и PKCE (S256), redirect URI `https://<домен>/login`, включить «User Info inside ID Token», разрешить CORS на origin Kargo, и записать `kargo_oidc_client_id` в `hosts-vars-override/`; (3) DNS домена → ingress кластера.
+- **Ограничения.** Kargo в кластеры не ходит: `controller.argocd.integrationEnabled: false`, связь с ArgoCD только через git-ops репозиторий. Входящие webhook'и выключены (`externalWebhooksServer.enabled: false`) — обновление Warehouse инициируется из CI командой `kargo refresh warehouse`. Поддержка SSH-URL для git объявлена устаревшей и удаляется в v1.13 — дизайн строится на HTTPS + токен.
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -414,6 +435,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `mon-system` | mon-system (consolidated: prometheus-operator, prometheus, alertmanager, grafana, loki, vector, node-exporter, kube-state-metrics) | no |
 | `filestash` | filestash | no |
 | `outline` | outline | no |
+| `kargo` | kargo | no (+ служебные `kargo-cluster-secrets` / `kargo-shared-resources` / `kargo-system-resources`, создаёт upstream-чарт) |
 
 ## 19. Cross-cutting Dependency Order
 
@@ -428,18 +450,18 @@ L4  traefik        haproxy
 L5  mon-system     seaweedfs
 L6  zitadel
 L7  argocd    gitlab    teleport    filestash
-L8  gitlab-runner
+L8  gitlab-runner   kargo
 ```
 
 `linstor` и `longhorn` — оба storage tier; устанавливается **только один** из двух в кластере (выбор оператора), не оба параллельно.
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L7 as part of `argocd-install.yaml` — no separate playbook.
 
-## 20. ESO-integrated Components (10)
+## 20. ESO-integrated Components (12)
 
 Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-verify.yaml`:
 
-`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`, `filestash`
+`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`, `filestash`, `outline`, `kargo`
 
 Each integration object + `_secrets` list + `_secrets_extra` list lives in the corresponding `hosts-vars/<c>.yaml`.
 
