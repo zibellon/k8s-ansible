@@ -1,0 +1,357 @@
+# =============================================================================
+# Install Kargo (continuous promotion platform, upstream Helm chart + local charts)
+# Steps:
+#   1. kargo/pre:     ESO resources (SA, SecretStore, ExternalSecret) + NetworkPolicies + cert-manager Issuer
+#   2. kargo/install: admin creds seed (Vault, seed-if-missing) + upstream Helm chart (OCI)
+#   3. kargo/post:    Ingress (Traefik) + cert-manager Certificate + user RBAC ServiceAccounts
+#
+# Usage (tags):
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-install.yaml
+#   ansible-playbook ... --tags pre
+#   ansible-playbook ... --tags install
+#   ansible-playbook ... --tags post
+#
+# Prerequisites:
+#   - Vault installed/unsealed; Vault policies+roles synced (kargo.eso-main)
+#   - External Secrets Operator, cert-manager, traefik installed
+#   - If OIDC enabled: ZITADEL application created (public PKCE client, no client secret),
+#     kargo_oidc_client_id set in hosts-vars-override/<cluster>/kargo.yaml
+#
+# NOTE: admin password + bcrypt hash + token signing key are generated ONCE
+#       (seed-if-missing) and NEVER rotated — Kargo has no rotation concept.
+#       The plaintext password stays in Vault for the operator; only the hash and
+#       the signing key are materialized into the K8s Secret via ESO.
+# =============================================================================
+
+---
+- name: Install Kargo (continuous promotion platform)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  vars:
+    # Local fact names — admin creds seed-if-missing
+    _local_kargo_admin_exists_key: "_local_kargo_admin_exists"
+    _local_kargo_admin_check_key: "_local_kargo_admin_check"
+    _local_kargo_admin_password_key: "_local_kargo_admin_password"
+    _local_kargo_admin_password_hash_key: "_local_kargo_admin_password_hash"
+    _local_kargo_admin_signing_key_key: "_local_kargo_admin_signing_key"
+    _local_kargo_admin_put_data_key: "_local_kargo_admin_put_data"
+    # Local fact name — upstream chart source (OCI URL or repo/chart)
+    _local_kargo_helm_chart_source_key: "_local_kargo_helm_chart_source"
+
+  tasks:
+    - name: "[kargo-install] Assert component enabled"
+      assert:
+        that:
+          - kargo_enabled | default(false) | bool
+        fail_msg: "kargo is disabled (kargo_enabled=false). Set kargo_enabled: true in hosts-vars-override/ to install it."
+      run_once: true
+      tags: [always]
+
+    - name: "[kargo-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "kargo-pre-check"
+      tags: [always]
+
+    - name: "[kargo-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "kargo-pre-check"
+        dto_target_namespace: "{{ kargo_namespace }}"
+      tags: [always]
+
+    - name: "[kargo-install-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "kargo-install-init"
+      tags: [always]
+
+    - name: "[kargo-install-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "kargo-install-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_kargo_secrets + (eso_vault_integration_kargo_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_kargo }}"
+        dto_namespace: "{{ kargo_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (ESO Resources, NetworkPolicies, Issuer)
+    # =========================================================================
+
+    - name: "[kargo-pre] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "kargo-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/kargo/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/kargo/pre"
+      tags: [pre]
+
+    - name: "[kargo-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "kargo-pre"
+        dto_dir: "{{ remote_charts_dir }}/kargo/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ kargo_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[kargo-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "kargo-pre"
+        dto_release_name: "kargo-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/kargo/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/kargo/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/kargo/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/kargo/pre-k"
+        dto_patches_list: "{{ kargo_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ kargo_namespace }}"
+      tags: [pre]
+
+    - name: "[kargo-pre] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "kargo-pre"
+        dto_helm_command: >
+          helm upgrade --install kargo-pre {{ remote_charts_dir }}/kargo/pre-k
+          --namespace {{ kargo_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ kargo_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: INSTALL (seed admin creds, upstream Helm chart)
+    # =========================================================================
+
+    - name: "[kargo-admin-secrets] Get admin creds from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "kargo-admin-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_kargo.kv_engine_path }}{{ kargo_secret_admin_creds.vault_path }}"
+        dto_vault_get_field: "{{ kargo_admin_secret_key_password_hash }}"
+        dto_vault_get_res_fact_name: "{{ _local_kargo_admin_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_kargo_admin_exists_key }}"
+      tags: [install]
+
+    - name: "[kargo-admin-secrets] Generate admin password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "kargo-admin-secrets"
+        dto_generate_fact_name: "{{ _local_kargo_admin_password_key }}"
+      when: not lookup('vars', _local_kargo_admin_exists_key)
+      tags: [install]
+
+    - name: "[kargo-admin-secrets] Generate token signing key"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "kargo-admin-secrets"
+        dto_generate_fact_name: "{{ _local_kargo_admin_signing_key_key }}"
+      when: not lookup('vars', _local_kargo_admin_exists_key)
+      tags: [install]
+
+    - name: "[kargo-admin-secrets] Compute bcrypt hash of admin password"
+      set_fact:
+        "{{ _local_kargo_admin_password_hash_key }}": "{{ lookup('vars', _local_kargo_admin_password_key) | password_hash('blowfish') }}"
+      when: not lookup('vars', _local_kargo_admin_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[kargo-admin-secrets] Prepare admin Vault put data"
+      set_fact:
+        "{{ _local_kargo_admin_put_data_key }}": >-
+          {{ {
+               kargo_admin_secret_key_username: kargo_admin_username,
+               kargo_admin_secret_key_password: lookup('vars', _local_kargo_admin_password_key),
+               kargo_admin_secret_key_password_hash: lookup('vars', _local_kargo_admin_password_hash_key),
+               kargo_admin_secret_key_token_signing_key: lookup('vars', _local_kargo_admin_signing_key_key)
+             } }}
+      when: not lookup('vars', _local_kargo_admin_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[kargo-admin-secrets] Store admin creds in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "kargo-admin-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_kargo.kv_engine_path }}{{ kargo_secret_admin_creds.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_kargo_admin_put_data_key) }}"
+      when: not lookup('vars', _local_kargo_admin_exists_key)
+      tags: [install]
+
+    - name: "[kargo-admin-secrets] Trigger ESO sync"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "kargo-admin-secrets"
+        dto_eso_sync_namespace: "{{ kargo_namespace }}"
+      tags: [install]
+
+    - name: "[kargo-admin-secrets] Wait for admin secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "kargo-admin-secrets"
+        dto_wait_secret_name: "{{ kargo_secret_admin_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ kargo_namespace }}"
+      tags: [install]
+
+    - name: "[kargo-install] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "kargo-install"
+        dto_dir: "{{ remote_charts_dir }}/kargo/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ kargo_helm_values | to_nice_yaml }}"
+      tags: [install]
+
+    - name: "[kargo-install] Add Helm repository"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "kargo-install"
+        dto_helm_is_oci: "{{ kargo_helm_is_oci }}"
+        dto_helm_url: "{{ kargo_helm_url }}"
+        dto_helm_chart_version: "{{ kargo_helm_chart_version }}"
+        dto_helm_repo_name: "{{ kargo_helm_repo_name }}"
+        dto_helm_chart_name: "{{ kargo_helm_chart_name }}"
+        dto_helm_chart_source_res_fact_name: "{{ _local_kargo_helm_chart_source_key }}"
+      tags: [install]
+
+    - name: "[kargo-install] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "kargo-install"
+        dto_helm_command: >
+          helm upgrade --install kargo {{ lookup('vars', _local_kargo_helm_chart_source_key) }}
+          --namespace {{ kargo_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/kargo/install/values-override.yaml
+          --version {{ kargo_helm_chart_version }}
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ kargo_install_helm_timeout }}
+      tags: [install]
+
+    - name: "[kargo-install] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "kargo-install"
+        dto_rollout_namespace: "{{ kargo_namespace }}"
+        dto_rollout_timeout: "{{ kargo_install_rollout_timeout }}"
+        dto_rollout_resources_list:
+          - deployment.apps/kargo-api
+          - deployment.apps/kargo-controller
+          - deployment.apps/kargo-management-controller
+          - deployment.apps/kargo-webhooks-server
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: POST (Ingress + Certificate + user RBAC)
+    # =========================================================================
+
+    - name: "[kargo-post] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "kargo-post"
+        dto_chart_name: "post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/kargo/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/kargo/post"
+      tags: [post]
+
+    - name: "[kargo-post] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "kargo-post"
+        dto_dir: "{{ remote_charts_dir }}/kargo/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ kargo_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[kargo-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "kargo-post"
+        dto_release_name: "kargo-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/kargo/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/kargo/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/kargo/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/kargo/post-k"
+        dto_patches_list: "{{ kargo_post_kustomize_patches }}"
+        dto_target_namespace: "{{ kargo_namespace }}"
+      tags: [post]
+
+    - name: "[kargo-post] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "kargo-post"
+        dto_helm_command: >
+          helm upgrade --install kargo-post {{ remote_charts_dir }}/kargo/post-k
+          --namespace {{ kargo_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ kargo_post_helm_timeout }}
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[kargo-verify] Verify Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_label_name: "kargo-verify"
+        dto_helm_namespace: "{{ kargo_namespace }}"
+      tags: [always]
+
+    - name: "[kargo-verify] Show pods in {{ kargo_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "kargo-verify"
+        dto_pods_namespace: "{{ kargo_namespace }}"
+      tags: [always]
+
+    - name: "[kargo-verify] Show NetworkPolicies in {{ kargo_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "kargo-verify"
+        dto_np_namespace: "{{ kargo_namespace }}"
+      tags: [always]
+
+    - name: "[kargo-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "KARGO INSTALLATION COMPLETE"
+          - "=============================================="
+          - "UI: https://{{ kargo_ui_domain }}"
+          - ""
+          - "Admin (break-glass, login name '{{ kargo_admin_username }}'):"
+          - "  vault kv get {{ eso_vault_integration_kargo.kv_engine_path }}{{ kargo_secret_admin_creds.vault_path }}"
+          - ""
+          - "SSO: ZITADEL (public PKCE client, no client secret)."
+          - "Rights are granted via kargo_rbac_service_accounts in hosts-vars-override/."
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[kargo-verify] Installation complete"
+      debug:
+        msg: "kargo-pre + kargo + kargo-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
