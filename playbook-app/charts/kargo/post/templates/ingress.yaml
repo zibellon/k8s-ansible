@@ -1,0 +1,43 @@
+# =============================================================================
+# KARGO INGRESS (Traefik)
+#   enabled    → рендерить Ingress
+#   tlsEnabled → websecure entrypoint + router.tls + tls-блок; иначе web, без tls (TLS у Cloudflare)
+# =============================================================================
+{{- if .Values.ingressConfig.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kargo
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingressConfig.ingressClass | quote }}
+    {{- if .Values.ingressConfig.tlsEnabled }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.websecure | quote }}
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- else }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.traefik.entryPoints.web | quote }}
+    {{- end }}
+    {{- if .Values.ingressConfig.vpnOnlyEnabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Values.ingressConfig.vpnIngressMiddlewares }}"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingressConfig.ingressClass }}
+  {{- if and .Values.ingressConfig.tlsEnabled .Values.ingressConfig.tlsSecretName }}
+  tls:
+    - hosts:
+        - {{ .Values.ingressConfig.domain }}
+      secretName: {{ .Values.ingressConfig.tlsSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingressConfig.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.service.name }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
