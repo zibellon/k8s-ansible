@@ -132,6 +132,17 @@ https://<zitadel_domain>/.well-known/openid-configuration
 - USE_PKCE = false
 - CLIENT_ID / CLIENT_SECRET = secretKeyRef -> eso-mon-system-grafana-oidc-creds (из Vault)
 
+### Как сделать пользователя из ZITADEL === Grafana.ADMIN
+1. авторизоваться через ZITADEL -> будет создан новый пользователь
+2. Выйти из аккаунта
+3. Зайти по логин + пароль за Grafana.Admin
+4. Найти пользователя из ZITADEL и сделать его Grafana.admin
+   1. name: <FirstName> <LastName> (ClusterAdmin RW)
+   2. email: <email> (cluster-admin-rw@some-domain.com)
+   3. username: <LoginName> (cluster-admin-rw@cluster-tools.<zitadel_domain>, с учетом всех настроек, сделанных выше)
+5. Выйти из admin пользователя и авторизоваться за пользователя из ZITADEL
+6. Вы админ !
+
 ## ArgoCD
 ### zitadel-side
 
@@ -153,9 +164,19 @@ oidc.config:
   refreshTokenThreshold: "2h"
 
 argocd-rbac-cm:
-  scopes: '[email]'
+  scopes: '[preferred_username]'
   policy.default: '' # deny-by-default
-  policy.csv: g, <email>, role:admin # грант по email (в override argocd_policy_csv_list)
+  policy.csv: g, <preferred_username>, role:admin
+
+### Как сделать пользователя из ZITADEL === ArgoCD.ADMIN
+1. авторизоваться через ZITADEL и зайти в раздел ProfileInfo
+   1. Username: <email> (cluster-admin-rw@some-domain.com). Хардкод. сменить нельзя
+   2. Issuer: https://<zitadel_domain>
+   3. Groups: <preferred_username> (cluster-admin-rw@cluster-tools.<zitadel_domain>)
+2. В момент установки ArgoCD, поправить PATCH для `argocd_policy_csv_list`
+   1. дописать правило: `"g, cluster-admin-rw@cluster-tools.<zitadel_domain>, role:admin"`
+   2. провести повторную установку
+3. Вы админ !
 
 ## GitLab
 ### zitadel-side
@@ -186,6 +207,18 @@ appConfig.omniauth:
   blockAutoCreatedUsers=true
   autoLinkUser=[openid_connect]
 
+### Как сделать пользователя из ZITADEL === GitLab.ADMIN
+1. Авторизоваться через ZITADEL -> будет создан новый пользователь
+2. Выйти из аккаунта
+3. Зайти по логин + пароль за GitLab.Admin
+4. Найти пользователя из ZITADEL и сделать его GitLab.admin
+   1. name: <FirstName> <LastName> (ClusterAdmin RW)
+   2. username: <LoginName> (cluster-admin-rw@cluster-tools.<zitadel_domain>) -> cluster-admin-rw
+      1. там механика внутри GitLab, он обрезает split('@').first
+   3. email: <email> (cluster-admin-rw@some-domain.com)
+5. Выйти из admin пользователя и авторизоваться за пользователя из ZITADEL
+6. Вы админ !
+
 ## Outline
 ### zitadel-side
 
@@ -207,6 +240,13 @@ appConfig.omniauth:
 - OIDC_DISPLAY_NAME = ZITADEL (текст на кнопке входа)
 - OIDC_SCOPES = openid profile email offline_access + org-pin urn:zitadel:iam:org:id:<ORG_ID>
 - OIDC_DISABLE_REDIRECT = true
+
+### Как сделать пользователя из ZITADEL === Outline.ADMIN
+1. Авторизоваться через ZITADEL -> будет создан новый пользователь
+   1. name: <FirstName> <LastName> (ClusterAdmin RW)
+   2. email: <email> (cluster-admin-rw@some-domain.com)
+2. Вы админ !
+   1. первый пользователь, который пройдет успешную авторизацию в OutLine = становится сразу ADMIN
 
 ## Потом создаем Users
 Вот тут два важных момента
