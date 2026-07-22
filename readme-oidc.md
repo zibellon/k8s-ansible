@@ -8,7 +8,7 @@
 - Grafana
 - Outline (docs, wiki)
 
-# Все примеры и объяснения будут на основе Zitadel (этот id-provider используется в этой конфигурации)
+# Все примеры и объяснения будут на основе `Zitadel` (этот id-provider используется в этой конфигурации)
 
 ## Метод для разведки конфигурации
 https://<zitadel_domain>/.well-known/openid-configuration
@@ -54,7 +54,7 @@ https://<zitadel_domain>/.well-known/openid-configuration
   - clientId: <ClientID из шага A4>
   - clientSecret: <Client Secret из шага A4>
 
-## Интересная настройка. ORG - project - application
+## Интересная настройка. ORG -> project -> application
 `Back-Channel Logout URI` = OIDC Back-Channel Logout — механизм, когда IdP (ZITADEL) уведомляет приложение о завершении сессии сервер-к-серверу (по «заднему каналу», в обход браузера)
 
 # Последовательность действий, детально по каждому проекту
