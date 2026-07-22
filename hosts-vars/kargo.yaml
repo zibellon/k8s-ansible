@@ -20,6 +20,10 @@ all:
     kargo_api_container_port: 8080
     kargo_api_service_port: 80
     kargo_webhooks_server_port: 9443
+    # external-webhooks-server: тот же приём, что у api — Service 80 -> под 8080.
+    # Не путать с kargo_webhooks_server_port выше: то admission-webhooks (9443).
+    kargo_external_webhooks_container_port: 8080
+    kargo_external_webhooks_service_port: 80
 
     # ------
     # Auth: локальный admin. В Kargo он ровно ОДИН (мультиаккаунтов нет) и он
@@ -37,10 +41,12 @@ all:
     # используется нигде, поэтому Vault-секрета для OIDC НЕТ; в inventory только
     # clientId (не секрет), реальное значение — в hosts-vars-override/<cluster>/.
     # У ZITADEL нет scope `groups` — дефолт чарта переопределяем пустым списком.
-    # Все *_claims остаются пустыми: чартовые ServiceAccount'ы (kargo-admin,
-    # kargo-project-creator, kargo-user, kargo-viewer) должны быть инертны —
-    # аннотация claims рендерится только при непустом значении. Пользовательские
-    # SA рендерит post-чарт из kargo_rbac_service_accounts.
+    # api.oidc.<role>.claims чарту НЕ передаём вообще: на дефолте {} аннотация не
+    # рендерится, и четыре чартовых ServiceAccount'а (kargo-admin,
+    # kargo-project-creator, kargo-user, kargo-viewer) остаются инертными.
+    # Права выдаются своими объектами из kargo_rbac_* (см. ниже).
+    # global_service_account_namespaces — дополнительные namespace, где Kargo ищет
+    # SA с аннотацией claims; релизный namespace чарт подставляет туда сам.
     # ------
     kargo_oidc_enabled: false
     kargo_oidc_issuer_url: "https://{{ zitadel_domain }}"
@@ -48,26 +54,41 @@ all:
     kargo_oidc_cli_client_id: ""
     kargo_oidc_username_claim: "preferred_username"
     kargo_oidc_additional_scopes: []
-    kargo_oidc_admins_claims: {}
-    kargo_oidc_project_creators_claims: {}
-    kargo_oidc_users_claims: {}
-    kargo_oidc_viewers_claims: {}
     kargo_oidc_global_service_account_namespaces: []
 
     # ------
-    # Пользовательские ServiceAccount'ы: claims из ID-токена → права.
+    # Пользовательские RBAC-объекты — три независимых списка. Шаблоны post-чарта
+    # разворачивают элементы как есть (raw) и НЕ связывают их между собой: можно
+    # объявить SA без биндинга, свою ClusterRole без SA, биндинг на чартовую роль.
     # Kargo матчит SA по аннотации rbac.kargo.akuity.io/claims без фильтра по
     # метке или владельцу, поэтому свои SA работают наравне с чартовыми.
-    # Рендерит post-чарт (ClusterRole создаёт фаза install).
-    # Доступные роли upstream: kargo-admin, kargo-project-creator, kargo-user,
-    # kargo-viewer. Реальные значения — в hosts-vars-override/<cluster>/kargo.yaml.
+    # Реальные значения — в hosts-vars-override/<cluster>/kargo.yaml.
+    # ------
     # Формат элемента:
     #   - name: "kargo-release-admin"
-    #     claims:
-    #       preferred_username: ["user@org.auth.example.com"]
-    #     clusterRoles: ["kargo-admin"]
-    # ------
+    #     annotations:
+    #       rbac.kargo.akuity.io/claims: '{"preferred_username":["user@org.auth.example.com"]}'
+    #     labels: {}
     kargo_rbac_service_accounts: []
+    # Формат элемента:
+    #   - name: "kargo-release-promoter"
+    #     rules:
+    #       - apiGroups: ["kargo.akuity.io"]
+    #         resources: ["stages"]
+    #         verbs: ["get", "list", "watch", "promote"]
+    kargo_rbac_cluster_roles: []
+    # Формат элемента. roleRef может ссылаться и на чартовую роль:
+    # kargo-admin, kargo-project-creator, kargo-user, kargo-viewer.
+    #   - name: "kargo-release-admin"
+    #     roleRef:
+    #       apiGroup: rbac.authorization.k8s.io
+    #       kind: ClusterRole
+    #       name: kargo-admin
+    #     subjects:
+    #       - kind: ServiceAccount
+    #         name: kargo-release-admin
+    #         namespace: kargo
+    kargo_rbac_cluster_role_bindings: []
 
     # ------
     # ESO integration: Vault → K8s Secrets.
@@ -119,8 +140,16 @@ all:
     # ------
     kargo_ui_domain: "kargo-ui-k8s-v2.drawapp.ru"
     kargo_ui_tls_secret_name: "cert-kargo"
+    # Отдельный публичный домен external-webhooks-server: в него GitLab и registry
+    # шлют события, он же попадает в EXTERNAL_WEBHOOK_SERVER_BASE_URL и в URL,
+    # которые Kargo показывает при настройке приёмников.
+    kargo_webhooks_domain: "kargo-webhooks-k8s-v2.drawapp.ru"
+    kargo_webhooks_tls_secret_name: "cert-kargo-webhooks"
     kargo_ingress_class_name: "traefik-lb"
     kargo_ui_vpn_only_enabled: false
+    # VPN-мидлварь на webhooks-домене закрыла бы доступ извне и сломала приём
+    # событий — в рабочей конфигурации остаётся false.
+    kargo_webhooks_vpn_only_enabled: false
 
     # cert-manager Issuer (per-component, namespaced)
     kargo_cert_manager_issuer_enabled: true
@@ -173,6 +202,28 @@ all:
         secretName: "{{ kargo_ui_tls_secret_name }}"
         dnsNames:
           - "{{ kargo_ui_domain }}"
+        issuerRef:
+          name: "{{ kargo_acme_issuer_name }}"
+          kind: "Issuer"
+
+    kargo_webhooks_ingress_enabled: true
+    kargo_webhooks_ingress_tls_enabled: true
+    kargo_webhooks_certificate_enabled: true
+    kargo_webhooks_ingress_config:
+      enabled: "{{ kargo_webhooks_ingress_enabled }}"
+      domain: "{{ kargo_webhooks_domain }}"
+      ingressClass: "{{ kargo_ingress_class_name }}"
+      tlsEnabled: "{{ kargo_webhooks_ingress_tls_enabled }}"
+      tlsSecretName: "{{ kargo_webhooks_tls_secret_name }}"
+      vpnOnlyEnabled: "{{ kargo_webhooks_vpn_only_enabled }}"
+      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+    kargo_webhooks_certificate:
+      enabled: "{{ kargo_webhooks_certificate_enabled }}"
+      name: "{{ kargo_webhooks_tls_secret_name }}"
+      spec:
+        secretName: "{{ kargo_webhooks_tls_secret_name }}"
+        dnsNames:
+          - "{{ kargo_webhooks_domain }}"
         issuerRef:
           name: "{{ kargo_acme_issuer_name }}"
           kind: "Issuer"
@@ -232,7 +283,11 @@ all:
     kargo_controller_resources: {}
     kargo_management_controller_resources: {}
     kargo_webhooks_server_resources: {}
+    kargo_external_webhooks_server_resources: {}
     kargo_garbage_collector_resources: {}
+    # external-webhooks-server принимает события от GitLab и registry.
+    # Выключение убирает и его Deployment, и ClusterRole kargo-external-webhooks-server.
+    kargo_external_webhooks_enabled: true
     # Git-идентичность коммитов, которые Kargo делает в git-ops репозиториях.
     kargo_git_client_name: "kargo"
     kargo_git_client_email: "kargo@example.com"
@@ -249,14 +304,6 @@ all:
       cliClientID: "{{ kargo_oidc_cli_client_id }}"
       additionalScopes: "{{ kargo_oidc_additional_scopes }}"
       usernameClaim: "{{ kargo_oidc_username_claim }}"
-      admins:
-        claims: "{{ kargo_oidc_admins_claims }}"
-      projectCreators:
-        claims: "{{ kargo_oidc_project_creators_claims }}"
-      users:
-        claims: "{{ kargo_oidc_users_claims }}"
-      viewers:
-        claims: "{{ kargo_oidc_viewers_claims }}"
       globalServiceAccounts:
         namespaces: "{{ kargo_oidc_global_service_account_namespaces }}"
       dex:
@@ -287,7 +334,7 @@ all:
       ingress:
         enabled: false
       rollouts:
-        integrationEnabled: false
+        integrationEnabled: true
       oidc: "{{ kargo_helm_values_oidc }}"
     kargo_helm_values:
       image:
@@ -299,11 +346,12 @@ all:
       api: "{{ kargo_helm_values_api }}"
       controller:
         resources: "{{ kargo_controller_resources }}"
-        # Kargo в кластеры не ходит — интеграции выключены (меньше RBAC).
+        # Kargo в кластеры не ходит: связь с ArgoCD только через git-ops
+        # репозиторий, поэтому argocd-интеграция выключена (меньше RBAC).
         argocd:
           integrationEnabled: false
         rollouts:
-          integrationEnabled: false
+          integrationEnabled: true
         gitClient:
           name: "{{ kargo_git_client_name }}"
           email: "{{ kargo_git_client_email }}"
@@ -312,10 +360,18 @@ all:
         resources: "{{ kargo_management_controller_resources }}"
       webhooksServer:
         resources: "{{ kargo_webhooks_server_resources }}"
-      # Входящие webhook'и от GitLab/registry выключены: обновление Warehouse
-      # инициируется из CI командой `kargo refresh warehouse`.
+      # Входящие webhook'и от GitLab/registry. Сервер публикуется на отдельном
+      # домене нашим post-чартом, поэтому чартовый ingress выключен. TLS, как и
+      # у api, терминирует Traefik.
       externalWebhooksServer:
-        enabled: false
+        enabled: "{{ kargo_external_webhooks_enabled }}"
+        host: "{{ kargo_webhooks_domain }}"
+        resources: "{{ kargo_external_webhooks_server_resources }}"
+        tls:
+          enabled: false
+          terminatedUpstream: true
+        ingress:
+          enabled: false
       garbageCollector:
         resources: "{{ kargo_garbage_collector_resources }}"
         schedule: "{{ kargo_gc_schedule }}"
@@ -327,22 +383,29 @@ all:
         keep: true
 
     # ------
-    # PHASE: post (Ingress + Certificate + пользовательские RBAC-SA)
+    # PHASE: post (Ingress + Certificate + пользовательские RBAC-объекты)
     # ------
     kargo_post_helm_timeout: "5m"
     kargo_post_extra_objects: []
     kargo_post_kustomize_patches: []
     kargo_post_helm_values:
       namespace: "{{ kargo_namespace }}"
-      ingressConfig: "{{ kargo_ui_ingress_config }}"
-      certificateConfig: "{{ kargo_ui_certificate }}"
+      uiIngressConfig: "{{ kargo_ui_ingress_config }}"
+      uiCertificateConfig: "{{ kargo_ui_certificate }}"
+      webhooksIngressConfig: "{{ kargo_webhooks_ingress_config }}"
+      webhooksCertificateConfig: "{{ kargo_webhooks_certificate }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:
           web: "{{ traefik_web_entrypoint }}"
           websecure: "{{ traefik_websecure_entrypoint }}"
-      service:
+      apiService:
         name: "kargo-api"
         port: "{{ kargo_api_service_port }}"
+      externalWebhooksService:
+        name: "kargo-external-webhooks-server"
+        port: "{{ kargo_external_webhooks_service_port }}"
       rbacServiceAccounts: "{{ kargo_rbac_service_accounts }}"
+      rbacClusterRoles: "{{ kargo_rbac_cluster_roles }}"
+      rbacClusterRoleBindings: "{{ kargo_rbac_cluster_role_bindings }}"
       extraObjects: "{{ kargo_post_extra_objects }}"
