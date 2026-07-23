@@ -3,12 +3,14 @@
 # Steps:
 #   1. kargo/pre:     ESO resources (SA, SecretStore, ExternalSecret) + NetworkPolicies + cert-manager Issuer
 #   2. kargo/install: admin creds seed (Vault, seed-if-missing) + upstream Helm chart (OCI)
-#   3. kargo/post:    Ingress (Traefik) + cert-manager Certificate + user RBAC ServiceAccounts
+#   3. kargo/rbac:    user ServiceAccounts + ClusterRoles + ClusterRoleBindings
+#   4. kargo/post:    Ingress (Traefik) + cert-manager Certificate
 #
 # Usage (tags):
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-install.yaml
 #   ansible-playbook ... --tags pre
 #   ansible-playbook ... --tags install
+#   ansible-playbook ... --tags rbac
 #   ansible-playbook ... --tags post
 #
 # Prerequisites:
@@ -258,7 +260,57 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 3: POST (Ingress + Certificate + user RBAC)
+    # STEP 3: RBAC (user ServiceAccounts, ClusterRoles, ClusterRoleBindings)
+    # =========================================================================
+
+    - name: "[kargo-rbac] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "kargo-rbac"
+        dto_chart_name: "rbac"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/kargo/rbac/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/kargo/rbac"
+      tags: [rbac]
+
+    - name: "[kargo-rbac] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "kargo-rbac"
+        dto_dir: "{{ remote_charts_dir }}/kargo/rbac"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ kargo_rbac_helm_values | to_nice_yaml }}"
+      tags: [rbac]
+
+    - name: "[kargo-rbac] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "kargo-rbac"
+        dto_release_name: "kargo-rbac"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/kargo/rbac"
+        dto_values_file_path: "{{ remote_charts_dir }}/kargo/rbac/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/kargo/rbac-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/kargo/rbac-k"
+        dto_patches_list: "{{ kargo_rbac_kustomize_patches }}"
+        dto_target_namespace: "{{ kargo_namespace }}"
+      tags: [rbac]
+
+    - name: "[kargo-rbac] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "kargo-rbac"
+        dto_helm_command: >
+          helm upgrade --install kargo-rbac {{ remote_charts_dir }}/kargo/rbac-k
+          --namespace {{ kargo_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ kargo_rbac_helm_timeout }}
+      tags: [rbac]
+
+    # =========================================================================
+    # STEP 4: POST (Ingress + Certificate)
     # =========================================================================
 
     - name: "[kargo-post] Copy chart to remote"
