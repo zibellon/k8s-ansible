@@ -1,0 +1,89 @@
+# =============================================================================
+# ARGO ROLLOUTS NETWORK POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in argo-rollouts namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS for all pods in argo-rollouts namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: {{ .Values.dns.port }}
+        - protocol: TCP
+          port: {{ .Values.dns.port }}
+
+# =============================================================================
+# ARGO ROLLOUTS CONTROLLER
+# =============================================================================
+
+---
+# Argo Rollouts controller: egress к kube-apiserver (watch/create AnalysisRun и
+# прочих CR) + наружу 443/80 — провайдер `web` в AnalysisTemplate обращается по
+# HTTP к произвольным адресам (в нашем сценарии GitLab API за статусом коммита).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-argo-rollouts
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: argo-rollouts
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+    # External HTTPS/HTTP (web-провайдер AnalysisTemplate)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+
+---
+# Allow Prometheus (mon-system) to scrape argo-rollouts metrics.
+# Port-only ingress (matches stakater-reloader allow-for-monitoring convention).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-for-monitoring
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.argoRollouts.metricsPort }}
