@@ -196,6 +196,51 @@ spec:
           port: {{ .Values.apiserver.port }}
 
 # =============================================================================
+# KARGO EXTERNAL WEBHOOKS SERVER
+# =============================================================================
+
+---
+# External webhooks: ingress от Traefik (публичный приём событий от GitLab и
+# registry). Egress наружу нужен для проверки схемы OCI-реестра при обработке
+# подписок на Helm-чарты.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kargo-external-webhooks-server
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kargo
+      app.kubernetes.io/component: external-webhooks-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.kargo.externalWebhooksPort }}
+  egress:
+    # External HTTPS/HTTP (OCI registry scheme probe)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
 # KARGO GARBAGE COLLECTOR (CronJob)
 # =============================================================================
 
@@ -283,11 +328,11 @@ spec:
 {{- end }}
 
 # =============================================================================
-# TRAEFIK NAMESPACE POLICY (allow egress from Traefik to KARGO API)
+# TRAEFIK NAMESPACE POLICY (allow egress from Traefik to KARGO)
 # =============================================================================
 
 ---
-# Allow Traefik to reach KARGO API
+# Allow Traefik to reach KARGO API and external webhooks server
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -312,3 +357,15 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.kargo.apiPort }}
+    # To KARGO external webhooks server
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kargo
+              app.kubernetes.io/component: external-webhooks-server
+      ports:
+        - protocol: TCP
+          port: {{ .Values.kargo.externalWebhooksPort }}
