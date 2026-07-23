@@ -68,7 +68,7 @@ ansible-playbook ... --limit w1,w2,w3
 ### 2.5 Application stack (in dependency order)
 
 ```bash
-for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader longhorn \
+for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader argo-rollouts longhorn \
          seaweedfs \
          mon-system \
          argocd gitlab gitlab-runner zitadel teleport filestash outline kargo haproxy; do

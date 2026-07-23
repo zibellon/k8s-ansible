@@ -413,6 +413,24 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` (политика/роль `kargo.eso-main`); (2) при OIDC — создать в ZITADEL приложение типа User Agent/SPA с auth method NONE и PKCE (S256), redirect URI `https://<kargo_ui_domain>/login`, включить «User Info inside ID Token», разрешить CORS на origin Kargo, и записать `kargo_oidc_client_id` в `hosts-vars-override/`; (3) DNS **обоих** доменов (`kargo_ui_domain` и `kargo_webhooks_domain`) → ingress кластера.
 - **Ограничения.** Kargo в кластеры не ходит: `controller.argocd.integrationEnabled: false`, связь с ArgoCD только через git-ops репозиторий. Поддержка SSH-URL для git объявлена устаревшей и удаляется в v1.13 — дизайн строится на HTTPS + токен.
 
+## 17.10. `argo-rollouts`
+
+- **Chart path.** `charts/argo-rollouts/{crds,pre,install,post}/` (local). Фаза `install` — вендоренный upstream-манифест (официального helm-чарта у продукта нет), KUSTOMIZE_WRAPPER как у argocd (см. [`playbook-conventions.md`](playbook-conventions.md) §21). Фаза `crds` — сырой `crds.yaml` под `kubectl create`, без `Chart.yaml`.
+- **Install playbook.** `argo-rollouts-install.yaml`.
+- **Namespace.** `argo-rollouts` (совпадает с хардкодом в subjects ClusterRoleBinding апстрима).
+- **Releases.** `argo-rollouts-pre`, `argo-rollouts`, `argo-rollouts-post`. Фаза `crds` ставится `kubectl create`, а не helm-релизом.
+- **Version.** `argo_rollouts_version` (default `v1.9.1`). Официального helm-чарта нет; вендоренный `install.yaml` обновляется вручную (внешний runbook), CRD извлекаются в `crds/crds.yaml`.
+- **Workload.** 1 Deployment `argo-rollouts` (контроллер). Хранилища нет.
+- **CRDs (5, отдельная фаза).** `analysisruns`, `analysistemplates`, `clusteranalysistemplates` (нужны Kargo), `experiments`, `rollouts` (не используются, едут вместе с апстримом). Вынесены из `install.yaml` в `crds/crds.yaml` и ставятся `kubectl create -f` c `failed_when: false` — каждый CRD > 170 КБ, у `kubectl apply` client-side лимит аннотации 256 КБ (та же причина, что у argocd).
+- **Required vars.** `argo_rollouts_namespace`, `argo_rollouts_enabled`, `argo_rollouts_version`, `argo_rollouts_image` (пин, см. ниже), порты (`argo_rollouts_metrics_port` 8090 / `argo_rollouts_healthz_port` 8080), ServiceMonitor-тумблеры (`argo_rollouts_service_monitor_enabled`/`_interval`/`_scrape_timeout`/`_labels`), scheduling (`argo_rollouts_resources`/`_node_selector`/`_tolerations` — переменные-заглушки, автопроводки нет, применяются оператором через `argo_rollouts_install_kustomize_patches_extra`). Kustomize patches (default `[]`): `argo_rollouts_{pre,install,post}_kustomize_patches`.
+- **Image pin.** Upstream-манифест помечает образ `:latest`. Пин на `argo_rollouts_version` делает базовый kustomize-патч (`argo_rollouts_kustomize_patches_base`, strategic merge на `Deployment/argo-rollouts`) на фазе install. Namespace-рибайндинг (`subjects[].namespace` в ClusterRoleBinding) — `dto_kustomize_apply_namespace_transform: true` там же.
+- **ESO integration.** No — секретов из Vault у компонента нет.
+- **ServiceMonitor.** Yes. Селектирует Service `argo-rollouts-metrics` по его `metadata.labels` (`app.kubernetes.io/name: argo-rollouts-metrics` — не путать со `spec.selector` того же Service, который выбирает поды), порт `metrics` (:8090).
+- **NetworkPolicy.** deny-all + DNS + `allow-argo-rollouts` (egress → apiserver + **наружу 443/80** — провайдер `web` в AnalysisTemplate ходит по HTTP, в целевом сценарии к GitLab API) + `allow-for-monitoring` (ingress на :8090). Cross-ns пар с kargo нет: Kargo и Rollouts не общаются напрямую, обмен идёт через объекты в apiserver.
+- **Dependencies.** Cilium, cert-manager (не требуется), mon-system (при включённом ServiceMonitor).
+- **Enable flag.** `argo_rollouts_enabled` (opt-in, default `false`): guards install.
+- **Связь с Kargo.** Kargo делегирует Rollouts верификацию Stage (`spec.verification.analysisTemplates`): создаёт `AnalysisRun`, читает `status.phase`. Флаги `controller.rollouts.integrationEnabled` + `api.rollouts.integrationEnabled` в Kargo уже включены; без этого компонента Kargo тихо самоотключает интеграцию на старте. Проверка после установки: `kubectl -n {{ kargo_namespace }} logs deploy/kargo-controller | grep -i rollouts` → `Argo Rollouts integration is enabled`. Провайдеры метрик `job` (bash/свой образ) и `web` (HTTP + jsonPath) вкомпилированы — plugin не нужен, Deployment'ы приложений менять не требуется.
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -437,6 +455,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `filestash` | filestash | no |
 | `outline` | outline | no |
 | `kargo` | kargo | no (+ служебные `kargo-cluster-secrets` / `kargo-shared-resources` / `kargo-system-resources`, создаёт upstream-чарт) |
+| `argo-rollouts` | argo-rollouts | no |
 
 ## 19. Cross-cutting Dependency Order
 
@@ -445,7 +464,7 @@ Install in roughly this order (first → last). Parallel installation within a d
 ```
 L0  cilium
 L1  cert-manager   external-secrets
-L2  longhorn       linstor       metrics-server   stakater-reloader
+L2  longhorn       linstor       metrics-server   stakater-reloader   argo-rollouts
 L3  vault
 L4  traefik        haproxy
 L5  mon-system     seaweedfs
