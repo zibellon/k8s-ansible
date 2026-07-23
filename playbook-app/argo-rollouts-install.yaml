@@ -1,12 +1,14 @@
 # =============================================================================
 # Install Argo Rollouts (analysis engine for Kargo Stage verification)
 # Steps:
-#   1. argo-rollouts/pre:     NetworkPolicies
-#   2. argo-rollouts/install: vendored upstream manifest v1.9.1 (CRDs + controller + RBAC)
-#   3. argo-rollouts/post:    ServiceMonitor
+#   1. argo-rollouts/crds:    CustomResourceDefinitions (kubectl create)
+#   2. argo-rollouts/pre:     NetworkPolicies
+#   3. argo-rollouts/install: vendored upstream manifest v1.9.1 (controller + RBAC)
+#   4. argo-rollouts/post:    ServiceMonitor
 #
 # Usage (tags):
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-rollouts-install.yaml
+#   ansible-playbook ... --tags crds
 #   ansible-playbook ... --tags pre
 #   ansible-playbook ... --tags install
 #   ansible-playbook ... --tags post
@@ -51,7 +53,39 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: PRE (NetworkPolicies)
+    # STEP 1: CRDS (kubectl create — CRD > 256KB, apply не подходит)
+    # =========================================================================
+
+    - name: "[argo-rollouts-crds] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-rollouts-crds"
+        dto_chart_name: "crds"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-rollouts/crds/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-rollouts/crds"
+      tags: [crds]
+
+    - name: "[argo-rollouts-crds] Install CRDs via kubectl"
+      command: kubectl create -f {{ remote_charts_dir }}/argo-rollouts/crds/crds.yaml
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [crds]
+
+    - name: "[argo-rollouts-crds] Wait for CRDs"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-crds.yaml"
+      vars:
+        dto_label_name: "argo-rollouts-crds"
+        dto_crds_list:
+          - crd/analysisruns.argoproj.io
+          - crd/analysistemplates.argoproj.io
+          - crd/clusteranalysistemplates.argoproj.io
+          - crd/experiments.argoproj.io
+          - crd/rollouts.argoproj.io
+      tags: [crds]
+
+    # =========================================================================
+    # STEP 2: PRE (NetworkPolicies)
     # =========================================================================
 
     - name: "[argo-rollouts-pre] Copy chart to remote"
@@ -101,7 +135,7 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 2: INSTALL (vendored upstream manifest)
+    # STEP 3: INSTALL (vendored upstream manifest)
     # =========================================================================
 
     - name: "[argo-rollouts-install] Copy chart to remote"
@@ -154,18 +188,6 @@
           --timeout {{ argo_rollouts_install_helm_timeout }}
       tags: [install]
 
-    - name: "[argo-rollouts-install] Wait for CRDs"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-crds.yaml"
-      vars:
-        dto_label_name: "argo-rollouts-install"
-        dto_crds_list:
-          - crd/analysisruns.argoproj.io
-          - crd/analysistemplates.argoproj.io
-          - crd/clusteranalysistemplates.argoproj.io
-          - crd/experiments.argoproj.io
-          - crd/rollouts.argoproj.io
-      tags: [install]
-
     - name: "[argo-rollouts-install] Wait for rollout"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
       vars:
@@ -177,7 +199,7 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 3: POST (ServiceMonitor)
+    # STEP 4: POST (ServiceMonitor)
     # =========================================================================
 
     - name: "[argo-rollouts-post] Copy chart to remote"
