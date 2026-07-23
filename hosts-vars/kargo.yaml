@@ -57,9 +57,10 @@ all:
     kargo_oidc_global_service_account_namespaces: []
 
     # ------
-    # Пользовательские RBAC-объекты — три независимых списка. Шаблоны post-чарта
-    # разворачивают элементы как есть (raw) и НЕ связывают их между собой: можно
-    # объявить SA без биндинга, свою ClusterRole без SA, биндинг на чартовую роль.
+    # Пользовательские RBAC-объекты — три независимых списка. Шаблоны rbac-чарта
+    # (отдельная фаза установки между install и post) разворачивают элементы как
+    # есть (raw) и НЕ связывают их между собой: можно объявить SA без биндинга,
+    # свою ClusterRole без SA, биндинг на чартовую роль.
     # Kargo матчит SA по аннотации rbac.kargo.akuity.io/claims без фильтра по
     # метке или владельцу, поэтому свои SA работают наравне с чартовыми.
     # Реальные значения — в hosts-vars-override/<cluster>/kargo.yaml.
@@ -384,7 +385,23 @@ all:
         keep: true
 
     # ------
-    # PHASE: post (Ingress + Certificate + пользовательские RBAC-объекты)
+    # PHASE: rbac (пользовательские ServiceAccount, ClusterRole, ClusterRoleBinding)
+    # Отдельный релиз, чтобы выдача прав пересобиралась через --tags rbac
+    # независимо от Ingress и Certificate. Идёт ПОСЛЕ install: ClusterRole'и,
+    # на которые могут ссылаться биндинги, создаёт upstream-чарт.
+    # ------
+    kargo_rbac_helm_timeout: "5m"
+    kargo_rbac_extra_objects: []
+    kargo_rbac_kustomize_patches: []
+    kargo_rbac_helm_values:
+      namespace: "{{ kargo_namespace }}"
+      rbacServiceAccounts: "{{ kargo_rbac_service_accounts }}"
+      rbacClusterRoles: "{{ kargo_rbac_cluster_roles }}"
+      rbacClusterRoleBindings: "{{ kargo_rbac_cluster_role_bindings }}"
+      extraObjects: "{{ kargo_rbac_extra_objects }}"
+
+    # ------
+    # PHASE: post (Ingress + Certificate)
     # ------
     kargo_post_helm_timeout: "5m"
     kargo_post_extra_objects: []
@@ -406,7 +423,4 @@ all:
       externalWebhooksService:
         name: "kargo-external-webhooks-server"
         port: "{{ kargo_external_webhooks_service_port }}"
-      rbacServiceAccounts: "{{ kargo_rbac_service_accounts }}"
-      rbacClusterRoles: "{{ kargo_rbac_cluster_roles }}"
-      rbacClusterRoleBindings: "{{ kargo_rbac_cluster_role_bindings }}"
       extraObjects: "{{ kargo_post_extra_objects }}"
