@@ -1,0 +1,101 @@
+all:
+  vars:
+    # =========================================================================
+    # Argo Rollouts — движок анализа для верификации Stage в Kargo.
+    # Самостоятельный продукт семейства Argo, НЕ путать с Argo CD.
+    # Kargo сам создаёт объект AnalysisRun, а исполняет проверку контроллер
+    # Rollouts; поэтому без этого компонента Stage с spec.verification падает.
+    # Официального helm-чарта нет — ставится вендоренным install.yaml (как argocd).
+    # Приложениям НЕ требуется переходить на объекты Rollout: AnalysisRun
+    # существует самостоятельно.
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start.
+    argo_rollouts_enabled: false
+
+    # Namespace совпадает с тем, что захардкожен в upstream-манифесте
+    # (subjects[].namespace в ClusterRoleBinding) — меньше расхождений с апстримом.
+    argo_rollouts_namespace: "argo-rollouts"
+
+    # ------
+    # Порты контроллера (из upstream-манифеста, менять нельзя без смены версии).
+    # ------
+    argo_rollouts_metrics_port: 8090
+    argo_rollouts_healthz_port: 8080
+
+    # ------
+    # Версия и образ. В upstream-манифесте образ помечен :latest — плавающий тег
+    # в проде недопустим, поэтому пиним явно kustomize-патчем ниже.
+    # Вендоренный манифест лежит в charts/argo-rollouts/install/templates/install.yaml
+    # и обновляется вручную вместе с этой переменной.
+    # ------
+    argo_rollouts_version: "v1.9.1"
+    argo_rollouts_image: "quay.io/argoproj/argo-rollouts:{{ argo_rollouts_version }}"
+
+    # ------
+    # PHASE: pre (NetworkPolicies)
+    # ------
+    argo_rollouts_pre_helm_timeout: "5m"
+    argo_rollouts_pre_extra_objects: []
+    argo_rollouts_pre_kustomize_patches: []
+    argo_rollouts_pre_helm_values:
+      namespace: "{{ argo_rollouts_namespace }}"
+      argoRollouts:
+        metricsPort: "{{ argo_rollouts_metrics_port }}"
+      extraObjects: "{{ argo_rollouts_pre_extra_objects }}"
+
+    # ------
+    # PHASE: install (вендоренный upstream-манифест + kustomize)
+    # ------
+    argo_rollouts_install_helm_timeout: "5m"
+    argo_rollouts_install_rollout_timeout: "300s"
+    argo_rollouts_install_extra_objects: []
+    # Scheduling и ресурсы применяются к вендоренному манифесту патчем —
+    # своих values у него нет.
+    argo_rollouts_resources: {}
+    argo_rollouts_node_selector: {}
+    argo_rollouts_tolerations: []
+    # Базовый патч: пин образа. Strategic merge, как в argocd.
+    argo_rollouts_kustomize_patches_base:
+      - target:
+          kind: Deployment
+          name: argo-rollouts
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: argo-rollouts
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: argo-rollouts
+                    image: "{{ argo_rollouts_image }}"
+    # Операторское расширение (hosts-vars-override/): ресурсы, nodeSelector,
+    # tolerations и прочее прикладываются сюда отдельными патчами.
+    argo_rollouts_install_kustomize_patches_extra: []
+    argo_rollouts_install_kustomize_patches: >-
+      {{ argo_rollouts_kustomize_patches_base
+         + argo_rollouts_install_kustomize_patches_extra }}
+    # Helm values для KUSTOMIZE_WRAPPER install phase — только extraObjects wiring
+    argo_rollouts_install_helm_values:
+      extraObjects: "{{ argo_rollouts_install_extra_objects }}"
+
+    # ------
+    # PHASE: post (ServiceMonitor)
+    # ------
+    argo_rollouts_post_helm_timeout: "5m"
+    argo_rollouts_post_extra_objects: []
+    argo_rollouts_post_kustomize_patches: []
+    argo_rollouts_service_monitor_enabled: true
+    argo_rollouts_service_monitor_interval: "30s"
+    argo_rollouts_service_monitor_scrape_timeout: "15s"
+    argo_rollouts_service_monitor_labels: {}
+    argo_rollouts_post_helm_values:
+      namespace: "{{ argo_rollouts_namespace }}"
+      serviceMonitor:
+        enabled: "{{ argo_rollouts_service_monitor_enabled }}"
+        interval: "{{ argo_rollouts_service_monitor_interval }}"
+        scrapeTimeout: "{{ argo_rollouts_service_monitor_scrape_timeout }}"
+        labels: "{{ argo_rollouts_service_monitor_labels }}"
+      extraObjects: "{{ argo_rollouts_post_extra_objects }}"
