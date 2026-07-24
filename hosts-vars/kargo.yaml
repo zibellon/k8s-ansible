@@ -65,7 +65,7 @@ all:
     kargo_oidc_viewers_claims: {}
 
     # ------
-    # Пользовательские RBAC-объекты — три независимых списка. Шаблоны rbac-чарта
+    # Пользовательские RBAC-объекты — четыре независимых списка. Шаблоны rbac-чарта
     # (отдельная фаза установки между install и post) разворачивают элементы как
     # есть (raw) и НЕ связывают их между собой: можно объявить SA без биндинга,
     # свою ClusterRole без SA, биндинг на чартовую роль.
@@ -98,6 +98,21 @@ all:
     #         name: kargo-release-admin
     #         namespace: kargo
     kargo_rbac_cluster_role_bindings: []
+    # Формат элемента. В отличие от кластерного биндинга обязателен namespace —
+    # он и ограничивает область действия. roleRef может указывать и на Role, и на
+    # ClusterRole: связка ClusterRole + RoleBinding даёт права только внутри
+    # namespace, а не по всему кластеру.
+    #   - name: "kargo-admin-system-resources"
+    #     namespace: "kargo-system-resources"
+    #     roleRef:
+    #       apiGroup: rbac.authorization.k8s.io
+    #       kind: Role
+    #       name: kargo-system-resources-admin
+    #     subjects:
+    #       - kind: ServiceAccount
+    #         name: kargo-admin
+    #         namespace: kargo
+    kargo_rbac_role_bindings: []
 
     # ------
     # ESO integration: Vault → K8s Secrets.
@@ -428,6 +443,7 @@ all:
       rbacServiceAccounts: "{{ kargo_rbac_service_accounts }}"
       rbacClusterRoles: "{{ kargo_rbac_cluster_roles }}"
       rbacClusterRoleBindings: "{{ kargo_rbac_cluster_role_bindings }}"
+      rbacRoleBindings: "{{ kargo_rbac_role_bindings }}"
       extraObjects: "{{ kargo_rbac_extra_objects }}"
 
     # ------
