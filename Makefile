@@ -1,6 +1,5 @@
 DOCKER_IMAGE := k8s-ansible-test:local
 DOCKER_RUN  := docker run --rm \
-               -v "$(CURDIR):/repo:ro" \
                --tmpfs /tmp:rw,exec,size=100M \
                $(DOCKER_IMAGE)
 
@@ -19,8 +18,11 @@ help:
 docker-build:
 	docker build -t $(DOCKER_IMAGE) -f tests/Dockerfile .
 
+# The image carries a snapshot of the repo (COPY . /repo in tests/Dockerfile),
+# so every test target rebuilds it first — otherwise the suite would validate
+# stale code. Warm rebuilds are ~0.8 s: tool layers stay cached, only COPY runs.
 ensure-image:
-	@docker image inspect $(DOCKER_IMAGE) >/dev/null 2>&1 || $(MAKE) docker-build
+	@docker build -q -t $(DOCKER_IMAGE) -f tests/Dockerfile . > /dev/null
 
 test-yamllint: ensure-image
 	$(DOCKER_RUN) yamllint -c .yamllint.yaml .
