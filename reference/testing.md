@@ -42,15 +42,15 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 
 `make test` is fail-fast: if `test-yamllint` fails, the next three are not run. To see all failures at once, run each target separately.
 
-`ensure-image` is an internal target every `test-*` depends on — it builds the image automatically if it is missing, otherwise it is a no-op.
+`ensure-image` is an internal target every `test-*` depends on — it rebuilds the image on every invocation. That is deliberate: the repo is baked into the image (`COPY . /repo`), so a conditional "build only if missing" would run the suite against stale code and report a false green. Warm rebuilds cost ~0.8 s — only the `COPY` layer re-runs.
 
 ## 4. Repo layout
 
 | Path | Purpose |
 |---|---|
-| `Makefile` | Test entry point. Wraps every test as `docker run` with read-only volume mount + tmpfs `/tmp`. |
-| `tests/Dockerfile` | Test image definition. Pinned `ansible-core`, `ansible-lint`, `yamllint`, plus `ansible.posix` and `community.general` collections. |
-| `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list — keeps build context small. |
+| `Makefile` | Test entry point. Wraps every test as `docker run` with tmpfs `/tmp` and no bind mount — the repo comes from the image. Mounting it instead cost ~13 s per run walking `sources/`, which is why code delivery moved to build time. |
+| `tests/Dockerfile` | Test image definition. Pinned `ansible-core`, `ansible-lint`, `yamllint`, plus `ansible.posix` and `community.general` collections. `COPY . /repo` is the last layer, so a code edit invalidates only it and the tool layers stay cached. |
+| `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list. Since the repo is baked in, this is the single source of truth for what the suite can see: `sources/` (229k vendored files), `pkgs-sources/` (174 MB of offline tarballs) and `hosts-vars-override/` (real secrets) never enter the container. |
 | `tests/run-syntax-check.sh` | Two batched `ansible-playbook --syntax-check` runs: one over every playbook, one over a generated wrapper that imports every task-file (bare task-files are not valid Plays). Batching pays the ~1.4 s interpreter + inventory startup once per cycle instead of once per file — 122 files in ~5 s. |
 | `tests/helm-validate.yaml` | Ansible-playbook driver for Layer 2. PRE phase: mock `master_manager_fact` + ESO secret lookups for chart values. STEP 1–7: per-chart Helm repo add (через `tasks-add-helm-repo.yaml`) → render values → `helm template` → `kubeconform` → aggregate. Reports per-chart OK/FAIL. |
 | `tests/python/test_seaweedfs_{policy,user,bucket,distribute}.py` | Pytest unit tests for the 4 SeaweedFS filter plugins `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py` (21 public filters). 125 cases (policy 11 / user 30 / bucket 48 / distribute 36). Shared fixtures + `sys.path.insert` to repo-root `filter_plugins/` в `tests/python/conftest.py`. |
@@ -128,7 +128,7 @@ Wall-clock: Xm YYs
 
 **На fail** success-блок отсутствует; `tail -5` показывает последние 5 строк output'а упавшей стадии. Make's fail-fast прерывает на первой упавшей — отображается ошибка **первой** не прошедшей стадии.
 
-**Expected runtime** — full run ~3.5 минуты wall-clock (измерено 3m 31s). По стадиям: yamllint ~18 с, ansible-lint ~53 с, syntax-check ~5 с, helm-validate ~123 с, pytest ~2 с. Основная latency — helm-validate: 16 upstream charts (12 HTTP + 4 OCI); `helm repo add --force-update` перекачивает index на каждом прогоне, поэтому тёплый helm-кеш ничего не даёт. Если прогон превышает ~10 минут без появления success-маркера — подозревай зависание; abort, investigate.
+**Expected runtime** — full run ~3 минуты wall-clock (измерено 3m 03s). По стадиям: yamllint ~5 с, ansible-lint ~52 с, syntax-check ~7 с, helm-validate ~117 с, pytest ~3 с. Основная latency — helm-validate: 16 upstream charts (12 HTTP + 4 OCI); `helm repo add --force-update` перекачивает index на каждом прогоне, поэтому тёплый helm-кеш ничего не даёт. Если прогон превышает ~10 минут без появления success-маркера — подозревай зависание; abort, investigate.
 
 **Anti-pattern (не делать):** повторный запуск `make test` с разными shell-pipe парсингами. Если первый прогон завершился (exit 0 или non-zero) — используй его результат. SUB-4 history: 40 минут wall-clock на 7 retry потому что маркер ещё не существовал; commit `22b7afe` его добавил.
 
