@@ -276,6 +276,12 @@ all:
     # Тег образа пиним явно, не полагаясь на Chart.AppVersion.
     kargo_image_tag: "v1.10.9"
     kargo_api_replica_count: 1
+    # Реплики только у stateless-workload'ов. У controller и
+    # management-controller в чарте 1.10.9 replicas: 1 захардкожен, leader
+    # election в Kargo нет вообще — вторая реплика дала бы дублирующиеся
+    # промоушены. Масштабирование controller'а — только шардированием.
+    kargo_webhooks_server_replica_count: 1
+    kargo_external_webhooks_server_replica_count: 1
     # Scheduling задаём ТОЛЬКО в global.*: per-component ключи чарта не
     # мержатся с global, а ЗАМЕЩАЮТ его.
     kargo_node_selector: {}
@@ -361,6 +367,7 @@ all:
       managementController:
         resources: "{{ kargo_management_controller_resources }}"
       webhooksServer:
+        replicas: "{{ kargo_webhooks_server_replica_count }}"
         resources: "{{ kargo_webhooks_server_resources }}"
       # Входящие webhook'и от GitLab/registry. Сервер публикуется на отдельном
       # домене нашим post-чартом, поэтому чартовый ingress выключен. TLS, как и
@@ -368,6 +375,7 @@ all:
       externalWebhooksServer:
         enabled: "{{ kargo_external_webhooks_enabled }}"
         host: "{{ kargo_webhooks_domain }}"
+        replicas: "{{ kargo_external_webhooks_server_replica_count }}"
         resources: "{{ kargo_external_webhooks_server_resources }}"
         tls:
           enabled: false
