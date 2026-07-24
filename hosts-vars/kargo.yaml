@@ -41,10 +41,14 @@ all:
     # используется нигде, поэтому Vault-секрета для OIDC НЕТ; в inventory только
     # clientId (не секрет), реальное значение — в hosts-vars-override/<cluster>/.
     # У ZITADEL нет scope `groups` — дефолт чарта переопределяем пустым списком.
-    # api.oidc.<role>.claims чарту НЕ передаём вообще: на дефолте {} аннотация не
-    # рендерится, и четыре чартовых ServiceAccount'а (kargo-admin,
-    # kargo-project-creator, kargo-user, kargo-viewer) остаются инертными.
-    # Права выдаются своими объектами из kargo_rbac_* (см. ниже).
+    # api.oidc.<role>.claims мапят клеймы на четыре чартовых ServiceAccount'а
+    # (kargo-admin, kargo-project-creator, kargo-user, kargo-viewer). Мапить надо
+    # именно на них: чарт вешает на эти имена пять отдельных грантов, включая
+    # namespaced RoleBinding'и в kargo / kargo-system-resources /
+    # kargo-shared-resources и per-Project RoleBinding, который создаёт
+    # management-controller. Субъект в них — литеральное имя, поэтому свой SA из
+    # kargo_rbac_service_accounts матчится по клеймам, но этих грантов НЕ
+    # наследует. На дефолте {} аннотация не рендерится — дельта нулевая.
     # global_service_account_namespaces — дополнительные namespace, где Kargo ищет
     # SA с аннотацией claims; релизный namespace чарт подставляет туда сам.
     # ------
@@ -55,6 +59,10 @@ all:
     kargo_oidc_username_claim: "preferred_username"
     kargo_oidc_additional_scopes: []
     kargo_oidc_global_service_account_namespaces: []
+    kargo_oidc_admins_claims: {}
+    kargo_oidc_project_creators_claims: {}
+    kargo_oidc_users_claims: {}
+    kargo_oidc_viewers_claims: {}
 
     # ------
     # Пользовательские RBAC-объекты — три независимых списка. Шаблоны rbac-чарта
@@ -312,6 +320,14 @@ all:
       cliClientID: "{{ kargo_oidc_cli_client_id }}"
       additionalScopes: "{{ kargo_oidc_additional_scopes }}"
       usernameClaim: "{{ kargo_oidc_username_claim }}"
+      admins:
+        claims: "{{ kargo_oidc_admins_claims }}"
+      projectCreators:
+        claims: "{{ kargo_oidc_project_creators_claims }}"
+      users:
+        claims: "{{ kargo_oidc_users_claims }}"
+      viewers:
+        claims: "{{ kargo_oidc_viewers_claims }}"
       globalServiceAccounts:
         namespaces: "{{ kargo_oidc_global_service_account_namespaces }}"
       dex:
