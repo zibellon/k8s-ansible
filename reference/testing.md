@@ -51,7 +51,7 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 | `Makefile` | Test entry point. Wraps every test as `docker run` with read-only volume mount + tmpfs `/tmp`. |
 | `tests/Dockerfile` | Test image definition. Pinned `ansible-core`, `ansible-lint`, `yamllint`, plus `ansible.posix` and `community.general` collections. |
 | `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list — keeps build context small. |
-| `tests/run-syntax-check.sh` | Bash iterator running `ansible-playbook --syntax-check` over every playbook, then over every task-file (each wrapped in a temporary `import_tasks` playbook). |
+| `tests/run-syntax-check.sh` | Two batched `ansible-playbook --syntax-check` runs: one over every playbook, one over a generated wrapper that imports every task-file (bare task-files are not valid Plays). Batching pays the ~1.4 s interpreter + inventory startup once per cycle instead of once per file — 122 files in ~5 s. |
 | `tests/helm-validate.yaml` | Ansible-playbook driver for Layer 2. PRE phase: mock `master_manager_fact` + ESO secret lookups for chart values. STEP 1–7: per-chart Helm repo add (через `tasks-add-helm-repo.yaml`) → render values → `helm template` → `kubeconform` → aggregate. Reports per-chart OK/FAIL. |
 | `tests/python/test_seaweedfs_{policy,user,bucket,distribute}.py` | Pytest unit tests for the 4 SeaweedFS filter plugins `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py` (18 public filters). 91 cases (policy 11 / user 24 / bucket 32 / distribute 24). Shared fixtures + `sys.path.insert` to repo-root `filter_plugins/` в `tests/python/conftest.py`. |
 | `tests/python/test_vault_config_verify.py` | Pytest unit tests for `filter_plugins/vault_config_verify.py` (Layer 3). 13 cases — happy + G1/G2/G3 violations + multi + `_find_duplicates`. |
@@ -96,7 +96,7 @@ These layers are tracked separately. Adding them must not loosen Layer 1, Layer 
 | `yamllint` complains about a file you did not change | Recent edit broke trailing-whitespace or EOF newline | `make test-yamllint` and read the path:line — fix in place |
 | `ansible-lint` flags a new playbook with `name[missing]` | Task or play has no `name:` | Add `name:` — do not add to `skip_list` |
 | `make test-syntax` says `couldn't resolve module/action 'X'` for a new module | `X` lives in a collection not installed in the image | Add a `RUN ansible-galaxy collection install <ns>.<col>:<ver>` to `tests/Dockerfile`, rebuild image |
-| `make test-syntax` reports two `FAIL:` for one broken playbook | Broken file is included by another playbook | Fix the source file; both will go green |
+| `make test-syntax` fails but names only one broken file | Each cycle is a single batched run and aborts at the first error | Read `Origin: <path>:<line>:<col>` from the log, fix that file, re-run (~5 s per iteration) |
 | `make test-helm` falls render task with `'<var>' is undefined` | Production playbook sets this fact via `tasks-pre-check.yaml` / `set_fact` / direct inventory variable reference; test playbook hasn't been wired to do the same | Either (a) update `tests/helm-validate.yaml` to call the appropriate production task via `include_tasks: "{{ playbook_dir }}/../playbook-app/tasks/<task>.yaml"`, or (b) hardcode a mock in `hosts-vars-test/` |
 | `make test-helm` falls helm template with `Error: chart pull failed` | `<c>_chart_version` in inventory does not exist in upstream repo (yanked or typo'd) | Verify version exists at the published repo (e.g. `helm search repo <repo>/<chart> --versions`); update inventory if intentional |
 | `make test-helm` falls kubeconform with `key "<X>" already set in map` | Upstream chart bug — duplicate key produced by `toYaml` of merged values dict; K8s API server last-wins masks it in production | See §9 Known upstream issues; if new chart hits this, comment out the entry in `hosts-vars-test/upstream-charts.yaml` with explanation (как сделано для traefik) |
@@ -124,9 +124,20 @@ Wall-clock: Xm YYs
 
 **На fail** success-блок отсутствует; `tail -5` показывает последние 5 строк output'а упавшей стадии. Make's fail-fast прерывает на первой упавшей — отображается ошибка **первой** не прошедшей стадии.
 
-**Expected runtime** — cold full run ~4-5 минут wall-clock. Основная latency в `helm repo add` для 13 charts (без кеширования между прогонами). Если прогон превышает ~10 минут без появления success-маркера — подозревай зависание; abort, investigate.
+**Expected runtime** — full run ~3.5 минуты wall-clock (измерено 3m 31s). По стадиям: yamllint ~18 с, ansible-lint ~53 с, syntax-check ~5 с, helm-validate ~123 с, pytest ~2 с. Основная latency — helm-validate: 16 upstream charts (12 HTTP + 4 OCI); `helm repo add --force-update` перекачивает index на каждом прогоне, поэтому тёплый helm-кеш ничего не даёт. Если прогон превышает ~10 минут без появления success-маркера — подозревай зависание; abort, investigate.
 
 **Anti-pattern (не делать):** повторный запуск `make test` с разными shell-pipe парсингами. Если первый прогон завершился (exit 0 или non-zero) — используй его результат. SUB-4 history: 40 минут wall-clock на 7 retry потому что маркер ещё не существовал; commit `22b7afe` его добавил.
+
+**Проверка красного пути (syntax-check).** Батч-стратегия проверена намеренной поломкой реальных файлов репозитория — каждый сценарий даёт `rc≠0` и называет файл:
+
+| Что сломано | Что в логе |
+|---|---|
+| несуществующий модуль в playbook | `FAIL: playbook cycle` + `Origin: /repo/playbook-app/cilium-install.yaml:280:7` |
+| несуществующий модуль в task-файле | `FAIL: task-file cycle` + `Origin: /repo/playbook-app/tasks/tasks-copy-chart.yaml:98:3` |
+| невалидный YAML в playbook | `FAIL: playbook cycle` + `YAML parsing failed` + `Origin: /repo/playbook-app/cilium-install.yaml:278:1` |
+| поломки в обоих циклах сразу | оба `FAIL:` и оба `Origin:` в одном прогоне |
+
+Во втором цикле `Origin:` указывает на реальный task-файл, а не на сгенерированный wrapper. После восстановления файлов — `rc=0` и 122 строки `OK:`.
 
 ## 9. Known upstream issues
 
