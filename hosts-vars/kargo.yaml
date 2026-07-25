@@ -323,6 +323,12 @@ all:
     kargo_git_client_name: "kargo"
     kargo_git_client_email: "kargo@example.com"
     kargo_git_push_integration_policy: "RebaseOrMerge"
+    # ПОЛ интервала опроса Warehouse. Контроллер поднимает до этого значения
+    # любой spec.interval, который меньше (GetInterval в warehouse_types.go), и
+    # именно это значение уходит в RequeueAfter — то есть контроллер физически
+    # не просыпается чаще. Дефолт чарта 1.10.9 — 5m0s, и он молча обесценивал
+    # spec.interval: 1m0s у Warehouse'ов.
+    kargo_controller_warehouse_min_reconciliation_interval: "1m0s"
     # Garbage collector: глубина отката ограничена этими значениями.
     kargo_gc_schedule: "0 * * * *"
     kargo_gc_max_retained_promotions: 20
@@ -387,6 +393,9 @@ all:
       controller:
         resources: "{{ kargo_controller_resources }}"
         logFormat: JSON
+        reconcilers:
+          warehouses:
+            minReconciliationInterval: "{{ kargo_controller_warehouse_min_reconciliation_interval }}"
         # Kargo в кластеры не ходит: связь с ArgoCD только через git-ops
         # репозиторий, поэтому argocd-интеграция выключена (меньше RBAC).
         argocd:
