@@ -46,7 +46,8 @@
     # -------------------------------------------------------------------------
 
     - name: "[haproxy-restart] Restart HAProxy DaemonSet"
-      command: kubectl rollout restart daemonset/{{ haproxy_daemonset_name }} -n {{ haproxy_namespace }}
+      command: kubectl rollout restart {{ item }} -n {{ haproxy_namespace }}
+      loop: "{{ haproxy_rollout_resources }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -59,9 +60,8 @@
       vars:
         dto_label_name: "haproxy-restart"
         dto_rollout_namespace: "{{ haproxy_namespace }}"
-        dto_rollout_timeout: "{{ haproxy_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - daemonset/{{ haproxy_daemonset_name }}
+        dto_rollout_timeout: "{{ haproxy_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ haproxy_rollout_resources }}"
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART
