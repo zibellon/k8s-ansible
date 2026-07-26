@@ -47,27 +47,12 @@
         dto_pods_namespace: "{{ cilium_namespace }}"
 
     # -------------------------------------------------------------------------
-    # RESTART DAEMONSETS
+    # RESTART WORKLOADS
     # -------------------------------------------------------------------------
 
-    - name: "[cilium-restart] Restart Cilium DaemonSets"
-      command: kubectl rollout restart daemonset/{{ item }} -n {{ cilium_namespace }}
-      loop:
-        - cilium
-        - cilium-envoy
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    # -------------------------------------------------------------------------
-    # RESTART DEPLOYMENTS
-    # -------------------------------------------------------------------------
-
-    - name: "[cilium-restart] Restart Cilium Deployments"
-      command: kubectl rollout restart deployment/{{ item }} -n {{ cilium_namespace }}
-      loop:
-        - cilium-operator
-        - hubble-relay
-        - hubble-ui
+    - name: "[cilium-restart] Restart Cilium workloads"
+      command: kubectl rollout restart {{ item }} -n {{ cilium_namespace }}
+      loop: "{{ cilium_rollout_resources }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -80,13 +65,8 @@
       vars:
         dto_label_name: "cilium-restart"
         dto_rollout_namespace: "{{ cilium_namespace }}"
-        dto_rollout_timeout: "{{ cilium_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - daemonset.apps/cilium
-          - daemonset.apps/cilium-envoy
-          - deployment.apps/cilium-operator
-          - deployment.apps/hubble-ui
-          - deployment.apps/hubble-relay
+        dto_rollout_timeout: "{{ cilium_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ cilium_rollout_resources }}"
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART
