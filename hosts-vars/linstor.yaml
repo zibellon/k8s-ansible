@@ -7,7 +7,6 @@ all:
     # =============================================================================
 
     linstor_namespace: "linstor"
-    linstor_rollout_timeout: "300s"
 
     # =============================================================================
     # LINSTOR Controller GUI — Ingress (Traefik) + cert-manager TLS
@@ -113,6 +112,17 @@ all:
     # ---
     piraeus_operator_helm_timeout: "15m"
     piraeus_operator_rollout_timeout: "900s"
+    # Restart-phase rollout wait timeout (operator stage of linstor-restart.yaml)
+    piraeus_operator_restart_rollout_timeout: "300s"
+    # Deployment waited on after install and restarted in the operator stage
+    piraeus_operator_rollout_resources:
+      - deployment.apps/piraeus-operator-controller-manager
+    # CRDs waited on after the operator install (chart-version-coupled)
+    piraeus_operator_crds_list:
+      - crd/linstorclusters.piraeus.io
+      - crd/linstorsatelliteconfigurations.piraeus.io
+      - crd/linstornodeconnections.piraeus.io
+      - crd/linstorsatellites.piraeus.io
     piraeus_operator_helm_is_oci: true
     piraeus_operator_helm_url: "oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus"
     piraeus_operator_helm_chart_version: "2.10.7"
@@ -140,6 +150,18 @@ all:
     # ---
     linstor_cluster_helm_timeout: "15m"
     linstor_cluster_rollout_timeout: "900s"
+    # Restart-phase rollout wait timeout (cluster stage of linstor-restart.yaml)
+    linstor_cluster_restart_rollout_timeout: "300s"
+    # Cluster workloads waited on after install and restarted by linstor-restart.yaml.
+    # Satellite DaemonSets (linstor-satellite.<node>) are per-node/per-cluster —
+    # add them in hosts-vars-override/ if they should be waited on / restarted.
+    linstor_cluster_rollout_resources:
+      - deployment.apps/linstor-controller
+      - deployment.apps/linstor-csi-controller
+      - daemonset.apps/ha-controller
+      - deployment.apps/linstor-affinity-controller
+      - daemonset.apps/linstor-csi-nfs-server
+      - daemonset.apps/linstor-csi-node
     linstor_cluster_helm_is_oci: true
     linstor_cluster_helm_url: "oci://ghcr.io/piraeusdatastore/helm-charts/linstor-cluster"
     linstor_cluster_helm_chart_version: "1.1.1"

@@ -17,6 +17,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
       vars:
         dto_label_name: "linstor-restart-pre-check"
+      tags: [always]
 
     # -------------------------------------------------------------------------
     # PRE-CHECK: Verify LINSTOR namespace is installed
@@ -29,56 +30,61 @@
       failed_when: false
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
 
     - name: "[linstor-restart] Fail if LINSTOR namespace not found"
       fail:
         msg: "LINSTOR namespace '{{ linstor_namespace }}' not found. Install LINSTOR first via linstor-install.yaml."
       when: _local_namespace_check.rc != 0
       run_once: true
+      tags: [always]
 
     - name: "[linstor-restart] Show pods in {{ linstor_namespace }} (before restart)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
       vars:
         dto_label_name: "linstor-restart"
         dto_pods_namespace: "{{ linstor_namespace }}"
+      tags: [always]
 
     # -------------------------------------------------------------------------
-    # RESTART WORKLOADS
+    # RESTART OPERATOR (mirrors install-operator stage)
     # -------------------------------------------------------------------------
 
-    - name: "[linstor-restart] Rollout-restart workloads from linstor_restart_resources"
+    - name: "[linstor-restart-operator] Rollout-restart Piraeus operator"
       command: kubectl rollout restart {{ item }} -n {{ linstor_namespace }}
-      loop:
-        - deployment.apps/piraeus-operator-controller-manager
-        - deployment.apps/linstor-controller
-        - deployment.apps/linstor-csi-controller
-        - daemonset.apps/linstor-csi-node
-        - deployment.apps/ha-controller
-        - deployment.apps/affinity-controller
-        - daemonset.apps/linstor-satellite.managers-config
-        - daemonset.apps/linstor-satellite.workers-config
+      loop: "{{ piraeus_operator_rollout_resources }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [install-operator]
 
-    # -------------------------------------------------------------------------
-    # WAIT FOR ROLLOUTS TO COMPLETE
-    # -------------------------------------------------------------------------
-
-    - name: "[linstor-restart] Wait for rollouts"
+    - name: "[linstor-restart-operator] Wait for operator rollout"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
       vars:
-        dto_label_name: "linstor-restart"
+        dto_label_name: "linstor-restart-operator"
         dto_rollout_namespace: "{{ linstor_namespace }}"
-        dto_rollout_timeout: "{{ linstor_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - deployment.apps/piraeus-operator-controller-manager
-          - deployment.apps/linstor-controller
-          - deployment.apps/linstor-csi-controller
-          - daemonset.apps/linstor-csi-node
-          - deployment.apps/ha-controller
-          - deployment.apps/affinity-controller
-          - daemonset.apps/linstor-satellite.managers-config
-          - daemonset.apps/linstor-satellite.workers-config
+        dto_rollout_timeout: "{{ piraeus_operator_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ piraeus_operator_rollout_resources }}"
+      tags: [install-operator]
+
+    # -------------------------------------------------------------------------
+    # RESTART CLUSTER (mirrors install-cluster stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[linstor-restart-cluster] Rollout-restart LINSTOR cluster workloads"
+      command: kubectl rollout restart {{ item }} -n {{ linstor_namespace }}
+      loop: "{{ linstor_cluster_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install-cluster]
+
+    - name: "[linstor-restart-cluster] Wait for cluster rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "linstor-restart-cluster"
+        dto_rollout_namespace: "{{ linstor_namespace }}"
+        dto_rollout_timeout: "{{ linstor_cluster_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ linstor_cluster_rollout_resources }}"
+      tags: [install-cluster]
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART
@@ -89,9 +95,11 @@
       vars:
         dto_label_name: "linstor-verify"
         dto_pods_namespace: "{{ linstor_namespace }}"
+      tags: [always]
 
     - name: "[linstor-verify] Restart completed"
       debug:
         msg: "LINSTOR / Piraeus stack restart complete (workloads)"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
+      tags: [always]
