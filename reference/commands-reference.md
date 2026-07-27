@@ -179,6 +179,8 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/t
 
 Each uses `kubectl rollout restart` on the target resources and waits for rollout to complete.
 
+`linstor-restart.yaml` and `mon-system-restart.yaml` are split into per-stage tasks mirroring their install stages, so `--tags <stage>` restarts only that stage (e.g. `mon-system-restart.yaml --tags loki`, `linstor-restart.yaml --tags install-cluster`). mon-system stages are additionally gated by the `mon_system_*_enabled` flags, so a disabled sub-component's restart is skipped instead of failing on a non-existent workload.
+
 ### 4.5 DR / sync helpers
 
 | Task | Command |
