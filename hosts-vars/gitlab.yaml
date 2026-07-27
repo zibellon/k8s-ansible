@@ -410,6 +410,9 @@ all:
     # --- PHASE: postgresql ---
     gitlab_postgresql_helm_timeout: "5m"
     gitlab_postgresql_rollout_timeout: "300s"
+    # StatefulSet waited on after the postgresql install stage
+    gitlab_postgresql_rollout_resources:
+      - statefulset.apps/gitlab-postgresql
     gitlab_postgresql_image: "docker.io/postgres:17.9-alpine3.23"
     gitlab_postgresql_storage_class: "lnstr-major-multi-sync"
     gitlab_postgresql_storage_size: "4Gi"
@@ -447,6 +450,9 @@ all:
     # --- PHASE: redis ---
     gitlab_redis_helm_timeout: "5m"
     gitlab_redis_rollout_timeout: "300s"
+    # StatefulSet waited on after the redis install stage
+    gitlab_redis_rollout_resources:
+      - statefulset.apps/gitlab-redis
     gitlab_redis_image: "docker.io/redis/redis-stack-server:latest"
     gitlab_redis_storage_class: "lnstr-major-local"
     gitlab_redis_storage_size: "1Gi"
@@ -482,6 +488,16 @@ all:
     # --- PHASE: install ---
     gitlab_install_helm_timeout: "30m"
     gitlab_rollout_timeout: "900s"
+    # Workload label-selectors waited on after install (labels are stable across chart versions)
+    gitlab_rollout_selectors:
+      - {kind: deployment, selector: "app=webservice"}
+      - {kind: deployment, selector: "app=sidekiq"}
+      - {kind: deployment, selector: "app=gitlab-shell"}
+      - {kind: deployment, selector: "app=gitlab-exporter"}
+      - {kind: deployment, selector: "app=gitlab-pages"}
+      - {kind: deployment, selector: "app=registry"}
+      - {kind: deployment, selector: "app=toolbox"}
+      - {kind: statefulset, selector: "app=gitaly"}
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     gitlab_helm_is_oci: false
     gitlab_helm_url: "https://charts.gitlab.io"
