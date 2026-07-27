@@ -2,8 +2,49 @@ all:
   vars:
     mon_system_namespace: "mon-system"
 
-    # Rollout timeout for mon-system-restart.yaml (namespace-wide restart); = slowest component.
-    mon_system_restart_rollout_timeout: "300s"
+    # Per-component restart-phase rollout wait timeouts (mon-system-restart.yaml).
+    mon_system_prometheus_operator_restart_rollout_timeout: "300s"
+    mon_system_prometheus_restart_rollout_timeout: "300s"
+    mon_system_alertmanager_restart_rollout_timeout: "300s"
+    mon_system_node_exporter_restart_rollout_timeout: "300s"
+    mon_system_ksm_restart_rollout_timeout: "300s"
+    mon_system_loki_restart_rollout_timeout: "300s"
+    mon_system_vector_restart_rollout_timeout: "300s"
+    mon_system_grafana_postgresql_restart_rollout_timeout: "300s"
+    mon_system_grafana_restart_rollout_timeout: "300s"
+
+    # Workloads waited on after install and restarted by mon-system-restart.yaml (per sub-component).
+    mon_system_prometheus_operator_rollout_resources:
+      - deployment.apps/prometheus-operator
+    mon_system_prometheus_rollout_resources:
+      - statefulset.apps/prometheus-prometheus-instance
+    mon_system_alertmanager_rollout_resources:
+      - statefulset.apps/alertmanager-alertmanager-instance
+    mon_system_node_exporter_rollout_resources:
+      - daemonset.apps/node-exporter
+    mon_system_ksm_rollout_resources:
+      - deployment.apps/kube-state-metrics
+    mon_system_loki_rollout_resources:
+      - deployment.apps/loki
+    mon_system_vector_rollout_resources:
+      - daemonset.apps/vector
+    mon_system_grafana_postgresql_rollout_resources:
+      - statefulset.apps/mon-system-grafana-postgresql
+    mon_system_grafana_rollout_resources:
+      - deployment.apps/grafana
+
+    # CRDs waited on after the prometheus-operator install (chart-version-coupled).
+    mon_system_crds_list:
+      - crd/alertmanagerconfigs.monitoring.coreos.com
+      - crd/alertmanagers.monitoring.coreos.com
+      - crd/podmonitors.monitoring.coreos.com
+      - crd/probes.monitoring.coreos.com
+      - crd/prometheusagents.monitoring.coreos.com
+      - crd/prometheuses.monitoring.coreos.com
+      - crd/prometheusrules.monitoring.coreos.com
+      - crd/scrapeconfigs.monitoring.coreos.com
+      - crd/servicemonitors.monitoring.coreos.com
+      - crd/thanosrulers.monitoring.coreos.com
 
     # Per-component enable flags. Composite gate: prometheus/alertmanager skipped if
     # mon_system_prometheus_operator_enabled: false (regardless of own flag).
