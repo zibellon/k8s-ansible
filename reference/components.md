@@ -171,6 +171,7 @@ Template fields:
 - **Dependencies.** `gitlab` (for runner registration token).
 - **Enable flag.** `gitlab_runner_enabled` (opt-in, default `false`): guards install; gitlab-runner's cross-ns NPs to gitlab gated by `gitlab_enabled`. See [`networking.md`](networking.md) §8.5.
 - **Notes.** Cross-ns NP к SeaweedFS S3 backend (`To SeaweedFS S3` egress entries в `allow-gitlab-runner` + `allow-job-pod` NPs + `gitlab-runner-allow-seaweedfs-s3` ingress в seaweedfs ns с двумя `from` entries — runner pods + job pods) — в `gitlab-runner/pre/templates/network-policy.yaml`, gated by `seaweedfs_enabled` (skipped when SeaweedFS disabled, e.g. cloud-S3); см. [`networking.md`](networking.md) §8.5.
+- **Non-install playbooks.** `gitlab-runner-restart.yaml` (single-stage rollout-restart of the gitlab-runner Deployment).
 
 ## 13. `zitadel`
 
@@ -185,6 +186,7 @@ Template fields:
 - **ServiceMonitor.** Yes.
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn.
 - **Enable flag.** `zitadel_enabled` (opt-in, default `false`): guards install.
+- **Non-install playbooks.** `zitadel-restart.yaml` — two stages mirroring install (`[postgresql]`, `[install]`).
 
 ## 14. `teleport`
 
@@ -213,6 +215,7 @@ Template fields:
 - **ServiceMonitor.** PodMonitor (chart built-in, scrapes pod `:9090/metrics`); no ServiceMonitor.
 - **Dependencies.** Cilium.
 - **Notes.** Off-by-default — reloads nothing unless a workload opts in via annotation: broad `reloader.stakater.com/auto: "true"` (all referenced CM/Secrets) or narrow `configmap.reloader.stakater.com/reload: "<name>"` / `secret.reloader.stakater.com/reload: "<name>"` (only the named resources — the standard for explicit control). `reloadStrategy: annotations` patches the fixed pod-template annotation `reloader.stakater.com/last-reloaded-from` (key hardcoded, not configurable). Under ArgoCD, exclude it via `ignoreDifferences` jqPathExpression `.spec.template.metadata.annotations."reloader.stakater.com/last-reloaded-from"` (group `apps`) together with `RespectIgnoreDifferences=true` in `syncPolicy.syncOptions` so `selfHeal` does not revert it.
+- **Non-install playbooks.** `stakater-reloader-restart.yaml` (single-stage rollout-restart of the reloader Deployment).
 
 ## 16. `metrics-server`
 
@@ -225,6 +228,7 @@ Template fields:
 - **ESO integration.** No.
 - **ServiceMonitor.** No.
 - **Dependencies.** Cilium.
+- **Non-install playbooks.** `metrics-server-restart.yaml` (single-stage rollout-restart of the metrics-server Deployment).
 
 ## 16.5 `linstor`
 
@@ -367,6 +371,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **ServiceMonitor.** No (no metrics).
 - **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn/linstor (storage), seaweedfs (S3 backend, functional).
 - **Enable flag.** `filestash_enabled` (opt-in, default `false`): guards install + gates cross-ns NetworkPolicies.
+- **Non-install playbooks.** `filestash-restart.yaml` (single-stage rollout-restart of the filestash StatefulSet).
 
 ## 17.8. `outline`
 
@@ -390,6 +395,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Enable flag.** `outline_enabled` (opt-in, default `false`): guards install.
 - **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` (политика/роль `outline.eso-main`); (2) `seaweedfs-install.yaml --tags policy-sync,user-sync,identity-distribute,bucket-sync` (бакет `outline` + identity + креды → `eso-secret/outline/s3-storage`); (3) при OIDC: создать ZITADEL Web-app + `vault kv put eso-secret/outline/oidc clientId=… clientSecret=…`; (4) DNS для домена wiki + публичного S3-хоста → ingress кластера. Install fail-fast если S3 (или OIDC-при-включении) кредов нет в Vault.
 - **Limitations (upstream Outline).** Русский FTS деградирован (захардкожен `english` regconfig — однословный префикс работает, многословный/словоформы нет; фикс — форк образа). Workspace-админ читает/экспортирует любую приватную коллекцию, на self-hosted это НЕ видно в UI audit-log (компенсация: webhook `fileOperations.create` → Loki). Группы из OIDC не синкаются (руками, либо будущий Ansible-реконсайлер).
+- **Non-install playbooks.** `outline-restart.yaml` — three stages mirroring install (`[postgresql]`, `[redis]`, `[install]`).
 
 ## 17.9. `kargo`
 
@@ -413,6 +419,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Enable flag.** `kargo_enabled` (opt-in, default `false`): guards install.
 - **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` (политика/роль `kargo.eso-main`); (2) при OIDC — создать в ZITADEL приложение типа User Agent/SPA с auth method NONE и PKCE (S256), redirect URI `https://<kargo_ui_domain>/login`, включить «User Info inside ID Token», разрешить CORS на origin Kargo, и записать `kargo_oidc_client_id` в `hosts-vars-override/`; (3) DNS **обоих** доменов (`kargo_ui_domain` и `kargo_webhooks_domain`) → ingress кластера.
 - **Ограничения.** Kargo в кластеры не ходит: `controller.argocd.integrationEnabled: false`, связь с ArgoCD только через git-ops репозиторий. Поддержка SSH-URL для git объявлена устаревшей и удаляется в v1.13 — дизайн строится на HTTPS + токен.
+- **Non-install playbooks.** `kargo-restart.yaml` (single-stage rollout-restart of the five kargo Deployments).
 
 ## 17.10. `argo-rollouts`
 
@@ -432,6 +439,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Dependencies.** Cilium, cert-manager (не требуется), mon-system (при включённом ServiceMonitor).
 - **Enable flag.** `argo_rollouts_enabled` (opt-in, default `false`): guards install.
 - **Связь с Kargo.** Kargo делегирует Rollouts верификацию Stage (`spec.verification.analysisTemplates`): создаёт `AnalysisRun`, читает `status.phase`. Флаги `controller.rollouts.integrationEnabled` + `api.rollouts.integrationEnabled` в Kargo уже включены; без этого компонента Kargo тихо самоотключает интеграцию на старте. Проверка после установки: `kubectl -n {{ kargo_namespace }} logs deploy/kargo-controller | grep -i rollouts` → `Argo Rollouts integration is enabled`. Провайдеры метрик `job` (bash/свой образ) и `web` (HTTP + jsonPath) вкомпилированы — plugin не нужен, Deployment'ы приложений менять не требуется.
+- **Non-install playbooks.** `argo-rollouts-restart.yaml` (single-stage rollout-restart of the argo-rollouts Deployment).
 
 ## 18. Namespaces Matrix
 
