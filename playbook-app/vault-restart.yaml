@@ -1,0 +1,109 @@
+# =============================================================================
+# VAULT RESTART
+# Restarts Vault components to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/vault-restart.yaml
+#
+# Two stages mirroring install (operator, then vault CR StatefulSet), each
+# tagged so --tags <stage> restarts only that stage. Scaffolding runs under [always].
+#
+# WARNING: the vault-cr stage restarts the Vault StatefulSet, which re-triggers
+# auto-unseal (bank-vaults). Vault is briefly unavailable during that stage —
+# run `--tags operator` alone if you only need to restart the operator.
+# =============================================================================
+
+- name: Restart Vault components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[vault-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "vault-restart-pre-check"
+      tags: [always]
+
+    - name: "[vault-restart] Check if vault namespace exists"
+      command: kubectl get namespace {{ vault_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[vault-restart] Fail if vault namespace not found"
+      fail:
+        msg: "vault namespace '{{ vault_namespace }}' not found. Install vault first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+      tags: [always]
+
+    - name: "[vault-restart] Show pods in {{ vault_namespace }} (before restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "vault-restart"
+        dto_pods_namespace: "{{ vault_namespace }}"
+      tags: [always]
+
+    # -------------------------------------------------------------------------
+    # RESTART operator (mirrors vault-operator install stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[vault-restart-operator] Restart vault operator"
+      command: kubectl rollout restart {{ item }} -n {{ vault_namespace }}
+      loop: "{{ vault_operator_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [operator]
+
+    - name: "[vault-restart-operator] Wait for operator rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "vault-restart-operator"
+        dto_rollout_namespace: "{{ vault_namespace }}"
+        dto_rollout_timeout: "{{ vault_operator_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ vault_operator_rollout_resources }}"
+      tags: [operator]
+
+    # -------------------------------------------------------------------------
+    # RESTART vault-cr (mirrors vault-cr install stage) — re-triggers unseal
+    # -------------------------------------------------------------------------
+
+    - name: "[vault-restart-vault-cr] Restart Vault StatefulSet"
+      command: kubectl rollout restart {{ item }} -n {{ vault_namespace }}
+      loop: "{{ vault_cr_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [vault-cr]
+
+    - name: "[vault-restart-vault-cr] Wait for Vault StatefulSet rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "vault-restart-vault-cr"
+        dto_rollout_namespace: "{{ vault_namespace }}"
+        dto_rollout_timeout: "{{ vault_cr_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ vault_cr_rollout_resources }}"
+      tags: [vault-cr]
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[vault-verify] Show pods in {{ vault_namespace }} (after restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "vault-verify"
+        dto_pods_namespace: "{{ vault_namespace }}"
+      tags: [always]
+
+    - name: "[vault-verify] Restart completed"
+      debug:
+        msg:
+          - "=== Vault Restart Complete ==="
+          - "Restarted components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
