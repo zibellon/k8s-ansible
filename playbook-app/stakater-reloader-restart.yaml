@@ -1,0 +1,85 @@
+# =============================================================================
+# STAKATER-RELOADER RESTART
+# Restarts stakater-reloader to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/stakater-reloader-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Deployments from stakater_reloader_rollout_resources (hosts-vars/stakater-reloader.yaml)
+# =============================================================================
+
+- name: Restart stakater-reloader components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[stakater-reloader-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify stakater-reloader is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[stakater-reloader-restart] Check if stakater-reloader namespace exists"
+      command: kubectl get namespace {{ stakater_reloader_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[stakater-reloader-restart] Fail if stakater-reloader namespace not found"
+      fail:
+        msg: "stakater-reloader namespace '{{ stakater_reloader_namespace }}' not found. Install stakater-reloader first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[stakater-reloader-restart] Show pods in {{ stakater_reloader_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-restart"
+        dto_pods_namespace: "{{ stakater_reloader_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: "[stakater-reloader-restart] Restart stakater-reloader Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ stakater_reloader_namespace }}
+      loop: "{{ stakater_reloader_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[stakater-reloader-restart] Wait for Deployment rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-restart"
+        dto_rollout_namespace: "{{ stakater_reloader_namespace }}"
+        dto_rollout_timeout: "{{ stakater_reloader_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ stakater_reloader_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[stakater-reloader-verify] Show pods in {{ stakater_reloader_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "stakater-reloader-verify"
+        dto_pods_namespace: "{{ stakater_reloader_namespace }}"
+
+    - name: "[stakater-reloader-verify] Restart completed"
+      debug:
+        msg:
+          - "=== stakater-reloader Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
