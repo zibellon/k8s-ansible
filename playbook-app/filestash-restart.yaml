@@ -1,0 +1,85 @@
+# =============================================================================
+# FILESTASH RESTART
+# Restarts filestash to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/filestash-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Workloads from filestash_install_rollout_resources (hosts-vars/filestash.yaml)
+# =============================================================================
+
+- name: Restart filestash components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[filestash-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "filestash-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify filestash is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[filestash-restart] Check if filestash namespace exists"
+      command: kubectl get namespace {{ filestash_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[filestash-restart] Fail if filestash namespace not found"
+      fail:
+        msg: "filestash namespace '{{ filestash_namespace }}' not found. Install filestash first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[filestash-restart] Show pods in {{ filestash_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "filestash-restart"
+        dto_pods_namespace: "{{ filestash_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART WORKLOADS
+    # -------------------------------------------------------------------------
+
+    - name: "[filestash-restart] Restart filestash workloads"
+      command: kubectl rollout restart {{ item }} -n {{ filestash_namespace }}
+      loop: "{{ filestash_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[filestash-restart] Wait for rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "filestash-restart"
+        dto_rollout_namespace: "{{ filestash_namespace }}"
+        dto_rollout_timeout: "{{ filestash_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ filestash_install_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[filestash-verify] Show pods in {{ filestash_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "filestash-verify"
+        dto_pods_namespace: "{{ filestash_namespace }}"
+
+    - name: "[filestash-verify] Restart completed"
+      debug:
+        msg:
+          - "=== filestash Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
