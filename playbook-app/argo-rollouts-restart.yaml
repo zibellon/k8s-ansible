@@ -1,0 +1,85 @@
+# =============================================================================
+# ARGO-ROLLOUTS RESTART
+# Restarts argo-rollouts to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-rollouts-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Deployments from argo_rollouts_install_rollout_resources (hosts-vars/argo-rollouts.yaml)
+# =============================================================================
+
+- name: Restart argo-rollouts components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[argo-rollouts-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "argo-rollouts-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify argo-rollouts is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-rollouts-restart] Check if argo-rollouts namespace exists"
+      command: kubectl get namespace {{ argo_rollouts_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argo-rollouts-restart] Fail if argo-rollouts namespace not found"
+      fail:
+        msg: "argo-rollouts namespace '{{ argo_rollouts_namespace }}' not found. Install argo-rollouts first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[argo-rollouts-restart] Show pods in {{ argo_rollouts_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "argo-rollouts-restart"
+        dto_pods_namespace: "{{ argo_rollouts_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-rollouts-restart] Restart argo-rollouts Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ argo_rollouts_namespace }}
+      loop: "{{ argo_rollouts_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-rollouts-restart] Wait for Deployment rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "argo-rollouts-restart"
+        dto_rollout_namespace: "{{ argo_rollouts_namespace }}"
+        dto_rollout_timeout: "{{ argo_rollouts_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ argo_rollouts_install_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-rollouts-verify] Show pods in {{ argo_rollouts_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "argo-rollouts-verify"
+        dto_pods_namespace: "{{ argo_rollouts_namespace }}"
+
+    - name: "[argo-rollouts-verify] Restart completed"
+      debug:
+        msg:
+          - "=== argo-rollouts Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
