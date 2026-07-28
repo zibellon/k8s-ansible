@@ -166,15 +166,26 @@ All three use `serial: 1` internally to preserve quorum. Safe to run on a health
 
 ```bash
 # Rollout-restart wrappers for specific components:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-rollouts-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cert-manager-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cilium-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/external-secrets-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/filestash-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/gitlab-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/gitlab-runner-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/haproxy-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/linstor-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/metrics-server-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/mon-system-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/outline-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/seaweedfs-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/stakater-reloader-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/traefik-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/vault-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/zitadel-restart.yaml
 ```
 
 Each uses `kubectl rollout restart` on the target resources and waits for rollout to complete.
