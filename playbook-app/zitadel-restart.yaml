@@ -1,0 +1,105 @@
+# =============================================================================
+# ZITADEL RESTART
+# Restarts zitadel components to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/zitadel-restart.yaml
+#
+# Two stages mirroring install (postgresql, then app), each tagged so
+# --tags <stage> restarts only that stage. Scaffolding runs under [always].
+# =============================================================================
+
+- name: Restart zitadel components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[zitadel-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "zitadel-restart-pre-check"
+      tags: [always]
+
+    - name: "[zitadel-restart] Check if zitadel namespace exists"
+      command: kubectl get namespace {{ zitadel_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-restart] Fail if zitadel namespace not found"
+      fail:
+        msg: "zitadel namespace '{{ zitadel_namespace }}' not found. Install zitadel first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+      tags: [always]
+
+    - name: "[zitadel-restart] Show pods in {{ zitadel_namespace }} (before restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "zitadel-restart"
+        dto_pods_namespace: "{{ zitadel_namespace }}"
+      tags: [always]
+
+    # -------------------------------------------------------------------------
+    # RESTART postgresql (mirrors postgresql install stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[zitadel-restart-postgresql] Restart zitadel postgresql"
+      command: kubectl rollout restart {{ item }} -n {{ zitadel_namespace }}
+      loop: "{{ zitadel_postgresql_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [postgresql]
+
+    - name: "[zitadel-restart-postgresql] Wait for postgresql rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "zitadel-restart-postgresql"
+        dto_rollout_namespace: "{{ zitadel_namespace }}"
+        dto_rollout_timeout: "{{ zitadel_postgresql_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ zitadel_postgresql_rollout_resources }}"
+      tags: [postgresql]
+
+    # -------------------------------------------------------------------------
+    # RESTART app (mirrors install stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[zitadel-restart-install] Restart zitadel app"
+      command: kubectl rollout restart {{ item }} -n {{ zitadel_namespace }}
+      loop: "{{ zitadel_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[zitadel-restart-install] Wait for app rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "zitadel-restart-install"
+        dto_rollout_namespace: "{{ zitadel_namespace }}"
+        dto_rollout_timeout: "{{ zitadel_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ zitadel_install_rollout_resources }}"
+      tags: [install]
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[zitadel-verify] Show pods in {{ zitadel_namespace }} (after restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "zitadel-verify"
+        dto_pods_namespace: "{{ zitadel_namespace }}"
+      tags: [always]
+
+    - name: "[zitadel-verify] Restart completed"
+      debug:
+        msg:
+          - "=== zitadel Restart Complete ==="
+          - "Restarted components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
