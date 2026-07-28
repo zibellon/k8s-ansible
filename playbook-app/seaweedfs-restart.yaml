@@ -1,0 +1,128 @@
+# =============================================================================
+# SEAWEEDFS RESTART
+# Restarts seaweedfs components to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/seaweedfs-restart.yaml
+#
+# Three stages mirroring install (postgresql, control-plane install, then
+# per-cluster volume servers), each tagged so --tags <stage> restarts only that
+# stage. Scaffolding runs under [always]. The [volume] stage is a no-op unless
+# seaweedfs_volume_rollout_resources is filled in hosts-vars-override/ (volume
+# StatefulSet names are per-cluster).
+# =============================================================================
+
+- name: Restart seaweedfs components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[seaweedfs-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "seaweedfs-restart-pre-check"
+      tags: [always]
+
+    - name: "[seaweedfs-restart] Check if seaweedfs namespace exists"
+      command: kubectl get namespace {{ seaweedfs_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[seaweedfs-restart] Fail if seaweedfs namespace not found"
+      fail:
+        msg: "seaweedfs namespace '{{ seaweedfs_namespace }}' not found. Install seaweedfs first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+      tags: [always]
+
+    - name: "[seaweedfs-restart] Show pods in {{ seaweedfs_namespace }} (before restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "seaweedfs-restart"
+        dto_pods_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
+
+    # -------------------------------------------------------------------------
+    # RESTART postgresql (mirrors postgresql install stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[seaweedfs-restart-postgresql] Restart seaweedfs postgresql"
+      command: kubectl rollout restart {{ item }} -n {{ seaweedfs_namespace }}
+      loop: "{{ seaweedfs_postgresql_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [postgresql]
+
+    - name: "[seaweedfs-restart-postgresql] Wait for postgresql rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "seaweedfs-restart-postgresql"
+        dto_rollout_namespace: "{{ seaweedfs_namespace }}"
+        dto_rollout_timeout: "{{ seaweedfs_postgresql_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ seaweedfs_postgresql_rollout_resources }}"
+      tags: [postgresql]
+
+    # -------------------------------------------------------------------------
+    # RESTART install / control-plane (mirrors install stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[seaweedfs-restart-install] Restart seaweedfs control-plane"
+      command: kubectl rollout restart {{ item }} -n {{ seaweedfs_namespace }}
+      loop: "{{ seaweedfs_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[seaweedfs-restart-install] Wait for control-plane rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "seaweedfs-restart-install"
+        dto_rollout_namespace: "{{ seaweedfs_namespace }}"
+        dto_rollout_timeout: "{{ seaweedfs_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ seaweedfs_install_rollout_resources }}"
+      tags: [install]
+
+    # -------------------------------------------------------------------------
+    # RESTART volume servers (per-cluster; no-op unless override fills the list)
+    # -------------------------------------------------------------------------
+
+    - name: "[seaweedfs-restart-volume] Restart seaweedfs volume servers"
+      command: kubectl rollout restart {{ item }} -n {{ seaweedfs_namespace }}
+      loop: "{{ seaweedfs_volume_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [volume]
+
+    - name: "[seaweedfs-restart-volume] Wait for volume-server rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "seaweedfs-restart-volume"
+        dto_rollout_namespace: "{{ seaweedfs_namespace }}"
+        dto_rollout_timeout: "{{ seaweedfs_volume_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ seaweedfs_volume_rollout_resources }}"
+      tags: [volume]
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[seaweedfs-verify] Show pods in {{ seaweedfs_namespace }} (after restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "seaweedfs-verify"
+        dto_pods_namespace: "{{ seaweedfs_namespace }}"
+      tags: [always]
+
+    - name: "[seaweedfs-verify] Restart completed"
+      debug:
+        msg:
+          - "=== seaweedfs Restart Complete ==="
+          - "Restarted components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
