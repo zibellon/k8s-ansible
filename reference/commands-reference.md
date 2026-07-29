@@ -68,10 +68,10 @@ ansible-playbook ... --limit w1,w2,w3
 ### 2.5 Application stack (in dependency order)
 
 ```bash
-for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader longhorn \
+for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader argo-rollouts longhorn \
          seaweedfs \
          mon-system \
-         argocd gitlab gitlab-runner zitadel teleport filestash outline haproxy; do
+         argocd gitlab gitlab-runner zitadel teleport filestash outline kargo haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
 ```
@@ -87,6 +87,7 @@ done
 - `argocd` / `gitlab` / `gitlab-runner` / `seaweedfs` / `filestash` требуют `<c>_enabled: true` (дефолт `false`, opt-in) — иначе install падает с guard'ом. Cross-ns NP между этими компонентами гейтятся флагами цели; фиксированный порядок установки не требуется — см. [`networking.md`](networking.md) §8.5
 - `filestash`: admin-пароль **авто-генерится** при install (seed-if-missing; оба ключа `admin_password` plaintext + `admin_password_hash` bcrypt пишутся в Vault) — ручной seed НЕ нужен. Plaintext читать `vault kv get eso-secret/filestash/app` (поле `admin_password`). Control node требует `passlib` + `bcrypt<4.1` для фильтра `password_hash('bcrypt')` (см. `tests/Dockerfile`). После старта — войти в `/admin` и добавить S3-подключение (endpoint `http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333`); девы логинятся своими AK/SK.
 - `outline`: OIDC-only (локального логина нет) — bootstrap OIDC-first (первый ZITADEL-логин = админ), сразу привязать passkey (break-glass). SECRET_KEY/UTILS_SECRET/PG/Redis-пароли авто-генерятся seed-if-missing; SECRET_KEY НЕ ротируется. Preflight: seaweedfs bucket+identity (S3-креды → `eso-secret/outline/s3-storage`) + ZITADEL app + `vault kv put eso-secret/outline/oidc clientId=… clientSecret=…`. Браузер грузит вложения НАПРЯМУЮ в публичный S3-хост (server-side proxy у Outline нет). См. [`components.md`](components.md) §17.8.
+- `kargo`: admin-пароль + bcrypt-хеш + token signing key **авто-генерятся** при install (seed-if-missing, ротации нет — смена signing key инвалидирует выданные токены). Открытый пароль читать `vault kv get eso-secret/kargo/admin/creds` (поле `password`); в K8s Secret уезжают только хеш и signing key. Control node требует `passlib` + `bcrypt<4.1` (тот же фильтр, что у filestash). Два домена: UI (`kargo_ui_domain`) и приёмник событий от GitLab/registry (`kargo_webhooks_domain`) — DNS нужен на оба. Preflight при OIDC: ZITADEL-приложение типа User Agent/SPA с auth method NONE + PKCE, redirect `https://<kargo_ui_domain>/login`, включённый «User Info inside ID Token», и `kargo_oidc_client_id` в override — client secret Kargo не использует. Права выдаются тремя raw-списками (`kargo_rbac_service_accounts` / `_cluster_roles` / `_cluster_role_bindings`); дефолтной роли нет, без совпадения по claim пользователь получает 403. См. [`components.md`](components.md) §17.9.
 - **Альтернатива** `longhorn` → `linstor` (Piraeus Operator + LINSTOR; ставится через `ansible-playbook ... playbook-app/linstor-install.yaml`). Только один из двух storage stack'ов в кластере, не оба параллельно. См. [`components.md`](components.md) §16.5.
 
 ---
@@ -165,18 +166,31 @@ All three use `serial: 1` internally to preserve quorum. Safe to run on a health
 
 ```bash
 # Rollout-restart wrappers for specific components:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-rollouts-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cert-manager-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cilium-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/external-secrets-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/filestash-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/gitlab-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/gitlab-runner-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/haproxy-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/linstor-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/metrics-server-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/mon-system-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/outline-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/seaweedfs-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/stakater-reloader-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/traefik-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/vault-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/zitadel-restart.yaml
 ```
 
 Each uses `kubectl rollout restart` on the target resources and waits for rollout to complete.
+
+`linstor-restart.yaml` and `mon-system-restart.yaml` are split into per-stage tasks mirroring their install stages, so `--tags <stage>` restarts only that stage (e.g. `mon-system-restart.yaml --tags loki`, `linstor-restart.yaml --tags install-cluster`). mon-system stages are additionally gated by the `mon_system_*_enabled` flags, so a disabled sub-component's restart is skipped instead of failing on a non-existent workload.
 
 ### 4.5 DR / sync helpers
 

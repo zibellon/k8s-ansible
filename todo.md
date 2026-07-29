@@ -236,3 +236,7 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 1. На машине с доступом в интернет: docker pull, docker save, и упаковывают в .tar.
 2. Переносят .tar в закрытый контур.
 3. На локальной машине: docker load, docker tag (на адрес 1.2.3.4:15001) и docker push.
+
+
+# Задача
+вынести gitlab-селектор-wait в reusable task-include

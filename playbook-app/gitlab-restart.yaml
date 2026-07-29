@@ -1,0 +1,134 @@
+# =============================================================================
+# GITLAB RESTART
+# Restarts gitlab components to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-restart.yaml
+#
+# Three stages mirroring install (postgresql, redis, then the main workloads),
+# each tagged so --tags <stage> restarts only that stage. Scaffolding runs under
+# [always]. The main stage restarts/waits by label selector (gitlab_rollout_selectors)
+# because gitlab resource names are version-unstable while app labels are stable.
+# =============================================================================
+
+- name: Restart gitlab components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[gitlab-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "gitlab-restart-pre-check"
+      tags: [always]
+
+    - name: "[gitlab-restart] Check if gitlab namespace exists"
+      command: kubectl get namespace {{ gitlab_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-restart] Fail if gitlab namespace not found"
+      fail:
+        msg: "gitlab namespace '{{ gitlab_namespace }}' not found. Install gitlab first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+      tags: [always]
+
+    - name: "[gitlab-restart] Show pods in {{ gitlab_namespace }} (before restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "gitlab-restart"
+        dto_pods_namespace: "{{ gitlab_namespace }}"
+      tags: [always]
+
+    # -------------------------------------------------------------------------
+    # RESTART postgresql (mirrors postgresql install stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-restart-postgresql] Restart gitlab postgresql"
+      command: kubectl rollout restart {{ item }} -n {{ gitlab_namespace }}
+      loop: "{{ gitlab_postgresql_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [postgresql]
+
+    - name: "[gitlab-restart-postgresql] Wait for postgresql rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "gitlab-restart-postgresql"
+        dto_rollout_namespace: "{{ gitlab_namespace }}"
+        dto_rollout_timeout: "{{ gitlab_postgresql_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ gitlab_postgresql_rollout_resources }}"
+      tags: [postgresql]
+
+    # -------------------------------------------------------------------------
+    # RESTART redis (mirrors redis install stage)
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-restart-redis] Restart gitlab redis"
+      command: kubectl rollout restart {{ item }} -n {{ gitlab_namespace }}
+      loop: "{{ gitlab_redis_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [redis]
+
+    - name: "[gitlab-restart-redis] Wait for redis rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "gitlab-restart-redis"
+        dto_rollout_namespace: "{{ gitlab_namespace }}"
+        dto_rollout_timeout: "{{ gitlab_redis_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ gitlab_redis_rollout_resources }}"
+      tags: [redis]
+
+    # -------------------------------------------------------------------------
+    # RESTART main workloads (mirrors install stage; label-selector based)
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-restart-install] Restart gitlab workloads"
+      command: kubectl rollout restart {{ item.kind }} -l {{ item.selector }} -n {{ gitlab_namespace }}
+      loop: "{{ gitlab_rollout_selectors }}"
+      loop_control:
+        label: "{{ item.kind }} l={{ item.selector }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[gitlab-restart-install] Wait for workload rollout"
+      command: >
+        kubectl rollout status {{ item.kind }}
+        -l {{ item.selector }}
+        -n {{ gitlab_namespace }}
+        --timeout={{ gitlab_restart_rollout_timeout }}
+      changed_when: false
+      loop: "{{ gitlab_rollout_selectors }}"
+      loop_control:
+        label: "{{ item.kind }} l={{ item.selector }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-verify] Show pods in {{ gitlab_namespace }} (after restart)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "gitlab-verify"
+        dto_pods_namespace: "{{ gitlab_namespace }}"
+      tags: [always]
+
+    - name: "[gitlab-verify] Restart completed"
+      debug:
+        msg:
+          - "=== gitlab Restart Complete ==="
+          - "Restarted components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

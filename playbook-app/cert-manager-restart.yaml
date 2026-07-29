@@ -6,7 +6,7 @@
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cert-manager-restart.yaml
 #
 # This playbook performs graceful rolling restart of all components:
-#   - Deployments: cert-manager, cert-manager-cainjector, cert-manager-webhook
+#   - Deployments from cert_manager_rollout_resources (hosts-vars/cert-manager.yaml)
 # =============================================================================
 
 - name: Restart cert-manager components
@@ -50,10 +50,7 @@
 
     - name: "[cert-manager-restart] Restart cert-manager Deployments"
       command: kubectl rollout restart {{ item }} -n {{ cert_manager_namespace }}
-      loop:
-        - deployment.apps/cert-manager
-        - deployment.apps/cert-manager-cainjector
-        - deployment.apps/cert-manager-webhook
+      loop: "{{ cert_manager_rollout_resources }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -66,11 +63,8 @@
       vars:
         dto_label_name: "cert-manager-restart"
         dto_rollout_namespace: "{{ cert_manager_namespace }}"
-        dto_rollout_timeout: "{{ cert_manager_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - deployment.apps/cert-manager
-          - deployment.apps/cert-manager-cainjector
-          - deployment.apps/cert-manager-webhook
+        dto_rollout_timeout: "{{ cert_manager_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ cert_manager_rollout_resources }}"
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART

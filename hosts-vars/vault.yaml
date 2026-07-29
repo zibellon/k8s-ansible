@@ -102,6 +102,18 @@ all:
     vault_service_monitor_additional_labels: {}
 
     vault_rollout_timeout: "300s"
+    # Restart-phase rollout wait timeouts (vault-restart.yaml, per stage)
+    vault_operator_restart_rollout_timeout: "300s"
+    vault_cr_restart_rollout_timeout: "300s"
+    # Deployment waited on after the vault-operator install stage
+    vault_operator_rollout_resources:
+      - deployment.apps/vault-operator
+    # CRD waited on after the vault-operator install stage (version-coupled)
+    vault_operator_crds_list:
+      - crd/vaults.vault.banzaicloud.com
+    # StatefulSet waited on after the vault-cr install stage
+    vault_cr_rollout_resources:
+      - statefulset.apps/vault
 
     # === SECTION 2: ESO ===
     # Vault is the ESO SOURCE (not a consumer). No eso_vault_integration_vault.
@@ -238,6 +250,13 @@ all:
           path "eso-secret/data/outline/*" { capabilities = ["read", "list"] }
           path "eso-secret/metadata/outline/*" { capabilities = ["read", "list"] }
       # ---------
+      # ESO: Kargo
+      # ---------
+      - name: kargo.eso-main
+        rules: |
+          path "eso-secret/data/kargo/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/kargo/*" { capabilities = ["read", "list"] }
+      # ---------
       # Vault Admin — ПОЛНАЯ admin-политика (почти-root). Назначается человеку-админу
       # (логин userpass в vault-ui), чтобы не сидеть под root-token в повседневке.
       # Отличие от root: подчиняется ACL (аудит + можно отозвать), НЕ обходит политики.
@@ -323,7 +342,7 @@ all:
       #     path "eso-secret/metadata/some-ns-123/app/*" { capabilities = ["read", "list", "delete"] }
       # ------
       # ------
-      # ---Examples. Path: eso-secret/some-ns-123/app
+      # ---Examples. Path: eso-secret/some-ns-123
       # ------
       # vasya — read-only
       # - name: user-vasya
@@ -477,6 +496,15 @@ all:
         bound_service_account_names: eso-main
         policies:
           - outline.eso-main
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
+      # ---------
+      # ESO: Kargo
+      # ---------
+      - name: kargo.eso-main
+        bound_service_account_namespaces: kargo
+        bound_service_account_names: eso-main
+        policies:
+          - kargo.eso-main
         ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
 
     vault_auth_kubernetes_roles_extra: []

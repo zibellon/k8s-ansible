@@ -1,0 +1,85 @@
+# =============================================================================
+# GITLAB-RUNNER RESTART
+# Restarts gitlab-runner to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-runner-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Deployments from gitlab_runner_rollout_resources (hosts-vars/gitlab-runner.yaml)
+# =============================================================================
+
+- name: Restart gitlab-runner components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[gitlab-runner-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "gitlab-runner-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify gitlab-runner is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-runner-restart] Check if gitlab-runner namespace exists"
+      command: kubectl get namespace {{ gitlab_runner_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[gitlab-runner-restart] Fail if gitlab-runner namespace not found"
+      fail:
+        msg: "gitlab-runner namespace '{{ gitlab_runner_namespace }}' not found. Install gitlab-runner first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[gitlab-runner-restart] Show pods in {{ gitlab_runner_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "gitlab-runner-restart"
+        dto_pods_namespace: "{{ gitlab_runner_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-runner-restart] Restart gitlab-runner Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ gitlab_runner_namespace }}
+      loop: "{{ gitlab_runner_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-runner-restart] Wait for Deployment rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "gitlab-runner-restart"
+        dto_rollout_namespace: "{{ gitlab_runner_namespace }}"
+        dto_rollout_timeout: "{{ gitlab_runner_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ gitlab_runner_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[gitlab-runner-verify] Show pods in {{ gitlab_runner_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "gitlab-runner-verify"
+        dto_pods_namespace: "{{ gitlab_runner_namespace }}"
+
+    - name: "[gitlab-runner-verify] Restart completed"
+      debug:
+        msg:
+          - "=== gitlab-runner Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

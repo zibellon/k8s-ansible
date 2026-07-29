@@ -242,8 +242,7 @@
         dto_label_name: "gitlab-postgresql"
         dto_rollout_namespace: "{{ gitlab_namespace }}"
         dto_rollout_timeout: "{{ gitlab_postgresql_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - statefulset.apps/gitlab-postgresql
+        dto_rollout_resources_list: "{{ gitlab_postgresql_rollout_resources }}"
       tags: [postgresql]
 
     # =========================================================================
@@ -359,8 +358,7 @@
         dto_label_name: "gitlab-redis"
         dto_rollout_namespace: "{{ gitlab_namespace }}"
         dto_rollout_timeout: "{{ gitlab_redis_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - statefulset.apps/gitlab-redis
+        dto_rollout_resources_list: "{{ gitlab_redis_rollout_resources }}"
       tags: [redis]
 
     # =========================================================================
@@ -476,15 +474,7 @@
         -n {{ gitlab_namespace }}
         --timeout={{ gitlab_rollout_timeout }}
       changed_when: false
-      loop:
-        - {kind: deployment, selector: "app=webservice"}
-        - {kind: deployment, selector: "app=sidekiq"}
-        - {kind: deployment, selector: "app=gitlab-shell"}
-        - {kind: deployment, selector: "app=gitlab-exporter"}
-        - {kind: deployment, selector: "app=gitlab-pages"}
-        - {kind: deployment, selector: "app=registry"}
-        - {kind: deployment, selector: "app=toolbox"}
-        - {kind: statefulset, selector: "app=gitaly"}
+      loop: "{{ gitlab_rollout_selectors }}"
       loop_control:
         label: "{{ item.kind }} l={{ item.selector }}"
       delegate_to: "{{ master_manager_fact }}"

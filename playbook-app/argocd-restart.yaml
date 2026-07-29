@@ -45,27 +45,12 @@
         dto_pods_namespace: "{{ argocd_namespace }}"
 
     # -------------------------------------------------------------------------
-    # RESTART STATEFULSET
+    # RESTART WORKLOADS
     # -------------------------------------------------------------------------
 
-    - name: "[argocd-restart] Restart ArgoCD StatefulSet (application-controller)"
-      command: kubectl rollout restart statefulset/argocd-application-controller -n {{ argocd_namespace }}
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    # -------------------------------------------------------------------------
-    # RESTART DEPLOYMENTS
-    # -------------------------------------------------------------------------
-
-    - name: "[argocd-restart] Restart ArgoCD Deployments"
-      command: kubectl rollout restart deployment/{{ item }} -n {{ argocd_namespace }}
-      loop:
-        - argocd-applicationset-controller
-        - argocd-dex-server
-        - argocd-notifications-controller
-        - argocd-redis
-        - argocd-repo-server
-        - argocd-server
+    - name: "[argocd-restart] Restart ArgoCD workloads"
+      command: kubectl rollout restart {{ item }} -n {{ argocd_namespace }}
+      loop: "{{ argocd_rollout_resources }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -78,15 +63,8 @@
       vars:
         dto_label_name: "argocd-restart"
         dto_rollout_namespace: "{{ argocd_namespace }}"
-        dto_rollout_timeout: "{{ argocd_rollout_timeout }}"
-        dto_rollout_resources_list:
-          - statefulset/argocd-application-controller
-          - deployment/argocd-applicationset-controller
-          - deployment/argocd-dex-server
-          - deployment/argocd-notifications-controller
-          - deployment/argocd-redis
-          - deployment/argocd-repo-server
-          - deployment/argocd-server
+        dto_rollout_timeout: "{{ argocd_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ argocd_rollout_resources }}"
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART

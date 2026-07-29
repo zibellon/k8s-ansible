@@ -55,3 +55,9 @@ ENV ANSIBLE_LINT_CACHE_DIR=/tmp/ansible-lint-cache
 ENV PWD=/repo
 
 WORKDIR /repo
+
+# The repo is baked into the image instead of bind-mounted at run time, so
+# tests/Dockerfile.dockerignore is the single source of truth for what the
+# suite can see: sources/, pkgs-sources/ and hosts-vars-override/ never enter
+# the container. Last layer on purpose — a code edit invalidates only this one.
+COPY . /repo

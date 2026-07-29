@@ -84,7 +84,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 
 - **Purpose.** Wait for CRDs to reach `Established` condition before applying workloads that depend on them.
 - **Input.** `dto_label_name`, `dto_crds_list` (list of `"crd/<name>"` strings).
-- **Validates (assert).** `dto_label_name` defined + non-empty; `dto_crds_list` defined, is sequence, non-empty.
+- **Validates (assert).** `dto_label_name` defined + non-empty; `dto_crds_list` defined, is sequence, not string, not mapping (empty list allowed). The `kubectl wait` task is guarded with `when: dto_crds_list | length > 0`, so an empty list skips cleanly instead of building an argument-less command.
 - **Reads global var.** `crds_wait` (dict from `hosts-vars/k8s-base.yaml`: `timeout`/`retries`/`delay`) — controls `command --timeout`, `until.retries`, `until.delay`. Not a caller-passed param.
 - **Output.** None. Fails on timeout.
 - **Callers.** Install playbooks with `crds/` phases (`argocd`, `mon-system`), Vault operator, cert-manager.
@@ -94,7 +94,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 
 - **Purpose.** `kubectl rollout status` for Deployments / DaemonSets / StatefulSets.
 - **Input.** `dto_label_name`, `dto_rollout_namespace`, `dto_rollout_timeout` (e.g. `"120s"`), `dto_rollout_resources_list` (list of `"<kind>/<name>"`).
-- **Validates (assert).** `dto_label_name`, `dto_rollout_namespace`, `dto_rollout_timeout` defined + non-empty; `dto_rollout_resources_list` defined, is sequence, non-empty.
+- **Validates (assert).** `dto_label_name`, `dto_rollout_namespace`, `dto_rollout_timeout` defined + non-empty; `dto_rollout_resources_list` defined, is sequence, not string, not mapping (empty list allowed — the `loop` skips, a clean no-op).
 - **Output.** None. Fails on timeout.
 - **Callers.** End of `install` phase on every component; also `-restart` playbooks.
 - **Idempotent.** Read-only wait.

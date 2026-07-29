@@ -1,0 +1,85 @@
+# =============================================================================
+# KARGO RESTART
+# Restarts kargo to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Deployments from kargo_install_rollout_resources (hosts-vars/kargo.yaml)
+# =============================================================================
+
+- name: Restart kargo components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[kargo-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "kargo-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify kargo is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[kargo-restart] Check if kargo namespace exists"
+      command: kubectl get namespace {{ kargo_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[kargo-restart] Fail if kargo namespace not found"
+      fail:
+        msg: "kargo namespace '{{ kargo_namespace }}' not found. Install kargo first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[kargo-restart] Show pods in {{ kargo_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "kargo-restart"
+        dto_pods_namespace: "{{ kargo_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: "[kargo-restart] Restart kargo Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ kargo_namespace }}
+      loop: "{{ kargo_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[kargo-restart] Wait for Deployment rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "kargo-restart"
+        dto_rollout_namespace: "{{ kargo_namespace }}"
+        dto_rollout_timeout: "{{ kargo_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ kargo_install_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[kargo-verify] Show pods in {{ kargo_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "kargo-verify"
+        dto_pods_namespace: "{{ kargo_namespace }}"
+
+    - name: "[kargo-verify] Restart completed"
+      debug:
+        msg:
+          - "=== kargo Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

@@ -16,7 +16,7 @@ Layer 1 + Layer 2 + Layer 3 run five tools, gated by a single `make test` target
 - **ansible-lint** (profile: `moderate`) — every playbook in `playbook-system/` and `playbook-app/`.
 - **ansible-playbook --syntax-check** — every playbook in `playbook-system/` and `playbook-app/`, plus every task-file in their `tasks/` subdirectories (wrapped in a temporary `import_tasks` playbook because bare task-files are not valid Plays). With both `-i hosts-vars/` and `-i hosts-vars-test/`.
 - **helm template + kubeconform** — для каждого upstream Helm release (`<repo>/<chart>` или `oci://...`), который мы устанавливаем в production. Render values from `hosts-vars/` через ansible (production tasks `tasks-vault-config-verify.yaml` + `tasks-add-helm-repo.yaml` reused; `tasks-eso-verify.yaml` не вызывается из test driver — нет component scope), затем `helm template` → файл на диск → `kubeconform -strict --ignore-missing-schemas`. Render и validation разделены на отдельные шаги (см. `tests/helm-validate.yaml` STEP 4 и STEP 5). **Не** тестируются local wrappers (`pre/`, `post/`, `gitlab/postgresql/`, и т.п.) — там нет сторонней логики.
-- **pytest** — unit-тесты для filter plugins (Python compute functions: `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py`, `filter_plugins/vault_config_verify.py`, `filter_plugins/eso_verify.py`). Tests live in `tests/python/test_*.py`. Catches runtime Jinja2/Python issues которые предыдущие 4 stages не видят (syntax check ≠ runtime evaluation).
+- **pytest** — unit-тесты для всех 9 filter plugins (Python compute functions: `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py`, `filter_plugins/argocd_accounts.py`, `filter_plugins/argocd_accounts_distribute.py`, `filter_plugins/password_generate.py`, `filter_plugins/vault_config_verify.py`, `filter_plugins/eso_verify.py` — 35 public filters) плюс regression guard на passlib bcrypt backend (пин `bcrypt<4.1` в `tests/Dockerfile`). Tests live in `tests/python/test_*.py` — 239 cases. Catches runtime Jinja2/Python issues которые предыдущие 4 stages не видят (syntax check ≠ runtime evaluation).
 
 All five must pass for `make test` to exit 0. Targets are independent and re-runnable individually.
 
@@ -42,20 +42,24 @@ No other host tooling is required. Specifically, do **not** install `ansible-lin
 
 `make test` is fail-fast: if `test-yamllint` fails, the next three are not run. To see all failures at once, run each target separately.
 
-`ensure-image` is an internal target every `test-*` depends on — it builds the image automatically if it is missing, otherwise it is a no-op.
+`ensure-image` is an internal target every `test-*` depends on — it rebuilds the image on every invocation. That is deliberate: the repo is baked into the image (`COPY . /repo`), so a conditional "build only if missing" would run the suite against stale code and report a false green. Warm rebuilds cost ~0.8 s — only the `COPY` layer re-runs.
 
 ## 4. Repo layout
 
 | Path | Purpose |
 |---|---|
-| `Makefile` | Test entry point. Wraps every test as `docker run` with read-only volume mount + tmpfs `/tmp`. |
-| `tests/Dockerfile` | Test image definition. Pinned `ansible-core`, `ansible-lint`, `yamllint`, plus `ansible.posix` and `community.general` collections. |
-| `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list — keeps build context small. |
-| `tests/run-syntax-check.sh` | Bash iterator running `ansible-playbook --syntax-check` over every playbook, then over every task-file (each wrapped in a temporary `import_tasks` playbook). |
+| `Makefile` | Test entry point. Wraps every test as `docker run` with tmpfs `/tmp` and no bind mount — the repo comes from the image. Mounting it instead cost ~13 s per run walking `sources/`, which is why code delivery moved to build time. |
+| `tests/Dockerfile` | Test image definition. Pinned `ansible-core`, `ansible-lint`, `yamllint`, plus `ansible.posix` and `community.general` collections. `COPY . /repo` is the last layer, so a code edit invalidates only it and the tool layers stay cached. |
+| `tests/Dockerfile.dockerignore` | BuildKit-scoped ignore list. Since the repo is baked in, this is the single source of truth for what the suite can see: `sources/` (229k vendored files), `pkgs-sources/` (174 MB of offline tarballs) and `hosts-vars-override/` (real secrets) never enter the container. |
+| `tests/run-syntax-check.sh` | Two batched `ansible-playbook --syntax-check` runs: one over every playbook, one over a generated wrapper that imports every task-file (bare task-files are not valid Plays). Batching pays the ~1.4 s interpreter + inventory startup once per cycle instead of once per file — 122 files in ~5 s. |
 | `tests/helm-validate.yaml` | Ansible-playbook driver for Layer 2. PRE phase: mock `master_manager_fact` + ESO secret lookups for chart values. STEP 1–7: per-chart Helm repo add (через `tasks-add-helm-repo.yaml`) → render values → `helm template` → `kubeconform` → aggregate. Reports per-chart OK/FAIL. |
-| `tests/python/test_seaweedfs_{policy,user,bucket,distribute}.py` | Pytest unit tests for the 4 SeaweedFS filter plugins `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py` (18 public filters). 91 cases (policy 11 / user 24 / bucket 32 / distribute 24). Shared fixtures + `sys.path.insert` to repo-root `filter_plugins/` в `tests/python/conftest.py`. |
+| `tests/python/test_seaweedfs_{policy,user,bucket,distribute}.py` | Pytest unit tests for the 4 SeaweedFS filter plugins `filter_plugins/seaweedfs_{policy,user,bucket,distribute}.py` (21 public filters). 125 cases (policy 11 / user 30 / bucket 48 / distribute 36). Shared fixtures + `sys.path.insert` to repo-root `filter_plugins/` в `tests/python/conftest.py`. |
 | `tests/python/test_vault_config_verify.py` | Pytest unit tests for `filter_plugins/vault_config_verify.py` (Layer 3). 13 cases — happy + G1/G2/G3 violations + multi + `_find_duplicates`. |
 | `tests/python/test_eso_verify.py` | Pytest unit tests for `filter_plugins/eso_verify.py` (Layer 3). 23 cases — happy + B1/B2/B3/C1/C2/D + malformed + multi + private helpers. |
+| `tests/python/test_argocd_accounts.py` | Pytest unit tests for `filter_plugins/argocd_accounts.py` (Layer 3). 31 cases — parse live accounts + to_create/to_delete/to_rotate/to_resync deltas + `server.secretkey`/token leak guards + validate (name, mtime, enabled, capabilities). |
+| `tests/python/test_argocd_accounts_distribute.py` | Pytest unit tests for `filter_plugins/argocd_accounts_distribute.py` (Layer 3). 31 cases — paths to add/delete + ConfigMap name validation + combined-JSON state + change-detection (unchanged / rotation / mtime / paths). |
+| `tests/python/test_password_generate.py` | Pytest unit tests for `filter_plugins/password_generate.py` (Layer 3). 15 cases — length + per-class counts + case derivation + errors (negative/float/bool count, empty charset, all-zero). |
+| `tests/python/test_bcrypt_backend.py` | Regression guard (not a filter-plugin test) for the passlib bcrypt backend behind Ansible's `password_hash('bcrypt')`. 1 case — fails loudly if the `bcrypt<4.1` pin in `tests/Dockerfile` regresses. |
 | `hosts-vars-test/upstream-charts.yaml` | Inventory-format vars-файл для Layer 2 (auto-loaded через `-i hosts-vars-test/`). Unified schema `upstream_charts` list для всех upstream charts (`is_oci`, `helm_url`, `helm_repo_name`, `helm_chart_name`, `helm_chart_version`, `namespace`, `values`). |
 | `.yamllint.yaml` | yamllint config — extends `default` with project-aware relaxations and ignore paths. |
 | `.ansible-lint.yml` | ansible-lint config — `profile: moderate` with documented `skip_list` and `mock_modules`. |
@@ -96,7 +100,7 @@ These layers are tracked separately. Adding them must not loosen Layer 1, Layer 
 | `yamllint` complains about a file you did not change | Recent edit broke trailing-whitespace or EOF newline | `make test-yamllint` and read the path:line — fix in place |
 | `ansible-lint` flags a new playbook with `name[missing]` | Task or play has no `name:` | Add `name:` — do not add to `skip_list` |
 | `make test-syntax` says `couldn't resolve module/action 'X'` for a new module | `X` lives in a collection not installed in the image | Add a `RUN ansible-galaxy collection install <ns>.<col>:<ver>` to `tests/Dockerfile`, rebuild image |
-| `make test-syntax` reports two `FAIL:` for one broken playbook | Broken file is included by another playbook | Fix the source file; both will go green |
+| `make test-syntax` fails but names only one broken file | Each cycle is a single batched run and aborts at the first error | Read `Origin: <path>:<line>:<col>` from the log, fix that file, re-run (~5 s per iteration) |
 | `make test-helm` falls render task with `'<var>' is undefined` | Production playbook sets this fact via `tasks-pre-check.yaml` / `set_fact` / direct inventory variable reference; test playbook hasn't been wired to do the same | Either (a) update `tests/helm-validate.yaml` to call the appropriate production task via `include_tasks: "{{ playbook_dir }}/../playbook-app/tasks/<task>.yaml"`, or (b) hardcode a mock in `hosts-vars-test/` |
 | `make test-helm` falls helm template with `Error: chart pull failed` | `<c>_chart_version` in inventory does not exist in upstream repo (yanked or typo'd) | Verify version exists at the published repo (e.g. `helm search repo <repo>/<chart> --versions`); update inventory if intentional |
 | `make test-helm` falls kubeconform with `key "<X>" already set in map` | Upstream chart bug — duplicate key produced by `toYaml` of merged values dict; K8s API server last-wins masks it in production | See §9 Known upstream issues; if new chart hits this, comment out the entry in `hosts-vars-test/upstream-charts.yaml` with explanation (как сделано для traefik) |
@@ -124,9 +128,20 @@ Wall-clock: Xm YYs
 
 **На fail** success-блок отсутствует; `tail -5` показывает последние 5 строк output'а упавшей стадии. Make's fail-fast прерывает на первой упавшей — отображается ошибка **первой** не прошедшей стадии.
 
-**Expected runtime** — cold full run ~4-5 минут wall-clock. Основная latency в `helm repo add` для 13 charts (без кеширования между прогонами). Если прогон превышает ~10 минут без появления success-маркера — подозревай зависание; abort, investigate.
+**Expected runtime** — full run ~3 минуты wall-clock (измерено 3m 03s). По стадиям: yamllint ~5 с, ansible-lint ~52 с, syntax-check ~7 с, helm-validate ~117 с, pytest ~3 с. Основная latency — helm-validate: 16 upstream charts (12 HTTP + 4 OCI); `helm repo add --force-update` перекачивает index на каждом прогоне, поэтому тёплый helm-кеш ничего не даёт. Если прогон превышает ~10 минут без появления success-маркера — подозревай зависание; abort, investigate.
 
 **Anti-pattern (не делать):** повторный запуск `make test` с разными shell-pipe парсингами. Если первый прогон завершился (exit 0 или non-zero) — используй его результат. SUB-4 history: 40 минут wall-clock на 7 retry потому что маркер ещё не существовал; commit `22b7afe` его добавил.
+
+**Проверка красного пути (syntax-check).** Батч-стратегия проверена намеренной поломкой реальных файлов репозитория — каждый сценарий даёт `rc≠0` и называет файл:
+
+| Что сломано | Что в логе |
+|---|---|
+| несуществующий модуль в playbook | `FAIL: playbook cycle` + `Origin: /repo/playbook-app/cilium-install.yaml:280:7` |
+| несуществующий модуль в task-файле | `FAIL: task-file cycle` + `Origin: /repo/playbook-app/tasks/tasks-copy-chart.yaml:98:3` |
+| невалидный YAML в playbook | `FAIL: playbook cycle` + `YAML parsing failed` + `Origin: /repo/playbook-app/cilium-install.yaml:278:1` |
+| поломки в обоих циклах сразу | оба `FAIL:` и оба `Origin:` в одном прогоне |
+
+Во втором цикле `Origin:` указывает на реальный task-файл, а не на сгенерированный wrapper. После восстановления файлов — `rc=0` и 122 строки `OK:`.
 
 ## 9. Known upstream issues
 

@@ -124,6 +124,42 @@ all:
     # --- PHASE: install ---
     longhorn_install_helm_timeout: "10m"
     longhorn_rollout_timeout: "600s"
+    # Main components waited on after install
+    longhorn_rollout_resources:
+      - daemonset.apps/longhorn-manager
+      - deployment.apps/longhorn-ui
+      - deployment.apps/longhorn-driver-deployer
+    # CSI components waited on after install
+    longhorn_csi_rollout_resources:
+      - daemonset.apps/longhorn-csi-plugin
+      - deployment.apps/csi-attacher
+      - deployment.apps/csi-provisioner
+      - deployment.apps/csi-resizer
+      - deployment.apps/csi-snapshotter
+    # CRDs waited on after the official chart install (chart-version-coupled)
+    longhorn_crds_list:
+      - crd/backingimagedatasources.longhorn.io
+      - crd/backingimagemanagers.longhorn.io
+      - crd/backingimages.longhorn.io
+      - crd/backupbackingimages.longhorn.io
+      - crd/backups.longhorn.io
+      - crd/backuptargets.longhorn.io
+      - crd/backupvolumes.longhorn.io
+      - crd/engineimages.longhorn.io
+      - crd/engines.longhorn.io
+      - crd/instancemanagers.longhorn.io
+      - crd/nodes.longhorn.io
+      - crd/orphans.longhorn.io
+      - crd/recurringjobs.longhorn.io
+      - crd/replicas.longhorn.io
+      - crd/settings.longhorn.io
+      - crd/sharemanagers.longhorn.io
+      - crd/snapshots.longhorn.io
+      - crd/supportbundles.longhorn.io
+      - crd/systembackups.longhorn.io
+      - crd/systemrestores.longhorn.io
+      - crd/volumeattachments.longhorn.io
+      - crd/volumes.longhorn.io
     # Helm repository - источник chart (переопределить в hosts-vars-override/ для airgap)
     longhorn_helm_is_oci: false
     longhorn_helm_url: "https://charts.longhorn.io"
@@ -138,7 +174,7 @@ all:
     # Helm chart values
     longhorn_helm_values:
       defaultSettings:
-        # Есть компонент longhorn-driver-deployer, Этот товарищ ходит к longhorn-manager по dyenhtyytve flhtce http://longhorn-manager:9200
+        # Есть компонент longhorn-driver-deployer, Этот товарищ ходит к longhorn-manager по внутреннему адресу http://longhorn-manager:9200
         # Если переопределить managerUrl - то товарищ longhorn-driver-deployer начнет ходить к manager ПО НОВОМУ УКАЗАНОМУ url
         # это спровоцирует ошибку (сетевые политики или домен еще не доступен)
         # managerUrl: "{{ longhorn_external_url }}"
