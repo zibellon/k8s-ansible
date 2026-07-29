@@ -131,8 +131,10 @@ all:
     vault_oidc_issuer: "https://{{ zitadel_domain }}"
     # clientID — НЕ секрет; реальное значение задаётся в hosts-vars-override/.
     vault_oidc_client_id: ""
-    # Путь mount'а auth-метода. Он же group-aliases[].mountpath и сегмент в UI redirect URI.
-    vault_oidc_mount_path: "oidc"
+    # Путь mount'а auth-метода. Он же group-aliases[].mountpath и сегмент в UI redirect URI
+    # (.../ui/vault/auth/<mount_path>/oidc/callback — второй сегмент фиксирован Vault'ом).
+    # Назван по провайдеру, а не "oidc": вся интеграция ZITADEL-специфична.
+    vault_oidc_mount_path: "zitadel"
     # Имя OIDC-роли; оно же default_role (вход из UI без ввода имени роли).
     vault_oidc_role_name: "default"
     # Claim, по которому Vault определяет и пользователя, и его группу.
@@ -647,7 +649,7 @@ all:
     #         source: "zitadel"
     #   vault_group_aliases_extra:
     #     - name: "boris-mus@cluster-tools.1520.tech"   # ровно значение preferred_username
-    #       mountpath: "oidc"
+    #       mountpath: "{{ vault_oidc_mount_path }}"
     #       group: "vault-user-boris-mus"
     # ---------
     vault_groups: []
@@ -675,6 +677,11 @@ all:
     vault_spec_auth_oidc:
       type: oidc
       path: "{{ vault_oidc_mount_path }}"
+      # listing_visibility: unauth — метод виден в списке на странице логина vault-ui.
+      # Без него при нестандартном mount path юзеру пришлось бы вручную вписывать путь
+      # в «More options». bank-vaults применяет options и при создании mount'а, и при tune.
+      options:
+        listing_visibility: unauth
       config: "{{ vault_oidc_config }}"
       roles: "{{ vault_oidc_roles + (vault_oidc_roles_extra | default([])) }}"
     # Выключенный метод не пустой, а ОТСУТСТВУЕТ в списке → purgeUnmanagedConfig
