@@ -105,7 +105,7 @@ Known `_extra` names:
 ```
 vault_policies_extra
 vault_auth_kubernetes_roles_extra
-eso_vault_integration_<c>_secrets_extra    # for each of the 8 ESO-integrated components
+eso_vault_integration_<c>_secrets_extra    # for each of the 13 ESO-integrated components
 teleport_configure_<resource>_extra        # roles, users, bots, apps, databases, oidc, saml, access-lists, trusted-clusters, ...
 ```
 
@@ -270,6 +270,11 @@ Per-file source of truth in parentheses.
 | `vault_rekey_temp_file_path` | Temp-файл на `master_manager_fact`, куда `vault-rotate.yaml` пишет новые unseal keys + root token между `vault operator rekey` и обновлением K8s Secret. Default `/etc/kubernetes/vault-rekey-in-progress.json`. Формат — как у `vault_creds_host_path`. Удаляется в конце успешного rotate. Наличие при старте playbook'а = recovery-режим. |
 | `vault_policies` / `vault_policies_extra` | Vault ACL policy definitions |
 | `vault_auth_kubernetes_roles` / `vault_auth_kubernetes_roles_extra` | Kubernetes-auth role bindings (SA + ns → policies) |
+| `vault_purge_unmanaged_enabled` / `vault_purge_unmanaged_exclude` | `purgeUnmanagedConfig` — явная политика строгого git-ops. `exclude` содержит все 7 секционных флагов bank-vaults (`audit`, `auth`, `groups`, `group-aliases`, `plugins`, `policies`, `secrets`), по умолчанию все `false`. Per-method исключений нет — объявленные auth-методы иммунны к purge по построению |
+| `vault_oidc_enabled` / `vault_userpass_enabled` | Тумблеры человеческих auth-методов. `vault_oidc_enabled: false` по умолчанию (Vault ставится до ZITADEL); `vault_userpass_enabled: false` убирает метод из конфига → purge гасит mount вместе со всеми его юзерами |
+| `vault_oidc_*` | OIDC-параметры: `_issuer` (из `zitadel_domain`), `_client_id`, `_mount_path`, `_role_name`, `_user_claim` / `_groups_claim` (оба `preferred_username`), `_scopes`, `_token_ttl` / `_token_max_ttl`, `_allowed_redirect_uris`, `_verbose_logging`, `_client_secret_env_name`, `_secret_key_client_secret` |
+| `vault_groups` / `_extra`, `vault_group_aliases` / `_extra` | External identity groups + group-aliases (секции `groups` / `group-aliases` в `externalConfig`). Привязка «человек → политика» при OIDC-входе; база пустая, реальные записи — в `hosts-vars-override/` |
+| `vault_spec_auth_extra` | Операторские дополнительные auth-методы сверх kubernetes/userpass/oidc |
 | `eso_vault_integration_<c>` | One object per ESO-integrated component; lives in `hosts-vars/<c>.yaml` (not `vault.yaml`) — see `secrets-and-eso.md` |
 
 ### 2.7 VPN allowlist (`hosts-vars/vpn-rules.yaml`)
