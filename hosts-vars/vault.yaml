@@ -160,8 +160,33 @@ all:
     vault_oidc_secret_key_client_secret: "clientSecret"
 
     # === SECTION 2: ESO ===
-    # Vault is the ESO SOURCE (not a consumer). No eso_vault_integration_vault.
-    # Section 2 omitted.
+    # Vault — ОДНОВРЕМЕННО источник ESO и (при vault_oidc_enabled=true) его потребитель:
+    # oidc client secret лежит в самом Vault (eso-secret/vault/oidc) и материализуется
+    # ESO в K8s Secret в namespace vault, откуда попадает в spec.envsConfig конфигурера.
+    # SA + SecretStore рендерятся ВСЕГДА (как у остальных pre-чартов);
+    # ExternalSecret — только при vault_oidc_enabled=true (иначе Vault-путь ещё пуст).
+    eso_vault_integration_vault:
+      sa_name: "eso-main"
+      role_name: "vault.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    # OIDC client secret — заполняется оператором вручную:
+    #   vault kv put eso-secret/vault/oidc clientSecret=<...>
+    vault_secret_oidc_creds:
+      external_secret_name: "eso-vault-oidc-creds"
+      vault_path: "/vault/oidc"
+      body:
+        target:
+          name: "vault-oidc-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_vault.kv_engine_path }}/data/vault/oidc"
+
+    # OIDC-секрет попадает в список ТОЛЬКО при vault_oidc_enabled=true
+    eso_vault_integration_vault_secrets: "{{ [vault_secret_oidc_creds] if vault_oidc_enabled | bool else [] }}"
+
+    eso_vault_integration_vault_secrets_extra: []
 
     # === SECTION 3 ===
     # --- PHASE: pre ---
@@ -170,7 +195,7 @@ all:
     vault_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
     vault_pre_kustomize_patches: []
-    # Pre-phase values (NetworkPolicies chart)
+    # Pre-phase values (ESO Resources + NetworkPolicies chart)
     vault_pre_helm_values:
       namespace: "{{ vault_namespace }}"
       traefik:
@@ -178,6 +203,17 @@ all:
         instanceName: "traefik-{{ traefik_namespace }}"
       externalSecrets:
         namespace: "{{ external_secrets_namespace }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_vault.sa_name }}"
+        roleName: "{{ eso_vault_integration_vault.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_vault.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_vault.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_vault_secrets + (eso_vault_integration_vault_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
       issuer: "{{ vault_cert_manager_issuer }}"
       extraObjects: "{{ vault_pre_extra_objects }}"
 
@@ -300,6 +336,14 @@ all:
         rules: |
           path "eso-secret/data/kargo/*" { capabilities = ["read", "list"] }
           path "eso-secret/metadata/kargo/*" { capabilities = ["read", "list"] }
+      # ---------
+      # ESO: Vault (self) — OIDC client secret для человеческого OIDC-логина.
+      # Vault одновременно источник и потребитель ESO (см. SECTION 2).
+      # ---------
+      - name: vault.eso-main
+        rules: |
+          path "eso-secret/data/vault/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/vault/*" { capabilities = ["read", "list"] }
       # ---------
       # Vault Admin — ПОЛНАЯ admin-политика (почти-root). Назначается человеку-админу
       # (логин userpass в vault-ui), чтобы не сидеть под root-token в повседневке.
@@ -549,6 +593,15 @@ all:
         bound_service_account_names: eso-main
         policies:
           - kargo.eso-main
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
+      # ---------
+      # ESO: Vault (self)
+      # ---------
+      - name: vault.eso-main
+        bound_service_account_namespaces: vault
+        bound_service_account_names: eso-main
+        policies:
+          - vault.eso-main
         ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
 
     vault_auth_kubernetes_roles_extra: []
