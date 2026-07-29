@@ -115,6 +115,50 @@ all:
     vault_cr_rollout_resources:
       - statefulset.apps/vault
 
+    # === SECTION: OIDC / SSO (ZITADEL) ===
+    # Человеческий вход в Vault UI через ZITADEL. Включается ТОЛЬКО в
+    # hosts-vars-override/<cluster>/vault.yaml и ТОЛЬКО после того, как ZITADEL поднят,
+    # Application заведён и client_secret положен в сам Vault (eso-secret/vault/oidc).
+    # Порядок bootstrap: Vault(OIDC=false) -> ZITADEL -> Application -> секрет -> Vault(OIDC=true).
+    vault_oidc_enabled: false
+    # userpass — legacy человеческий вход. false = УДАЛЕНИЕ метода: он пропадает и из
+    # vault_spec_auth, и из purgeUnmanagedConfig.exclude, поэтому purge отключает mount
+    # userpass вместе со всеми ручными юзерами и паролями.
+    # ВНИМАНИЕ: после false единственный break-glass — root token из K8s Secret
+    # vault_unsealer_secret_name / файла vault_creds_host_path.
+    vault_userpass_enabled: true
+
+    vault_oidc_issuer: "https://{{ zitadel_domain }}"
+    # clientID — НЕ секрет; реальное значение задаётся в hosts-vars-override/.
+    vault_oidc_client_id: ""
+    # Путь mount'а auth-метода. Он же group-aliases[].mountpath и сегмент в UI redirect URI.
+    vault_oidc_mount_path: "oidc"
+    # Имя OIDC-роли; оно же default_role (вход из UI без ввода имени роли).
+    vault_oidc_role_name: "default"
+    # Claim, по которому Vault определяет и пользователя, и его группу.
+    # ZITADEL preferred_username = полный loginName <login>@<org-domain>.
+    vault_oidc_user_claim: "preferred_username"
+    vault_oidc_groups_claim: "preferred_username"
+    # scopes БЕЗ "openid" — Vault добавляет его сам.
+    # org-pin "urn:zitadel:iam:org:id:<orgId>" добавляется в hosts-vars-override/.
+    vault_oidc_scopes:
+      - profile
+      - email
+    vault_oidc_token_ttl: "1h"
+    vault_oidc_token_max_ttl: "4h"
+    # true пишет полный набор claim'ов в лог Vault. Только для отладки, НЕ держать в prod.
+    vault_oidc_verbose_logging: false
+    vault_oidc_ui_redirect_uri: "https://{{ vault_ui_domain }}/ui/vault/auth/{{ vault_oidc_mount_path }}/oidc/callback"
+    vault_oidc_cli_redirect_uri: "http://localhost:8250/oidc/callback"
+    vault_oidc_allowed_redirect_uris:
+      - "{{ vault_oidc_ui_redirect_uri }}"
+      - "{{ vault_oidc_cli_redirect_uri }}"
+    # Имя env-переменной, которую bank-vaults CONFIGURER подставляет в oidc_client_secret
+    # через ${ .Env.<name> }. Инъекция — spec.envsConfig (НЕ vaultEnvsConfig).
+    vault_oidc_client_secret_env_name: "VAULT_OIDC_CLIENT_SECRET"
+    # Имя поля и в Vault KV, и в материализованном K8s Secret.
+    vault_oidc_secret_key_client_secret: "clientSecret"
+
     # === SECTION 2: ESO ===
     # Vault is the ESO SOURCE (not a consumer). No eso_vault_integration_vault.
     # Section 2 omitted.
