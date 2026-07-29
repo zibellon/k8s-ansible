@@ -240,3 +240,10 @@ prometheus-operator - не расширил диск для Prometheus и Alertm
 
 # Задача
 вынести gitlab-селектор-wait в reusable task-include
+
+# SeaweedFS
+minFreeSpacePercent = 1%. Порядок работ:
+
+- заполнить seaweedfs_volume_rollout_resources пятью StatefulSet'ами (seaweedfs-volume-workers-shared-1-dc-1 … -5-dc-1) — сейчас install не дожидается volume-серверов, а restart для них no-op;
+- поставить minFreeSpacePercent: "3GiB" (поле принимает и проценты, и абсолютный размер — парсер один);
+- рестартить по одной ноде с проверкой между: пока нода лежит, её 001-тома под-реплицированы, а volume.fix.replication -apply крутится каждые 17 минут и может начать копировать реплики.
