@@ -115,6 +115,12 @@ collection.list
 volume.list                           
 EOF
 
+# вывод информации (2)
+kubectl -n seaweedfs exec -i deploy/seaweedfs-s3 -- weed shell -master=seaweedfs-master:9333 -filer=seaweedfs-filer:8888 <<'EOF'
+fs.configure
+s3.bucket.list
+EOF
+
 # Слияние volumes (перенос файлов ф один целевой volume)
 kubectl -n seaweedfs exec -i seaweedfs-master-0 -- weed shell <<'EOF'
 fs.mergeVolumes -collection=gitlab-artifacts -apply
