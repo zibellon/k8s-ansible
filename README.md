@@ -367,6 +367,23 @@
 ## - зайти в CLI и выполнить команду: `vault read -field=accessor sys/auth/userpass`
 ## Пример политики: `user-self-service` (`./hosts-vars/vault.yaml`)
 ## ---
+## Важнл_5. Как работать с токенов в vault-cli
+## авторизоваться: `vault login` -> потом он попросит ввести токен
+## все успешно, авторизация прошла. Можем выполнять команды, в соответствии нашему токену
+## чтобы выйти: НЕТ команды `vault logout` или что-то такое
+## Нужно делать так: `rm -f ~/.vault-token` и потом проверить `vault token lookup`
+## ---
+## Важно_6. как настроить OIDC
+## основная проблема = `clientSecret`. Чтобы он появился в kubernetes (k8s-secret) = нужен рабочий VAULT + ESO интеграция
+## а если vault включить OIDC и указать неверный secret = то он не запустится
+## Получается такая логика
+## - Запустить полностью VAULT без OIDC (`vault_oidc_enabled = false`)
+## - зайти в vault под root token и положить нужные clientSecret + clientId
+## - переопределить `vault_oidc_enabled = true`
+## - перезапустить установку: `ansible-playbook ... --tags pre,vault-cr`
+## - добавится: ExternalSecret (для oidc.clientSecret), конфиги для vault-operator, и сам VAULT перезапустится
+##
+## ---
 ## `--tags pre, operator, vault-cr, unseal-keys, post`
 ## ---
 ##
@@ -402,10 +419,10 @@
 ##   Логин: `zitadel-admin@zitadel.zitadel-k8s-v2.drawapp.ru` (zitadel-admin@<ORG_NAME>.<Zitadel_domain>)
 ##   Пароль: `Password1!`
 ## ---
-## Важно_2. Пароль для первого instance-admin. Этот пароль задается СТРОГО ОДИН раз в момент установки
+## Важно_2. Пароль для первого `instance-admin`. Этот пароль задается СТРОГО ОДИН раз в момент установки
 ## Кладется в VAULT, срабатывает ESO -> запускаем саму ZITADEL
 ## Никаких автоматическиз механизмов смены этого пароля в k8s-ansible = не предусмотрено
-## Зайти под этим instance-admin, сменить пароль, чтобы не забыть пароль - зайти в VAULT, и положить этот пароль в VAULT
+## Зайти под этим `instance-admin`, сменить пароль, чтобы не забыть пароль - зайти в VAULT, и положить этот пароль в VAULT
 ## То есть: тут нет механики как у GitLab - что можно ротировать пароль повторным запуском k8s-ansible
 ## ---
 ## `--tags pre, postgresql, install, post`
@@ -415,6 +432,16 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/zitadel-install.yaml`
 - Есть отдельный playbook для перезапуска
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/zitadel-restart.yaml`
+
+## ---
+## Теперь, можно установить OIDC (SSO) для компонентов
+## ---
+## Обий принцип такой
+##   Зайти в ZITADEL + Создать организацию + Создать там проекты + все это настроить
+##   Получить clientId | clientSecret | что-то еще и сохранить это в VAULT
+##   Перед запуском нового компонента, который может работать по OIDC = подготовить конфиг
+##   Достать organization_id, создать пользователя в ZITADEL и добавить его в проект
+##   Запустить компонент
 
 ## ---
 ## SeaweedFS (S3). Официальный helm-chart

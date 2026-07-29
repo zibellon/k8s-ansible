@@ -107,6 +107,62 @@ https://<zitadel_domain>/.well-known/openid-configuration
 ## Настройка каждого приложения
 - `Include user's profile info in the ID Token` = TRUE (Без этого ArgoCD - не работает)
 
+## Vault
+### zitadel-side
+
+- Тип = Web
+- Auth method = Basic / CODE (Vault работает только конфиденциальным клиентом, PKCE не поддерживает)
+- Redirect URI = https://<vault_domain>/ui/vault/auth/zitadel/oidc/callback
+  - первый сегмент после `auth/` = mount path (`vault_oidc_mount_path`), второй `oidc` фиксирован самим Vault
+  - mount назван `zitadel`, а не `oidc`, чтобы URL не читался как `oidc/oidc`
+- Refresh token grant = нет (Vault выдаёт СВОЙ токен и refresh-токен IdP не использует; длину сессии задают `token_ttl` / `token_max_ttl`)
+- User Info inside ID Token = ДА (нужен `preferred_username` — на нём держится выдача политик)
+- Post Logout URI = нет (можно не ставить)
+- Development Mode = OFF (нужен только если добавлять CLI-redirect `http://localhost:8250/oidc/callback`; у нас вход только через UI)
+
+### Vault-side (externalConfig.auth, из `vault_oidc_*`)
+
+auth:
+  type = oidc
+  path = zitadel (`vault_oidc_mount_path`)
+  options.listing_visibility = unauth (метод сам виден в списке на странице логина; иначе mount path пришлось бы вбивать руками в «More options»)
+config:
+  oidc_discovery_url = https://<zitadel_domain>
+  oidc_client_id = "<appId>" (`vault_oidc_client_id`, лежит в inventory — это НЕ секрет)
+  oidc_client_secret = ${ .Env.VAULT_OIDC_CLIENT_SECRET } (шаблон bank-vaults, НЕ Jinja; раскрывается в configurer'е)
+  default_role = default (позволяет входить из UI, не вводя имя роли)
+role `default`:
+  role_type = oidc
+  user_claim = preferred_username
+  groups_claim = preferred_username
+  oidc_scopes = profile email (`openid` Vault добавляет сам; `offline_access` не нужен)
+  allowed_redirect_uris = https://<vault_domain>/ui/vault/auth/zitadel/oidc/callback
+  token_ttl / token_max_ttl = 1h / 4h
+  token_policies = default (персональные политики приходят НЕ отсюда, а из групп — см. ниже)
+
+### Секрет в Vault (тут отличие от остальных компонентов)
+
+- path = eso-secret/vault/oidc
+  - clientSecret: <Client Secret из ZITADEL>
+  - clientId сюда НЕ кладём (он не секрет и живёт в inventory) — в отличие от общего правила «Пункт 2»
+- ESO материализует из этого пути K8s Secret `vault-oidc-creds` в namespace vault
+- Vault читает его через `spec.envsConfig` (secretKeyRef, `optional: true`) — переменная приезжает в bank-vaults configurer, который и раскрывает `${ .Env.* }`
+  - именно `envsConfig`, а НЕ `vaultEnvsConfig`: последний доезжает только до контейнера vault, но не до configurer'а
+- Vault тут одновременно источник и потребитель ESO: секрет для своего же входа он читает из самого себя
+- Ротация секрета: перезаписать путь в Vault и перезапустить `statefulset/vault` + `deployment/vault-configurer` — secretKeyRef читается при старте пода, сам по себе он не подхватится
+
+### Как выдать пользователю права (аналога «сделать админом в UI» тут нет)
+
+Vault отличается от Grafana / GitLab / Outline: зайти админом и выдать права постфактум нельзя — прав вне политик у Vault не существует, а декларативных identity entities bank-vaults не умеет. Права выдаются заранее, ДО первого входа человека, тремя записями в `hosts-vars-override/<cluster>/vault.yaml`:
+
+1. политика в `vault_policies_extra` — что человеку можно
+2. external group в `vault_groups_extra` — `type: external`, `policies: [<политика из п.1>]`
+3. group-alias в `vault_group_aliases_extra` — `name` = ТОЧНОЕ значение `preferred_username`, `mountpath` = `{{ vault_oidc_mount_path }}`, `group` = группа из п.2
+
+Цепочка при входе: claim `preferred_username` -> `group-alias.name` -> external group -> её `policies` -> в токен. Entity и alias Vault создаёт сам при первом входе.
+
+Ловушка: group-alias резолвит accessor mount'а в момент применения. Нельзя объявлять алиасы, пока метод выключен — bank-vaults упадёт с `auth mount path zitadel/ does not exist in vault`, а identity применяется РАНЬШЕ policies и secrets, поэтому встанет весь прогон целиком. Алиасы и `vault_oidc_enabled: true` держать в одной правке.
+
 ## Grafana
 ### zitadel-side
 
