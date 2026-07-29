@@ -607,19 +607,85 @@ all:
     vault_auth_kubernetes_roles_extra: []
 
     # ---------
+    # VAULT OIDC — declarative auth method + identity records
+    # bank-vaults пишет ВЕРБАТИМ: config -> auth/<path>/config, каждый role -> auth/<path>/role/<name>.
+    # oidc_client_secret НЕ в git: "${ .Env.X }" — шаблон bank-vaults, его резолвит
+    # configurer из spec.envsConfig (см. vault_spec_envs_config ниже).
+    # token_policies у роли НЕ задаём: персональные политики приезжают через external
+    # group (groups_claim -> group-alias -> group.policies).
+    # ---------
+    vault_oidc_config:
+      oidc_discovery_url: "{{ vault_oidc_issuer }}"
+      oidc_client_id: "{{ vault_oidc_client_id }}"
+      oidc_client_secret: "${ .Env.{{ vault_oidc_client_secret_env_name }} }"
+      default_role: "{{ vault_oidc_role_name }}"
+    vault_oidc_roles:
+      - name: "{{ vault_oidc_role_name }}"
+        role_type: oidc
+        user_claim: "{{ vault_oidc_user_claim }}"
+        groups_claim: "{{ vault_oidc_groups_claim }}"
+        oidc_scopes: "{{ vault_oidc_scopes }}"
+        allowed_redirect_uris: "{{ vault_oidc_allowed_redirect_uris }}"
+        token_ttl: "{{ vault_oidc_token_ttl }}"
+        token_max_ttl: "{{ vault_oidc_token_max_ttl }}"
+        verbose_oidc_logging: "{{ vault_oidc_verbose_logging }}"
+    vault_oidc_roles_extra: []
+    # ---------
+    # VAULT IDENTITY — external groups + group-aliases.
+    # bank-vaults НЕ умеет декларативные identity ENTITIES. Привязка «человек -> политика»:
+    # claim preferred_username -> group-alias.name -> group -> group.policies.
+    # На человека РОВНО 3 записи: policy user-<name> + group + group-alias; все три —
+    # в hosts-vars-override/<cluster>/vault.yaml, база пустая.
+    # groups[].type ОБЯЗАН быть "external" (иначе bank-vaults падает).
+    # group-aliases[].mountpath — дружественный путь ("oidc"), accessor резолвится сам.
+    # Форма записи:
+    #   vault_oidc_groups_extra:
+    #     - name: "vault-user-boris-mus"
+    #       type: external
+    #       policies: ["user-boris-mus"]
+    #       metadata:
+    #         source: "zitadel"
+    #   vault_oidc_group_aliases_extra:
+    #     - name: "boris-mus@cluster-tools.1520.tech"   # ровно значение preferred_username
+    #       mountpath: "oidc"
+    #       group: "vault-user-boris-mus"
+    # ---------
+    vault_oidc_groups: []
+    vault_oidc_groups_extra: []
+    vault_oidc_group_aliases: []
+    vault_oidc_group_aliases_extra: []
+
+    # ---------
     # VAULT SPEC
     # Full Vault CR spec — edit here to change image, storage, unseal params, etc.
     # Dynamic refs kept only for values that differ per environment.
     # --- Operator-overridable sub-blocks (extracted from vault_spec) ---
-    vault_spec_auth:
-      - type: kubernetes
-        config:
-          kubernetes_host: "{{ vault_kubernetes_host }}"
-        roles: "{{ vault_auth_kubernetes_roles + (vault_auth_kubernetes_roles_extra | default([])) }}"
-      # userpass — человеческий логин в vault-ui (метод «Username & Password»).
-      # Включаем ТОЛЬКО метод; пользователей заводим вручную через UI/CLI и НЕ держим в конфиге
-      # (пароли не в git; auth исключён из purgeUnmanagedConfig → ручные юзеры/пароли не затираются).
-      - type: userpass
+    vault_spec_auth_kubernetes:
+      type: kubernetes
+      config:
+        kubernetes_host: "{{ vault_kubernetes_host }}"
+      roles: "{{ vault_auth_kubernetes_roles + (vault_auth_kubernetes_roles_extra | default([])) }}"
+    # userpass — человеческий логин в vault-ui (метод «Username & Password»).
+    # Включаем ТОЛЬКО метод; пользователей заводим вручную через UI/CLI и НЕ держим в конфиге
+    # (пароли не в git; при vault_userpass_enabled=true auth исключён из purgeUnmanagedConfig
+    # → ручные юзеры/пароли не затираются).
+    vault_spec_auth_userpass:
+      type: userpass
+    # oidc — человеческий логин через ZITADEL (см. секцию VAULT OIDC выше).
+    vault_spec_auth_oidc:
+      type: oidc
+      path: "{{ vault_oidc_mount_path }}"
+      config: "{{ vault_oidc_config }}"
+      roles: "{{ vault_oidc_roles + (vault_oidc_roles_extra | default([])) }}"
+    # Выключенный метод не пустой, а ОТСУТСТВУЕТ в списке → purgeUnmanagedConfig
+    # отключает его mount в Vault (встроенный token/ purge не трогает).
+    # Операторские дополнительные auth-методы (ldap, github, ...) — hosts-vars-override/.
+    vault_spec_auth_extra: []
+    vault_spec_auth: >-
+      {{ [vault_spec_auth_kubernetes]
+         + ([vault_spec_auth_userpass] if vault_userpass_enabled | bool else [])
+         + ([vault_spec_auth_oidc] if vault_oidc_enabled | bool else [])
+         + (vault_spec_auth_extra | default([])) }}
     vault_spec_secrets:
       - path: secret
         type: kv
@@ -672,15 +738,48 @@ all:
     vault_spec_vault_envs_config:
       - name: VAULT_ADDR
         value: "http://127.0.0.1:8200"
+    # envsConfig — env для ВСЕХ bank-vaults pod'ов, включая CONFIGURER, который резолвит
+    # ${ .Env.X } в externalConfig. НЕ vaultEnvsConfig (тот идёт только в vault-контейнер).
+    # optional: true — если ESO ещё не материализовал Secret, pod всё равно стартует.
+    # ВНИМАНИЕ: непустой envsConfig меняет podTemplate StatefulSet'а → rolling restart Vault.
+    vault_spec_envs_config_oidc:
+      - name: "{{ vault_oidc_client_secret_env_name }}"
+        valueFrom:
+          secretKeyRef:
+            name: "{{ vault_secret_oidc_creds.body.target.name }}"
+            key: "{{ vault_oidc_secret_key_client_secret }}"
+            optional: true
+    vault_spec_envs_config_extra: []
+    vault_spec_envs_config: >-
+      {{ (vault_spec_envs_config_oidc if vault_oidc_enabled | bool else [])
+         + (vault_spec_envs_config_extra | default([])) }}
+    # purgeUnmanagedConfig — строгий git-ops: всё, чего нет в конфиге, удаляется.
+    # Гранулярность bank-vaults = СЕКЦИЯ (7 флагов), per-method исключений НЕТ и не нужно:
+    # purge гасит только mount'ы, которых НЕТ в конфиге — объявленные (kubernetes/userpass/
+    # oidc/_extra) и встроенный token/ вычитаются из кандидатов (auth_methods.go:486-497).
+    # Ручные userpass-юзеры не удаляются никогда: per-user purge в bank-vaults отсутствует.
+    # Юзеры исчезнут только вместе с mount'ом при vault_userpass_enabled: false.
+    vault_purge_unmanaged_enabled: true
+    vault_purge_unmanaged_exclude:
+      audit: false
+      auth: false
+      groups: false
+      group-aliases: false
+      plugins: false
+      policies: false
+      secrets: false
     vault_spec_purge_unmanaged_config:
-      enabled: true
-      exclude:
-        auth: true
+      enabled: "{{ vault_purge_unmanaged_enabled | bool }}"
+      exclude: "{{ vault_purge_unmanaged_exclude }}"
+    # groups/group-aliases — ключи есть всегда, наполняются из hosts-vars-override/.
+    # Ключ 'group-aliases' ДЕФИСНЫЙ — опечатка роняет весь configurer (ErrorUnused: true).
     vault_spec_external_config:
       purgeUnmanagedConfig: "{{ vault_spec_purge_unmanaged_config }}"
       policies: "{{ vault_policies + (vault_policies_extra | default([])) }}"
       auth: "{{ vault_spec_auth }}"
       secrets: "{{ vault_spec_secrets }}"
+      groups: "{{ vault_oidc_groups + (vault_oidc_groups_extra | default([])) }}"
+      group-aliases: "{{ vault_oidc_group_aliases + (vault_oidc_group_aliases_extra | default([])) }}"
     # ---------
     vault_spec:
       size: 1
@@ -691,6 +790,7 @@ all:
       # Добавляем переменные окружения здесь
       vaultEnvsConfig: "{{ vault_spec_vault_envs_config }}"
       # ---
+      envsConfig: "{{ vault_spec_envs_config }}"
       externalConfig: "{{ vault_spec_external_config }}"
       volumeClaimTemplates: "{{ vault_spec_volume_claim_templates }}"
       volumeMounts: "{{ vault_spec_volume_mounts }}"
