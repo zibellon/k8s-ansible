@@ -378,6 +378,33 @@ all:
     # Master: volume seal size MB (capacity) + default replication fallback
     seaweedfs_helm_values_master_volume_size_limit_mb: 200
     seaweedfs_helm_values_master_default_replication: "000"
+    # Master: стратегия роста томов (едет в master.toml → секция [master.volume_growth]).
+    # База держит ПОЛНУЮ структуру со значениями, равными дефолтам бинаря
+    # (weed/topology/volume_growth.go:50-58) — т.е. сама по себе ничего не меняет.
+    # Реальные значения задаются в hosts-vars-override/<cluster>/.
+    #
+    # copy_N     — сколько ЛОГИЧЕСКИХ томов создать за одно grow-событие, когда
+    #              per-bucket volumeGrowthCount НЕ задан. Такое бывает для записей
+    #              вне /buckets/ (meta-log filer'а → коллекция "") и для бакета,
+    #              в который успели записать до Phase D bucket-sync. Физических
+    #              томов родится copy_N × N. N = число копий: copy_1 → replication
+    #              000, copy_2 → 001/010/100, copy_3 → 011/101/110, copy_other → остальные.
+    # threshold  — порог "том почти полон", используется В ДВУХ разных смыслах:
+    #              (1) размерный: том помечается crowded при Size > volumeSizeLimitMB × threshold;
+    #              (2) счётный: фоновое условие роста B срабатывает при
+    #                  (crowded + 2) > writable × threshold, т.е. пока writable < 2/threshold.
+    #              При 0.9 пул writable-томов дорастает до 2 × volumeGrowthCount;
+    #              при 1.0 остаётся равен volumeGrowthCount (crowded при этом не
+    #              выставляется никогда — размерное применение (1) становится недостижимым).
+    # disable    — полностью гасит и фоновый, и реактивный рост томов (окно обслуживания).
+    seaweedfs_helm_values_master_config: |
+      [master.volume_growth]
+      copy_1 = 7
+      copy_2 = 6
+      copy_3 = 3
+      copy_other = 1
+      threshold = 0.9
+      disable = false
     # Master / admin PVC (storage size + class)
     seaweedfs_helm_values_master_data_storage_size: "1Gi"
     seaweedfs_helm_values_master_data_storage_class: "lnstr-major-local"
@@ -576,6 +603,15 @@ all:
         # defaultReplication "000" — без репликации по умолчанию; бакеты задают свою
         # replication сами через fs.configure (Phase C). Default — fallback для non-bucket writes.
         defaultReplication: "{{ seaweedfs_helm_values_master_default_replication }}"
+        # master.toml — чарт кладёт это в ConfigMap и монтирует в /etc/seaweedfs/master.toml
+        # (templates/master/master-configmap.yaml + master-statefulset.yaml subPath),
+        # мастер читает через util.LoadConfiguration("master") с поиском в /etc/seaweedfs/.
+        # Управляет стратегией роста томов — см. seaweedfs_helm_values_master_config выше.
+        # ВНИМАНИЕ: ConfigMap сам по себе pod не рестартит — после изменения нужен
+        # явный рестарт (playbook-app/seaweedfs-restart.yaml --tags install; мастер
+        # входит в seaweedfs_install_rollout_resources). Рестарт нужен и по второй
+        # причине: он обнуляет in-memory lastGrowCount у всех VolumeLayout.
+        config: "{{ seaweedfs_helm_values_master_config }}"
 
       # Singular volume отключён — используем volumes: (plural) для тир-размещения.
       # Chart мёрджит singular в named-группы (mergeOverwrite deepCopy volume → group),
