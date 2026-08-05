@@ -1,0 +1,268 @@
+# =============================================================================
+# ARGO EVENTS NETWORK POLICIES
+# =============================================================================
+
+# =============================================================================
+# BASE POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in argo-events namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: {{ .Values.dns.port }}
+        - protocol: TCP
+          port: {{ .Values.dns.port }}
+
+---
+# Allow all traffic between pods inside the namespace. Поды EventSource,
+# Sensor и EventBus создаёт контроллер по CR — их состав и порты заранее
+# неизвестны, поэтому внутренний трафик открывается целиком.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+# =============================================================================
+# CONTROLLER MANAGER
+# =============================================================================
+
+---
+# Controller: реконсайлит CR и создаёт дочерние Deployment/StatefulSet/Service.
+# Входящих соединений не принимает, кроме скрейпа метрик (см. allow-for-monitoring).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-controller-manager
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: controller-manager
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
+# VALIDATING ADMISSION WEBHOOK
+# =============================================================================
+
+---
+# Webhook: ingress от kube-apiserver (port-only, без from: — apiserver работает
+# в host netns и его pod-селектором не выразить). Egress к apiserver нужен,
+# чтобы вебхук сам зарегистрировал ValidatingWebhookConfiguration и выпустил
+# себе сертификат в Secret.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-events-webhook
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: events-webhook
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # kube-apiserver calls the admission webhook
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.argoEvents.webhookPort }}
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+
+# =============================================================================
+# EVENTSOURCE PODS
+# =============================================================================
+
+---
+# EventSource: apiserver нужен источникам типа resource (watch объектов),
+# наружу 443/80 — источникам, которые ходят в API внешнего сервиса
+# (регистрация webhook'а в GitLab/GitHub, long-polling Telegram и т.п.).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-eventsource
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      controller: eventsource-controller
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+    # External HTTPS/HTTP (API внешних источников событий)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+
+# =============================================================================
+# SENSOR PODS
+# =============================================================================
+
+---
+# Sensor: apiserver нужен триггерам k8s и argoWorkflow (создание объектов),
+# наружу 443/80 — триггерам http, slack и прочим внешним получателям.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sensor
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      controller: sensor-controller
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+    # External HTTPS/HTTP (получатели триггеров)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+
+---
+# Allow Prometheus (mon-system) to scrape argo-events metrics.
+# Port-only ingress (matches stakater-reloader allow-for-monitoring convention).
+# Один порт покрывает и контроллер, и все дочерние поды.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-for-monitoring
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.argoEvents.metricsPort }}
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
+# =============================================================================
+{{- if .Values.issuer.enabled }}
+{{- $spec := .Values.issuer.spec | default dict }}
+{{- if hasKey $spec "acme" }}
+{{- range $i, $solver := ($spec.acme.solvers | default list) }}
+{{- if hasKey $solver "http01" }}
+{{- $ing := $solver.http01.ingress | default dict }}
+{{- $solverLabels := dig "podTemplate" "metadata" "labels" (dict "acme.cert-manager.io/http01-solver" "true") $ing }}
+---
+# http01 solver #{{ $i }} — ingress к solver-pod от traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $solverLabels | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+---
+# http01 solver #{{ $i }} — egress traefik → solver-pod (в namespace traefik)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ $.Values.namespace }}-allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $solverLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
