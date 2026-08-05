@@ -444,6 +444,31 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Связь с Kargo.** Kargo делегирует Rollouts верификацию Stage (`spec.verification.analysisTemplates`): создаёт `AnalysisRun`, читает `status.phase`. Флаги `controller.rollouts.integrationEnabled` + `api.rollouts.integrationEnabled` в Kargo уже включены; без этого компонента Kargo тихо самоотключает интеграцию на старте. Проверка после установки: `kubectl -n {{ kargo_namespace }} logs deploy/kargo-controller | grep -i rollouts` → `Argo Rollouts integration is enabled`. Провайдеры метрик `job` (bash/свой образ) и `web` (HTTP + jsonPath) вкомпилированы — plugin не нужен, Deployment'ы приложений менять не требуется.
 - **Non-install playbooks.** `argo-rollouts-restart.yaml` (single-stage rollout-restart of the argo-rollouts Deployment).
 
+## 17.11. `argo-events`
+
+- **Chart path.** `charts/argo-events/{crds,pre,install,webhook,rbac,cr,post}/` (local). Фазы `install` и `webhook` — вендоренные upstream-манифесты (официального helm-чарта у продукта нет), KUSTOMIZE_WRAPPER как у argocd (см. [`playbook-conventions.md`](playbook-conventions.md) §21). Фаза `crds` — сырой `crds.yaml` под `kubectl apply`, без `Chart.yaml`.
+- **Install playbook.** `argo-events-install.yaml`.
+- **Namespace.** `argo-events` (совпадает с хардкодом апстрима — `metadata.namespace` и `subjects[].namespace` в ClusterRoleBinding).
+- **Releases.** `argo-events-pre`, `argo-events`, `argo-events-webhook`, `argo-events-rbac`, `argo-events-cr`, `argo-events-post`. Порядок фаз `crds → pre → install → webhook → rbac → cr → post`; `rbac` идёт перед `cr`, потому что Sensor ссылается на ServiceAccount по имени. Фаза `crds` ставится `kubectl apply`, а не helm-релизом.
+- **Version.** `argo_events_version` (default `v1.9.11`). Официального helm-чарта нет; вендоренные `install.yaml` и `install-validating-webhook.yaml` обновляются вручную вместе с этой переменной. Манифесты на master апстрима отличаются от релизных **только тегом образа**, поэтому вендорить можно с master, пиня тег.
+- **Workload.** 2 Deployment: `controller-manager` (реконсайлер всех трёх CRD) и `events-webhook` (при `argo_events_webhook_enabled`). Плюс поды, которые контроллер порождает по CR: StatefulSet `eventbus-<name>-js` (nats + config-reloader + metrics-exporter) и по Deployment'у на каждый EventSource и Sensor.
+- **CRDs (3, отдельная фаза).** `eventbus`, `eventsources`, `sensors` — все `argoproj.io/v1alpha1`, спека нетипизированная (`x-kubernetes-preserve-unknown-fields`). Ставятся `kubectl apply -f` **без** `failed_when: false`: у argocd и argo-rollouts `kubectl create` вынужденный из-за client-side лимита аннотации 256 КБ, а здесь все три CRD суммарно ~3 КБ, и `apply` даёт идемпотентность плюс апгрейд схемы при смене версии. Отдельная фаза нужна не из-за размера, а из-за владения: если бы CRD принадлежали helm-релизу, `helm uninstall argo-events` каскадом удалил бы все EventBus/EventSource/Sensor.
+- **Required vars.** `argo_events_namespace`, `argo_events_enabled`, `argo_events_version`, `argo_events_image`, `argo_events_image_pull_policy`, порты (`argo_events_metrics_port` 7777 / `argo_events_health_port` 8081 / `argo_events_webhook_port` 443), `argo_events_crds_list`, тумблер вебхука (`argo_events_webhook_enabled`), ACME (`argo_events_cert_manager_issuer_enabled`, `argo_events_acme_*`, `argo_events_cert_manager_issuer`), шина (`argo_events_eventbus_enabled`/`_name`/`_jetstream_version`/`_jetstream_replicas`/`_stream_replicas`/`_stream_max_age`/`_storage_class`/`_volume_size`/`_spec`), прикладные списки (`argo_events_event_sources`, `argo_events_sensors`), RBAC-списки (`argo_events_rbac_service_accounts`/`_roles`/`_cluster_roles`/`_role_bindings`/`_cluster_role_bindings`), PodMonitor (`argo_events_pod_monitor_controller_enabled`/`_workloads_enabled`/`_interval`/`_scrape_timeout`/`_labels`), плюс таймауты и rollout-ресурсы каждой фазы. Kustomize patches (default `[]`): `argo_events_{pre,rbac,cr,post}_kustomize_patches`; у `install` и `webhook` — база плюс `_extra`.
+- **Image pin.** Upstream помечает образ `:latest`. Пин делают базовые kustomize-патчи фаз `install` и `webhook`. У контроллера пин обязателен **в двух местах** — `image` и env `ARGO_EVENTS_IMAGE`: из второго контроллер порождает дочерние поды, и без пина они поедут на плавающем теге. Тот же патч добавляет контроллеру порт `metrics: 7777` (апстрим `ports` у него не объявляет — без этого PodMonitor не найдёт цель) и переводит `imagePullPolicy` с `Always` на `IfNotPresent`. Namespace-рибайндинг — `dto_kustomize_apply_namespace_transform: true` на обеих фазах.
+- **ESO integration.** Yes (`eso_vault_integration_argo_events`) — каркас с **пустым** списком секретов: `SecretStore` и SA рендерятся всегда, `ExternalSecret`'ы появляются по мере записей в `eso_vault_integration_argo_events_secrets_extra` (токены внешних источников — telegram, slack, GitLab). Политика и роль `argo-events.eso-main` обязаны существовать даже при пустом списке: их проверяет группа B в `tasks-eso-verify.yaml`, иначе install падает.
+- **Валидирующий webhook.** Отдельная фаза и релиз, тумблер `argo_events_webhook_enabled` (default `true`). Сам выпускает себе сертификат в Secret `events-webhook-certs` и сам регистрирует `ValidatingWebhookConfiguration` `webhook.argo-events.argoproj.io` с `failurePolicy: Ignore` — cert-manager не нужен, падение вебхука не блокирует запись CR. Владельцем webhook-конфига ставится ClusterRole `argo-events-webhook`, поэтому удаление релиза вычищает и конфиг. Под работает от root: апстрим не задаёт `securityContext`, а слушает :443. Тумблер гейтит фазу через `when:` в плейбуке, а не через `{{- if }}` в чарте (вендоренный манифест обязан оставаться pristine) — следствие: перевод в `false` фазу пропускает, но уже установленный релиз не удаляет, нужен `helm uninstall argo-events-webhook`.
+- **EventBus.** Фаза `cr`, спека целиком из inventory (`argo_events_eventbus_spec`), базовый профиль — lite: одна реплика JetStream. Глобальный дефолт `streamConfig.replicas` в апстримном ConfigMap равен `3`, поэтому при одной реплике его **обязательно** перекрывать в спеке, иначе поток не создастся. Пер-шинные `settings` и `streamConfig` мержатся поверх глобального ConfigMap, поэтому сам ConfigMap остаётся апстримным и в inventory не дублируется. Шину ждёт `tasks-wait-rollout.yaml` по `statefulset.apps/eventbus-<name>-js` — контроллер создаёт её асинхронно уже после появления CR.
+- **Namespace-модель.** Контроллер ставится cluster-wide и **видит CR во всех namespace**. Чего у продукта нет — селектора подмножества namespace: выбор бинарный, либо все, либо ровно один (`--namespaced --managed-namespace`, флаг принимает одно значение), аналога `serviceMonitorNamespaceSelector` из prometheus-operator не существует. CR держим только в `argo-events` по двум другим причинам: EventBus namespaced (EventSource и Sensor ищут шину в своём namespace — в чужом ns без шины под поднимется, но не подключится) и baseline `deny-all` NetworkPolicy (чужому namespace нужен свой комплект политик, который рендерит чарт того компонента).
+- **RBAC (фаза `rbac`).** Пять независимых сырых списков из inventory. ServiceAccount создаётся в namespace компонента, Role и RoleBinding — в namespace из самого элемента: EventSource типа `resource` часто наблюдает объекты в namespace приложения, и ClusterRole под это избыточна. Связей между списками шаблоны не проверяют; с пустыми списками фаза не создаёт ни одного объекта.
+- **Логи.** JSON в stdout по умолчанию — `zap.NewProductionConfig()`, флага формата нет (в отличие от argo-rollouts, где нужен `--logformat=json`). Уровень — env `LOG_LEVEL`.
+- **ServiceMonitor.** No — два **PodMonitor**: `argo-events-controller` (по метке `app: controller-manager`) и `argo-events-workloads` (`matchExpressions` `controller In (eventsource-controller, sensor-controller, eventbus-controller)`), оба на порт `metrics` (:7777). Service апстрим не создаёт ни для контроллера, ни для дочерних подов, поэтому селектировать нечего. Под вебхука метрик не отдаёт и ни под один селектор не попадает.
+- **NetworkPolicy.** deny-all + DNS + `allow-internal-traffic` (весь трафик внутри namespace: состав и порты дочерних подов меняются в рантайме вместе с CR, перечислять их в правилах бессмысленно) + `allow-controller-manager` (egress → apiserver) + `allow-events-webhook` (**ingress на :443 без `from:`** — kube-apiserver работает в host netns) + `allow-eventsource` и `allow-sensor` (egress → apiserver + наружу 443/80) + `allow-for-monitoring` (ingress на :7777). Плюс ACME solver-пара под гейтом `issuer.enabled`. `<ns>-allow-traefik` не рендерится — Ingress'ов у компонента нет.
+- **Ingress.** No. Собственного UI у argo-events нет: в апстриме только подкоманды `controller`, `eventsource`, `sensor`, `webhook`, `lint`, каталога фронтенда в репозитории не существует. Визуализация Event Flow живёт в Argo Workflows — отдельном продукте, который в кластере не установлен. ACME-обвязка (`argo_events_cert_manager_issuer`, `templates/issuer.yaml` в `pre`, solver-политики) написана заранее и выключена (`argo_events_cert_manager_issuer_enabled: false`) — включается вместе с появлением домена для webhook-источника.
+- **Dependencies.** Cilium, external-secrets + vault (ESO-каркас), longhorn/linstor (PVC под JetStream), mon-system (CRD PodMonitor), traefik и cert-manager — только при включённом Issuer.
+- **Enable flag.** `argo_events_enabled` (opt-in, default `false`): guards install.
+- **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` — политика и роль `argo-events.eso-main`; (2) storage class из `argo_events_eventbus_storage_class` должен существовать в кластере; (3) согласовать `argo_events_eventbus_jetstream_replicas` и `argo_events_eventbus_stream_replicas` между собой — при одной реплике шины кворум потока тоже обязан быть 1.
+- **Non-install playbooks.** `argo-events-restart.yaml` — перекат контроллера и, при включённом тумблере, вебхука. Шину, EventSource'ы и Sensor'ы не трогает: их создаёт контроллер, а перекат шины рвёт доставку событий.
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -469,6 +494,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `outline` | outline | no |
 | `kargo` | kargo | no (+ служебные `kargo-cluster-secrets` / `kargo-shared-resources` / `kargo-system-resources`, создаёт upstream-чарт) |
 | `argo-rollouts` | argo-rollouts | no |
+| `argo-events` | argo-events | no |
 
 ## 19. Cross-cutting Dependency Order
 
@@ -483,18 +509,18 @@ L4  traefik        haproxy
 L5  mon-system     seaweedfs
 L6  zitadel
 L7  argocd    gitlab    teleport    filestash
-L8  gitlab-runner   kargo
+L8  gitlab-runner   kargo   argo-events
 ```
 
 `linstor` и `longhorn` — оба storage tier; устанавливается **только один** из двух в кластере (выбор оператора), не оба параллельно.
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L7 as part of `argocd-install.yaml` — no separate playbook.
 
-## 20. ESO-integrated Components (13)
+## 20. ESO-integrated Components (14)
 
 Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-verify.yaml`:
 
-`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`, `filestash`, `outline`, `kargo`, `vault` (self-consumer — только OIDC client secret)
+`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`, `filestash`, `outline`, `kargo`, `argo_events`, `vault` (self-consumer — только OIDC client secret)
 
 Each integration object + `_secrets` list + `_secrets_extra` list lives in the corresponding `hosts-vars/<c>.yaml`.
 
