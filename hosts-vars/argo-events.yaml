@@ -1,0 +1,314 @@
+all:
+  vars:
+    # =========================================================================
+    # Argo Events — событийный слой кластера: EventSource принимает события
+    # (Kubernetes API, webhook'и внешних сервисов), EventBus их переносит,
+    # Sensor исполняет триггеры. Официального helm-чарта у продукта нет —
+    # ставится вендоренным install.yaml (как argocd и argo-rollouts).
+    #
+    # Контроллер ставится cluster-wide и видит CR во всех namespace, но
+    # EventBus/EventSource/Sensor держим только в argo-events: шина namespaced,
+    # а чужому namespace нужен ещё и свой комплект NetworkPolicy.
+    # Собственного UI у argo-events нет.
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start.
+    argo_events_enabled: false
+
+    # Namespace совпадает с тем, что захардкожен в upstream-манифесте
+    # (metadata.namespace + subjects[].namespace в ClusterRoleBinding).
+    argo_events_namespace: "argo-events"
+
+    # ------
+    # Порты (из upstream-исходников, менять нельзя без смены версии).
+    # ------
+    argo_events_metrics_port: 7777
+    argo_events_health_port: 8081
+    argo_events_webhook_port: 443
+
+    # ------
+    # Версия и образ. В upstream-манифесте образ помечен :latest — плавающий тег
+    # в проде недопустим, поэтому пиним явно kustomize-патчами ниже. Пин нужен и
+    # в image, и в env ARGO_EVENTS_IMAGE: из второго контроллер порождает поды
+    # EventSource/Sensor/EventBus. Вендоренные манифесты лежат в
+    # charts/argo-events/{crds,install,webhook}/ и обновляются вручную вместе
+    # с этой переменной.
+    # ------
+    argo_events_version: "v1.9.11"
+    argo_events_image: "quay.io/argoproj/argo-events:{{ argo_events_version }}"
+    # Апстрим ставит Always под плавающий тег; тег мы пиним, поэтому IfNotPresent.
+    argo_events_image_pull_policy: "IfNotPresent"
+
+    # ------
+    # PHASE: crds (kubectl apply — CRD маленькие, лимит аннотации не грозит)
+    # ------
+    argo_events_crds_list:
+      - crd/eventbus.argoproj.io
+      - crd/eventsources.argoproj.io
+      - crd/sensors.argoproj.io
+
+    # ------
+    # ESO integration. Каркас поднимается всегда (SecretStore + SA), список
+    # секретов пустой — реальные пути добавляются в hosts-vars-override/
+    # через eso_vault_integration_argo_events_secrets_extra по мере появления
+    # источников, требующих токенов.
+    # ------
+    eso_vault_integration_argo_events:
+      sa_name: "eso-main"
+      role_name: "argo-events.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_argo_events_secrets: []
+
+    eso_vault_integration_argo_events_secrets_extra: []
+
+    # ------
+    # cert-manager Issuer. Ingress'ов у компонента пока нет, поэтому тумблер
+    # выключен: обвязка лежит готовой и включается вместе с появлением домена
+    # для webhook-источника. Solver-политики рендерятся по этому же объекту.
+    # ------
+    argo_events_cert_manager_issuer_enabled: false
+    argo_events_acme_issuer_name: "argo-events-acme"
+    argo_events_acme_private_key_name: "argo-events-acme-account-key"
+    argo_events_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    argo_events_acme_email: "some-email-123@gmail.com"
+    argo_events_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    argo_events_cert_manager_issuer:
+      enabled: "{{ argo_events_cert_manager_issuer_enabled }}"
+      name: "{{ argo_events_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ argo_events_acme_server }}"
+          email: "{{ argo_events_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ argo_events_acme_private_key_name }}"
+          solvers: "{{ argo_events_acme_solvers }}"
+
+    # ------
+    # PHASE: pre (NetworkPolicies + Issuer + ESO resources)
+    # ------
+    argo_events_pre_helm_timeout: "5m"
+    argo_events_pre_extra_objects: []
+    argo_events_pre_kustomize_patches: []
+    argo_events_pre_helm_values:
+      namespace: "{{ argo_events_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      argoEvents:
+        metricsPort: "{{ argo_events_metrics_port }}"
+        webhookPort: "{{ argo_events_webhook_port }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_argo_events.sa_name }}"
+        roleName: "{{ eso_vault_integration_argo_events.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_argo_events.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_argo_events.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_argo_events_secrets + (eso_vault_integration_argo_events_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      issuer: "{{ argo_events_cert_manager_issuer }}"
+      extraObjects: "{{ argo_events_pre_extra_objects }}"
+
+    # ------
+    # PHASE: install (вендоренный upstream-манифест + kustomize)
+    # ------
+    argo_events_install_helm_timeout: "5m"
+    argo_events_install_rollout_timeout: "300s"
+    # Restart-phase rollout wait timeout (argo-events-restart.yaml)
+    argo_events_install_restart_rollout_timeout: "300s"
+    argo_events_install_rollout_resources:
+      - deployment.apps/controller-manager
+    argo_events_install_extra_objects: []
+    # Базовый патч: пин образа в двух местах, pull policy и порт метрик —
+    # апстрим не объявляет ports у контроллера, без этого PodMonitor не найдёт
+    # цель. containerPort намеренно без кавычек: нужен int, не строка.
+    argo_events_kustomize_patches_base:
+      - target:
+          kind: Deployment
+          name: controller-manager
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: controller-manager
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: controller-manager
+                    image: "{{ argo_events_image }}"
+                    imagePullPolicy: "{{ argo_events_image_pull_policy }}"
+                    env:
+                      - name: ARGO_EVENTS_IMAGE
+                        value: "{{ argo_events_image }}"
+                    ports:
+                      - name: metrics
+                        containerPort: {{ argo_events_metrics_port }}
+    # Операторское расширение (hosts-vars-override/): ресурсы, nodeSelector,
+    # tolerations и прочее прикладываются сюда отдельными патчами.
+    argo_events_install_kustomize_patches_extra: []
+    argo_events_install_kustomize_patches: >-
+      {{ argo_events_kustomize_patches_base
+         + argo_events_install_kustomize_patches_extra }}
+    # Helm values для KUSTOMIZE_WRAPPER install phase — только extraObjects wiring
+    argo_events_install_helm_values:
+      extraObjects: "{{ argo_events_install_extra_objects }}"
+
+    # ------
+    # PHASE: webhook (валидирующий admission webhook, вендоренный манифест)
+    # Вебхук сам выпускает себе сертификат и сам регистрирует
+    # ValidatingWebhookConfiguration с failurePolicy: Ignore — cert-manager
+    # ему не нужен. Тумблер выключает фазу целиком в плейбуке; уже
+    # установленный релиз при этом не удаляется — нужен helm uninstall.
+    # ------
+    argo_events_webhook_enabled: true
+    argo_events_webhook_helm_timeout: "5m"
+    argo_events_webhook_rollout_timeout: "300s"
+    # Restart-phase rollout wait timeout (argo-events-restart.yaml)
+    argo_events_webhook_restart_rollout_timeout: "300s"
+    argo_events_webhook_rollout_resources:
+      - deployment.apps/events-webhook
+    argo_events_webhook_extra_objects: []
+    argo_events_webhook_kustomize_patches_base:
+      - target:
+          kind: Deployment
+          name: events-webhook
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: events-webhook
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: webhook
+                    image: "{{ argo_events_image }}"
+                    imagePullPolicy: "{{ argo_events_image_pull_policy }}"
+    argo_events_webhook_kustomize_patches_extra: []
+    argo_events_webhook_kustomize_patches: >-
+      {{ argo_events_webhook_kustomize_patches_base
+         + argo_events_webhook_kustomize_patches_extra }}
+    argo_events_webhook_helm_values:
+      extraObjects: "{{ argo_events_webhook_extra_objects }}"
+
+    # ------
+    # PHASE: rbac (права для ServiceAccount'ов источников и сенсоров)
+    # Пять независимых сырых списков; связей между ними нет. EventSource типа
+    # resource требует SA с list/watch на наблюдаемый ресурс, Sensor с k8s- или
+    # argoWorkflow-триггером — SA с create/update на целевой ресурс.
+    # SA:                  {name, annotations?, labels?}
+    # Role / ClusterRole:  {name, rules}
+    # RoleBinding:         {name, namespace, roleRef, subjects}
+    # ClusterRoleBinding:  {name, roleRef, subjects}
+    # ------
+    argo_events_rbac_helm_timeout: "5m"
+    argo_events_rbac_service_accounts: []
+    argo_events_rbac_roles: []
+    argo_events_rbac_cluster_roles: []
+    argo_events_rbac_role_bindings: []
+    argo_events_rbac_cluster_role_bindings: []
+    argo_events_rbac_extra_objects: []
+    argo_events_rbac_kustomize_patches: []
+    argo_events_rbac_helm_values:
+      namespace: "{{ argo_events_namespace }}"
+      rbacServiceAccounts: "{{ argo_events_rbac_service_accounts }}"
+      rbacRoles: "{{ argo_events_rbac_roles }}"
+      rbacClusterRoles: "{{ argo_events_rbac_cluster_roles }}"
+      rbacRoleBindings: "{{ argo_events_rbac_role_bindings }}"
+      rbacClusterRoleBindings: "{{ argo_events_rbac_cluster_role_bindings }}"
+      extraObjects: "{{ argo_events_rbac_extra_objects }}"
+
+    # ------
+    # PHASE: cr (EventBus + EventSource + Sensor)
+    # Базовый профиль шины — lite: одна реплика JetStream. Глобальный дефолт
+    # streamConfig.replicas равен 3, поэтому здесь он перекрыт единицей —
+    # иначе поток с кворумом 3 на одной реплике не создастся. Прод-профиль
+    # (3 реплики + streamConfig.replicas: 3) задаётся в hosts-vars-override/.
+    # ------
+    argo_events_eventbus_enabled: true
+    argo_events_eventbus_name: "default"
+    argo_events_eventbus_jetstream_version: "2.10.29"
+    argo_events_eventbus_jetstream_replicas: 1
+    argo_events_eventbus_stream_replicas: 1
+    argo_events_eventbus_stream_max_age: "168h"
+    argo_events_eventbus_storage_class: "lnstr-major-local"
+    argo_events_eventbus_volume_size: "10Gi"
+    argo_events_eventbus_spec:
+      jetstream:
+        version: "{{ argo_events_eventbus_jetstream_version }}"
+        replicas: "{{ argo_events_eventbus_jetstream_replicas }}"
+        persistence:
+          storageClassName: "{{ argo_events_eventbus_storage_class }}"
+          accessMode: ReadWriteOnce
+          volumeSize: "{{ argo_events_eventbus_volume_size }}"
+        streamConfig: |
+          replicas: {{ argo_events_eventbus_stream_replicas }}
+          maxAge: {{ argo_events_eventbus_stream_max_age }}
+    # Списки прикладных объектов: элемент — {name, spec}, spec рендерится как
+    # есть. Реальные объекты живут в hosts-vars-override/ конкретного кластера.
+    argo_events_event_sources: []
+    argo_events_sensors: []
+    argo_events_cr_helm_timeout: "5m"
+    argo_events_cr_rollout_timeout: "600s"
+    # StatefulSet шины создаёт контроллер асинхронно после появления CR —
+    # tasks-wait-rollout.yaml ретраит до его появления.
+    argo_events_cr_rollout_resources:
+      - "statefulset.apps/eventbus-{{ argo_events_eventbus_name }}-js"
+    argo_events_cr_extra_objects: []
+    argo_events_cr_kustomize_patches: []
+    argo_events_cr_helm_values:
+      namespace: "{{ argo_events_namespace }}"
+      eventBus:
+        enabled: "{{ argo_events_eventbus_enabled }}"
+        name: "{{ argo_events_eventbus_name }}"
+        spec: "{{ argo_events_eventbus_spec }}"
+      eventSources: "{{ argo_events_event_sources }}"
+      sensors: "{{ argo_events_sensors }}"
+      extraObjects: "{{ argo_events_cr_extra_objects }}"
+
+    # ------
+    # PHASE: post (PodMonitor'ы)
+    # Service апстрим не создаёт ни для контроллера, ни для дочерних подов,
+    # поэтому метрики снимаются двумя PodMonitor'ами, а не ServiceMonitor'ом.
+    # ------
+    argo_events_post_helm_timeout: "5m"
+    argo_events_pod_monitor_controller_enabled: true
+    argo_events_pod_monitor_workloads_enabled: true
+    argo_events_pod_monitor_interval: "30s"
+    argo_events_pod_monitor_scrape_timeout: "15s"
+    argo_events_pod_monitor_labels: {}
+    argo_events_post_extra_objects: []
+    argo_events_post_kustomize_patches: []
+    argo_events_post_helm_values:
+      namespace: "{{ argo_events_namespace }}"
+      podMonitor:
+        controller:
+          enabled: "{{ argo_events_pod_monitor_controller_enabled }}"
+        workloads:
+          enabled: "{{ argo_events_pod_monitor_workloads_enabled }}"
+        interval: "{{ argo_events_pod_monitor_interval }}"
+        scrapeTimeout: "{{ argo_events_pod_monitor_scrape_timeout }}"
+        labels: "{{ argo_events_pod_monitor_labels }}"
+      extraObjects: "{{ argo_events_post_extra_objects }}"
