@@ -71,7 +71,7 @@ ansible-playbook ... --limit w1,w2,w3
 for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader argo-rollouts longhorn \
          seaweedfs \
          mon-system \
-         argocd gitlab gitlab-runner zitadel teleport filestash outline kargo haproxy; do
+         argocd gitlab gitlab-runner zitadel teleport filestash outline kargo argo-events haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
 ```
@@ -88,6 +88,7 @@ done
 - `filestash`: admin-пароль **авто-генерится** при install (seed-if-missing; оба ключа `admin_password` plaintext + `admin_password_hash` bcrypt пишутся в Vault) — ручной seed НЕ нужен. Plaintext читать `vault kv get eso-secret/filestash/app` (поле `admin_password`). Control node требует `passlib` + `bcrypt<4.1` для фильтра `password_hash('bcrypt')` (см. `tests/Dockerfile`). После старта — войти в `/admin` и добавить S3-подключение (endpoint `http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333`); девы логинятся своими AK/SK.
 - `outline`: OIDC-only (локального логина нет) — bootstrap OIDC-first (первый ZITADEL-логин = админ), сразу привязать passkey (break-glass). SECRET_KEY/UTILS_SECRET/PG/Redis-пароли авто-генерятся seed-if-missing; SECRET_KEY НЕ ротируется. Preflight: seaweedfs bucket+identity (S3-креды → `eso-secret/outline/s3-storage`) + ZITADEL app + `vault kv put eso-secret/outline/oidc clientId=… clientSecret=…`. Браузер грузит вложения НАПРЯМУЮ в публичный S3-хост (server-side proxy у Outline нет). См. [`components.md`](components.md) §17.8.
 - `kargo`: admin-пароль + bcrypt-хеш + token signing key **авто-генерятся** при install (seed-if-missing, ротации нет — смена signing key инвалидирует выданные токены). Открытый пароль читать `vault kv get eso-secret/kargo/admin/creds` (поле `password`); в K8s Secret уезжают только хеш и signing key. Control node требует `passlib` + `bcrypt<4.1` (тот же фильтр, что у filestash). Два домена: UI (`kargo_ui_domain`) и приёмник событий от GitLab/registry (`kargo_webhooks_domain`) — DNS нужен на оба. Preflight при OIDC: ZITADEL-приложение типа User Agent/SPA с auth method NONE + PKCE, redirect `https://<kargo_ui_domain>/login`, включённый «User Info inside ID Token», и `kargo_oidc_client_id` в override — client secret Kargo не использует. Права выдаются тремя raw-списками (`kargo_rbac_service_accounts` / `_cluster_roles` / `_cluster_role_bindings`); дефолтной роли нет, без совпадения по claim пользователь получает 403. См. [`components.md`](components.md) §17.9.
+- `argo-events`: opt-in (`argo_events_enabled: true`). Preflight: политика и роль `argo-events.eso-main` (через `vault-install.yaml --tags install`) плюс существующий storage class из `argo_events_eventbus_storage_class` под PVC шины. Профиль шины обязан быть согласован: при одной реплике JetStream (`argo_events_eventbus_jetstream_replicas`) кворум потока (`argo_events_eventbus_stream_replicas`) тоже должен быть 1 — глобальный дефолт в апстримном ConfigMap равен 3, и поток с ним не создастся. Собственного UI у компонента нет, ingress не разворачивается. См. [`components.md`](components.md) §17.11.
 - **Альтернатива** `longhorn` → `linstor` (Piraeus Operator + LINSTOR; ставится через `ansible-playbook ... playbook-app/linstor-install.yaml`). Только один из двух storage stack'ов в кластере, не оба параллельно. См. [`components.md`](components.md) §16.5.
 
 ---
@@ -108,7 +109,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 
 **Extra phase tags (where applicable):**
 
-- `--tags crds` — for `argocd`, `mon-system` (applies CRDs before main chart)
+- `--tags crds` — for `argocd`, `mon-system`, `argo-events` (applies CRDs before main chart)
 - `--tags prometheus-operator` — for `mon-system` (operator Deployment + RBAC + Service)
 - `--tags prometheus` — for `mon-system` (Prometheus CR)
 - `--tags alertmanager` — for `mon-system` (Alertmanager CR)
@@ -118,6 +119,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags gitops` — for `argocd` (AppProjects + Applications)
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
+- `--tags webhook`, `--tags rbac`, `--tags cr` — for `argo-events` (validating admission webhook / ServiceAccounts + Roles + bindings / EventBus + EventSources + Sensors)
 
 `tags: [always]` tasks (`tasks-pre-check`, `tasks-vault-config-verify`, `tasks-eso-verify`) run regardless of `--tags`.
 
@@ -166,6 +168,7 @@ All three use `serial: 1` internally to preserve quorum. Safe to run on a health
 
 ```bash
 # Rollout-restart wrappers for specific components:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-rollouts-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cert-manager-restart.yaml

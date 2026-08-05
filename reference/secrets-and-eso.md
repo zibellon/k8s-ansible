@@ -278,7 +278,7 @@ spec:
             name: {{ .Values.eso.saName }}
 ```
 
-### 5.3 ExternalSecret — canonical chart template (identical across all 10 components)
+### 5.3 ExternalSecret — canonical chart template (identical across all 14 components)
 
 All 10 `charts/<c>/pre/templates/eso-external-secret.yaml` files are now identical (modulo the banner comment). The entire `spec` body of each `ExternalSecret` comes from inventory via `$secret.body`:
 
@@ -397,7 +397,7 @@ Checklist — keep strictly in order.
 
 7. **Add `eso_vault_integration_<c>` integration object + `<c>_pre_helm_values.eso` block** в `hosts-vars/<c>.yaml`. `<c>_pre_helm_values.eso.secrets` — inline merge: `"{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"`. Никаких runtime fact'ов / 8-component hard-coded lists больше нет.
 
-8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 10 components and requires no modification.
+8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 14 components and requires no modification.
 
 9. **В `<c>-install.yaml` (и configure если нужно)** добавь два последовательных pre-check блока: `tasks-vault-config-verify.yaml` (dto: `dto_label_name`) + `tasks-eso-verify.yaml` (dto: `dto_label_name`, `dto_eso_secrets_list` = inline base+extra, `dto_eso_integration_object`, `dto_namespace`). Шаблон в [`reusable-tasks.md`](reusable-tasks.md) §3.1.
 
@@ -463,6 +463,7 @@ All under `eso-secret/` KV engine.
 | `filestash` | `eso-secret/filestash/*` | `app` — admin password: `admin_password` (plaintext, operator `/admin` login) + `admin_password_hash` (bcrypt → env `ADMIN_PASSWORD`); auto-generated at install (seed-if-missing), ExternalSecret extracts ONLY the hash (least-privilege) |
 | `outline` | `eso-secret/outline/*` | `app` (`secretKey`/`utilsSecret` — seed-if-missing, SECRET_KEY never-rotate), `postgresql` (`username`/`password` — seed-if-missing), `redis` (`password` — seed-if-missing), `s3-storage` (`username`/`accessKey`/`secretKey` — SeaweedFS identity-distribute), `oidc` (`clientId`/`clientSecret` — ручной seed, только при `outline_oidc_enabled`) |
 | `kargo` | `eso-secret/kargo/*` | `admin/creds` — поля `username` / `password` (plaintext, для оператора), `passwordHash`, `tokenSigningKey`; seed-if-missing в `kargo-install.yaml`, ротации нет. ExternalSecret использует явный `data[]` с `remoteRef.property` (не `dataFrom.extract`), т.к. имена ключей в K8s Secret жёстко заданы Kargo (`ADMIN_ACCOUNT_PASSWORD_HASH` / `ADMIN_ACCOUNT_TOKEN_SIGNING_KEY`) — открытый password в K8s Secret не попадает |
+| `argo_events` | `eso-secret/argo-events/*` | Пусто по умолчанию — каркас: `SecretStore` и SA рендерятся всегда, `ExternalSecret`'ы появляются по мере записей в `eso_vault_integration_argo_events_secrets_extra` (токены внешних источников событий — telegram, slack, GitLab `accessToken`/`secretToken`). Политика и роль `argo-events.eso-main` обязаны существовать даже при пустом списке: их проверяет группа B в `tasks-eso-verify.yaml`, иначе install падает |
 | `vault` | `eso-secret/vault/*` | `oidc` (`clientSecret` — ручной seed, только при `vault_oidc_enabled`). Vault читает собственный KV: ESO материализует K8s Secret `vault-oidc-creds`, откуда значение попадает в `spec.envsConfig` конфигурера |
 
 ---
