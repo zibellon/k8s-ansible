@@ -1,0 +1,107 @@
+# =============================================================================
+# ARGO-EVENTS RESTART
+# Restarts argo-events to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Deployments from argo_events_install_rollout_resources (hosts-vars/argo-events.yaml)
+#   - Deployments from argo_events_webhook_rollout_resources, if argo_events_webhook_enabled
+#
+# NOTE: JetStream-шина, EventSource'ы и Sensor'ы здесь НЕ перекатываются.
+#       Их создаёт контроллер по CR, а не helm; перекат шины рвёт доставку
+#       событий. Если шину действительно нужно перезапустить — делать это
+#       осознанно и вручную.
+# =============================================================================
+
+- name: Restart argo-events components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[argo-events-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "argo-events-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify argo-events is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-events-restart] Check if argo-events namespace exists"
+      command: kubectl get namespace {{ argo_events_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argo-events-restart] Fail if argo-events namespace not found"
+      fail:
+        msg: "argo-events namespace '{{ argo_events_namespace }}' not found. Install argo-events first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[argo-events-restart] Show pods in {{ argo_events_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "argo-events-restart"
+        dto_pods_namespace: "{{ argo_events_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART CONTROLLER
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-events-restart] Restart argo-events controller Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ argo_events_namespace }}
+      loop: "{{ argo_events_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argo-events-restart] Wait for controller Deployment rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "argo-events-restart"
+        dto_rollout_namespace: "{{ argo_events_namespace }}"
+        dto_rollout_timeout: "{{ argo_events_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ argo_events_install_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART VALIDATING ADMISSION WEBHOOK
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-events-restart] Restart argo-events webhook Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ argo_events_namespace }}
+      loop: "{{ argo_events_webhook_rollout_resources }}"
+      when: argo_events_webhook_enabled | bool
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argo-events-restart] Wait for webhook Deployment rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "argo-events-restart"
+        dto_rollout_namespace: "{{ argo_events_namespace }}"
+        dto_rollout_timeout: "{{ argo_events_webhook_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ argo_events_webhook_rollout_resources }}"
+      when: argo_events_webhook_enabled | bool
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-events-verify] Show pods in {{ argo_events_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "argo-events-verify"
+        dto_pods_namespace: "{{ argo_events_namespace }}"
+
+    - name: "[argo-events-verify] Restart completed"
+      debug:
+        msg:
+          - "=== argo-events Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
