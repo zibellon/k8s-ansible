@@ -201,7 +201,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - Unique `name` in merged roles.
 - Referential integrity: each role's `policies` references existing policy.
 
-**Callers:** `vault-install.yaml` + 10 ESO-install playbook'ов + `tests/helm-validate.yaml` (12 callers total).
+**Callers:** `vault-install.yaml` + 13 ESO-install playbook'ов + `tests/helm-validate.yaml` (15 callers total).
 
 ### 3.2 `tasks-eso-verify.yaml`
 
@@ -221,7 +221,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - C. ESO uniqueness: `external_secret_name`, `body.target.name`.
 - D. Policy path coverage scoped к role's policies: каждый Vault path (из `body.dataFrom[].extract.key` и `body.data[].remoteRef.key`) должен быть substring какого-либо path-prefix из policies этой role (после stripping `/*`).
 
-**Callers:** 10 ESO-integrated install playbook'ов. НЕ вызывается из `tests/helm-validate.yaml`.
+**Callers:** 14 ESO-integrated install playbook'ов. НЕ вызывается из `tests/helm-validate.yaml`.
 
 ---
 
