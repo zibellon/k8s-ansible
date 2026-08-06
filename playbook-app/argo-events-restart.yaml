@@ -7,7 +7,6 @@
 #
 # This playbook performs graceful rolling restart of all components:
 #   - Deployments from argo_events_install_rollout_resources (hosts-vars/argo-events.yaml)
-#   - Deployments from argo_events_webhook_rollout_resources, if argo_events_webhook_enabled
 #
 # NOTE: JetStream-шина, EventSource'ы и Sensor'ы здесь НЕ перекатываются.
 #       Их создаёт контроллер по CR, а не helm; перекат шины рвёт доставку
@@ -51,42 +50,22 @@
         dto_pods_namespace: "{{ argo_events_namespace }}"
 
     # -------------------------------------------------------------------------
-    # RESTART CONTROLLER
+    # RESTART DEPLOYMENTS
     # -------------------------------------------------------------------------
 
-    - name: "[argo-events-restart] Restart argo-events controller Deployments"
+    - name: "[argo-events-restart] Restart argo-events Deployments"
       command: kubectl rollout restart {{ item }} -n {{ argo_events_namespace }}
       loop: "{{ argo_events_install_rollout_resources }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    - name: "[argo-events-restart] Wait for controller Deployment rollouts"
+    - name: "[argo-events-restart] Wait for Deployment rollouts"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
       vars:
         dto_label_name: "argo-events-restart"
         dto_rollout_namespace: "{{ argo_events_namespace }}"
         dto_rollout_timeout: "{{ argo_events_install_restart_rollout_timeout }}"
         dto_rollout_resources_list: "{{ argo_events_install_rollout_resources }}"
-
-    # -------------------------------------------------------------------------
-    # RESTART VALIDATING ADMISSION WEBHOOK
-    # -------------------------------------------------------------------------
-
-    - name: "[argo-events-restart] Restart argo-events webhook Deployments"
-      command: kubectl rollout restart {{ item }} -n {{ argo_events_namespace }}
-      loop: "{{ argo_events_webhook_rollout_resources }}"
-      when: argo_events_webhook_enabled | bool
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-
-    - name: "[argo-events-restart] Wait for webhook Deployment rollouts"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
-      vars:
-        dto_label_name: "argo-events-restart"
-        dto_rollout_namespace: "{{ argo_events_namespace }}"
-        dto_rollout_timeout: "{{ argo_events_webhook_restart_rollout_timeout }}"
-        dto_rollout_resources_list: "{{ argo_events_webhook_rollout_resources }}"
-      when: argo_events_webhook_enabled | bool
 
     # -------------------------------------------------------------------------
     # VERIFY RESTART

@@ -139,10 +139,13 @@ all:
     argo_events_install_restart_rollout_timeout: "300s"
     argo_events_install_rollout_resources:
       - deployment.apps/controller-manager
+      - deployment.apps/events-webhook
     argo_events_install_extra_objects: []
-    # Базовый патч: пин образа в двух местах, pull policy и порт метрик —
-    # апстрим не объявляет ports у контроллера, без этого PodMonitor не найдёт
-    # цель. containerPort намеренно без кавычек: нужен int, не строка.
+    # Базовые патчи на оба вендоренных Deployment'а. У контроллера пин образа
+    # нужен в двух местах (image + env ARGO_EVENTS_IMAGE — из второго он
+    # порождает дочерние поды) и добавляется порт метрик: апстрим ports у него
+    # не объявляет, без этого PodMonitor не найдёт цель. containerPort
+    # намеренно без кавычек: нужен int, не строка.
     argo_events_kustomize_patches_base:
       - target:
           kind: Deployment
@@ -165,32 +168,6 @@ all:
                     ports:
                       - name: metrics
                         containerPort: {{ argo_events_metrics_port }}
-    # Операторское расширение (hosts-vars-override/): ресурсы, nodeSelector,
-    # tolerations и прочее прикладываются сюда отдельными патчами.
-    argo_events_install_kustomize_patches_extra: []
-    argo_events_install_kustomize_patches: >-
-      {{ argo_events_kustomize_patches_base
-         + argo_events_install_kustomize_patches_extra }}
-    # Helm values для KUSTOMIZE_WRAPPER install phase — только extraObjects wiring
-    argo_events_install_helm_values:
-      extraObjects: "{{ argo_events_install_extra_objects }}"
-
-    # ------
-    # PHASE: webhook (валидирующий admission webhook, вендоренный манифест)
-    # Вебхук сам выпускает себе сертификат и сам регистрирует
-    # ValidatingWebhookConfiguration с failurePolicy: Ignore — cert-manager
-    # ему не нужен. Тумблер выключает фазу целиком в плейбуке; уже
-    # установленный релиз при этом не удаляется — нужен helm uninstall.
-    # ------
-    argo_events_webhook_enabled: true
-    argo_events_webhook_helm_timeout: "5m"
-    argo_events_webhook_rollout_timeout: "300s"
-    # Restart-phase rollout wait timeout (argo-events-restart.yaml)
-    argo_events_webhook_restart_rollout_timeout: "300s"
-    argo_events_webhook_rollout_resources:
-      - deployment.apps/events-webhook
-    argo_events_webhook_extra_objects: []
-    argo_events_webhook_kustomize_patches_base:
       - target:
           kind: Deployment
           name: events-webhook
@@ -206,12 +183,15 @@ all:
                   - name: webhook
                     image: "{{ argo_events_image }}"
                     imagePullPolicy: "{{ argo_events_image_pull_policy }}"
-    argo_events_webhook_kustomize_patches_extra: []
-    argo_events_webhook_kustomize_patches: >-
-      {{ argo_events_webhook_kustomize_patches_base
-         + argo_events_webhook_kustomize_patches_extra }}
-    argo_events_webhook_helm_values:
-      extraObjects: "{{ argo_events_webhook_extra_objects }}"
+    # Операторское расширение (hosts-vars-override/): ресурсы, nodeSelector,
+    # tolerations и прочее прикладываются сюда отдельными патчами.
+    argo_events_install_kustomize_patches_extra: []
+    argo_events_install_kustomize_patches: >-
+      {{ argo_events_kustomize_patches_base
+         + argo_events_install_kustomize_patches_extra }}
+    # Helm values для KUSTOMIZE_WRAPPER install phase — только extraObjects wiring
+    argo_events_install_helm_values:
+      extraObjects: "{{ argo_events_install_extra_objects }}"
 
     # ------
     # PHASE: rbac (права для ServiceAccount'ов источников и сенсоров)

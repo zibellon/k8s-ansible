@@ -3,18 +3,17 @@
 # Steps:
 #   1. argo-events/crds:    CustomResourceDefinitions (kubectl apply)
 #   2. argo-events/pre:     NetworkPolicies + cert-manager Issuer + ESO resources
-#   3. argo-events/install: vendored upstream manifest v1.9.11 (controller + RBAC)
-#   4. argo-events/webhook: vendored validating admission webhook
-#   5. argo-events/rbac:    ServiceAccounts + Roles + bindings for EventSource/Sensor pods
-#   6. argo-events/cr:      EventBus + EventSources + Sensors
-#   7. argo-events/post:    PodMonitors
+#   3. argo-events/install: vendored upstream manifests v1.9.11 — controller,
+#                           RBAC and the validating admission webhook
+#   4. argo-events/rbac:    ServiceAccounts + Roles + bindings for EventSource/Sensor pods
+#   5. argo-events/cr:      EventBus + EventSources + Sensors
+#   6. argo-events/post:    PodMonitors
 #
 # Usage (tags):
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-install.yaml
 #   ansible-playbook ... --tags crds
 #   ansible-playbook ... --tags pre
 #   ansible-playbook ... --tags install
-#   ansible-playbook ... --tags webhook
 #   ansible-playbook ... --tags rbac
 #   ansible-playbook ... --tags cr
 #   ansible-playbook ... --tags post
@@ -30,9 +29,9 @@
 #       EventBus/EventSource/Sensor держим только в argo-events: шина namespaced,
 #       а чужому namespace нужен ещё и свой комплект NetworkPolicy.
 #       Собственного UI у argo-events нет.
-#       Фаза webhook гейтится argo_events_webhook_enabled. Перевод тумблера в
-#       false пропускает фазу, но уже установленный релиз не удаляет — для этого
-#       нужен `helm uninstall argo-events-webhook -n argo-events`.
+#       Валидирующий admission webhook — безусловная часть фазы install: он сам
+#       выпускает себе сертификат и сам регистрирует ValidatingWebhookConfiguration
+#       с failurePolicy: Ignore, поэтому cert-manager ему не нужен.
 # =============================================================================
 
 ---
@@ -177,10 +176,10 @@
         dto_content: "{{ argo_events_install_helm_values | to_nice_yaml }}"
       tags: [install]
 
-    # namespace_transform обязателен: upstream-манифест хардкодит
+    # namespace_transform обязателен: оба вендоренных манифеста хардкодят
     # `namespace: argo-events` в metadata и в subjects ClusterRoleBinding.
-    # Патчи пинят образ (в манифесте он помечен :latest) и добавляют
-    # контроллеру порт metrics — апстрим его не объявляет.
+    # Патчи пинят образ на обоих Deployment'ах (в манифестах он помечен
+    # :latest) и добавляют контроллеру порт metrics — апстрим его не объявляет.
     - name: "[argo-events-install] Build kustomize artifact"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
       vars:
@@ -220,74 +219,7 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 4: WEBHOOK (vendored validating admission webhook)
-    # Гейтится argo_events_webhook_enabled. Вебхук сам выпускает себе
-    # сертификат и сам регистрирует ValidatingWebhookConfiguration.
-    # =========================================================================
-
-    - name: "[argo-events-webhook] Copy chart to remote"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
-      vars:
-        dto_label_name: "argo-events-webhook"
-        dto_chart_name: "webhook"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/webhook/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/webhook"
-      when: argo_events_webhook_enabled | bool
-      tags: [webhook]
-
-    - name: "[argo-events-webhook] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
-      vars:
-        dto_label_name: "argo-events-webhook"
-        dto_dir: "{{ remote_charts_dir }}/argo-events/webhook"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ argo_events_webhook_helm_values | to_nice_yaml }}"
-      when: argo_events_webhook_enabled | bool
-      tags: [webhook]
-
-    - name: "[argo-events-webhook] Build kustomize artifact"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
-      vars:
-        dto_label_name: "argo-events-webhook"
-        dto_release_name: "argo-events-webhook"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/webhook"
-        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/webhook/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/webhook-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/webhook-k"
-        dto_patches_list: "{{ argo_events_webhook_kustomize_patches }}"
-        dto_target_namespace: "{{ argo_events_namespace }}"
-        dto_kustomize_apply_namespace_transform: true
-      when: argo_events_webhook_enabled | bool
-      tags: [webhook]
-
-    - name: "[argo-events-webhook] Install via Helm (async)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
-      vars:
-        dto_label_name: "argo-events-webhook"
-        dto_helm_command: >
-          helm upgrade --install argo-events-webhook {{ remote_charts_dir }}/argo-events/webhook-k
-          --namespace {{ argo_events_namespace }}
-          --create-namespace
-          --cleanup-on-fail
-          --atomic
-          --wait
-          --wait-for-jobs
-          --timeout {{ argo_events_webhook_helm_timeout }}
-      when: argo_events_webhook_enabled | bool
-      tags: [webhook]
-
-    - name: "[argo-events-webhook] Wait for rollout"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
-      vars:
-        dto_label_name: "argo-events-webhook"
-        dto_rollout_namespace: "{{ argo_events_namespace }}"
-        dto_rollout_timeout: "{{ argo_events_webhook_rollout_timeout }}"
-        dto_rollout_resources_list: "{{ argo_events_webhook_rollout_resources }}"
-      when: argo_events_webhook_enabled | bool
-      tags: [webhook]
-
-    # =========================================================================
-    # STEP 5: RBAC (ServiceAccounts + Roles + bindings)
+    # STEP 4: RBAC (ServiceAccounts + Roles + bindings)
     # Идёт перед cr: Sensor ссылается на ServiceAccount по имени.
     # =========================================================================
 
@@ -338,7 +270,7 @@
       tags: [rbac]
 
     # =========================================================================
-    # STEP 6: CR (EventBus + EventSources + Sensors)
+    # STEP 5: CR (EventBus + EventSources + Sensors)
     # StatefulSet шины создаёт контроллер асинхронно после появления CR —
     # tasks-wait-rollout.yaml ретраит до его появления.
     # =========================================================================
@@ -399,7 +331,7 @@
       tags: [cr]
 
     # =========================================================================
-    # STEP 7: POST (PodMonitors)
+    # STEP 6: POST (PodMonitors)
     # =========================================================================
 
     - name: "[argo-events-post] Copy chart to remote"
@@ -494,7 +426,7 @@
 
     - name: "[argo-events-verify] Installation complete"
       debug:
-        msg: "argo-events-pre + argo-events + argo-events-webhook + argo-events-rbac + argo-events-cr + argo-events-post: OK"
+        msg: "argo-events-pre + argo-events + argo-events-rbac + argo-events-cr + argo-events-post: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
