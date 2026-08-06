@@ -20,7 +20,9 @@
 #               apt_sources_changed / apt_conf_d_changed / apt_prefs_changed /
 #               fail2ban_files_changed / sshd_files_changed.
 #   5. SWAP — swapoff, comment swap in /etc/fstab, mask swap.target.
-#   6. SYSCTL — write /etc/sysctl.d/k8s.conf from k8s_sysctl_list.
+#   6. SYSCTL — write /etc/sysctl.d/k8s.conf from k8s_sysctl_list (флаги = 1)
+#               and /etc/sysctl.d/k8s-tuning.conf from k8s_sysctl_values
+#               (ключ = произвольное значение).
 #   7. KERNEL MODULES — write /etc/modules-load.d/k8s.conf from k8s_module_list
 #                       (overlay, br_netfilter).
 #   8. SOFTDOG — modprobe config + softdog.service watchdog unit.
@@ -344,6 +346,20 @@
         mode: '0644'
       register: sysctl_conf_create_result
 
+    # Параметры с ПРОИЗВОЛЬНЫМ значением — отдельный файл, а не k8s.conf выше.
+    # Тот шаблон печатает "<ключ> = 1" и проверяется на единицу; смешивать
+    # с ним значения пришлось бы ценой переделки обоих. Разные файлы дают ещё
+    # и разные register: правка одного набора не помечает изменившимся второй.
+    - name: Create /etc/sysctl.d/k8s-tuning.conf
+      copy:
+        dest: /etc/sysctl.d/k8s-tuning.conf
+        content: |
+          {% for param, value in k8s_sysctl_values.items() %}
+          {{ param }} = {{ value }}
+          {% endfor %}
+        mode: '0644'
+      register: sysctl_tuning_conf_create_result
+
     # =========================================================================
     # KERNEL MODULES (overlay, br_netfilter)
     # =========================================================================
@@ -403,6 +419,7 @@
       set_fact:
         node_prepare_needs_reboot: >-
           {{ sysctl_conf_create_result.changed
+             or sysctl_tuning_conf_create_result.changed
              or modules_conf_create_result.changed
              or softdog_conf_result.changed
              or softdog_service_result.changed
@@ -451,6 +468,24 @@
       loop: "{{ sysctl_check.results }}"
       loop_control:
         label: "{{ item.item }}"
+
+    - name: Check sysctl tuning parameter
+      command: sysctl -n {{ item.key }}
+      register: sysctl_tuning_check
+      changed_when: false
+      loop: "{{ k8s_sysctl_values | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Assert all sysctl tuning parameters match declared values
+      assert:
+        that:
+          - item.stdout | trim == item.item.value | string
+        fail_msg: "{{ item.item.key }} is {{ item.stdout | trim }}, expected {{ item.item.value }}!"
+        quiet: true
+      loop: "{{ sysctl_tuning_check.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
 
     # ======
     # MODULES

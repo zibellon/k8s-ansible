@@ -360,6 +360,29 @@ all:
       - net.bridge.bridge-nf-call-ip6tables
       - net.ipv4.ip_forward
 
+    # Kubernetes sysctl parameters с ПРОИЗВОЛЬНЫМ значением.
+    #
+    # Отдельный список рядом с k8s_sysctl_list, а не вместо него: тот печатает
+    # "<ключ> = 1" и проверяется на единицу, то есть выражает только булевы
+    # переключатели. Здесь — ключ и значение, и пишутся они в СВОЙ файл
+    # /etc/sysctl.d/k8s-tuning.conf, чтобы правка одного набора не помечала
+    # изменившимся второй.
+    #
+    # fs.inotify.max_user_instances — сколько inotify-инстансов может завести
+    # ОДИН uid на узле. Дефолт ядра 128, и он общий на все поды этого uid:
+    # контроллеры, следящие за файлами (argo-events, argocd-repo-server,
+    # prometheus, vector), выбирают его втроём-вчетвером. При исчерпании
+    # inotify_init1 возвращает EMFILE, и приложение видит "too many open
+    # files" — сообщение про файловые дескрипторы, хотя дело не в них.
+    # Так падал Sensor argo-events: viper при неудаче создания watcher делает
+    # os.Exit(1), то есть под уходит в CrashLoopBackOff.
+    #
+    # Не путать с fs.inotify.max_user_watches (число отслеживаемых путей): его
+    # исчерпание даёт ENOSPC, "no space left on device". Он вычисляется ядром
+    # от объёма RAM и на этих узлах штатный (~189k), трогать не нужно.
+    k8s_sysctl_values:
+      fs.inotify.max_user_instances: 1024
+
     # Longhorn kernel modules
     longhorn_modules:
       - iscsi_tcp
