@@ -65,6 +65,38 @@ spec:
     - to:
         - podSelector: {}
 
+---
+# Исходящий HTTP/HTTPS для ВСЕХ подов namespace.
+#
+# Ниже те же порты открыты адресно подам EventSource и Sensor, но этого мало:
+# triggers типа k8s создают собственные объекты (например, Job с curl для
+# отправки уведомления), а их поды не несут меток controller=eventsource-controller
+# и controller=sensor-controller и под deny-all наружу не выходят. Состав таких
+# подов задаётся в CR и заранее неизвестен, селектор по метке пришлось бы
+# согласовывать между этим чартом и git-ops репозиторием, где живут Sensor'ы.
+#
+# Симптом при отсутствии этой политики невнятный: под не падает с отказом, а
+# висит до таймаута клиента и уходит в backoffLimit.
+#
+# Namespace служебный и целиком принадлежит argo-events, поэтому открыть
+# исходящий 80/443 всем его подам — приемлемый размен за то, чтобы политики не
+# зависели от содержимого прикладных CR.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-external-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+
 # =============================================================================
 # CONTROLLER MANAGER
 # =============================================================================
