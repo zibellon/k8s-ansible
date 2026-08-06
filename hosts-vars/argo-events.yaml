@@ -202,6 +202,10 @@ all:
     # Role / ClusterRole:  {name, rules}
     # RoleBinding:         {name, namespace, roleRef, subjects}
     # ClusterRoleBinding:  {name, roleRef, subjects}
+    #
+    # ⚠️ ПУСТЫ НАМЕРЕННО — по той же причине, что argo_events_event_sources
+    # и argo_events_sensors ниже: права заводятся рядом со своим потоком, в
+    # git-ops продукте deploy-notify. Здесь остаётся только каркас фазы.
     # ------
     argo_events_rbac_helm_timeout: "5m"
     argo_events_rbac_service_accounts: []
@@ -238,7 +242,33 @@ all:
     argo_events_eventbus_jetstream_version: "2.10.29"
     argo_events_eventbus_jetstream_replicas: 1
     argo_events_eventbus_stream_replicas: 1
-    argo_events_eventbus_stream_max_age: "168h"
+    # Четверо суток вместо недели. Через шину едут УВЕДОМЛЕНИЯ, и хранить их
+    # неделю незачем: если потребитель лежал дольше, старые сообщения
+    # отправлять уже не надо. За историю платим диском — watch за Application
+    # льёт порядка 340 МБ в сутки (объект ~20 КБ, около 36 приложений, status
+    # переписывается на каждом reconcile контроллера ArgoCD), то есть на этом
+    # окне ожидается порядка 1.4 ГБ.
+    argo_events_eventbus_stream_max_age: "96h"
+    # Жёсткий потолок на диск — страховка на случай, если оценка выше врёт.
+    # Она линейно едет от размера объектов, их количества и частоты reconcile,
+    # то есть от величин, которыми этот файл не управляет. 6 GiB из 10 GiB
+    # тома: примерно четырёхкратный запас к ожидаемым 1.4 ГБ, а оставшиеся
+    # 4 GiB — под состояние консьюмеров, K/V-бакеты сенсоров (в JetStream они
+    # тоже стримы и лежат в том же сторе) и метаданные.
+    #
+    # По достижении лимита JetStream вытесняет САМОЕ СТАРОЕ (discard: DiscardOld
+    # по умолчанию), а не отклоняет новое. Для уведомлений это верный размен:
+    # потерять позавчерашнее сообщение не жалко, перестать принимать новые —
+    # нельзя. Заполнение же тома целиком означало бы, что писать некуда и шина
+    # встала вместе с обоими уведомлениями.
+    #
+    # ⚠️ ЧИСЛО В БАЙТАХ, НЕ СТРОКА. Значение читается viper'ом через GetInt64
+    # (jetstream.go:161), и привычное "6Gi" молча превратится в 0, а ноль
+    # сервер нормализует в -1, то есть в ОТСУТСТВИЕ лимита (проверено на живом
+    # NATS 2.10). Соседний maxAge при этом строку принимает — он читается через
+    # GetDuration. Два ключа рядом с разными правилами, легко перепутать.
+    # 6 * 1024^3 = 6442450944.
+    argo_events_eventbus_stream_max_bytes: 6442450944
     argo_events_eventbus_storage_class: "lnstr-major-local"
     argo_events_eventbus_volume_size: "10Gi"
     argo_events_eventbus_spec:
@@ -249,12 +279,30 @@ all:
           storageClassName: "{{ argo_events_eventbus_storage_class }}"
           accessMode: ReadWriteOnce
           volumeSize: "{{ argo_events_eventbus_volume_size }}"
+        # ⚠️ ЭТИ НАСТРОЙКИ ПРИМЕНЯЮТСЯ РОВНО ОДИН РАЗ — при СОЗДАНИИ стрима.
+        # Стрим создаёт первый подключившийся EventSource или Sensor
+        # (source_jetstream.go:27 / sensor_jetstream.go:50 -> Init ->
+        # CreateStream), а не контроллер шины. И CreateStream на уже
+        # существующем стриме выходит сразу: "No need to create Stream as it
+        # already exists" (jetstream.go:122-125) — новый конфиг НЕ применяется.
+        # Поэтому менять maxAge/maxBytes можно безболезненно только пока
+        # прикладных объектов нет. Позже потребуется удалить стрим вручную.
         streamConfig: |
           replicas: {{ argo_events_eventbus_stream_replicas }}
           maxAge: {{ argo_events_eventbus_stream_max_age }}
+          maxBytes: {{ argo_events_eventbus_stream_max_bytes }}
     # Списки прикладных объектов: элемент — {name, labels?, annotations?, spec},
-    # spec рендерится как есть. Реальные объекты живут в hosts-vars-override/
-    # конкретного кластера.
+    # spec рендерится как есть.
+    #
+    # ⚠️ ПУСТЫ НАМЕРЕННО, И ТАКИМИ ДОЛЖНЫ ОСТАВАТЬСЯ. Прикладные EventSource и
+    # Sensor живут в git-ops репозитории — продукт
+    # argocd-client/products-no-envs/deploy-notify в 1520-tech-infra, — по тому
+    # же разделу, что у mon-system: оператора ставит ansible, а его CR
+    # (AlertmanagerConfig, PrometheusRule) лежат в продукте system-observer.
+    #
+    # Заполнить эти списки означает завести ВТОРОГО владельца на те же объекты:
+    # helm-релиз argo-events-cr и ArgoCD начнут переписывать их друг за другом.
+    # Если понадобился новый поток — он заводится в git-ops, а не здесь.
     argo_events_event_sources: []
     argo_events_sensors: []
     argo_events_cr_helm_timeout: "5m"
