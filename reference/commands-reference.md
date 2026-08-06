@@ -119,7 +119,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags gitops` — for `argocd` (AppProjects + Applications)
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
-- `--tags webhook`, `--tags rbac`, `--tags cr` — for `argo-events` (validating admission webhook / ServiceAccounts + Roles + bindings / EventBus + EventSources + Sensors)
+- `--tags rbac`, `--tags cr` — for `argo-events` (ServiceAccounts + Roles + bindings / EventBus + EventSources + Sensors)
 
 `tags: [always]` tasks (`tasks-pre-check`, `tasks-vault-config-verify`, `tasks-eso-verify`) run regardless of `--tags`.
 
