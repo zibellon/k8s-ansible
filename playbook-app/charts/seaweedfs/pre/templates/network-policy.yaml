@@ -107,23 +107,46 @@ spec:
 # =============================================================================
 # SEAWEEDFS VOLUME POLICIES
 # =============================================================================
+# Отдельной политики для volume-серверов НЕТ, и это осознанно:
+#   1) Бинарь `weed` вообще не содержит Kubernetes-клиента (в weed/ нет
+#      k8s.io/client-go / k8s.io/api, их нет и в go.mod), поэтому ни один
+#      volume-сервер физически не может обратиться к apiserver. ServiceAccount
+#      на pod'е — легаси миграционного хака (см. комментарии в upstream
+#      cluster-role.yaml и volume-statefulset.yaml), а не рантайм-потребность.
+#   2) Volume-серверы наружу не публикуются, cross-namespace ingress от Traefik
+#      им не нужен — то есть у политики не осталось бы ни одного правила.
+#   3) При `volumes:` (plural) компонентная метка pod'а = `volume-<tier>`
+#      (upstream volume-statefulset.yaml), а не `volume`, поэтому селектор
+#      `component: volume` всё равно не выбирал ни одного pod'а.
+# Внутрикластерный трафик volume-серверам даёт allow-internal-traffic,
+# DNS — allow-dns-egress, скрейп метрик — allow-for-monitoring.
 
 ---
-# SeaweedFS Volume: egress to apiserver (pod management via ClusterRole).
-# Intra-namespace traffic covered by allow-internal-traffic.
+# Volume resize hook: upstream Job (helm.sh/hook: pre-install,pre-upgrade),
+# который при изменении dataDirs[].size выполняет
+# `kubectl delete statefulset --cascade=orphan` + `kubectl patch pvc`
+# (volumeClaimTemplates у StatefulSet иммутабельны — иначе PVC не вырастить).
+# В отличие от самих volume-серверов ему apiserver НУЖЕН, а под deny-all
+# egress к нему закрыт → без этой политики Job зависает/падает посреди
+# pre-upgrade, ДО применения манифеста (helm не откатывает side-effects хуков).
+# Метку `volume-resize-hook` на pod'ах Job'а даёт upstream #10478 (chart >= 4.41);
+# на более старых чартах pod'ы Job'а были без меток и не выбирались никаким
+# селектором. Порт — apiserver.port (6443): Cilium заменяет kube-proxy и делает
+# трансляцию ClusterIP на socket-LB ДО применения политики, поэтому политика
+# видит уже бэкенд <node-ip>:6443, а не 443 сервиса kubernetes.default.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: seaweedfs-volume
+  name: seaweedfs-volume-resize-hook
   namespace: {{ .Values.namespace }}
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/component: volume
+      app.kubernetes.io/component: volume-resize-hook
   policyTypes:
     - Egress
   egress:
-    # To Kubernetes apiserver (pod management via ClusterRole)
+    # To Kubernetes apiserver (kubectl delete statefulset / patch pvc)
     - ports:
         - protocol: TCP
           port: {{ .Values.apiserver.port }}
