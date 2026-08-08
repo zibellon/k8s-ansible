@@ -363,7 +363,7 @@ all:
     seaweedfs_helm_url: "https://seaweedfs.github.io/seaweedfs/helm"
     seaweedfs_helm_repo_name: "seaweedfs"
     seaweedfs_helm_chart_name: "seaweedfs"
-    seaweedfs_helm_chart_version: "4.40.0"
+    seaweedfs_helm_chart_version: "4.41.0"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     seaweedfs_install_extra_objects: []
     # Install-phase kustomize patches (operator-side customization, default empty)
@@ -378,6 +378,27 @@ all:
     # Master: volume seal size MB (capacity) + default replication fallback
     seaweedfs_helm_values_master_volume_size_limit_mb: 200
     seaweedfs_helm_values_master_default_replication: "000"
+    # --- CLI-флаги бинаря (телеметрия / write-path) ---
+    # Master: extra CLI-флаги для `weed master`. Чарт рендерит их в command
+    # (templates/master/master-statefulset.yaml:177 — range .Values.master.extraArgs).
+    # -telemetry=false — с 4.41 (upstream #10488) дефолт флага -telemetry перевёрнут
+    # false→true: leader-мастер через 61 s после старта и далее раз в 24 h POST'ит
+    # статистику кластера (topology_id / version / os / счётчики серверов+томов /
+    # total_disk_bytes) на https://telemetry.seaweedfs.com/api/collect. topology_id —
+    # UUID, персистируемый в raft (MaxVolumeIdCommand.TopologyId), т.е. стабильный
+    # между рестартами. Отдельного knob'а под телеметрию в чарте НЕТ — только extraArgs.
+    seaweedfs_helm_values_master_extra_args:
+      - "-telemetry=false"
+    # Filer: -maxMB — размер чанка при chunked-записи. Бинарный дефолт weed = 4
+    # (weed/command/filer.go: "split files larger than the limit"); комментарий
+    # "default 32" в upstream values.yaml НЕВЕРЕН.
+    # До 4.41 S3-gateway резал чанк фиксированно по 8 MiB (хардкод const chunkSize
+    # в s3api_object_handlers_put.go, -maxMB на S3 не влиял). С 4.41 (upstream #10439)
+    # gateway читает это значение у filer'а ОДИН раз при старте и режет им свои чанки,
+    # поэтому без явного пина чанк молча упал бы 8 → 4 MiB: x2 needles, x2 Assign-RPC
+    # к единственному мастеру, x2 POST'ов на volume-серверы и x2 записей в chunk-list
+    # (Postgres filemeta) на каждом объекте > 4 MiB. 8 = сохраняем поведение 4.40.
+    seaweedfs_helm_values_filer_max_mb: 8
     # Master: стратегия роста томов (едет в master.toml → секция [master.volume_growth]).
     # База держит ПОЛНУЮ структуру со значениями, равными дефолтам бинаря
     # (weed/topology/volume_growth.go:50-58) — т.е. сама по себе ничего не меняет.
@@ -501,6 +522,8 @@ all:
       # Логи в stdout/stderr (chart emits -logtostderr=true когда logs.type не set)
       logs: {}
       resources: "{{ seaweedfs_helm_values_filer_resources }}"
+      # Размер чанка (-maxMB). С 4.41 его читает и S3-gateway — см. knob выше.
+      maxMB: "{{ seaweedfs_helm_values_filer_max_mb }}"
       # PostgreSQL backend (postgres2, table-per-bucket) через env vars — отключаем leveldb,
       # включаем postgres2. WEED_POSTGRES2_CREATETABLE → filer создаёт filemeta + per-bucket
       # таблицы сам. WEED_LEVELDB2_ENABLED:"false" обязателен (иначе два enabled-стора →
@@ -612,6 +635,8 @@ all:
         # входит в seaweedfs_install_rollout_resources). Рестарт нужен и по второй
         # причине: он обнуляет in-memory lastGrowCount у всех VolumeLayout.
         config: "{{ seaweedfs_helm_values_master_config }}"
+        # Extra CLI-флаги мастера (-telemetry=false) — см. knob выше.
+        extraArgs: "{{ seaweedfs_helm_values_master_extra_args }}"
 
       # Singular volume отключён — используем volumes: (plural) для тир-размещения.
       # Chart мёрджит singular в named-группы (mergeOverwrite deepCopy volume → group),
