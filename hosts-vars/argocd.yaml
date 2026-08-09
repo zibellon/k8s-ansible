@@ -173,15 +173,17 @@ all:
     # Содержимое ЦЕЛИКОМ из Vault: template-only ExternalSecret отвергается
     # admission-вебхуком ESO ("either data or dataFrom should be specified"),
     # поэтому dataFrom.extract, а template несёт только метку.
+    # Путь под clusters/ — расширяемо: внешние кластеры лягут соседями
+    # (clusters/<name>), каждый своим ExternalSecret'ом.
     # Оператор заполняет путь до первого прогона --tags pre:
-    #   vault kv put eso-secret/argocd/in-cluster \
+    #   vault kv put eso-secret/argocd/clusters/in-cluster \
     #     name="in-cluster" server="https://kubernetes.default.svc" \
     #     namespaces="argocd,..." clusterResources="true" \
     #     config='{"tlsClientConfig":{"insecure":false}}'
     # ⚠️ Это НЕ argocd-secret — инвариант про его пустоту сюда не относится.
     argocd_secret_in_cluster:
       external_secret_name: "eso-argocd-in-cluster"
-      vault_path: "/argocd/in-cluster"
+      vault_path: "/argocd/clusters/in-cluster"
       body:
         target:
           name: "eso-argocd-in-cluster"
@@ -192,7 +194,7 @@ all:
                 argocd.argoproj.io/secret-type: cluster
         dataFrom:
           - extract:
-              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/in-cluster"
+              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/clusters/in-cluster"
 
     # Base ESO secrets list: in-cluster запись — БЕЗУСЛОВНО (namespace-scoped ArgoCD
     # без неё нерабочий). OIDC client-secret — только при argocd_oidc_enabled: true.
