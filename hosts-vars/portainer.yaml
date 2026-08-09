@@ -1,0 +1,252 @@
+all:
+  vars:
+    # Component enable flag (default false, opt-in): guards install start.
+    portainer_enabled: false
+
+    # ------
+
+    portainer_namespace: "portainer"
+
+    # Ingress + TLS (домен — placeholder, реальный задаётся в hosts-vars-override/<cluster>/)
+    portainer_ui_domain: "portainer-ui-k8s-v2.drawapp.ru"
+    portainer_ui_tls_secret_name: "cert-portainer"
+    portainer_ingress_class_name: "traefik-lb"
+    portainer_ui_vpn_only_enabled: false
+
+    # Порты — зафиксированы upstream-чартом (targetPort захардкожены 9000/9443/8000).
+    # Service отдаёт все три даже при type=ClusterIP; NetworkPolicy пускает только http.
+    portainer_http_port: 9000
+    portainer_https_port: 9443
+    portainer_edge_port: 8000
+
+    # CSRF trusted origin: ТОЛЬКО голый хост. pkg/validate.IsTrustedOrigin отклоняет схему
+    # (`://`), порт, путь и query — невалидное значение роняет процесс через log.Fatal.
+    portainer_trusted_origins: "{{ portainer_ui_domain }}"
+
+    # ------
+    # ------
+    # ------
+
+    portainer_acme_issuer_name: "portainer-acme"
+    portainer_acme_private_key_name: "portainer-acme-account-key"
+    portainer_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    portainer_acme_email: "some-email-123@gmail.com"
+    portainer_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    portainer_cert_manager_issuer_enabled: true
+    portainer_cert_manager_issuer:
+      enabled: "{{ portainer_cert_manager_issuer_enabled }}"
+      name: "{{ portainer_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ portainer_acme_server }}"
+          email: "{{ portainer_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ portainer_acme_private_key_name }}"
+          solvers: "{{ portainer_acme_solvers }}"
+
+    # ------
+    # ------
+    # ------
+
+    portainer_ui_ingress_enabled: true
+    portainer_ui_ingress_tls_enabled: true
+    portainer_ui_certificate_enabled: true
+    portainer_ui_ingress_config:
+      enabled: "{{ portainer_ui_ingress_enabled }}"
+      domain: "{{ portainer_ui_domain }}"
+      ingressClass: "{{ portainer_ingress_class_name }}"
+      tlsEnabled: "{{ portainer_ui_ingress_tls_enabled }}"
+      tlsSecretName: "{{ portainer_ui_tls_secret_name }}"
+      vpnOnlyEnabled: "{{ portainer_ui_vpn_only_enabled }}"
+      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    portainer_ui_certificate:
+      enabled: "{{ portainer_ui_certificate_enabled }}"
+      name: "{{ portainer_ui_tls_secret_name }}"
+      spec:
+        secretName: "{{ portainer_ui_tls_secret_name }}"
+        dnsNames:
+          - "{{ portainer_ui_domain }}"
+        issuerRef:
+          name: "{{ portainer_acme_issuer_name }}"
+          kind: "Issuer"
+
+    # ------
+    # ------
+    # ------
+
+    # Admin-пароль лежит в Vault (eso-secret/portainer/app) ОТКРЫТЫМ текстом — это
+    # единственный способ оператора его узнать. Portainer принимает plaintext-файл и
+    # хэширует сам (--admin-password-file). Имя ключа менять НЕЛЬЗЯ: upstream-чарт
+    # хардкодит items[0].key: password при монтировании секрета.
+    # Пароль применяется, только пока админов ещё нет — ротации нет.
+    portainer_admin_password_secret_key: "password"
+
+    # === SECTION 2: ESO ===
+    # ---------
+    # ESO integration: Vault → K8s Secrets
+    # Базовые секреты — named-переменные с полным dict-объектом; _extra — расширение
+    # оператора через hosts-vars-override/. chart eso-external-secret.yaml рендерит
+    # .Values.eso.secrets единообразно (base-ссылки + _extra dict'ы).
+    # ---------
+    eso_vault_integration_portainer:
+      sa_name: "eso-main"
+      role_name: "portainer.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    portainer_secret_app:
+      external_secret_name: "eso-portainer-app"
+      vault_path: "/portainer/app"
+      body:
+        target:
+          name: "eso-portainer-app"
+        data:
+          - secretKey: "{{ portainer_admin_password_secret_key }}"
+            remoteRef:
+              key: "{{ eso_vault_integration_portainer.kv_engine_path }}/data/portainer/app"
+              property: "{{ portainer_admin_password_secret_key }}"
+
+    eso_vault_integration_portainer_secrets:
+      - "{{ portainer_secret_app }}"
+
+    eso_vault_integration_portainer_secrets_extra: []
+
+    # === SECTION 3 ===
+    # --- PHASE: pre ---
+    portainer_pre_helm_timeout: "5m"
+    portainer_pre_extra_objects: []
+    portainer_pre_kustomize_patches: []
+    # Pre-phase values (ESO Resources + NetworkPolicies + cert-manager Issuer chart)
+    portainer_pre_helm_values:
+      namespace: "{{ portainer_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      portainer:
+        httpPort: "{{ portainer_http_port }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_portainer.sa_name }}"
+        roleName: "{{ eso_vault_integration_portainer.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_portainer.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_portainer.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_portainer_secrets + (eso_vault_integration_portainer_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      issuer: "{{ portainer_cert_manager_issuer }}"
+      extraObjects: "{{ portainer_pre_extra_objects }}"
+
+    # --- PHASE: install (upstream chart portainer/portainer) ---
+    portainer_helm_is_oci: false
+    portainer_helm_url: "https://portainer.github.io/k8s/"
+    portainer_helm_repo_name: "portainer"
+    portainer_helm_chart_name: "portainer"
+    portainer_helm_chart_version: "239.5.0"
+
+    portainer_image_repository: "docker.io/portainer/portainer-ce"
+    portainer_image_tag: "2.39.5-alpine"
+    portainer_image_pull_policy: "IfNotPresent"
+    portainer_replica_count: 1
+    # SA, на который upstream-чарт вешает ClusterRoleBinding → cluster-admin (localMgmt).
+    portainer_service_account_name: "portainer-sa-clusteradmin"
+    portainer_storage_class: "lnstr-major-multi-sync"
+    portainer_storage_size: "1Gi"
+    portainer_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    portainer_node_selector:
+      node-role.kubernetes.io/worker: ""
+    portainer_tolerations: []
+    # feature.flags чарта = сырые extra-args к бинарю. Отдельной ручки для --log-mode
+    # в values нет, env-переменной у флага тоже нет — это единственный путь к JSON-логам.
+    portainer_feature_flags:
+      - "--log-mode=JSON"
+    # Точки расширения upstream-чарта (operator-side, дефолт пустой).
+    portainer_extra_env: []
+    portainer_service_annotations: {}
+    portainer_pvc_annotations: {}
+
+    portainer_install_helm_timeout: "10m"
+    portainer_install_rollout_timeout: "300s"
+    # Restart-phase rollout wait timeout (portainer-restart.yaml)
+    portainer_install_restart_rollout_timeout: "300s"
+    # Deployment waited on after install
+    portainer_install_rollout_resources:
+      - deployment.apps/portainer
+    # Install-phase values (upstream chart portainer/portainer)
+    portainer_helm_values:
+      replicaCount: "{{ portainer_replica_count }}"
+      image:
+        repository: "{{ portainer_image_repository }}"
+        tag: "{{ portainer_image_tag }}"
+        pullPolicy: "{{ portainer_image_pull_policy }}"
+      localMgmt: true
+      serviceAccount:
+        name: "{{ portainer_service_account_name }}"
+      service:
+        type: "ClusterIP"
+        httpPort: "{{ portainer_http_port }}"
+        httpsPort: "{{ portainer_https_port }}"
+        edgePort: "{{ portainer_edge_port }}"
+        annotations: "{{ portainer_service_annotations }}"
+      adminPassword:
+        existingSecret: "{{ portainer_secret_app.body.target.name }}"
+      trusted_origins:
+        enabled: true
+        domains: "{{ portainer_trusted_origins }}"
+      feature:
+        flags: "{{ portainer_feature_flags }}"
+      extraEnv: "{{ portainer_extra_env }}"
+      resources: "{{ portainer_resources }}"
+      nodeSelector: "{{ portainer_node_selector }}"
+      tolerations: "{{ portainer_tolerations }}"
+      persistence:
+        enabled: true
+        size: "{{ portainer_storage_size }}"
+        storageClass: "{{ portainer_storage_class }}"
+        annotations: "{{ portainer_pvc_annotations }}"
+      # Ingress рендерит наша фаза post (Traefik + cert-manager), не upstream-чарт.
+      ingress:
+        enabled: false
+
+    # --- PHASE: post ---
+    portainer_post_helm_timeout: "5m"
+    portainer_post_extra_objects: []
+    portainer_post_kustomize_patches: []
+    # Post-phase values (Ingress + cert-manager Certificate chart)
+    portainer_post_helm_values:
+      namespace: "{{ portainer_namespace }}"
+      ingressConfig: "{{ portainer_ui_ingress_config }}"
+      certificateConfig: "{{ portainer_ui_certificate }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      service:
+        port: "{{ portainer_http_port }}"
+      extraObjects: "{{ portainer_post_extra_objects }}"
