@@ -68,16 +68,23 @@ ansible-playbook ... --limit w1,w2,w3
 ### 2.5 Application stack (in dependency order)
 
 ```bash
+# namespace'ы кластера — до всего, что в них раскатывается
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-base-install.yaml --tags namespaces
+
 for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader argo-rollouts longhorn \
          seaweedfs \
          mon-system \
          argocd gitlab gitlab-runner zitadel teleport filestash portainer outline kargo argo-events haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
+
+# RBAC — последним: RoleBinding нельзя создать в несуществующем namespace
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-base-install.yaml --tags rbac
 ```
 
 **Dependency highlights** (see [`components.md`](components.md) §19 for full tier diagram):
 
+- `cluster-base` разнесён надвое: `--tags namespaces` идёт первым (namespace'ы должны существовать до раскатки в них), `--tags rbac` — последним (`RoleBinding` нельзя создать в несуществующем namespace, а его элементы адресуют namespace'ы `traefik-lb` / `seaweedfs` / `argocd` / `argo-events`). Требует `cluster_base_enabled: true`. См. [`components.md`](components.md) §17.13
 - `cilium` first (CNI — nothing networks until it's up)
 - `cert-manager` before anything with TLS
 - `external-secrets` before anything with ESO
@@ -121,6 +128,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
 - `--tags rbac`, `--tags cr` — for `argo-events` (ServiceAccounts + Roles + bindings / EventBus + EventSources + Sensors)
+- `--tags namespaces`, `--tags rbac` — for `cluster-base` (Namespace objects / ServiceAccounts + Roles + ClusterRoles + bindings). Стандартных `pre`/`install`/`post` у компонента нет, см. [`playbook-conventions.md`](playbook-conventions.md) §6.5
 
 `tags: [always]` tasks (`tasks-pre-check`, `tasks-vault-config-verify`, `tasks-eso-verify`) run regardless of `--tags`.
 
