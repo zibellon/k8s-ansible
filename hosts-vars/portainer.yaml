@@ -21,6 +21,7 @@ all:
 
     # CSRF trusted origin: ТОЛЬКО голый хост. pkg/validate.IsTrustedOrigin отклоняет схему
     # (`://`), порт, путь и query — невалидное значение роняет процесс через log.Fatal.
+    portainer_trusted_origins_enabled: true
     portainer_trusted_origins: "{{ portainer_ui_domain }}"
 
     # ------
@@ -90,7 +91,7 @@ all:
     # ------
     # ------
 
-    # Admin-пароль лежит в Vault (eso-secret/portainer/app) ОТКРЫТЫМ текстом — это
+    # Admin-пароль лежит в Vault (eso-secret/portainer/admin-creds) ОТКРЫТЫМ текстом — это
     # единственный способ оператора его узнать. Portainer принимает plaintext-файл и
     # хэширует сам (--admin-password-file). Имя ключа менять НЕЛЬЗЯ: upstream-чарт
     # хардкодит items[0].key: password при монтировании секрета.
@@ -110,20 +111,20 @@ all:
       secret_store_name: "eso-main.vault"
       kv_engine_path: "eso-secret"
 
-    portainer_secret_app:
-      external_secret_name: "eso-portainer-app"
-      vault_path: "/portainer/app"
+    portainer_secret_admin_creds:
+      external_secret_name: "eso-portainer-admin-creds"
+      vault_path: "/portainer/admin-creds"
       body:
         target:
-          name: "eso-portainer-app"
+          name: "eso-portainer-admin-creds"
         data:
           - secretKey: "{{ portainer_admin_password_secret_key }}"
             remoteRef:
-              key: "{{ eso_vault_integration_portainer.kv_engine_path }}/data/portainer/app"
+              key: "{{ eso_vault_integration_portainer.kv_engine_path }}/data/portainer/admin-creds"
               property: "{{ portainer_admin_password_secret_key }}"
 
     eso_vault_integration_portainer_secrets:
-      - "{{ portainer_secret_app }}"
+      - "{{ portainer_secret_admin_creds }}"
 
     eso_vault_integration_portainer_secrets_extra: []
 
@@ -169,6 +170,14 @@ all:
     portainer_replica_count: 1
     # SA, на который upstream-чарт вешает ClusterRoleBinding → cluster-admin (localMgmt).
     portainer_service_account_name: "portainer-sa-clusteradmin"
+    # localMgmt гейтит в чарте три вещи: создание ServiceAccount, создание
+    # ClusterRoleBinding на cluster-admin и строку serviceAccountName в поде.
+    # Нужен, чтобы Portainer управлял тем кластером, в котором сам работает.
+    # false → под едет под `default` SA, локальное окружение в UI нерабочее
+    # (сценарий «только удалённые Edge-окружения», у нас не используется).
+    portainer_local_mgmt: true
+    portainer_service_type: "ClusterIP"
+    portainer_persistence_enabled: true
     portainer_storage_class: "lnstr-major-multi-sync"
     portainer_storage_size: "1Gi"
     portainer_resources:
@@ -189,6 +198,8 @@ all:
     portainer_extra_env: []
     portainer_service_annotations: {}
     portainer_pvc_annotations: {}
+    # Ingress рендерит наша фаза post (Traefik + cert-manager) — у upstream-чарта выключен.
+    portainer_upstream_ingress_enabled: false
 
     portainer_install_helm_timeout: "10m"
     portainer_install_rollout_timeout: "300s"
@@ -204,19 +215,19 @@ all:
         repository: "{{ portainer_image_repository }}"
         tag: "{{ portainer_image_tag }}"
         pullPolicy: "{{ portainer_image_pull_policy }}"
-      localMgmt: true
+      localMgmt: "{{ portainer_local_mgmt }}"
       serviceAccount:
         name: "{{ portainer_service_account_name }}"
       service:
-        type: "ClusterIP"
+        type: "{{ portainer_service_type }}"
         httpPort: "{{ portainer_http_port }}"
         httpsPort: "{{ portainer_https_port }}"
         edgePort: "{{ portainer_edge_port }}"
         annotations: "{{ portainer_service_annotations }}"
       adminPassword:
-        existingSecret: "{{ portainer_secret_app.body.target.name }}"
+        existingSecret: "{{ portainer_secret_admin_creds.body.target.name }}"
       trusted_origins:
-        enabled: true
+        enabled: "{{ portainer_trusted_origins_enabled }}"
         domains: "{{ portainer_trusted_origins }}"
       feature:
         flags: "{{ portainer_feature_flags }}"
@@ -225,13 +236,12 @@ all:
       nodeSelector: "{{ portainer_node_selector }}"
       tolerations: "{{ portainer_tolerations }}"
       persistence:
-        enabled: true
+        enabled: "{{ portainer_persistence_enabled }}"
         size: "{{ portainer_storage_size }}"
         storageClass: "{{ portainer_storage_class }}"
         annotations: "{{ portainer_pvc_annotations }}"
-      # Ingress рендерит наша фаза post (Traefik + cert-manager), не upstream-чарт.
       ingress:
-        enabled: false
+        enabled: "{{ portainer_upstream_ingress_enabled }}"
 
     # --- PHASE: post ---
     portainer_post_helm_timeout: "5m"

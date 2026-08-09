@@ -19,8 +19,8 @@
 #
 # NOTE: admin password is auto-generated at first install (seed-if-missing):
 #       the playbook generates a random plaintext and stores it at
-#       eso-secret/portainer/app (field "password"). ESO materializes it into
-#       K8s Secret eso-portainer-app, which the chart mounts and passes to
+#       eso-secret/portainer/admin-creds (field "password"). ESO materializes it
+#       into K8s Secret eso-portainer-admin-creds, which the chart mounts and passes to
 #       Portainer via --admin-password-file. Portainer hashes it itself, so no
 #       bcrypt/passlib is needed on the control node. The plaintext stays in
 #       Vault — that is how the operator learns the password.
@@ -142,7 +142,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
       vars:
         dto_label_name: "portainer-admin-secrets"
-        dto_vault_get_path: "{{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_app.vault_path }}"
+        dto_vault_get_path: "{{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_admin_creds.vault_path }}"
         dto_vault_get_field: "{{ portainer_admin_password_secret_key }}"
         dto_vault_get_res_fact_name: "{{ _local_portainer_admin_vault_key }}"
         dto_vault_get_res_exists_fact_name: "{{ _local_portainer_admin_vault_exists_key }}"
@@ -172,7 +172,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
       vars:
         dto_label_name: "portainer-admin-secrets"
-        dto_vault_put_path: "{{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_app.vault_path }}"
+        dto_vault_put_path: "{{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_admin_creds.vault_path }}"
         dto_vault_put_data: "{{ lookup('vars', _local_portainer_admin_put_data_key) }}"
       when: not lookup('vars', _local_portainer_admin_vault_exists_key)
       tags: [install]
@@ -188,7 +188,7 @@
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
       vars:
         dto_label_name: "portainer-install"
-        dto_wait_secret_name: "{{ portainer_secret_app.body.target.name }}"
+        dto_wait_secret_name: "{{ portainer_secret_admin_creds.body.target.name }}"
         dto_wait_secret_namespace: "{{ portainer_namespace }}"
       tags: [install]
 
@@ -322,7 +322,7 @@
           - ""
           - "Admin login: admin"
           - "Admin password (plaintext) in Vault:"
-          - "  {{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_app.vault_path }} (key: {{ portainer_admin_password_secret_key }})"
+          - "  {{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_admin_creds.vault_path }} (key: {{ portainer_admin_password_secret_key }})"
           - ""
           - "The password is applied only while no admin exists yet — no rotation."
           - "=============================================="
