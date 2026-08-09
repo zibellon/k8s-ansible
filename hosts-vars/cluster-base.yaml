@@ -63,6 +63,14 @@ all:
     # ClusterRole:         {name, labels?, annotations?, rules}
     # RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
     # ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
+    #
+    # ⚠️ ВСЕ ПЯТЬ _base ПУСТЫ НАМЕРЕННО. Компонент — чистый рендерер: он не знает
+    # ни про ArgoCD, ни про Kargo, ни про кого-либо ещё. Кому и что выдавать —
+    # решение оператора конкретного кластера, поэтому объекты целиком живут в
+    # hosts-vars-override/<cluster>/cluster-base.yaml. В частности, роли
+    # argocd-managed-* (deployer / ui / cluster-kargo) и их привязки объявлены
+    # там, а не здесь. Общий для всех кластеров объект появится в _base только
+    # если такой действительно найдётся.
     # ------
     cluster_base_rbac_helm_timeout: "3m"
 
@@ -78,44 +86,7 @@ all:
       {{ cluster_base_rbac_roles_base
          + cluster_base_rbac_roles_extra }}
 
-    # ArgoCD переведён на namespace-scoped установку: upstream ClusterRole и
-    # ClusterRoleBinding сняты с манифеста. Здесь — ОПРЕДЕЛЕНИЯ прав; сами по
-    # себе они никого ничем не наделяют. Права возникают там, где на роль
-    # сослался RoleBinding, и ограничены его namespace. RoleBinding'и оператор
-    # заводит в hosts-vars-override/, по одной записи на namespace.
-    #   argocd-managed-deployer      → SA argocd-application-controller
-    #   argocd-managed-ui            → SA argocd-server (логи, терминал, UI-действия)
-    #   argocd-managed-cluster-kargo → единственное cluster-wide право ArgoCD;
-    #     привязано ClusterRoleBinding'ом ниже. Namespace в whitelist НЕ входит —
-    #     создавать namespace ArgoCD не может по построению.
-    cluster_base_rbac_cluster_roles_base:
-      - name: "argocd-managed-deployer"
-        rules:
-          - apiGroups: ["*"]
-            resources: ["*"]
-            verbs: ["*"]
-      - name: "argocd-managed-ui"
-        rules:
-          - apiGroups: ["*"]
-            resources: ["*"]
-            verbs: ["delete", "get", "patch"]
-          - apiGroups: [""]
-            resources: ["events"]
-            verbs: ["list"]
-          - apiGroups: [""]
-            resources: ["pods", "pods/log"]
-            verbs: ["get"]
-          - apiGroups: [""]
-            resources: ["pods/exec"]
-            verbs: ["create"]
-          - apiGroups: ["batch"]
-            resources: ["jobs"]
-            verbs: ["create"]
-      - name: "argocd-managed-cluster-kargo"
-        rules:
-          - apiGroups: ["kargo.akuity.io"]
-            resources: ["projects"]
-            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    cluster_base_rbac_cluster_roles_base: []
     cluster_base_rbac_cluster_roles_extra: []
     cluster_base_rbac_cluster_roles: >-
       {{ cluster_base_rbac_cluster_roles_base
@@ -127,19 +98,7 @@ all:
       {{ cluster_base_rbac_role_bindings_base
          + cluster_base_rbac_role_bindings_extra }}
 
-    cluster_base_rbac_cluster_role_bindings_base:
-      - name: "argocd-managed-cluster-kargo"
-        roleRef:
-          apiGroup: rbac.authorization.k8s.io
-          kind: ClusterRole
-          name: "argocd-managed-cluster-kargo"
-        subjects:
-          - kind: ServiceAccount
-            name: "argocd-application-controller"
-            namespace: "{{ argocd_namespace }}"
-          - kind: ServiceAccount
-            name: "argocd-server"
-            namespace: "{{ argocd_namespace }}"
+    cluster_base_rbac_cluster_role_bindings_base: []
     cluster_base_rbac_cluster_role_bindings_extra: []
     cluster_base_rbac_cluster_role_bindings: >-
       {{ cluster_base_rbac_cluster_role_bindings_base
