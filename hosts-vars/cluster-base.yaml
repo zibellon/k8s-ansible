@@ -1,0 +1,161 @@
+all:
+  vars:
+    # =========================================================================
+    # cluster-base — глобальная обвязка кластера: namespace'ы и RBAC в них.
+    # Компонент не привязан к приложению: он заводит namespace'ы и выдаёт
+    # права в них любым субъектам (сегодня — ArgoCD, завтра — кто угодно).
+    #
+    # Два независимых stage, два helm-релиза, два «домашних» namespace:
+    #   --tags namespaces → релиз cluster-base-namespaces в ns cluster-namespaces
+    #   --tags rbac       → релиз cluster-base-rbac       в ns cluster-rbac
+    #
+    # Отступление от трёхфазного паттерна (playbook-conventions.md §6.1)
+    # осознанное: у компонента нет workload'а, ESO и ingress — фазы
+    # pre/install/post были бы пустыми.
+    #
+    # ⚠️ ИМЕНОВАНИЕ — ОТВЕТСТВЕННОСТЬ ОПЕРАТОРА. Stage rbac рендерит объекты
+    # в ЧУЖИЕ namespace'ы, которыми владеют другие helm-релизы (argocd,
+    # argo-events, kargo, релизы продуктов из git-ops). Helm 3 отказывается
+    # перенимать существующий объект: совпадение имени в том же namespace
+    # роняет ВЕСЬ stage на invalid ownership metadata. Имя обязано быть
+    # уникальным относительно всех прочих релизов и того, что раскатывает
+    # ArgoCD. Приём — префикс-маркер владельца в имени (argocd-managed-*).
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start.
+    cluster_base_enabled: false
+
+    # «Домашние» namespace'ы helm-релизов. Объекты обоих stage либо
+    # cluster-scoped, либо живут в чужих namespace — сюда попадает только
+    # состояние самого helm.
+    cluster_base_namespaces_namespace: "cluster-namespaces"
+    cluster_base_rbac_namespace: "cluster-rbac"
+
+    # Разовые доп-флаги helm CLI, подставляются в конец команды ОБОИХ stage.
+    # Дефолт пуст, в hosts-vars-override/ не прописывается. Единственное
+    # назначение — разовый adoption уже существующих в кластере объектов:
+    #   -e cluster_base_helm_extra_flags=--take-ownership
+    # Постоянно держать флаг нельзя: он глушит ту самую ошибку
+    # invalid ownership metadata, которая защищает от коллизии имён.
+    cluster_base_helm_extra_flags: ""
+
+    # ------
+    # STAGE: namespaces
+    # Элемент — полная спецификация объекта: {name, labels?, annotations?}.
+    # labels нужны, например, kargo-namespace'у: без метки
+    # kargo.akuity.io/project=true Kargo не «усыновит» его.
+    # ⚠️ Защиты от удаления нет: убрал элемент из списка — следующий прогон
+    # снесёт namespace вместе с содержимым.
+    # Реальные значения — в hosts-vars-override/<cluster>/cluster-base.yaml.
+    # ------
+    cluster_base_namespaces_helm_timeout: "3m"
+    cluster_base_namespaces_list: []
+    cluster_base_namespaces_list_extra: []
+    cluster_base_namespaces_extra_objects: []
+    cluster_base_namespaces_kustomize_patches: []
+    cluster_base_namespaces_helm_values:
+      namespaces: "{{ cluster_base_namespaces_list + cluster_base_namespaces_list_extra }}"
+      extraObjects: "{{ cluster_base_namespaces_extra_objects }}"
+
+    # ------
+    # STAGE: rbac
+    # Пять независимых списков, по одному на тип объекта. Каждый — пара
+    # _base / _extra: _base держит объекты, общие для всех кластеров,
+    # _extra — per-cluster, задаётся в hosts-vars-override/.
+    # Связей между списками шаблон не проверяет.
+    # SA:                  {name, namespace, labels?, annotations?}
+    # Role:                {name, namespace, labels?, annotations?, rules}
+    # ClusterRole:         {name, labels?, annotations?, rules}
+    # RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
+    # ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
+    # ------
+    cluster_base_rbac_helm_timeout: "3m"
+
+    cluster_base_rbac_service_accounts_base: []
+    cluster_base_rbac_service_accounts_extra: []
+    cluster_base_rbac_service_accounts: >-
+      {{ cluster_base_rbac_service_accounts_base
+         + cluster_base_rbac_service_accounts_extra }}
+
+    cluster_base_rbac_roles_base: []
+    cluster_base_rbac_roles_extra: []
+    cluster_base_rbac_roles: >-
+      {{ cluster_base_rbac_roles_base
+         + cluster_base_rbac_roles_extra }}
+
+    # ArgoCD переведён на namespace-scoped установку: upstream ClusterRole и
+    # ClusterRoleBinding сняты с манифеста. Здесь — ОПРЕДЕЛЕНИЯ прав; сами по
+    # себе они никого ничем не наделяют. Права возникают там, где на роль
+    # сослался RoleBinding, и ограничены его namespace. RoleBinding'и оператор
+    # заводит в hosts-vars-override/, по одной записи на namespace.
+    #   argocd-managed-deployer      → SA argocd-application-controller
+    #   argocd-managed-ui            → SA argocd-server (логи, терминал, UI-действия)
+    #   argocd-managed-cluster-kargo → единственное cluster-wide право ArgoCD;
+    #     привязано ClusterRoleBinding'ом ниже. Namespace в whitelist НЕ входит —
+    #     создавать namespace ArgoCD не может по построению.
+    cluster_base_rbac_cluster_roles_base:
+      - name: "argocd-managed-deployer"
+        rules:
+          - apiGroups: ["*"]
+            resources: ["*"]
+            verbs: ["*"]
+      - name: "argocd-managed-ui"
+        rules:
+          - apiGroups: ["*"]
+            resources: ["*"]
+            verbs: ["delete", "get", "patch"]
+          - apiGroups: [""]
+            resources: ["events"]
+            verbs: ["list"]
+          - apiGroups: [""]
+            resources: ["pods", "pods/log"]
+            verbs: ["get"]
+          - apiGroups: [""]
+            resources: ["pods/exec"]
+            verbs: ["create"]
+          - apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["create"]
+      - name: "argocd-managed-cluster-kargo"
+        rules:
+          - apiGroups: ["kargo.akuity.io"]
+            resources: ["projects"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    cluster_base_rbac_cluster_roles_extra: []
+    cluster_base_rbac_cluster_roles: >-
+      {{ cluster_base_rbac_cluster_roles_base
+         + cluster_base_rbac_cluster_roles_extra }}
+
+    cluster_base_rbac_role_bindings_base: []
+    cluster_base_rbac_role_bindings_extra: []
+    cluster_base_rbac_role_bindings: >-
+      {{ cluster_base_rbac_role_bindings_base
+         + cluster_base_rbac_role_bindings_extra }}
+
+    cluster_base_rbac_cluster_role_bindings_base:
+      - name: "argocd-managed-cluster-kargo"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-cluster-kargo"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"
+    cluster_base_rbac_cluster_role_bindings_extra: []
+    cluster_base_rbac_cluster_role_bindings: >-
+      {{ cluster_base_rbac_cluster_role_bindings_base
+         + cluster_base_rbac_cluster_role_bindings_extra }}
+
+    cluster_base_rbac_extra_objects: []
+    cluster_base_rbac_kustomize_patches: []
+    cluster_base_rbac_helm_values:
+      rbacServiceAccounts: "{{ cluster_base_rbac_service_accounts }}"
+      rbacRoles: "{{ cluster_base_rbac_roles }}"
+      rbacClusterRoles: "{{ cluster_base_rbac_cluster_roles }}"
+      rbacRoleBindings: "{{ cluster_base_rbac_role_bindings }}"
+      rbacClusterRoleBindings: "{{ cluster_base_rbac_cluster_role_bindings }}"
+      extraObjects: "{{ cluster_base_rbac_extra_objects }}"
