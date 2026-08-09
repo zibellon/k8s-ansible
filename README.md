@@ -665,6 +665,92 @@
   - Ставится: argo-proj + argo-application
 
 ## ---
+## argo-rollouts. yaml -> helm
+## ---
+##
+- Установка + конфигурация
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-rollouts-install.yaml`
+- обновление (версия)
+  - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-rollouts/refs/tags/v1.9.1/manifests/install.yaml
+  - Разнести yaml на несколько файлов
+    - `playbook-app/charts/argo-rollouts/crds/crds.yaml` - только CRD (там много строк)
+    - `playbook-app/charts/argo-rollouts/install/templates/install.yaml` - все, кроме CRD
+  - Версия не указывается в `hosts-vars/` | `hosts-vars-override/` -> так как версия будет в `*.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-rollouts-install.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-rollouts-restart.yaml`
+- есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-rollouts-restart.yaml`
+
+## ---
+## argo-events
+## ---
+## ---
+## ---
+## ---
+
+## ---
+## kargo
+## ---
+## ---
+## ---
+## ---
+
+
+## ---
+## Portainer. Официальный helm-chart
+## ---
+## Есть web-ui, доступен по URL -> требуется Certificate (cert-manager-CRD)
+## Есть volume -> требуется работа с СХД (там лежит вся БД Portainer: окружения, пользователи, стеки, настройки)
+## Ожидание готовности deployment/daemonset - `kubectl rollout status ...`
+## Есть дополнительный файл для `vault + ESO`
+## ---
+## Важно_1. Как создается пароль первого админа (login: `admin`)
+## - playbook смотрит в VAULT: `eso-secret/portainer/admin-creds`, поле `password`
+## - если пароля там нет = генерирует новый (32 символа) и кладет в VAULT. Если есть = НЕ ТРОГАЕТ
+## - срабатывает ESO -> появляется k8s.secret = `eso-portainer-admin-creds`
+## - helm-chart монтирует этот secret в под файлом и передает контейнеру `--admin-password-file=/run/portainer/admin-password`
+## - Portainer читает файл, САМ хэширует значение и создает пользователя `admin`
+## В VAULT пароль лежит ОТКРЫТЫМ ТЕКСТОМ - это единственный способ его узнать
+##   `vault kv get eso-secret/portainer/admin-creds`
+## Bcrypt на control-node не нужен (в отличие от filestash и kargo) - хэширование делает сам Portainer
+## Побочный эффект: раз админ создан при старте, Portainer не требует setup-token. Ручная инициализация не нужна
+## ---
+## Важно_2. РОТАЦИИ ЭТОГО ПАРОЛЯ НЕТ
+## Portainer применяет `--admin-password-file` ТОЛЬКО пока в его БД нет ни одного админа
+## Если админ уже создан - файл игнорируется. В логах будет: `instance already has an administrator user defined, skipping admin password related flags.`
+## То есть: поменять пароль в VAULT + перезапустить под = НИЧЕГО НЕ ПРОИЗОЙДЕТ. Пароль останется старым
+## Тут нет механики как у GitLab - что можно ротировать пароль повторным запуском k8s-ansible
+## Как менять пароль: зайти в UI под `admin`, сменить пароль там, и РУКАМИ положить новый пароль в VAULT (чтобы не забыть)
+## После такой смены - значение в VAULT становится просто заметкой, ansible на него больше не смотрит
+## Если пароль потерян: средствами k8s-ansible не восстанавливается
+##   Гарантированный путь - удалить PVC `portainer` (namespace `portainer`) и поставить компонент с нуля
+##   БД при этом теряется полностью (окружения, пользователи, стеки). Для UI-«посмотреть-что-в-кластере» это не страшно
+## ---
+## Важно_3. У Portainer есть ClusterRoleBinding на `cluster-admin`
+## Это нужно, чтобы он управлял тем кластером, в котором сам работает. Управляется переменной `portainer_local_mgmt`
+## Если поставить `false` = не будут созданы ServiceAccount и ClusterRoleBinding, под уедет на `default` SA
+##   Portainer поднимется, UI откроется, но локальное окружение `Kubernetes` работать не будет (нет прав на kube-api)
+## Следствие от `true`: кто зашел в UI - тот админ кластера. Поэтому на проде UI закрывается VPN
+##   `portainer_ui_vpn_only_enabled: true`
+## ---
+## Важно_4. `portainer_trusted_origins` (защита от CSRF). По умолчанию = `portainer_ui_domain`
+## Значение должно быть ГОЛЫМ ХОСТОМ: без `https://`, без порта, без пути. Иначе под падает на старте (`log.Fatal`)
+## Если флаг вообще не передавать - UI за Traefik будет получать 403 на любых изменениях
+##   Потому что TLS снимается на Traefik, а внутрь кластера идет обычный http, и origin-проверка не сходится
+## ---
+## Важно_5. Установка НЕ ДЕКЛАРАТИВНАЯ (декларативно задается только пароль админа)
+## Окружения, пользователи, стеки, реестры и остальные настройки - делаются в UI и живут в БД на PVC
+## Edge-агенты не используются: tunnel-порт наружу не публикуется
+## ---
+## `--tags pre, install, post`
+## ---
+##
+- установка + обновление (версия + конфиг)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/portainer-install.yaml`
+- Есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/portainer-restart.yaml`
+
+## ---
 ## mon-system
 ## prometheus-operator + prometheus + alertmanager + node-exporter + ksm + loki + vector + grafana. yaml -> helm
 ## ---
@@ -691,18 +777,3 @@
   - просто обновить версии в hosts-vars
 - Есть отдельный playbook для перезапуска
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-restart.yaml`
-
-## ---------------------
-## ---------------------
-## ---------------------
-
-## ---------
-## ---Secrets-Rotation
-## ---------
-
-## ---
-## Добавить ротацию пароля
-## ...
-## ...
-## ...
-## ---
