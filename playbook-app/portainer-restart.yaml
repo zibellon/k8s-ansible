@@ -1,0 +1,85 @@
+# =============================================================================
+# PORTAINER RESTART
+# Restarts portainer to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/portainer-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Workloads from portainer_install_rollout_resources (hosts-vars/portainer.yaml)
+# =============================================================================
+
+- name: Restart portainer components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[portainer-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "portainer-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify portainer is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[portainer-restart] Check if portainer namespace exists"
+      command: kubectl get namespace {{ portainer_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[portainer-restart] Fail if portainer namespace not found"
+      fail:
+        msg: "portainer namespace '{{ portainer_namespace }}' not found. Install portainer first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[portainer-restart] Show pods in {{ portainer_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "portainer-restart"
+        dto_pods_namespace: "{{ portainer_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART WORKLOADS
+    # -------------------------------------------------------------------------
+
+    - name: "[portainer-restart] Restart portainer workloads"
+      command: kubectl rollout restart {{ item }} -n {{ portainer_namespace }}
+      loop: "{{ portainer_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    # -------------------------------------------------------------------------
+    # WAIT FOR ROLLOUTS TO COMPLETE
+    # -------------------------------------------------------------------------
+
+    - name: "[portainer-restart] Wait for rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "portainer-restart"
+        dto_rollout_namespace: "{{ portainer_namespace }}"
+        dto_rollout_timeout: "{{ portainer_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ portainer_install_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[portainer-verify] Show pods in {{ portainer_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "portainer-verify"
+        dto_pods_namespace: "{{ portainer_namespace }}"
+
+    - name: "[portainer-verify] Restart completed"
+      debug:
+        msg:
+          - "=== portainer Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
