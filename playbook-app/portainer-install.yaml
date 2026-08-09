@@ -1,0 +1,338 @@
+# =============================================================================
+# Install Portainer (container management UI, upstream Helm chart)
+# Steps:
+#   1. portainer/pre:     ESO resources (SA, SecretStore, ExternalSecret) + NetworkPolicies + cert-manager Issuer
+#   2. portainer:         upstream chart portainer/portainer (Deployment + PVC + Service + SA + ClusterRoleBinding)
+#   3. portainer/post:    Ingress (Traefik) + cert-manager Certificate
+#
+# Usage (tags):
+#   ansible-playbook portainer-install.yaml              # full install
+#   ansible-playbook portainer-install.yaml --tags pre
+#   ansible-playbook portainer-install.yaml --tags install
+#   ansible-playbook portainer-install.yaml --tags post
+#
+# Prerequisites:
+#   - Vault installed/unsealed; Vault policies+roles synced (portainer.eso-main)
+#   - External Secrets Operator installed
+#   - Storage (linstor/longhorn) installed
+#   - Traefik + cert-manager installed (Ingress + ACME)
+#
+# NOTE: admin password is auto-generated at first install (seed-if-missing):
+#       the playbook generates a random plaintext and stores it at
+#       eso-secret/portainer/admin-creds (field "password"). ESO materializes it
+#       into K8s Secret eso-portainer-admin-creds, which the chart mounts and passes to
+#       Portainer via --admin-password-file. Portainer hashes it itself, so no
+#       bcrypt/passlib is needed on the control node. The plaintext stays in
+#       Vault — that is how the operator learns the password.
+#       Portainer applies the file only while no admin exists yet, so there is
+#       no rotation: a later password change happens in the UI.
+# =============================================================================
+
+---
+- name: Install Portainer (container management UI, upstream Helm chart)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  vars:
+    # Local fact names for admin-password seed-if-missing
+    _local_portainer_admin_vault_key: "_local_portainer_admin_vault"
+    _local_portainer_admin_vault_exists_key: "_local_portainer_admin_vault_exists"
+    _local_portainer_admin_plaintext_key: "_local_portainer_admin_plaintext"
+    _local_portainer_admin_put_data_key: "_local_portainer_admin_put_data"
+    _local_portainer_helm_chart_source_key: "_local_portainer_helm_chart_source"
+
+  tasks:
+    - name: "[portainer-install] Assert component enabled"
+      assert:
+        that:
+          - portainer_enabled | default(false) | bool
+        fail_msg: "portainer is disabled (portainer_enabled=false). Set portainer_enabled: true in hosts-vars-override/ to install it."
+      run_once: true
+      tags: [always]
+
+    - name: "[portainer-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "portainer-pre-check"
+      tags: [always]
+
+    - name: "[portainer-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "portainer-pre-check"
+        dto_target_namespace: "{{ portainer_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # INIT: Verify Vault + ESO config
+    # =========================================================================
+
+    - name: "[portainer-install-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "portainer-install-init"
+      tags: [always]
+
+    - name: "[portainer-install-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "portainer-install-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_portainer_secrets + (eso_vault_integration_portainer_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_portainer }}"
+        dto_namespace: "{{ portainer_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: PRE (ESO Resources, NetworkPolicies, Issuer)
+    # =========================================================================
+
+    - name: "[portainer-pre] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "portainer-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/portainer/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/portainer/pre"
+      tags: [pre]
+
+    - name: "[portainer-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "portainer-pre"
+        dto_dir: "{{ remote_charts_dir }}/portainer/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ portainer_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[portainer-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "portainer-pre"
+        dto_release_name: "portainer-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/portainer/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/portainer/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/portainer/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/portainer/pre-k"
+        dto_patches_list: "{{ portainer_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ portainer_namespace }}"
+      tags: [pre]
+
+    - name: "[portainer-pre] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "portainer-pre"
+        dto_helm_command: >
+          helm upgrade --install portainer-pre {{ remote_charts_dir }}/portainer/pre-k
+          --namespace {{ portainer_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ portainer_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 2: INSTALL (upstream chart portainer/portainer)
+    # =========================================================================
+
+    # ----- Admin password: auto-generate at first install (seed-if-missing). -----
+    # Plaintext stays in Vault; ESO copies it into the K8s Secret the chart mounts.
+    - name: "[portainer-admin-secrets] Get admin password from Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "portainer-admin-secrets"
+        dto_vault_get_path: "{{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_admin_creds.vault_path }}"
+        dto_vault_get_field: "{{ portainer_admin_password_secret_key }}"
+        dto_vault_get_res_fact_name: "{{ _local_portainer_admin_vault_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_portainer_admin_vault_exists_key }}"
+      tags: [install]
+
+    - name: "[portainer-admin-secrets] Generate admin password"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-generate-secret.yaml"
+      vars:
+        dto_label_name: "portainer-admin-secrets"
+        dto_generate_fact_name: "{{ _local_portainer_admin_plaintext_key }}"
+      when: not lookup('vars', _local_portainer_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[portainer-admin-secrets] Prepare admin Vault put data"
+      set_fact:
+        "{{ _local_portainer_admin_put_data_key }}": >-
+          {{ {
+               portainer_admin_password_secret_key: lookup('vars', _local_portainer_admin_plaintext_key)
+             } }}
+      when: not lookup('vars', _local_portainer_admin_vault_exists_key)
+      no_log: true
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[portainer-admin-secrets] Store admin password in Vault"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-put.yaml"
+      vars:
+        dto_label_name: "portainer-admin-secrets"
+        dto_vault_put_path: "{{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_admin_creds.vault_path }}"
+        dto_vault_put_data: "{{ lookup('vars', _local_portainer_admin_put_data_key) }}"
+      when: not lookup('vars', _local_portainer_admin_vault_exists_key)
+      tags: [install]
+
+    - name: "[portainer-install] Trigger ESO sync (sync auto-generated admin secret)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-force-sync.yaml"
+      vars:
+        dto_label_name: "portainer-install"
+        dto_eso_sync_namespace: "{{ portainer_namespace }}"
+      tags: [install]
+
+    - name: "[portainer-install] Wait for admin secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "portainer-install"
+        dto_wait_secret_name: "{{ portainer_secret_admin_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ portainer_namespace }}"
+      tags: [install]
+
+    - name: "[portainer-install] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "portainer-install"
+        dto_dir: "{{ remote_charts_dir }}/portainer/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ portainer_helm_values | to_nice_yaml }}"
+      tags: [install]
+
+    - name: "[portainer-install] Add Helm repository"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
+      vars:
+        dto_label_name: "portainer-install"
+        dto_helm_is_oci: "{{ portainer_helm_is_oci }}"
+        dto_helm_url: "{{ portainer_helm_url }}"
+        dto_helm_chart_version: "{{ portainer_helm_chart_version }}"
+        dto_helm_repo_name: "{{ portainer_helm_repo_name }}"
+        dto_helm_chart_name: "{{ portainer_helm_chart_name }}"
+        dto_helm_chart_source_res_fact_name: "{{ _local_portainer_helm_chart_source_key }}"
+      tags: [install]
+
+    - name: "[portainer-install] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "portainer-install"
+        dto_helm_command: >
+          helm upgrade --install portainer {{ lookup('vars', _local_portainer_helm_chart_source_key) }}
+          --namespace {{ portainer_namespace }}
+          --create-namespace
+          --values {{ remote_charts_dir }}/portainer/install/values-override.yaml
+          --version {{ portainer_helm_chart_version }}
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ portainer_install_helm_timeout }}
+      tags: [install]
+
+    - name: "[portainer-install] Wait for rollout to be ready"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "portainer-install"
+        dto_rollout_namespace: "{{ portainer_namespace }}"
+        dto_rollout_timeout: "{{ portainer_install_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ portainer_install_rollout_resources }}"
+      tags: [install]
+
+    # =========================================================================
+    # STEP 3: POST (Ingress + Certificate)
+    # =========================================================================
+
+    - name: "[portainer-post] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "portainer-post"
+        dto_chart_name: "post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/portainer/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/portainer/post"
+      tags: [post]
+
+    - name: "[portainer-post] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "portainer-post"
+        dto_dir: "{{ remote_charts_dir }}/portainer/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ portainer_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[portainer-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "portainer-post"
+        dto_release_name: "portainer-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/portainer/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/portainer/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/portainer/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/portainer/post-k"
+        dto_patches_list: "{{ portainer_post_kustomize_patches }}"
+        dto_target_namespace: "{{ portainer_namespace }}"
+      tags: [post]
+
+    - name: "[portainer-post] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "portainer-post"
+        dto_helm_command: >
+          helm upgrade --install portainer-post {{ remote_charts_dir }}/portainer/post-k
+          --namespace {{ portainer_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --timeout {{ portainer_post_helm_timeout }}
+      tags: [post]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[portainer-verify] Verify Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_label_name: "portainer-verify"
+        dto_helm_namespace: "{{ portainer_namespace }}"
+      tags: [always]
+
+    - name: "[portainer-verify] Show pods in {{ portainer_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "portainer-verify"
+        dto_pods_namespace: "{{ portainer_namespace }}"
+      tags: [always]
+
+    - name: "[portainer-verify] Show NetworkPolicies in {{ portainer_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "portainer-verify"
+        dto_np_namespace: "{{ portainer_namespace }}"
+      tags: [always]
+
+    - name: "[portainer-verify] Show access info"
+      debug:
+        msg:
+          - "=============================================="
+          - "PORTAINER INSTALLATION COMPLETE"
+          - "=============================================="
+          - "UI: https://{{ portainer_ui_domain }}"
+          - ""
+          - "Admin login: admin"
+          - "Admin password (plaintext) in Vault:"
+          - "  {{ eso_vault_integration_portainer.kv_engine_path }}{{ portainer_secret_admin_creds.vault_path }} (key: {{ portainer_admin_password_secret_key }})"
+          - ""
+          - "The password is applied only while no admin exists yet — no rotation."
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[portainer-verify] Installation complete"
+      debug:
+        msg: "portainer-pre + portainer + portainer-post: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

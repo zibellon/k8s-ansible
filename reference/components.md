@@ -471,6 +471,29 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` — политика и роль `argo-events.eso-main`; (2) storage class из `argo_events_eventbus_storage_class` должен существовать в кластере; (3) согласовать `argo_events_eventbus_jetstream_replicas` и `argo_events_eventbus_stream_replicas` между собой — при одной реплике шины кворум потока тоже обязан быть 1.
 - **Non-install playbooks.** `argo-events-restart.yaml` — перекат обоих Deployment'ов фазы `install` одним списком (`argo_events_install_rollout_resources`). Шину, EventSource'ы и Sensor'ы не трогает: их создаёт контроллер, а перекат шины рвёт доставку событий.
 
+## 17.12. `portainer`
+
+- **Chart path.** `charts/portainer/{pre,post}/` (локальные) + `charts/portainer/install/` — только `readme.md`: фаза install ставится с upstream-репозитория, как у zitadel / teleport / kargo.
+- **Install playbook.** `portainer-install.yaml`.
+- **Namespace.** `portainer`.
+- **Releases.** `portainer-pre`, `portainer`, `portainer-post`.
+- **External Helm repo.** `https://portainer.github.io/k8s/` → chart `portainer/portainer`, version `portainer_helm_chart_version` (default `239.5.0`, appVersion `2.39.5`). HTTP↔OCI switchable via `portainer_helm_is_oci`.
+- **Workload.** Один Deployment `portainer` (upstream жёстко задаёт `strategy.type: Recreate` — корректно для RWO-тома) + static PVC `portainer` на `/data` + ClusterIP Service + ServiceAccount `portainer-sa-clusteradmin` + ClusterRoleBinding на `cluster-admin` (гейт `portainer_local_mgmt`). Реплика одна. Probes — апстримные, `GET /` на 9000 с `initialDelaySeconds: 45`.
+- **Required vars.** `portainer_namespace`, `portainer_enabled`, `portainer_helm_chart_version`, `portainer_image_repository` / `_image_tag` / `_image_pull_policy` (default `docker.io/portainer/portainer-ce:2.39.5-alpine`), `portainer_replica_count`, `portainer_service_account_name`, `portainer_local_mgmt`, `portainer_service_type`, `portainer_persistence_enabled`, порты (`portainer_http_port` 9000 / `portainer_https_port` 9443 / `portainer_edge_port` 8000), `portainer_storage_class` / `_storage_size`, `portainer_resources` / `_node_selector` / `_tolerations`, `portainer_trusted_origins` + `portainer_trusted_origins_enabled`, `portainer_feature_flags`, `portainer_admin_password_secret_key`, `portainer_upstream_ingress_enabled` (ingress самого upstream-чарта — выключен, Ingress рендерит фаза post), плюс точки расширения upstream-чарта `portainer_extra_env` / `portainer_service_annotations` / `portainer_pvc_annotations` (дефолты пустые). Ingress-тумблеры: `portainer_cert_manager_issuer_enabled`, `portainer_ui_ingress_enabled`, `portainer_ui_ingress_tls_enabled`, `portainer_ui_certificate_enabled`, `portainer_ui_vpn_only_enabled`. Kustomize patches (default `[]`): `portainer_pre_kustomize_patches`, `portainer_post_kustomize_patches` — у фазы install их нет, upstream-чарт ставится прямым `helm upgrade`.
+- **ESO integration.** Yes (`eso_vault_integration_portainer`) — ровно один секрет, admin-пароль (`portainer_secret_admin_creds`). Vault `eso-secret/portainer/admin-creds`, поле `password` (**plaintext**) → K8s Secret `eso-portainer-admin-creds`. Имя ключа `password` жёстко задано upstream-чартом (`items[0].key` при монтировании), переименовать нельзя.
+- **Admin password.** Авто-генерится при install (seed-if-missing, 32 символа): playbook пишет открытый пароль в Vault, ESO кладёт его в K8s Secret, чарт монтирует файл и передаёт `--admin-password-file`. **Portainer хэширует сам** — bcrypt/passlib на control-node не нужен (в отличие от filestash и kargo). Открытый пароль в Vault — единственный способ оператора его узнать. **Ротации нет:** файл применяется только пока админов ещё нет (`len(users) == 0`), последующая смена идёт через UI и Vault становится неактуален. Побочный эффект сида — setup-token не запрашивается, ручная инициализация не нужна.
+- **CSRF / trusted origins.** За Traefik TLS терминируется снаружи, внутрь идёт plain HTTP — без `--trusted-origins` gorilla/csrf режет мутирующие запросы из UI (403). Значение — `portainer_trusted_origins` (default `= portainer_ui_domain`), и оно обязано быть **голым хостом**: `pkg/validate.IsTrustedOrigin` отклоняет схему, порт, путь и query, а невалидное значение роняет процесс через `log.Fatal` на старте.
+- **Логи.** JSON через `--log-mode=JSON`. Отдельной ручки в upstream values нет, env-переменной у флага тоже нет, поэтому флаг едет через `portainer_feature_flags` — чарт рендерит каждый элемент `feature.flags` как сырой аргумент бинаря.
+- **NetworkPolicy.** deny-all + DNS + intra-ns + `allow-portainer` (ingress от Traefik на 9000; egress → apiserver 6443 и наружу 443/80 — шаблоны приложений, helm-репозитории, проверка обновлений) + ACME HTTP-01 solver-пара под гейтом `issuer.enabled` + `portainer-allow-traefik` в namespace traefik. Cross-namespace пар с seaweedfs / gitlab нет. Изменений в `CiliumClusterwideNetworkPolicy` не требуется.
+- **Ingress.** Plain `kind: Ingress` (Traefik) из фазы post; у upstream-чарта ingress выключен (`portainer_upstream_ingress_enabled: false`). Тумблеры: cert-manager ACME (`websecure` + `router.tls` + Certificate) либо за Cloudflare (`web`, без TLS). `vpn-only` middleware через `router.middlewares`.
+- **ServiceMonitor.** No — `/metrics` у Portainer нет.
+- **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, longhorn/linstor (PVC).
+- **Enable flag.** `portainer_enabled` (opt-in, default `false`): guards install.
+- **Preflight (перед первой установкой).** (1) `vault-install.yaml --tags install` — политика и роль `portainer.eso-main`; (2) DNS `portainer_ui_domain` → ingress кластера.
+- **Non-install playbooks.** `portainer-restart.yaml` (одностадийный rollout-restart Deployment'а).
+- **Ограничение upstream-чарта: под работает root'ом.** В чарте нет ни `podSecurityContext`, ни `securityContext` контейнера, а фаза install идёт прямым `helm upgrade` с репозитория и не проходит через kustomize-пайплайн ([`playbook-conventions.md`](playbook-conventions.md) §21) — вставить их нечем. Rootfs writable, поэтому emptyDir на `/tmp` не нужен (Portainer пишет туда при деплое стеков и работе с helm-репозиториями). Если хардненинг понадобится, архитектурный путь — перевести фазу install на `helm pull` + `helm template` + kustomize, а не форкать чарт.
+- **Notes.** Service при `type: ClusterIP` всё равно публикует три порта (`http` 9000, `https` 9443, `edge` 8000) — шаблон хардкодит их, убрать нечем; наружу открыт только 9000 через Ingress, остальные не пускает NetworkPolicy. Edge-агенты не используются: `--tunnel-port` upstream рендерит только при `service.type: NodePort`. Тег образа с суффиксом `-alpine` не матчит version-regex чарта, из-за чего probes уходят в ветку `9000/HTTP` — это корректная ветка.
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -497,6 +520,7 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `kargo` | kargo | no (+ служебные `kargo-cluster-secrets` / `kargo-shared-resources` / `kargo-system-resources`, создаёт upstream-чарт) |
 | `argo-rollouts` | argo-rollouts | no |
 | `argo-events` | argo-events | no |
+| `portainer` | portainer | no |
 
 ## 19. Cross-cutting Dependency Order
 
@@ -510,7 +534,7 @@ L3  vault
 L4  traefik        haproxy
 L5  mon-system     seaweedfs
 L6  zitadel
-L7  argocd    gitlab    teleport    filestash
+L7  argocd    gitlab    teleport    filestash    portainer
 L8  gitlab-runner   kargo   argo-events
 ```
 
@@ -518,11 +542,11 @@ L8  gitlab-runner   kargo   argo-events
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L7 as part of `argocd-install.yaml` — no separate playbook.
 
-## 20. ESO-integrated Components (14)
+## 20. ESO-integrated Components (15)
 
 Only these have `eso_vault_integration_<c>` objects and are validated by `tasks-eso-verify.yaml`:
 
-`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`, `filestash`, `outline`, `kargo`, `argo_events`, `vault` (self-consumer — только OIDC client secret)
+`traefik`, `haproxy`, `longhorn`, `gitlab`, `gitlab_runner`, `zitadel`, `argocd`, `mon_system`, `seaweedfs`, `filestash`, `outline`, `kargo`, `argo_events`, `portainer`, `vault` (self-consumer — только OIDC client secret)
 
 Each integration object + `_secrets` list + `_secrets_extra` list lives in the corresponding `hosts-vars/<c>.yaml`.
 

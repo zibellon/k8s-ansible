@@ -1,0 +1,199 @@
+# =============================================================================
+# PORTAINER NETWORK POLICIES - HARDENED
+# =============================================================================
+
+# =============================================================================
+# BASE POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in portainer namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: {{ .Values.dns.port }}
+        - protocol: TCP
+          port: {{ .Values.dns.port }}
+
+---
+# Allow all traffic between pods inside the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+# =============================================================================
+# PORTAINER APPLICATION POLICY
+# =============================================================================
+
+---
+# PORTAINER: ingress from Traefik (http port) + egress to kube-apiserver and outside
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-portainer
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: portainer
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.portainer.httpPort }}
+  egress:
+    # To kube-apiserver (управление локальным кластером)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+    # External HTTPS/HTTP (app templates, helm repos, registries, update check)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
+# =============================================================================
+{{- if .Values.issuer.enabled }}
+{{- $spec := .Values.issuer.spec | default dict }}
+{{- if hasKey $spec "acme" }}
+{{- range $i, $solver := ($spec.acme.solvers | default list) }}
+{{- if hasKey $solver "http01" }}
+{{- $ing := $solver.http01.ingress | default dict }}
+{{- $solverLabels := dig "podTemplate" "metadata" "labels" (dict "acme.cert-manager.io/http01-solver" "true") $ing }}
+---
+# http01 solver #{{ $i }} — ingress к solver-pod от traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $solverLabels | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+---
+# http01 solver #{{ $i }} — egress traefik → solver-pod (в namespace traefik)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ $.Values.namespace }}-allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $solverLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+# =============================================================================
+# TRAEFIK NAMESPACE POLICY (allow egress from Traefik to PORTAINER)
+# =============================================================================
+
+---
+# Allow Traefik to reach PORTAINER (http port)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-traefik
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    # To PORTAINER app
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portainer
+      ports:
+        - protocol: TCP
+          port: {{ .Values.portainer.httpPort }}
