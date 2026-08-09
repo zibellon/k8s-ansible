@@ -18,10 +18,13 @@
 # NOTE: namespace-transform НЕ применяется ни в одном stage — объекты живут в
 #       чужих namespace'ах и в cluster scope, переписывать их нельзя.
 #
-# NOTE: разовый adoption уже существующих в кластере объектов —
-#         ansible-playbook ... --tags namespaces -e cluster_base_helm_extra_flags=--take-ownership
-#       Постоянно держать флаг нельзя: он глушит ошибку invalid ownership
-#       metadata, которая защищает от коллизии имён с чужими helm-релизами.
+# NOTE: --take-ownership в обеих helm-командах — постоянный, не разовый. Компонент
+#       по природе работает с объектами, которые могут возникнуть вне его: namespace
+#       под Kargo Project заводит сам Kargo, namespace продукта мог создать ArgoCD,
+#       что-то оператор поднял руками. Без флага любой такой объект роняет ВЕСЬ stage
+#       на invalid ownership metadata. Обратная сторона: объект, принадлежащий
+#       чужому helm-релизу, будет перенят молча — от коллизии имён защищает только
+#       конвенция именования (префикс-маркер владельца, см. playbook-conventions.md §17.12).
 # =============================================================================
 
 ---
@@ -106,8 +109,8 @@
           --atomic
           --wait
           --wait-for-jobs
+          --take-ownership
           --timeout {{ cluster_base_namespaces_helm_timeout }}
-          {{ cluster_base_helm_extra_flags }}
       tags: [namespaces]
 
     # =========================================================================
@@ -157,8 +160,8 @@
           --atomic
           --wait
           --wait-for-jobs
+          --take-ownership
           --timeout {{ cluster_base_rbac_helm_timeout }}
-          {{ cluster_base_helm_extra_flags }}
       tags: [rbac]
 
     # =========================================================================
