@@ -230,6 +230,7 @@ Canonical example: [`playbook-app/charts/teleport/pre/values.yaml`](../playbook-
 | `mon-system/pre` (loki) | `seaweedfs` S3 + external S3 | `allow-loki` в mon-system ns (egress → seaweedfs S3 8333 + external 443/80) + `mon-system-allow-loki` ingress в seaweedfs ns |
 | `filestash/pre` | `traefik` | egress entries в `filestash-allow-traefik` (NP в traefik ns) |
 | `filestash/pre` | `seaweedfs` S3 | `allow-filestash` egress → seaweedfs S3 8333 + `filestash-allow-seaweedfs-s3` ingress в seaweedfs ns |
+| `portainer/pre` | `traefik` | egress entries в `portainer-allow-traefik` (NP в traefik ns) |
 
 ### 8.3 Naming convention
 
