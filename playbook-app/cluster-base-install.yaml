@@ -18,13 +18,20 @@
 # NOTE: namespace-transform НЕ применяется ни в одном stage — объекты живут в
 #       чужих namespace'ах и в cluster scope, переписывать их нельзя.
 #
-# NOTE: --take-ownership в обеих helm-командах — постоянный, не разовый. Компонент
-#       по природе работает с объектами, которые могут возникнуть вне его: namespace
-#       под Kargo Project заводит сам Kargo, namespace продукта мог создать ArgoCD,
-#       что-то оператор поднял руками. Без флага любой такой объект роняет ВЕСЬ stage
-#       на invalid ownership metadata. Обратная сторона: объект, принадлежащий
-#       чужому helm-релизу, будет перенят молча — от коллизии имён защищает только
-#       конвенция именования (префикс-маркер владельца, см. playbook-conventions.md §17.12).
+# NOTE: --take-ownership НЕ используется намеренно. Компонент рендерит объекты в
+#       чужие namespace, и объект с уже занятым именем обязан ронять stage с
+#       invalid ownership metadata — это единственный автоматический сигнал о
+#       коллизии (см. playbook-conventions.md §17.12). Helm в тексте ошибки сам
+#       перечисляет недостающие ключи.
+#
+#       Если перехват ОСОЗНАННЫЙ (объект создан ArgoCD, Kargo или руками) —
+#       усыновить вручную, проставив все три метки владения, после чего прогнать
+#       playbook обычным образом:
+#         kubectl label    <kind> <name> [-n <ns>] app.kubernetes.io/managed-by=Helm --overwrite
+#         kubectl annotate <kind> <name> [-n <ns>] meta.helm.sh/release-name=<release> --overwrite
+#         kubectl annotate <kind> <name> [-n <ns>] meta.helm.sh/release-namespace=<release-ns> --overwrite
+#       Пары release/namespace: cluster-base-namespaces/cluster-namespaces,
+#       cluster-base-rbac/cluster-rbac.
 # =============================================================================
 
 ---
@@ -109,7 +116,6 @@
           --atomic
           --wait
           --wait-for-jobs
-          --take-ownership
           --timeout {{ cluster_base_namespaces_helm_timeout }}
       tags: [namespaces]
 
@@ -160,7 +166,6 @@
           --atomic
           --wait
           --wait-for-jobs
-          --take-ownership
           --timeout {{ cluster_base_rbac_helm_timeout }}
       tags: [rbac]
 
