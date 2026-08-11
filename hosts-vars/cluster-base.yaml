@@ -1,0 +1,114 @@
+all:
+  vars:
+    # =========================================================================
+    # cluster-base — глобальная обвязка кластера: namespace'ы и RBAC в них.
+    # Компонент не привязан к приложению: он заводит namespace'ы и выдаёт
+    # права в них любым субъектам (сегодня — ArgoCD, завтра — кто угодно).
+    #
+    # Два независимых stage, два helm-релиза, два «домашних» namespace:
+    #   --tags namespaces → релиз cluster-base-namespaces в ns cluster-namespaces
+    #   --tags rbac       → релиз cluster-base-rbac       в ns cluster-rbac
+    #
+    # Отступление от трёхфазного паттерна (playbook-conventions.md §6.1)
+    # осознанное: у компонента нет workload'а, ESO и ingress — фазы
+    # pre/install/post были бы пустыми.
+    #
+    # ⚠️ ИМЕНОВАНИЕ — ОТВЕТСТВЕННОСТЬ ОПЕРАТОРА. Stage rbac рендерит объекты
+    # в ЧУЖИЕ namespace'ы, которыми владеют другие helm-релизы (argocd,
+    # argo-events, kargo, релизы продуктов из git-ops). Имя обязано быть
+    # уникальным относительно всех прочих релизов и того, что раскатывает
+    # ArgoCD — приём: префикс-маркер владельца в имени (argocd-managed-*).
+    # Совпадение имени роняет ВЕСЬ stage на invalid ownership metadata: helm
+    # отказывается перенимать чужой объект, и это штатная защита, а не помеха.
+    # --take-ownership намеренно НЕ используется. Осознанный перехват —
+    # ручная простановка трёх меток владения, см. playbook-app/cluster-base-install.yaml.
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start.
+    cluster_base_enabled: false
+
+    # «Домашние» namespace'ы helm-релизов. Объекты обоих stage либо
+    # cluster-scoped, либо живут в чужих namespace — сюда попадает только
+    # состояние самого helm.
+    cluster_base_namespaces_namespace: "cluster-namespaces"
+    cluster_base_rbac_namespace: "cluster-rbac"
+
+    # ------
+    # STAGE: namespaces
+    # Элемент — полная спецификация объекта: {name, labels?, annotations?}.
+    # labels нужны, например, kargo-namespace'у: без метки
+    # kargo.akuity.io/project=true Kargo не «усыновит» его.
+    # ⚠️ Защиты от удаления нет: убрал элемент из списка — следующий прогон
+    # снесёт namespace вместе с содержимым.
+    # Реальные значения — в hosts-vars-override/<cluster>/cluster-base.yaml.
+    # ------
+    cluster_base_namespaces_helm_timeout: "3m"
+    cluster_base_namespaces_list: []
+    cluster_base_namespaces_list_extra: []
+    cluster_base_namespaces_extra_objects: []
+    cluster_base_namespaces_kustomize_patches: []
+    cluster_base_namespaces_helm_values:
+      namespaces: "{{ cluster_base_namespaces_list + cluster_base_namespaces_list_extra }}"
+      extraObjects: "{{ cluster_base_namespaces_extra_objects }}"
+
+    # ------
+    # STAGE: rbac
+    # Пять независимых списков, по одному на тип объекта. Каждый — пара
+    # _base / _extra: _base держит объекты, общие для всех кластеров,
+    # _extra — per-cluster, задаётся в hosts-vars-override/.
+    # Связей между списками шаблон не проверяет.
+    # SA:                  {name, namespace, labels?, annotations?}
+    # Role:                {name, namespace, labels?, annotations?, rules}
+    # ClusterRole:         {name, labels?, annotations?, rules}
+    # RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
+    # ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
+    #
+    # ⚠️ ВСЕ ПЯТЬ _base ПУСТЫ НАМЕРЕННО. Компонент — чистый рендерер: он не знает
+    # ни про ArgoCD, ни про Kargo, ни про кого-либо ещё. Кому и что выдавать —
+    # решение оператора конкретного кластера, поэтому объекты целиком живут в
+    # hosts-vars-override/<cluster>/cluster-base.yaml. В частности, роли
+    # argocd-managed-* (deployer / ui / cluster-kargo) и их привязки объявлены
+    # там, а не здесь. Общий для всех кластеров объект появится в _base только
+    # если такой действительно найдётся.
+    # ------
+    cluster_base_rbac_helm_timeout: "3m"
+
+    cluster_base_rbac_service_accounts_base: []
+    cluster_base_rbac_service_accounts_extra: []
+    cluster_base_rbac_service_accounts: >-
+      {{ cluster_base_rbac_service_accounts_base
+         + cluster_base_rbac_service_accounts_extra }}
+
+    cluster_base_rbac_roles_base: []
+    cluster_base_rbac_roles_extra: []
+    cluster_base_rbac_roles: >-
+      {{ cluster_base_rbac_roles_base
+         + cluster_base_rbac_roles_extra }}
+
+    cluster_base_rbac_cluster_roles_base: []
+    cluster_base_rbac_cluster_roles_extra: []
+    cluster_base_rbac_cluster_roles: >-
+      {{ cluster_base_rbac_cluster_roles_base
+         + cluster_base_rbac_cluster_roles_extra }}
+
+    cluster_base_rbac_role_bindings_base: []
+    cluster_base_rbac_role_bindings_extra: []
+    cluster_base_rbac_role_bindings: >-
+      {{ cluster_base_rbac_role_bindings_base
+         + cluster_base_rbac_role_bindings_extra }}
+
+    cluster_base_rbac_cluster_role_bindings_base: []
+    cluster_base_rbac_cluster_role_bindings_extra: []
+    cluster_base_rbac_cluster_role_bindings: >-
+      {{ cluster_base_rbac_cluster_role_bindings_base
+         + cluster_base_rbac_cluster_role_bindings_extra }}
+
+    cluster_base_rbac_extra_objects: []
+    cluster_base_rbac_kustomize_patches: []
+    cluster_base_rbac_helm_values:
+      rbacServiceAccounts: "{{ cluster_base_rbac_service_accounts }}"
+      rbacRoles: "{{ cluster_base_rbac_roles }}"
+      rbacClusterRoles: "{{ cluster_base_rbac_cluster_roles }}"
+      rbacRoleBindings: "{{ cluster_base_rbac_role_bindings }}"
+      rbacClusterRoleBindings: "{{ cluster_base_rbac_cluster_role_bindings }}"
+      extraObjects: "{{ cluster_base_rbac_extra_objects }}"

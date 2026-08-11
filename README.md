@@ -617,12 +617,16 @@
   - Локальные аккаунты (login + пароль, включая custom-admin) — декларативно через `argocd_local_accounts` в `hosts-vars-override/`; пароли генерятся в рантайме и кладутся в Vault `eso-secret/argocd/accounts/creds`. Ротация: bump `passwordMtime` у аккаунта → `argocd-install.yaml --tags accounts-sync`.
   - Контракт для внешнего git-ops repo: имена из `argocd_local_accounts` ссылаются в `AppProject.spec.roles[].groups` как есть (строка-username ArgoCD биндит её к роли проекта через Casbin). Custom-admin получает глобальный `role:admin` через `argocd_policy_csv_list` здесь.
 - обновление (версия)
-  - Скачать новый yaml. https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+  - Скачать новый yaml. ВАЖНО: нужен `namespace-install.yaml` КОНКРЕТНОГО тега, а не `stable/manifests/install.yaml`
+    - `git -C sources/argo-cd show v<version>:manifests/namespace-install.yaml > playbook-app/charts/argocd/install/templates/install.yaml`
   - Разнести yaml на несколько файлов
     - `playbook-app/charts/argocd/crds/crds.yaml` - только CRD (там примерно 24к строк)
-    - `playbook-app/charts/argocd/install/templates/argocd.yaml` - все, кроме CRD
+    - `playbook-app/charts/argocd/install/templates/install.yaml` - все, кроме CRD
   - Версия не указывается в `hosts-vars/` | `hosts-vars-override/` -> так как версия будет в `*.yaml`
   - Пример обновленного конфига - `docs/arocd/...`
+  - ArgoCD ставится namespace-scoped: в `namespace-install.yaml` нет трех ClusterRole и трех ClusterRoleBinding
+    - Файл `stable/manifests/install.yaml` - это cluster-install, он вернет ArgoCD права cluster-admin. Брать нельзя
+  - Рестарт после установки ОБЯЗАТЕЛЕН: helm upgrade не пересоздает под контроллера, а открытые watch переживают отзыв RBAC
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml`
 - обновление (конфиг)
@@ -777,3 +781,54 @@
   - просто обновить версии в hosts-vars
 - Есть отдельный playbook для перезапуска
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-restart.yaml`
+
+## ---
+## cluster-base
+## namespaces + RBAC. yaml -> helm
+## ---
+## Глобальный компонент: заводит namespace'ы кластера и выдает в них права. Не привязан к приложению
+## Нет workload, нет ESO, нет ingress -> поэтому два stage (namespaces + rbac), а не три фазы (pre + install + post)
+## Два helm-релиза в двух своих namespace: cluster-base-namespaces (ns=cluster-namespaces) + cluster-base-rbac (ns=cluster-rbac)
+## Объекты живут в ЧУЖИХ namespace или в cluster scope. Сам компонент своих подов не имеет
+## Шесть списков объектов, по одному на тип: namespaces, ServiceAccount, Role, ClusterRole, RoleBinding, ClusterRoleBinding
+## Элемент списка = ПОЛНАЯ спецификация объекта. Шаблон рендерит его как есть, ничего не вычисляя
+## Базовые списки в hosts-vars/cluster-base.yaml ПУСТЫЕ. Все объекты задаются в hosts-vars-override/<cluster>/
+## ---
+## Важно_1. Порядок stage. namespaces - до продуктов, rbac - после установки компонентов, чьи namespace он трогает
+## RoleBinding нельзя создать в несуществующем namespace. Поэтому rbac идет последним (traefik-lb, seaweedfs, argocd, argo-events)
+## ---
+## Важно_2. Удаление элемента из cluster_base_namespaces_list = СНОС namespace вместе со всем содержимым на следующем прогоне
+## Защиты нет. Аннотация argocd.argoproj.io/sync-options (Delete=false + Prune=false) защищает только от ArgoCD, но не от helm
+## ---
+## Важно_3. Имя объекта в чужом namespace обязано быть УНИКАЛЬНЫМ. Прием - префикс-маркер владельца (argocd-managed-*)
+## Совпадение имени с объектом другого helm-релиза роняет ВЕСЬ stage: invalid ownership metadata
+## Это штатная защита. Флаг --take-ownership намеренно НЕ используется
+## Если перехват осознанный (объект создан ArgoCD, Kargo или руками) - усыновить вручную, проставив три метки владения
+##   `kubectl label    <kind> <name> [-n <ns>] app.kubernetes.io/managed-by=Helm --overwrite`
+##   `kubectl annotate <kind> <name> [-n <ns>] meta.helm.sh/release-name=<release> --overwrite`
+##   `kubectl annotate <kind> <name> [-n <ns>] meta.helm.sh/release-namespace=<release-ns> --overwrite`
+## Пары release/namespace: cluster-base-namespaces/cluster-namespaces + cluster-base-rbac/cluster-rbac
+## После простановки меток - повторить прогон, helm примет объект как свой
+## ---
+## Важно_4. Список namespace для ArgoCD дублируется в VAULT: eso-secret/argocd/clusters/in-cluster, поле namespaces
+## Namespace, которого нет в этом поле, ArgoCD не увидит даже при наличии RoleBinding - кеш контроллера в него не заглядывает
+## Обновлять оба места сразу: hosts-vars-override/<cluster>/cluster-base.yaml + VAULT
+## ---
+## Важно_5. Заведение namespace для нового продукта - ДВА шага, и оба до Application в git-ops
+## ArgoCD ставится namespace-scoped и создавать Namespace не может
+## 1) запись в cluster_base_namespaces_list -> прогон --tags namespaces
+## 2) пара RoleBinding (deployer + ui) в cluster_base_rbac_role_bindings_extra -> прогон --tags rbac
+## Объявлять Namespace в чарте продукта НЕ нужно - ArgoCD его не применит
+## ---
+## `--tags namespaces, rbac`
+## ---
+##
+- установка + обновление (namespace + RBAC)
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-base-install.yaml`
+- только namespace
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-base-install.yaml --tags namespaces`
+- только RBAC
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-base-install.yaml --tags rbac`
+- проверка прав после онбординга namespace
+  - `kubectl auth can-i create deployment --as=system:serviceaccount:argocd:argocd-application-controller -n <new-ns>` -> yes
+  - `kubectl auth can-i create namespace --as=system:serviceaccount:argocd:argocd-application-controller` -> no

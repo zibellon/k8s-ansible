@@ -68,16 +68,24 @@ ansible-playbook ... --limit w1,w2,w3
 ### 2.5 Application stack (in dependency order)
 
 ```bash
+# namespace'ы кластера — до всего, что в них раскатывается
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-base-install.yaml --tags namespaces
+
 for c in cilium cert-manager external-secrets vault traefik metrics-server stakater-reloader argo-rollouts longhorn \
          seaweedfs \
          mon-system \
          argocd gitlab gitlab-runner zitadel teleport filestash portainer outline kargo argo-events haproxy; do
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
+
+# RBAC — последним: RoleBinding нельзя создать в несуществующем namespace
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-base-install.yaml --tags rbac
 ```
 
 **Dependency highlights** (see [`components.md`](components.md) §19 for full tier diagram):
 
+- `cluster-base` разнесён надвое: `--tags namespaces` идёт первым (namespace'ы должны существовать до раскатки в них), `--tags rbac` — последним (`RoleBinding` нельзя создать в несуществующем namespace, а его элементы адресуют namespace'ы `traefik-lb` / `seaweedfs` / `argocd` / `argo-events`). Требует `cluster_base_enabled: true`. См. [`components.md`](components.md) §17.13
+- `argocd` ставится namespace-scoped — сразу после `argocd-install.yaml` прогнать `argocd-restart.yaml`, иначе контроллер продолжит видеть кластер по старым правам (§4.4). Namespace для приложений заводятся отдельно, до Application — §4.11
 - `cilium` first (CNI — nothing networks until it's up)
 - `cert-manager` before anything with TLS
 - `external-secrets` before anything with ESO
@@ -121,6 +129,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
 - `--tags rbac`, `--tags cr` — for `argo-events` (ServiceAccounts + Roles + bindings / EventBus + EventSources + Sensors)
+- `--tags namespaces`, `--tags rbac` — for `cluster-base` (Namespace objects / ServiceAccounts + Roles + ClusterRoles + bindings). Стандартных `pre`/`install`/`post` у компонента нет, см. [`playbook-conventions.md`](playbook-conventions.md) §6.5
 
 `tags: [always]` tasks (`tasks-pre-check`, `tasks-vault-config-verify`, `tasks-eso-verify`) run regardless of `--tags`.
 
@@ -194,6 +203,13 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/z
 ```
 
 Each uses `kubectl rollout restart` on the target resources and waits for rollout to complete.
+
+⚠️ **`argocd-restart.yaml` обязателен после `argocd-install.yaml`**, а не опционален. `helm upgrade` меняет RBAC-объекты и ConfigMap'ы, но не `StatefulSet` — под контроллера не пересоздаётся, а уже открытые watch переживают отзыв прав (Kubernetes авторизует watch при открытии соединения и потом не переавторизует). Без рестарта ArgoCD продолжает видеть cluster-scoped ресурсы по старым правам. Проверка — `startTime` пода:
+
+```bash
+kubectl get pod -n argocd -l app.kubernetes.io/name=argocd-application-controller \
+  -o custom-columns='NAME:.metadata.name,START:.status.startTime'
+```
 
 `linstor-restart.yaml` and `mon-system-restart.yaml` are split into per-stage tasks mirroring their install stages, so `--tags <stage>` restarts only that stage (e.g. `mon-system-restart.yaml --tags loki`, `linstor-restart.yaml --tags install-cluster`). mon-system stages are additionally gated by the `mon_system_*_enabled` flags, so a disabled sub-component's restart is skipped instead of failing on a non-existent workload.
 
@@ -315,6 +331,35 @@ ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags haproxy-i
 ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags haproxy-config
 ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags verify
 ```
+
+### 4.11 Namespace onboarding (namespace-scoped ArgoCD)
+
+ArgoCD не может создавать `Namespace` ([`components.md`](components.md) §9), поэтому namespace заводится **до** приложения и в другом репозитории. Три шага, порядок обязателен.
+
+```bash
+# 1. hosts-vars-override/<cluster>/cluster-base.yaml:
+#      cluster_base_namespaces_list          → + {name, labels?, annotations?}
+#      cluster_base_rbac_role_bindings_extra → + пара RoleBinding (deployer + ui) на этот namespace
+# 2. Завести namespace:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
+  playbook-app/cluster-base-install.yaml --tags namespaces
+
+# 3. Выдать в нём права ArgoCD:
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
+  playbook-app/cluster-base-install.yaml --tags rbac
+```
+
+Дальше — Application в git-ops репозитории. Объявлять `Namespace` в его чарте **не нужно**: ArgoCD его не применит.
+
+Список namespace дублируется в Vault — поле `namespaces` секрета `eso-secret/argocd/clusters/in-cluster` ([`secrets-and-eso.md`](secrets-and-eso.md) §9). Namespace, которого там нет, ArgoCD не увидит даже при наличии `RoleBinding`: кэш контроллера в него не заглядывает. Обновлять оба места.
+
+```bash
+# Проверка после онбординга — права должны появиться ровно в новом namespace:
+kubectl auth can-i create deployment --as=system:serviceaccount:argocd:argocd-application-controller -n <new-ns>   # yes
+kubectl auth can-i create namespace  --as=system:serviceaccount:argocd:argocd-application-controller               # no
+```
+
+**Снятие namespace с ArgoCD.** Убрать пару `RoleBinding` из override, убрать namespace из поля `namespaces` в Vault, прогнать `--tags rbac`. Сам namespace при этом остаётся; удаление записи из `cluster_base_namespaces_list` снесёт его вместе с содержимым (см. [`components.md`](components.md) §17.13).
 
 ---
 

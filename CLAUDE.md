@@ -24,6 +24,8 @@ Violating any of these will break the cluster or leak secrets.
 - Before adding a new node to the cluster, run `playbook-app/cilium-install.yaml --tags post` first — it refreshes the Cilium host firewall with the new node's IPs, otherwise the join handshake is blocked.
 - ArgoCD's **`argocd-secret` must stay empty** (no `data:`) in every helm render. Local-account passwords (`accounts.<name>.password`/`.passwordMtime`) and `server.secretkey` are written out-of-band — by the accounts-sync reconcile (`kubectl patch`) and by argocd-server — and the upstream `install.yaml` ships `argocd-secret` with no `data:` so helm's 3-way merge never prunes those keys. Templating ANY `data:` key into `argocd-secret` makes helm own the data map and delete the out-of-band keys (helm#12886) → lost passwords + broken auth. See [`components.md`](reference/components.md) §9.
 - **`gitlab` root password is Vault-source-of-truth, managed only via ansible** — never via ESO. Reconciled in-place by `gitlab-install.yaml --tags config-root`: if Vault has no password or `gitlab_root_creds.passwordMtime` changed → generate a new password and write it to Vault; then re-read Vault and reset GitLab's root password to it only on drift. `passwordMtime` (in `hosts-vars/gitlab.yaml`) is a **mandatory** RFC3339 rotation trigger — missing = error. Root creds live only in Vault (`eso-secret/gitlab/root/creds`, fields username/password/passwordMtime), **never** in `eso_vault_integration_gitlab_secrets`; the chart-created `gitlab-gitlab-initial-root-password` secret is deleted in the install phase. See [`components.md`](reference/components.md) §11.
+- **ArgoCD ставится namespace-scoped.** Вендоренный манифест — upstream `namespace-install.yaml` (тег v3.4.4), без трёх `ClusterRole` и трёх `ClusterRoleBinding`. Права в остальных namespace выдаёт компонент `cluster-base`: и сами роли `argocd-managed-deployer` / `argocd-managed-ui`, и `RoleBinding` на них (по паре на namespace) объявляются **целиком** в `hosts-vars-override/` — базовые списки компонента пусты, он про ArgoCD ничего не знает. Единственное cluster-wide право — `argocd-managed-kargo-cluster` (`kargo.akuity.io/projects`). Создавать `Namespace`, `ClusterRole` и `ClusterRoleBinding` ArgoCD не может — вербов нет. Обязательные спутники: ExternalSecret `eso-argocd-in-cluster` (иначе кэш контроллера пуст и все Application уходят в `Unknown`) и `resource.respectRBAC: normal` в `argocd-cm`. **После `argocd-install.yaml` обязателен `argocd-restart.yaml`**: `helm upgrade` не пересоздаёт под контроллера, а уже открытые watch переживают отзыв RBAC — без рестарта cluster-scoped ресурсы продолжают отслеживаться по старым правам, и ограничение применяется лишь наполовину. См. [`components.md`](reference/components.md) §9 и §17.13.
+- **Объект `cluster-base` в чужом namespace обязан иметь уникальное имя.** Stage `rbac` рендерит объекты в namespace'ы, которыми владеют другие helm-релизы; совпадение имени роняет **весь** релиз на `invalid ownership metadata`. Это штатная защита: `--take-ownership` намеренно не используется. Приём — префикс-маркер владельца (`argocd-managed-*`). Осознанный перехват — ручная простановка трёх меток владения. См. [`playbook-conventions.md`](reference/playbook-conventions.md) §17.12.
 
 ---
 
@@ -74,7 +76,7 @@ k8s-ansible/
 ├── Makefile, .yamllint.yaml, .ansible-lint.yml  ← test runner + lint configs
 ├── .claude/prompts/           ← cold-start prompt for manual chat workflow
 ├── playbook-system/  (+ tasks/, benchmark/, utils/)  ← node-scoped, imperative
-├── playbook-app/     (+ tasks/, charts/) ← cluster-scoped, declarative; charts/ = 23 local Helm-chart dirs
+├── playbook-app/     (+ tasks/, charts/) ← cluster-scoped, declarative; charts/ = 25 local Helm-chart dirs
 ├── tests/                     ← Docker-based test runner
 ├── hosts-vars/                ← base defaults (in git)
 ├── hosts-vars-override/       ← secrets + real inventory (gitignored)
@@ -131,6 +133,7 @@ One long-lived Opus chat (TeamLead) + a fresh Sonnet chat per SUB-task (DevOps =
 | Debug a failing install | [`commands-reference.md`](reference/commands-reference.md) §5 + per-topic Troubleshooting tables |
 | Run tests / debug a lint failure | [`testing.md`](reference/testing.md) |
 | Setup a manual chat session | §3.1 above + [`team-workflow.md`](reference/team-workflow.md) §3 |
+| Завести namespace / выдать в нём права | [`components.md`](reference/components.md) §17.13 + [`commands-reference.md`](reference/commands-reference.md) §2.5 |
 
 ### 3.3 Human-facing docs (not modified by Claude)
 

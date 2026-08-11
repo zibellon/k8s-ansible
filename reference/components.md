@@ -133,11 +133,13 @@ Template fields:
 - **Install playbook.** `argocd-install.yaml`.
 - **Namespace.** `argocd` (default; configurable via `argocd_namespace` — namespace handled by `helm template --namespace` при render'е chart templates, см. [`playbook-conventions.md`](playbook-conventions.md) §21).
 - **Releases.** `argocd-crds`, `argocd-pre`, `argocd`, `argocd-post`, `argocd-gitops`.
-- **External Helm repo.** No — local chart with kustomize render of pristine upstream `install.yaml` on master_manager_fact before helm install (see [`playbook-conventions.md`](playbook-conventions.md) §21).
+- **External Helm repo.** No — local chart with kustomize render of pristine upstream **`namespace-install.yaml`** (тег v3.4.4) on master_manager_fact before helm install (see [`playbook-conventions.md`](playbook-conventions.md) §21). Это штатный upstream-flavor: `cluster-install` = `namespace-install` + `cluster-rbac` + `crds`, и от него отличается ровно шестью объектами — 3 `ClusterRole` + 3 `ClusterRoleBinding`, которых у нас нет.
+- **RBAC — namespace-scoped.** Upstream cluster-RBAC снят с установки: ArgoCD имеет права только в своём namespace (6 `Role` + 6 `RoleBinding` из базового манифеста). Права в остальных namespace выдаёт компонент `cluster-base` (§17.13) — `RoleBinding` на `ClusterRole` `argocd-managed-deployer` (для SA `argocd-application-controller`) и `argocd-managed-ui` (для SA `argocd-server`), по паре на каждый разрешённый namespace. И роли, и привязки объявляются **целиком** в `hosts-vars-override/`: базовые списки `cluster-base` пусты, сам компонент про ArgoCD ничего не знает. Единственное cluster-wide право — `argocd-managed-kargo-cluster` (`kargo.akuity.io/projects`, нужен для Kargo `Project`). Создать `Namespace`, `ClusterRole` или `ClusterRoleBinding` ArgoCD не может: соответствующих вербов нет ни в одном гранте. Грант `pods/exec` для web-терминала переехал из kustomize-патча в `argocd-managed-ui`. **⚠️ После установки обязателен `argocd-restart.yaml`.** `helm upgrade` меняет `ClusterRole`/`ClusterRoleBinding` и ConfigMap'ы, но не трогает `StatefulSet` — под контроллера не пересоздаётся. А Kubernetes авторизует watch в момент открытия соединения и потом не переавторизует: watch на cluster-scoped типы, открытый при старых правах, продолжает жить и поставлять события. Наблюдалось вживую: RBAC уже урезан (`can-i list namespaces` → `no`), а `Namespace` всё ещё в кэше, попадает в состав Application и требует prune. Проверка «три upstream ClusterRole исчезли» этого не улавливает — смотреть надо на `startTime` пода контроллера.
+- **in-cluster cluster-Secret.** ArgoCD хранит список кластеров `Secret`'ами с меткой `argocd.argoproj.io/secret-type: cluster`; для собственного кластера такого Secret'а обычно нет и подставляется захардкоженная запись **без ограничений**. Объект `argocd_secret_in_cluster` (фаза `pre`, ExternalSecret `eso-argocd-in-cluster`) её перекрывает. **Обязателен** при namespace-scoped установке: без поля `namespaces` кэш контроллера уходит в cluster-wide LIST/WATCH, ловит Forbidden на всё и остаётся пустым — все Application переходят в `Unknown`. Поэтому включён в `eso_vault_integration_argocd_secrets` безусловно, без флага. Отсюда же `resource.respectRBAC: normal` в `argocd-cm`. Содержимое целиком из Vault (`eso-secret/argocd/clusters/in-cluster`, поля `name`/`server`/`namespaces`/`clusterResources`/`config`) — template-only ExternalSecret отвергается admission-вебхуком ESO. Путь под `clusters/` расширяем: внешние кластеры лягут соседями (`clusters/<name>`), каждый своим ExternalSecret'ом. ⚠️ Это **не** `argocd-secret`; инвариант `CLAUDE.md` §0 про его пустоту сюда не относится.
 - **Required vars.** `argocd_namespace`, `argocd_ui_domain`, `argocd_rpc_domain`, `argocd_external_url`, `argocd_ingress_class_name` (`traefik-lb`), `argocd_cert_manager_issuer` (object `{enabled, name, spec}`). Kustomize patches (default `[]`): `argocd_pre_kustomize_patches`, `argocd_install_kustomize_patches` (computed: `argocd_kustomize_patches_base` — operator base argocd-cm/argocd-cmd-params-cm patches + generated accounts/RBAC patches — concatenated with operator-override `argocd_install_kustomize_patches_extra`, e.g. argocd-ssh-known-hosts-cm), `argocd_post_kustomize_patches`, `argocd_gitops_kustomize_patches`.
 - **ESO integration.** Yes (via `eso_vault_integration_argocd`) — but ONLY for git-ops repo credentials, added by the operator through `eso_vault_integration_argocd_secrets_extra` (entries set `body.target.template.metadata.labels: argocd.argoproj.io/secret-type: repo-creds` or `repository` so ArgoCD recognises them as repository credentials). The base `eso_vault_integration_argocd_secrets` list is empty. Local-account passwords (incl. the custom admin) are NOT synced via ESO — see **Declarative local accounts** below.
 - **ServiceMonitor.** Yes.
-- **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik.
+- **Dependencies.** Cilium, cert-manager, external-secrets, vault, traefik, cluster-base (stage `rbac` — иначе ArgoCD не имеет прав ни в одном namespace, кроме своего).
 - **Enable flag.** `argocd_enabled` (opt-in, default `false`): guards install/configure; argocd's cross-ns NPs to gitlab / gitlab-runner gated by `gitlab_enabled` / `gitlab_runner_enabled`. See [`networking.md`](networking.md) §8.5.
 - **Non-install playbooks.** `argocd-restart.yaml`. (The former `argocd-configure.yaml` was removed once admin-password management became declarative — local accounts are reconciled in-place by `argocd-install.yaml --tags accounts-sync`.)
 - **Declarative local accounts.** `argocd_local_accounts` (list of `{name, passwordMtime, enabled, capabilities}`, real values in `hosts-vars-override/`) declares local users. Per-account `accounts.<name>: <capabilities>` (required CSV of `login`/`apiKey`) + `accounts.<name>.enabled` (required bool) + `admin.enabled` render into `argocd-cm`, and `argocd_policy_csv_list` (Casbin lines, incl. `g, <admin>, role:admin`) into `argocd-rbac-cm` — both inside `argocd_kustomize_patches_base`, consumed by the install phase via the computed `argocd_install_kustomize_patches` (= base + operator-override `argocd_install_kustomize_patches_extra`). Passwords are generated at runtime by the `accounts-sync` reconcile (`tasks-argocd-accounts-sync.yaml`): bcrypt → `argocd-secret` (`accounts.<name>.password`/`.passwordMtime`, only these keys), plaintext mirror → Vault `eso-secret/argocd/accounts/creds`. Per-project RBAC (`AppProject.roles/groups`) lives in the external git-ops repo and only references these usernames. Default `AppProject` lockdown via `argocd_gitops_default_project_update` (raw `kubectl apply` in the gitops phase — ArgoCD auto-creates `default` and forbids its deletion). **Invariant:** `argocd-secret` must stay empty (no `data:`) in every helm render, else helm prunes the out-of-band `accounts.*` + `server.secretkey` keys.
@@ -494,6 +496,45 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 - **Ограничение upstream-чарта: под работает root'ом.** В чарте нет ни `podSecurityContext`, ни `securityContext` контейнера, а фаза install идёт прямым `helm upgrade` с репозитория и не проходит через kustomize-пайплайн ([`playbook-conventions.md`](playbook-conventions.md) §21) — вставить их нечем. Rootfs writable, поэтому emptyDir на `/tmp` не нужен (Portainer пишет туда при деплое стеков и работе с helm-репозиториями). Если хардненинг понадобится, архитектурный путь — перевести фазу install на `helm pull` + `helm template` + kustomize, а не форкать чарт.
 - **Notes.** Service при `type: ClusterIP` всё равно публикует три порта (`http` 9000, `https` 9443, `edge` 8000) — шаблон хардкодит их, убрать нечем; наружу открыт только 9000 через Ingress, остальные не пускает NetworkPolicy. Edge-агенты не используются: `--tunnel-port` upstream рендерит только при `service.type: NodePort`. Тег образа с суффиксом `-alpine` не матчит version-regex чарта, из-за чего probes уходят в ветку `9000/HTTP` — это корректная ветка.
 
+## 17.13. `cluster-base`
+
+- **Chart path.** `charts/cluster-base/{namespaces,rbac}/` (оба локальные).
+- **Install playbook.** `cluster-base-install.yaml`.
+- **Namespace.** Два «домашних» namespace под состояние helm: `cluster-namespaces` (`cluster_base_namespaces_namespace`) и `cluster-rbac` (`cluster_base_rbac_namespace`). Собственного workload'а у компонента нет — объекты либо cluster-scoped, либо живут в **чужих** namespace.
+- **Releases.** `cluster-base-namespaces`, `cluster-base-rbac`.
+- **Stages вместо фаз.** Два независимо перезапускаемых stage — `--tags namespaces` и `--tags rbac`. Стандартных `pre`/`install`/`post` нет: у компонента нет workload'а, ESO и ingress — осознанное отступление, см. [`playbook-conventions.md`](playbook-conventions.md) §6.5.
+- **External Helm repo.** No — оба чарта локальные, рендер через helm template + kustomize ([`playbook-conventions.md`](playbook-conventions.md) §21). Namespace-transform **не применяется** ни в одном stage: объекты рендерятся в чужие namespace и в cluster scope, переписывать их нельзя.
+- **Required vars.** `cluster_base_enabled`, `cluster_base_namespaces_namespace`, `cluster_base_rbac_namespace`, `cluster_base_namespaces_helm_timeout`, `cluster_base_rbac_helm_timeout`. Списки объектов — по одному на тип, каждый парой `_base`/`_extra`: `cluster_base_namespaces_list`, `cluster_base_rbac_service_accounts`, `cluster_base_rbac_roles`, `cluster_base_rbac_cluster_roles`, `cluster_base_rbac_role_bindings`, `cluster_base_rbac_cluster_role_bindings`. Kustomize patches (default `[]`): `cluster_base_namespaces_kustomize_patches`, `cluster_base_rbac_kustomize_patches`.
+- **Одна запись — один объект.** Элемент несёт **полную спецификацию** объекта плюс `labels` и `annotations`; шаблон рендерит его как есть, ничего не вычисляя и не размножая по списку namespace'ов. Связей между списками нет: ServiceAccount может жить без биндинга, Role — без субъекта, RoleBinding — ссылаться на роль, созданную не здесь.
+- **ESO integration.** No.
+- **ServiceMonitor.** No.
+- **Dependencies.** Stage `namespaces` не зависит ни от чего. Stage `rbac` требует, чтобы **каждый** namespace из его элементов уже существовал — `RoleBinding` нельзя создать в несуществующем namespace, — то есть идёт после установки компонентов, чьи namespace он трогает. См. §19.
+- **Онбординг namespace — два шага, не один.** При namespace-scoped ArgoCD (§9) namespace больше не приезжает вместе с Application: ArgoCD не может его создать. Порядок — сначала запись в `cluster_base_namespaces_list` + прогон `--tags namespaces`, затем пара `RoleBinding` в `cluster_base_rbac_role_bindings_extra` + прогон `--tags rbac`, и только потом Application в git-ops. Обратный порядок даёт Application, который не может развернуться. Команды — [`commands-reference.md`](commands-reference.md) §4.11.
+- **Enable flag.** `cluster_base_enabled` (opt-in, default `false`).
+- **Все пять `_base` пусты намеренно.** Компонент — чистый рендерер и не знает ни про ArgoCD, ни про Kargo: кому и что выдавать, решает оператор конкретного кластера, поэтому объекты целиком живут в `hosts-vars-override/<cluster>/cluster-base.yaml`. Объект попадёт в `_base` только если окажется действительно общим для всех кластеров. Типовое наполнение override под namespace-scoped ArgoCD — **семь `ClusterRole`**, разложенных по двум осям. Ось «кто»: у ArgoCD два SA с разными задачами — `argocd-application-controller` (движок sync, нужен полный CRUD) и `argocd-server` (UI/API, обслуживает действия оператора), отсюда пара ролей на каждый класс. Ось «где»: namespace различаются тем, **что** в них деплоит ArgoCD.
+
+| Роль | Кому | Где | Права |
+|---|---|---|---|
+| `argocd-managed-deployer` | controller | продуктовые + `argocd` | `apiGroups`/`resources` = `*`, `verbs` **явным списком** `get,list,watch,create,update,patch,delete,deletecollection` |
+| `argocd-managed-ui` | server | те же | `*`/`*` → `get`,`patch`,`delete` + `events` list, `pods`/`pods/log` get, `pods/exec` create, `batch/jobs` create |
+| `argocd-managed-system-config` | controller | `traefik-lb`, `haproxy-lb`, `seaweedfs` | `networkpolicies`, `ingresses`, `services`, `certificates` — CRUD |
+| `argocd-managed-system-config-ui` | server | те же | те же типы → `get`,`patch`,`delete` + `events` list |
+| `argocd-managed-argo-events` | controller | `argo-events` | `serviceaccounts`, `roles`, `rolebindings`, `eventsources`, `sensors`, `eventbus`, `externalsecrets`, `secretstores` — CRUD |
+| `argocd-managed-argo-events-ui` | server | `argo-events` | те же типы → `get`,`patch`,`delete` + `events` list |
+| `argocd-managed-kargo-cluster` | оба SA | **cluster-wide** | `kargo.akuity.io/projects` — `Project` cluster-scoped, иначе Kargo не раскатать |
+
+**Почему `verbs` нигде не `*`.** Wildcard матчит служебные глаголы RBAC `escalate` (снимает проверку «нельзя выдать себе больше, чем имеешь»), `bind` (привязать роль, правами которой не обладаешь) и `impersonate` (действовать от имени любого SA этого namespace — прямой захват прав привилегированного SA).
+
+**Почему для инфраструктурных namespace роли перечислительные.** Там ArgoCD кладёт только конфигурацию, зато рядом живут SA с `ClusterRoleBinding`: `argo-events-sa` — `secrets` CRUD по всему кластеру плюс `pods/exec` и `deployments`; `haproxy-lb` — `secrets` CRUD по кластеру и `delete` любого CRD; `traefik-lb` — `secrets` на чтение по кластеру. С правами `*` ArgoCD мог бы поднять там под с их `serviceAccountName` или войти в существующий через `pods/exec`. Роли без `pods`, `secrets`, `deployments`, `statefulsets` делают оба пути невозможными. Обход через RBAC тоже закрыт: привязать `ClusterRole/argo-events-role` не выйдет — проверка эскалации требует обладать всеми её правами, а `secrets` и `pods` у ArgoCD там нет.
+
+**Почему продуктовые остаются широкими.** Перечислить типы там нельзя (список CRD растёт), но и красть нечего: единственный SA — `eso-main`, без единой кластерной привязки. Защита строится на PSA против побега на ноду, а не на сужении прав.
+
+Все роли, кроме `argocd-managed-kargo-cluster`, — **только определения**: `ClusterRole` без привязки никого ничем не наделяет, права возникают в namespace каждого `RoleBinding`. См. §9.
+- **⚠️ Именование — ответственность оператора.** Stage `rbac` рендерит объекты в чужие namespace, которыми владеют другие helm-релизы (`argocd`, `argo-events`, `kargo`, релизы продуктов из git-ops). Совпадение имени в том же namespace роняет **весь** stage на `invalid ownership metadata` — helm отказывается перенимать чужой объект. Это единственный автоматический сигнал о коллизии, поэтому `--take-ownership` намеренно не используется. Имя обязано быть уникальным относительно всех прочих релизов и того, что раскатывает ArgoCD; приём — префикс-маркер владельца в имени (`argocd-managed-*`). Правило — [`playbook-conventions.md`](playbook-conventions.md) §17.12.
+- **⚠️ Защиты от удаления namespace нет.** Убрал элемент из `cluster_base_namespaces_list` — следующий прогон `--tags namespaces` снесёт namespace вместе с содержимым. Осознанное решение оператора.
+- **Adoption существующих объектов — ручной и осознанный.** Объект, созданный вне компонента (ArgoCD, Kargo, `kubectl` руками), не перенимается автоматически: прогон падает, и helm в тексте ошибки сам перечисляет недостающие ключи. Чтобы усыновить, оператор проставляет объекту все три метки владения и повторяет прогон: `kubectl label <kind> <name> [-n <ns>] app.kubernetes.io/managed-by=Helm --overwrite`, затем `kubectl annotate ... meta.helm.sh/release-name=<release> --overwrite` и `kubectl annotate ... meta.helm.sh/release-namespace=<release-ns> --overwrite`. Пары: `cluster-base-namespaces`/`cluster-namespaces` и `cluster-base-rbac`/`cluster-rbac`. Массового усыновления не бывает по построению: `cluster-base` создаёт namespace **раньше** всех, кто мог бы их занять, — в частности kargo-namespace заводится здесь с меткой `kargo.akuity.io/project`, а `Project` из ArgoCD подхватывает существующий.
+- **⚠️ Известное ограничение — только для продуктовых namespace.** Там остаётся `resources: ["*"]`, а значит полный доступ к `pods`: без Pod Security Admission можно поднять privileged-под и уйти на ноду. Служебные глаголы RBAC из набора убраны, инфраструктурные namespace переведены на перечислительные роли (см. выше) — но подовый вектор ни тем, ни другим не закрывается. Убрать `create pods` из продуктовой роли бесполезно: ArgoCD создаёт `Deployment`, а под с нужным `serviceAccountName` за него сделает kube-controller-manager; запретить ссылку на чужой SA в спеке пода RBAC не умеет — это уровень Kyverno. Меток `pod-security.kubernetes.io/*` в репозитории сейчас нет (дефолтный уровень — `privileged`), Kyverno/Gatekeeper тоже нет. Метки навешиваются через `cluster_base_namespaces_list[].labels` — механизм готов, применение не сделано.
+
 ## 18. Namespaces Matrix
 
 | Namespace | Owners | Fixed by upstream? |
@@ -521,13 +562,15 @@ SeaweedFS allows hot data tier на replication, cold data tier на erasure cod
 | `argo-rollouts` | argo-rollouts | no |
 | `argo-events` | argo-events | no |
 | `portainer` | portainer | no |
+| `cluster-namespaces` | cluster-base (только состояние helm-релиза `cluster-base-namespaces`) | no (configurable via `cluster_base_namespaces_namespace`) |
+| `cluster-rbac` | cluster-base (только состояние helm-релиза `cluster-base-rbac`) | no (configurable via `cluster_base_rbac_namespace`) |
 
 ## 19. Cross-cutting Dependency Order
 
 Install in roughly this order (first → last). Parallel installation within a dependency tier is safe.
 
 ```
-L0  cilium
+L0  cilium         cluster-base --tags namespaces
 L1  cert-manager   external-secrets
 L2  longhorn       linstor       metrics-server   stakater-reloader   argo-rollouts
 L3  vault
@@ -536,11 +579,14 @@ L5  mon-system     seaweedfs
 L6  zitadel
 L7  argocd    gitlab    teleport    filestash    portainer
 L8  gitlab-runner   kargo   argo-events
+L9  cluster-base --tags rbac
 ```
 
 `linstor` и `longhorn` — оба storage tier; устанавливается **только один** из двух в кластере (выбор оператора), не оба параллельно.
 
 The `argocd` component's `[gitops]` tag (AppProject + Applications) also runs in L7 as part of `argocd-install.yaml` — no separate playbook.
+
+`cluster-base` разнесён по двум уровням намеренно. Stage `namespaces` ни от чего не зависит и идёт рано — namespace'ы должны существовать до того, как в них начнут раскатывать. Stage `rbac` идёт последним: `RoleBinding` нельзя создать в несуществующем namespace, а его элементы адресуют namespace'ы, которые заводят другие компоненты (`traefik-lb` L4, `seaweedfs` L5, `argocd` L7, `argo-events` L8).
 
 ## 20. ESO-integrated Components (15)
 

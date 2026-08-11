@@ -1,0 +1,196 @@
+# =============================================================================
+# Install cluster-base (global cluster scaffolding: namespaces + RBAC)
+# Steps:
+#   1. cluster-base/namespaces: Namespace objects
+#      → release cluster-base-namespaces in ns cluster-namespaces
+#   2. cluster-base/rbac: ServiceAccounts, Roles, ClusterRoles and bindings
+#      → release cluster-base-rbac in ns cluster-rbac
+#
+# Usage (tags):
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-base-install.yaml
+#   ansible-playbook ... --tags namespaces
+#   ansible-playbook ... --tags rbac
+#
+# NOTE: два stage вместо pre/install/post — у компонента нет workload'а, ESO и
+#       ingress, три стандартные фазы были бы пустыми (осознанное отступление
+#       от playbook-conventions.md §6.1).
+#
+# NOTE: namespace-transform НЕ применяется ни в одном stage — объекты живут в
+#       чужих namespace'ах и в cluster scope, переписывать их нельзя.
+#
+# NOTE: --take-ownership НЕ используется намеренно. Компонент рендерит объекты в
+#       чужие namespace, и объект с уже занятым именем обязан ронять stage с
+#       invalid ownership metadata — это единственный автоматический сигнал о
+#       коллизии (см. playbook-conventions.md §17.12). Helm в тексте ошибки сам
+#       перечисляет недостающие ключи.
+#
+#       Если перехват ОСОЗНАННЫЙ (объект создан ArgoCD, Kargo или руками) —
+#       усыновить вручную, проставив все три метки владения, после чего прогнать
+#       playbook обычным образом:
+#         kubectl label    <kind> <name> [-n <ns>] app.kubernetes.io/managed-by=Helm --overwrite
+#         kubectl annotate <kind> <name> [-n <ns>] meta.helm.sh/release-name=<release> --overwrite
+#         kubectl annotate <kind> <name> [-n <ns>] meta.helm.sh/release-namespace=<release-ns> --overwrite
+#       Пары release/namespace: cluster-base-namespaces/cluster-namespaces,
+#       cluster-base-rbac/cluster-rbac.
+# =============================================================================
+
+---
+- name: Install cluster-base (namespaces + RBAC)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[cluster-base-install] Assert component enabled"
+      assert:
+        that:
+          - cluster_base_enabled | default(false) | bool
+        fail_msg: "cluster-base is disabled (cluster_base_enabled=false). Set cluster_base_enabled: true in hosts-vars-override/ to install it."
+      run_once: true
+      tags: [always]
+
+    - name: "[cluster-base-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "cluster-base-pre-check"
+      tags: [always]
+
+    - name: "[cluster-base-pre-check] Forbid kube-system namespace (namespaces release)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "cluster-base-pre-check"
+        dto_target_namespace: "{{ cluster_base_namespaces_namespace }}"
+      tags: [always]
+
+    - name: "[cluster-base-pre-check] Forbid kube-system namespace (rbac release)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "cluster-base-pre-check"
+        dto_target_namespace: "{{ cluster_base_rbac_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: STAGE namespaces (Namespace objects)
+    # =========================================================================
+
+    - name: "[cluster-base-namespaces] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "cluster-base-namespaces"
+        dto_chart_name: "namespaces"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/cluster-base/namespaces/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/cluster-base/namespaces"
+      tags: [namespaces]
+
+    - name: "[cluster-base-namespaces] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "cluster-base-namespaces"
+        dto_dir: "{{ remote_charts_dir }}/cluster-base/namespaces"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ cluster_base_namespaces_helm_values | to_nice_yaml }}"
+      tags: [namespaces]
+
+    - name: "[cluster-base-namespaces] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "cluster-base-namespaces"
+        dto_release_name: "cluster-base-namespaces"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/cluster-base/namespaces"
+        dto_values_file_path: "{{ remote_charts_dir }}/cluster-base/namespaces/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/cluster-base/namespaces-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/cluster-base/namespaces-k"
+        dto_patches_list: "{{ cluster_base_namespaces_kustomize_patches }}"
+        dto_target_namespace: "{{ cluster_base_namespaces_namespace }}"
+      tags: [namespaces]
+
+    - name: "[cluster-base-namespaces] Install or upgrade via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "cluster-base-namespaces"
+        dto_helm_command: >
+          helm upgrade --install cluster-base-namespaces {{ remote_charts_dir }}/cluster-base/namespaces-k
+          --namespace {{ cluster_base_namespaces_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ cluster_base_namespaces_helm_timeout }}
+      tags: [namespaces]
+
+    # =========================================================================
+    # STEP 2: STAGE rbac (ServiceAccounts, Roles, ClusterRoles and bindings)
+    # =========================================================================
+
+    - name: "[cluster-base-rbac] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "cluster-base-rbac"
+        dto_chart_name: "rbac"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/cluster-base/rbac/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/cluster-base/rbac"
+      tags: [rbac]
+
+    - name: "[cluster-base-rbac] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "cluster-base-rbac"
+        dto_dir: "{{ remote_charts_dir }}/cluster-base/rbac"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ cluster_base_rbac_helm_values | to_nice_yaml }}"
+      tags: [rbac]
+
+    - name: "[cluster-base-rbac] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "cluster-base-rbac"
+        dto_release_name: "cluster-base-rbac"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/cluster-base/rbac"
+        dto_values_file_path: "{{ remote_charts_dir }}/cluster-base/rbac/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/cluster-base/rbac-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/cluster-base/rbac-k"
+        dto_patches_list: "{{ cluster_base_rbac_kustomize_patches }}"
+        dto_target_namespace: "{{ cluster_base_rbac_namespace }}"
+      tags: [rbac]
+
+    - name: "[cluster-base-rbac] Install or upgrade via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "cluster-base-rbac"
+        dto_helm_command: >
+          helm upgrade --install cluster-base-rbac {{ remote_charts_dir }}/cluster-base/rbac-k
+          --namespace {{ cluster_base_rbac_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ cluster_base_rbac_helm_timeout }}
+      tags: [rbac]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[cluster-base-verify] Verify Helm releases in {{ cluster_base_namespaces_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_helm_namespace: "{{ cluster_base_namespaces_namespace }}"
+        dto_label_name: "cluster-base-verify"
+      tags: [always]
+
+    - name: "[cluster-base-verify] Verify Helm releases in {{ cluster_base_rbac_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_helm_namespace: "{{ cluster_base_rbac_namespace }}"
+        dto_label_name: "cluster-base-verify"
+      tags: [always]
+
+    - name: "[cluster-base-verify] Installation complete"
+      debug:
+        msg:
+          - "cluster-base-namespaces + cluster-base-rbac: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

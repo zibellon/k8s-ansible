@@ -164,10 +164,45 @@ all:
           - extract:
               key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/oidc"
 
-    # Base ESO secrets list: OIDC client-secret добавляется только при argocd_oidc_enabled: true
-    # (при false → [] → рендер идентичен прежнему). Local-account passwords пишутся в argocd-secret
-    # accounts-sync'ом (kubectl patch), не через ESO. Git-ops repo creds — через _extra в override.
-    eso_vault_integration_argocd_secrets: "{{ [argocd_secret_oidc_creds] if argocd_oidc_enabled | bool else [] }}"
+    # in-cluster запись о СОБСТВЕННОМ кластере. ArgoCD хранит список кластеров
+    # Secret'ами с меткой argocd.argoproj.io/secret-type: cluster; для своего
+    # кластера Secret обычно отсутствует и подставляется захардкоженная запись
+    # БЕЗ ограничений — этот объект её перекрывает. Обязателен при namespace-scoped
+    # установке: без поля namespaces кэш контроллера уходит в cluster-wide LIST,
+    # ловит Forbidden на всё и остаётся пустым (все Application → Unknown).
+    # Содержимое ЦЕЛИКОМ из Vault: template-only ExternalSecret отвергается
+    # admission-вебхуком ESO ("either data or dataFrom should be specified"),
+    # поэтому dataFrom.extract, а template несёт только метку.
+    # Путь под clusters/ — расширяемо: внешние кластеры лягут соседями
+    # (clusters/<name>), каждый своим ExternalSecret'ом.
+    # Оператор заполняет путь до первого прогона --tags pre:
+    #   vault kv put eso-secret/argocd/clusters/in-cluster \
+    #     name="in-cluster" server="https://kubernetes.default.svc" \
+    #     namespaces="argocd,..." clusterResources="true" \
+    #     config='{"tlsClientConfig":{"insecure":false}}'
+    # ⚠️ Это НЕ argocd-secret — инвариант про его пустоту сюда не относится.
+    argocd_secret_in_cluster:
+      external_secret_name: "eso-argocd-in-cluster"
+      vault_path: "/argocd/clusters/in-cluster"
+      body:
+        target:
+          name: "eso-argocd-in-cluster"
+          template:
+            engineVersion: v2
+            metadata:
+              labels:
+                argocd.argoproj.io/secret-type: cluster
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/clusters/in-cluster"
+
+    # Base ESO secrets list: in-cluster запись — БЕЗУСЛОВНО (namespace-scoped ArgoCD
+    # без неё нерабочий). OIDC client-secret — только при argocd_oidc_enabled: true.
+    # Local-account passwords пишутся в argocd-secret accounts-sync'ом (kubectl patch),
+    # не через ESO. Git-ops repo creds — через _extra в override.
+    eso_vault_integration_argocd_secrets: >-
+      {{ [argocd_secret_in_cluster]
+         + ([argocd_secret_oidc_creds] if argocd_oidc_enabled | bool else []) }}
 
     eso_vault_integration_argocd_secrets_extra: []
     # === SECTION 3 ===
@@ -231,7 +266,7 @@ all:
     # Install-phase kustomize patches: base = operator patches + generated accounts/RBAC patches.
     # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure) + generated argocd-cm
     # (accounts.<name>: <capabilities> + accounts.<name>.enabled из argocd_local_accounts + admin.enabled) + argocd-rbac-cm
-    # (policy.csv из argocd_policy_csv_list) + argocd-server ClusterRole (pods/exec для web-terminal).
+    # (policy.csv из argocd_policy_csv_list).
     # kustomize мержит несколько патчей на один target.
     argocd_kustomize_patches_base:
       - target:
@@ -250,6 +285,7 @@ all:
             users.session.duration: "120h"
             exec.enabled: "true"
             exec.shells: "bash,sh"
+            resource.respectRBAC: "normal"
             resource.customizations: |
               networking.k8s.io/Ingress:
                 health.lua: |
@@ -295,20 +331,6 @@ all:
           {% for line in argocd_policy_csv_list %}
               {{ line }}
           {% endfor %}
-      # argocd-server ClusterRole — grant pods/exec (create) for the web terminal (exec.enabled above).
-      # JSON6902 (rules has no merge-key → strategic-merge would replace it); k8s 1.35+ needs create even on the WebSocket path.
-      - target:
-          group: rbac.authorization.k8s.io
-          version: v1
-          kind: ClusterRole
-          name: argocd-server
-        patch: |-
-          - op: add
-            path: /rules/-
-            value:
-              apiGroups: [""]
-              resources: ["pods/exec"]
-              verbs: ["create"]
     # Operator-side extra patches — задаются в hosts-vars-override/ (напр. argocd-ssh-known-hosts-cm). Default пусто.
     argocd_install_kustomize_patches_extra: []
     # OIDC-патчи — отдельными объектами, добавляются в список только при argocd_oidc_enabled: true.
