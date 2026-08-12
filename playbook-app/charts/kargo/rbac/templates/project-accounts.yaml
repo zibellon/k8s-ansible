@@ -1,0 +1,42 @@
+# =============================================================================
+# KARGO PROJECT ACCOUNTS
+#   Раздача ролей внутри проекта. name элемента — это и имя Project, и имя его
+#   namespace. На каждый элемент accounts рендерится RoleBinding в этом
+#   namespace: субъект — ServiceAccount saName в нём же, roleRef — Role или
+#   ClusterRole с именем roleName.
+#
+#   roleType: Role       — как правило роли, которые Kargo создаёт в namespace
+#                          каждого Project сам: kargo-admin, kargo-promoter,
+#                          kargo-viewer. Ссылаться на них безопасно: реконсайлер
+#                          сверяет только .rules самой Role и .subjects СВОИХ
+#                          биндингов, чужие объекты не трогает.
+#   roleType: ClusterRole — связка ClusterRole + RoleBinding даёт права только
+#                          внутри этого namespace, а не по всему кластеру.
+#
+#   ⚠️ Имя RoleBinding'а — kargo-custom-<saName>-<roleName>. Префикс обязателен:
+#   в проектных namespace Kargo держит свои kargo-admin / kargo-promoter /
+#   kargo-viewer и жёстко реконсайлит их .subjects — совпадение имени отобрало
+#   бы объект у чужого владельца и уронило релиз на invalid ownership metadata.
+#
+#   ⚠️ Role, на которую ссылается roleRef, Kargo создаёт при первом реконсайле
+#   Project'а. Ссылка на ещё не созданную роль допустима: биндинг создастся и
+#   начнёт действовать, когда роль появится.
+# =============================================================================
+{{- range $project := .Values.projects }}
+  {{- range $account := $project.accounts }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kargo-custom-{{ $account.saName }}-{{ $account.roleName }}
+  namespace: {{ $project.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ $account.roleType }}
+  name: {{ $account.roleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $account.saName }}
+    namespace: {{ $project.name }}
+  {{- end }}
+{{- end }}

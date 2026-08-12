@@ -10,7 +10,9 @@ namespace: ""
 # отсутствующие блоки не рендерятся.
 # Связей между списками нет: ServiceAccount может жить без биндинга, Role —
 # без субъекта, биндинг — ссылаться на роль, созданную upstream-чартом.
-#   ServiceAccount:      {name, labels?, annotations?}          namespace из .Values.namespace
+#   ServiceAccount:      {name, namespace?, labels?, annotations?}  namespace по
+#                        умолчанию .Values.namespace; в namespace проекта — ради
+#                        фильтра «My Projects», см. templates/rbac-service-accounts.yaml
 #   Role:                {name, namespace, labels?, annotations?, rules}
 #   ClusterRole:         {name, labels?, annotations?, rules}
 #   RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
@@ -20,6 +22,25 @@ rbacRoles: []
 rbacClusterRoles: []
 rbacClusterRoleBindings: []
 rbacRoleBindings: []
+
+# Сотрудники. Один элемент — один человек; SA с именем saName создаётся в
+# КАЖДОМ namespace из namespaces. Подробности — templates/custom-users.yaml.
+#   {saName, namespaces: [], labels?, annotations?}
+customUsers: []
+
+# «Вижу список проектов»: ClusterRole + ClusterRoleBinding, субъектами которого
+# автоматически становятся все customUsers (в релизном namespace). Рендерится
+# только когда customUsers непуст. Правила задаются целиком из hosts-vars,
+# чтобы их можно было переопределить. Подробности и ограничения —
+# templates/custom-discovery.yaml.
+discovery:
+  name: "kargo-custom-discovery"
+  rules: []
+
+# Раздача ролей внутри проектов. name — имя Project, оно же имя namespace.
+# Подробности — templates/project-accounts.yaml.
+#   {name, accounts: [{saName, roleType: Role|ClusterRole, roleName}]}
+projects: []
 
 # Custom K8s objects to render (operator-side, default empty)
 extraObjects: []

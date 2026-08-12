@@ -51,6 +51,11 @@ all:
     # наследует. На дефолте {} аннотация не рендерится — дельта нулевая.
     # global_service_account_namespaces — дополнительные namespace, где Kargo ищет
     # SA с аннотацией claims; релизный namespace чарт подставляет туда сам.
+    #
+    # ⚠️ ЭТИ ЧЕТЫРЕ СПИСКА ЗАРЕЗЕРВИРОВАНЫ. Заполняется только admins — и только
+    # администраторами кластера, у которых полные права и так есть. Остальные три
+    # остаются пустыми: доступ обычных сотрудников выдаётся через kargo_projects
+    # (см. ниже), чтобы человек объявлялся ровно в одном месте.
     # ------
     kargo_oidc_enabled: false
     kargo_oidc_issuer_url: "https://{{ zitadel_domain }}"
@@ -84,12 +89,20 @@ all:
     # invalid ownership metadata — это штатная защита, а не помеха
     # (playbook-conventions.md §17.12). Префикс для своих объектов: kargo-custom-*.
     # ------
-    # Формат элемента. Namespace общий для всего списка — .Values.namespace
-    # (= kargo_namespace), в отличие от Role и RoleBinding ниже.
-    #   - name: "kargo-custom-release-admin"
+    # Формат элемента. namespace необязателен, по умолчанию kargo_namespace.
+    # Здесь же объявляются SA сотрудников — по одному на человека:
+    #   - name: "petya"
     #     annotations:
-    #       rbac.kargo.akuity.io/claims: '{"preferred_username":["user@org.auth.example.com"]}'
-    #     labels: {}
+    #       rbac.kargo.akuity.io/claims: '{"preferred_username":["petya@org.auth.example.com"]}'
+    # Копия того же SA в namespace ПРОЕКТА включает фильтр «My Projects» в UI:
+    # он показывает проект, если у человека есть совпавший по клеймам SA в
+    # namespace с именем проекта, и прав при этом не смотрит вовсе. Прав такая
+    # копия не даёт — их даёт RoleBinding из kargo_projects. Нужна по одной на
+    # каждый проект, где человек должен видеть себя в фильтре:
+    #   - name: "petya"
+    #     namespace: "my-wallet"
+    #     annotations:
+    #       rbac.kargo.akuity.io/claims: '{"preferred_username":["petya@org.auth.example.com"]}'
     kargo_rbac_service_accounts: []
     # Формат элемента. Namespace обязателен — он и ограничивает область действия.
     #   - name: "kargo-custom-dev-promoter"
@@ -134,6 +147,105 @@ all:
     #         name: kargo-custom-dev-promoter
     #         namespace: kargo-system-docs
     kargo_rbac_role_bindings: []
+
+    # ------
+    # СОТРУДНИКИ. Один элемент — один человек. ServiceAccount с именем saName
+    # создаётся в КАЖДОМ namespace из namespaces, с одной и той же аннотацией.
+    #
+    # Какие namespace перечислять:
+    #   kargo (релизный) — ОБЯЗАТЕЛЕН. Без SA здесь список проектов пуст и внутрь
+    #     не попасть вообще: ListProjects — cluster-scoped запрос, и для таких
+    #     Kargo смотрит SA только в GLOBAL_SERVICE_ACCOUNT_NAMESPACES, куда чарт
+    #     всегда кладёт релизный namespace.
+    #   namespace проекта — опционально, включает фильтр «My Projects» в UI.
+    #     Фильтр показывает проект, если у человека есть совпавший по клеймам SA
+    #     в namespace с именем проекта, и прав при этом не смотрит вовсе. Права
+    #     даёт RoleBinding из kargo_projects, а не сам SA.
+    #
+    # ⚠️ Значение claim обязано быть СПИСКОМ строк: индекс аутентификации парсит
+    # аннотацию в map[string][]string и на ошибке делает continue без лога
+    # (pkg/indexer/indexer.go:470-474) — скаляр даст SA, который молча никогда
+    # не сматчится.
+    #
+    # Формат элемента:
+    #   - saName: "petya"
+    #     annotations:
+    #       rbac.kargo.akuity.io/claims: '{"preferred_username":["petya@org.auth.example.com"]}'
+    #     namespaces:
+    #       - "kargo"
+    #       - "my-wallet"
+    #       - "my-casino"
+    # ------
+    kargo_custom_users: []
+
+    # ------
+    # «ВИЖУ СПИСОК ПРОЕКТОВ» — ClusterRole + ClusterRoleBinding, субъектами
+    # которого автоматически становятся ВСЕ сотрудники из kargo_custom_users
+    # (их SA в релизном namespace). Рендерится только когда список непуст.
+    #
+    # Через kargo_projects это выразить нельзя: ListProjects — cluster-scoped
+    # запрос, его SubjectAccessReview идёт с Namespace: "", а такой SAR может
+    # разрешить только ClusterRoleBinding; биндинги из accounts namespaced даже
+    # при roleType: ClusterRole.
+    #
+    # Правила ниже — upstream'ная роль kargo-user минус два мёртвых правила:
+    #   ""/namespaces   — все три чтения Namespace в pkg/server идут через
+    #                     внутренний клиент, SAR на namespaces от человеческого
+    #                     SA не выставляется никогда;
+    #   projects: watch — RPC WatchProjects не существует.
+    # Правило на clusteranalysistemplates нужно, пока включён rollouts
+    # (kargo_helm_values_api.rollouts.integrationEnabled); при выключении —
+    # убрать переопределением всего объекта в hosts-vars-override/.
+    #
+    # ⚠️ ТОЛЬКО cluster-scoped ресурсы. Субъекты лежат в глобальном namespace и
+    # потому проверяются как запасной вариант на каждый namespaced-запрос в
+    # каждом проекте — namespaced-правило стало бы грантом сразу везде.
+    # ------
+    kargo_rbac_discovery:
+      name: "kargo-custom-discovery"
+      rules:
+        - apiGroups: ["kargo.akuity.io"]
+          resources: ["projects"]
+          verbs: ["get", "list"]
+        - apiGroups: ["kargo.akuity.io"]
+          resources: ["clusterconfigs", "clusterpromotiontasks"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["argoproj.io"]
+          resources: ["clusteranalysistemplates"]
+          verbs: ["get", "list", "watch"]
+
+    # ------
+    # РАЗДАЧА РОЛЕЙ В ПРОЕКТАХ. name — имя Project, оно же имя namespace.
+    # На каждый элемент accounts рендерится RoleBinding в этом namespace:
+    # субъект — SA saName в нём же, roleRef — Role или ClusterRole с roleName.
+    # Права пользователя — ОБЪЕДИНЕНИЕ прав всех совпавших по клеймам SA.
+    #
+    # Роли, которые Kargo создаёт в namespace каждого Project сам и на которые
+    # можно ссылаться как на Role: kargo-admin, kargo-promoter, kargo-viewer.
+    #
+    # ⚠️ Порядок онбординга: namespace (cluster-base) → объект Project →
+    # --tags rbac. Role, на которую ссылается roleRef, создаёт
+    # management-controller при первом реконсайле Project'а; ссылка на ещё не
+    # созданную роль допустима — биндинг начнёт действовать, когда роль
+    # появится, — но при обратном порядке будет окно, где человек залогинен и
+    # бесправен.
+    #
+    # ⚠️ «Вижу список проектов» этим списком НЕ выдаётся: для cluster-scoped
+    # запроса нужен ClusterRoleBinding, а здесь рендерятся только RoleBinding'и.
+    # Объявляется вручную парой kargo_rbac_cluster_roles +
+    # kargo_rbac_cluster_role_bindings, см. пример в hosts-vars-override/.
+    #
+    # Формат элемента:
+    #   - name: "my-wallet"
+    #     accounts:
+    #       - saName: "petya"
+    #         roleType: "Role"
+    #         roleName: "kargo-viewer"
+    #       - saName: "petya"
+    #         roleType: "Role"
+    #         roleName: "kargo-promoter"
+    # ------
+    kargo_projects: []
 
     # ------
     # ESO integration: Vault → K8s Secrets.
@@ -484,6 +596,9 @@ all:
       rbacClusterRoles: "{{ kargo_rbac_cluster_roles }}"
       rbacClusterRoleBindings: "{{ kargo_rbac_cluster_role_bindings }}"
       rbacRoleBindings: "{{ kargo_rbac_role_bindings }}"
+      customUsers: "{{ kargo_custom_users }}"
+      discovery: "{{ kargo_rbac_discovery }}"
+      projects: "{{ kargo_projects }}"
       extraObjects: "{{ kargo_rbac_extra_objects }}"
 
     # ------

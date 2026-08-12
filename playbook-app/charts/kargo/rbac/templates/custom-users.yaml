@@ -1,0 +1,36 @@
+# =============================================================================
+# KARGO CUSTOM USERS
+#   Один элемент — один сотрудник. Создаёт ServiceAccount с именем saName в
+#   КАЖДОМ namespace из namespaces, с одними и теми же метками и аннотациями.
+#
+#   Kargo матчит SA по аннотации rbac.kargo.akuity.io/claims и выполняет
+#   SubjectAccessReview от его имени; токен не выпускается, под ним никто не
+#   работает. Прав сам по себе SA не даёт — их даёт биндинг.
+#
+#   Зачем несколько namespace на одного человека:
+#     — релизный namespace Kargo обязателен для списка проектов: ListProjects
+#       это cluster-scoped запрос, и для таких проверяются только namespace из
+#       GLOBAL_SERVICE_ACCOUNT_NAMESPACES, куда чарт всегда кладёт релизный;
+#     — namespace проекта включает фильтр «My Projects» в UI: он показывает
+#       проект, если у человека есть совпавший по клеймам SA в namespace с
+#       именем проекта, и прав при этом не смотрит вовсе
+#       (list_projects_v1alpha1.go:174-186).
+# =============================================================================
+{{- range $user := .Values.customUsers }}
+  {{- range $namespace := $user.namespaces }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $user.saName }}
+  namespace: {{ $namespace }}
+  {{- with $user.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $user.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+{{- end }}

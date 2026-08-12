@@ -1,0 +1,49 @@
+# =============================================================================
+# KARGO CUSTOM DISCOVERY
+#   «Вижу список проектов» — ClusterRole + ClusterRoleBinding, субъектами
+#   которого автоматически становятся ВСЕ сотрудники из customUsers.
+#
+#   Почему это нельзя выразить через projects[].accounts: ListProjects — запрос
+#   cluster-scoped, его SubjectAccessReview идёт с Namespace: "", а такой SAR
+#   может разрешить только ClusterRoleBinding. Биндинги из accounts —
+#   namespaced, и с roleType: ClusterRole тоже (связка ClusterRole +
+#   RoleBinding действует лишь внутри своего namespace).
+#
+#   Субъект берётся в РЕЛИЗНОМ namespace: для cluster-scoped запроса Kargo
+#   смотрит ServiceAccount'ы только в GLOBAL_SERVICE_ACCOUNT_NAMESPACES, куда
+#   чарт всегда кладёт релизный namespace (api/configmap.yaml:48-52), даже при
+#   пустом globalServiceAccounts.namespaces. Поэтому у каждого сотрудника в
+#   customUsers.namespaces обязан быть релизный namespace — иначе субъект
+#   указывает на несуществующий SA и список проектов у человека пуст.
+#
+#   ⚠️ Правила роли — статичный объект discovery.rules из hosts-vars, чтобы их
+#   можно было переопределить целиком в hosts-vars-override. В них должны быть
+#   ТОЛЬКО cluster-scoped ресурсы: субъекты лежат в глобальном namespace и
+#   потому проверяются как запасной вариант на каждый namespaced-запрос в
+#   каждом проекте — namespaced-правило стало бы грантом сразу везде.
+# =============================================================================
+{{- $discovery := .Values.discovery }}
+{{- if .Values.customUsers }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $discovery.name }}
+rules:
+{{ toYaml $discovery.rules | indent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $discovery.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $discovery.name }}
+subjects:
+  {{- range $user := .Values.customUsers }}
+  - kind: ServiceAccount
+    name: {{ $user.saName }}
+    namespace: {{ $.Values.namespace }}
+  {{- end }}
+{{- end }}

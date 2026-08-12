@@ -129,6 +129,18 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Callers.** 10 ESO-integrated install playbook'ов. NOT called from `tests/helm-validate.yaml` (test driver рендерит upstream charts — нет component scope).
 - **Idempotent.** Read-only.
 
+### 1.8c `tasks-kargo-rbac-verify.yaml`
+
+- **Purpose.** Тонкий wrapper над Python-фильтром `kargo_rbac_verify` (`filter_plugins/kargo_rbac_verify.py`) — pre-check согласованности двух списков стадии `kargo/rbac`. Шаблоны чарта рендерят их **без проверок** сознательно (читаемый helm-template), поэтому всё ловится здесь. Wrapper: Rule-19 input-assert + `set_fact` `_local_error_item_list` + `assert length == 0` (fail с полным отчётом). Фильтр возвращает `list[str]`, не кидает; raise — в wrapper'е.
+- **Input.** `dto_label_name` (required string). Списки читаются из inventory: `kargo_custom_users`, `kargo_projects`, `kargo_namespace`.
+- **Validates.** Два класса ошибок, которые шаблон пропускает:
+  - **молчаливые** (объект создаётся, ошибки нет, прав нет): релизный namespace не перечислен в `kargo_custom_users[].namespaces` → субъект discovery-биндинга висит и список проектов пуст; `accounts[].saName` не объявлен в `kargo_custom_users` или у сотрудника нет namespace этого проекта → RoleBinding ссылается в пустоту; аннотация claims невалидна как JSON, не объект, или значение claim'а не список строк → индекс аутентификации молча пропускает SA; legacy-форма аннотации `rbac.kargo.akuity.io/claim.<name>`.
+  - **падающие** (helm упирается в дубликат имени): повтор `saName` в `kargo_custom_users`, повтор namespace внутри одного сотрудника, повтор пары `saName`+`roleName` внутри проекта, повтор `name` проекта.
+  - Плюс структурное: обязательные поля `saName`/`name`/`roleName`, `namespaces` непустой список, `accounts` список, `roleType` ∈ {`Role`, `ClusterRole`}.
+- **Output.** `_local_error_item_list` (local throwaway fact — `list[str]` нарушений; `[]` = OK).
+- **Callers.** `kargo-install.yaml` (тег `always` — отрабатывает и при прогоне с `--tags rbac`).
+- **Idempotent.** Read-only.
+
 ### 1.10 `tasks-k8s-list-helm.yaml`
 
 - **Purpose.** Utility task — run `helm list -n <ns>` and print the result to the Ansible log via the `debug` module. Tab characters in the output are replaced with spaces for readability.

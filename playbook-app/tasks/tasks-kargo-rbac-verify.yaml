@@ -1,0 +1,62 @@
+# =============================================================================
+# Kargo RBAC Verify (согласованность kargo_custom_users + kargo_projects)
+# =============================================================================
+# Pure validation pre-check стадии kargo/rbac. Тонкий wrapper: input asserts —
+# в YAML, вся логика делегирована в Python-фильтр kargo_rbac_verify
+# (filter_plugins/kargo_rbac_verify.py).
+#
+# Шаблоны стадии rbac рендерят оба списка БЕЗ проверок — сознательно, чтобы
+# helm-template оставался читаемым. Все ошибки, которые они пропускают, ловятся
+# здесь и делятся на два класса:
+#   — молчаливые: объект создаётся, ошибки нет, прав нет (ссылка на
+#     несуществующий ServiceAccount, скаляр вместо списка в claims);
+#   — падающие: дубликат имени роняет весь helm-релиз.
+#
+# Params:
+#   - dto_label_name (string): log prefix
+#
+# Reads (from inventory):
+#   - kargo_custom_users, kargo_projects, kargo_namespace
+#
+# Output: _local_error_item_list (local fact — list[str] нарушений; [] = OK).
+# Callers: kargo-install.yaml (тег always — проверка обязана отработать и при
+#          прогоне с --tags rbac).
+# =============================================================================
+
+- name: "[{{ dto_label_name }}] Assert input params + inventory vars"
+  assert:
+    that:
+      - dto_label_name is defined
+      - dto_label_name | length > 0
+      - kargo_custom_users is defined
+      - kargo_custom_users is sequence
+      - kargo_projects is defined
+      - kargo_projects is sequence
+      - kargo_namespace is defined
+      - kargo_namespace | length > 0
+    fail_msg: "tasks-kargo-rbac-verify: dto_label_name + kargo_custom_users/kargo_projects/kargo_namespace must be defined"
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Compute Kargo RBAC violations via filter"
+  set_fact:
+    _local_error_item_list: >-
+      {{ kargo_custom_users | kargo_rbac_verify(kargo_projects, kargo_namespace) }}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
+
+- name: "[{{ dto_label_name }}] Assert no Kargo RBAC violations"
+  assert:
+    that:
+      - _local_error_item_list | length == 0
+    fail_msg: |
+      [{{ dto_label_name }}] Kargo RBAC verify failed
+      ({{ _local_error_item_list | length }} violations):
+      {% for v in _local_error_item_list %}
+        - {{ v }}
+      {% endfor %}
+  delegate_to: "{{ master_manager_fact }}"
+  run_once: true
+  tags: [always]
