@@ -1,0 +1,28 @@
+# =============================================================================
+# KARGO ROLES (namespaced)
+#   Ограничивают права одним namespace. Namespace и rules берутся из элемента.
+#   Типовой случай — выдать права в namespace проекта, не трогая cluster scope.
+#   ⚠️ Имя обязано быть уникальным относительно объектов, которые Kargo создаёт
+#   в этом namespace сам (kargo-admin, kargo-viewer, kargo-promoter,
+#   kargo-project-admin, kargo-project-secrets-reader,
+#   kargo-controller-read-secrets) — иначе helm роняет весь релиз на
+#   invalid ownership metadata. Приём — префикс kargo-custom-*.
+# =============================================================================
+{{- range $role := .Values.rbacRoles }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $role.name }}
+  namespace: {{ $role.namespace }}
+  {{- with $role.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $role.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+{{ toYaml $role.rules | indent 2 }}
+{{- end }}

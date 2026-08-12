@@ -1,14 +1,22 @@
 ---
+# Namespace для ServiceAccount'ов — один на весь список (в отличие от
+# cluster-base, где namespace берётся из элемента). Kargo матчит SA по
+# аннотации claims в релизном namespace и в namespace'ах проектов.
 namespace: ""
 
-# Пользовательские RBAC-объекты — четыре независимых списка, элементы рендерятся
-# как есть (raw). Связи между списками нет: SA может быть без биндинга,
-# ClusterRole без SA, биндинг — на чартовую роль upstream-чарта.
-# SA:              {name, annotations?, labels?}
-# Role:            {name, rules}
-# Binding:         {name, roleRef, subjects}
-# RoleBinding:     {name, namespace, roleRef, subjects}
+# Пользовательские RBAC-объекты — пять независимых списков, по одному на тип.
+# Элемент несёт полную спецификацию объекта; шаблон рендерит его как есть,
+# ничего не вычисляя. labels/annotations опциональны у всех пяти типов:
+# отсутствующие блоки не рендерятся.
+# Связей между списками нет: ServiceAccount может жить без биндинга, Role —
+# без субъекта, биндинг — ссылаться на роль, созданную upstream-чартом.
+#   ServiceAccount:      {name, labels?, annotations?}          namespace из .Values.namespace
+#   Role:                {name, namespace, labels?, annotations?, rules}
+#   ClusterRole:         {name, labels?, annotations?, rules}
+#   RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
+#   ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
 rbacServiceAccounts: []
+rbacRoles: []
 rbacClusterRoles: []
 rbacClusterRoleBindings: []
 rbacRoleBindings: []
