@@ -1,0 +1,275 @@
+# =============================================================================
+#  Kargo (центральный, ОДИН) — ОБЩИЕ CRD
+#  Переиспользуются всеми продуктами. Применять ПЕРВЫМ.
+# =============================================================================
+#
+#  СТРУКТУРА
+#  ---------
+#    Project   = ПРОДУКТ   (Freight не пересекает namespace — stage_types.go:176,
+#                           поэтому стенды продукта и prod его клиентов в одном Project)
+#    Warehouse = источник образов продукта: dev-трек (SHORT_SHA) и release-трек (rc)
+#    Stage     = окружение: наши стенды + prod КАЖДОГО клиента этого продукта
+#
+#  ДВЕ НЕЗАВИСИМЫЕ РУЧКИ
+#  ---------------------
+#    1) КТО запускает промоушен  →  ProjectConfig.promotionPolicies[].autoPromotionEnabled
+#           true  = контроллер сам, как только груз доступен
+#           нет политики / false = только человек (кнопка PROMOTE в UI / kargo promote)
+#
+#    2) КАК изменение попадает в git  →  какой ClusterPromotionTask зовёт Stage
+#           promote-direct     = commit + push сразу
+#           promote-mr         = MR + ожидание решения (тег как есть)
+#           promote-client-mr  = MR + ожидание, тег очищен semverParse (только prod клиентов)
+#
+#  ИНВАРИАНТЫ (для всех продуктов)
+#  -------------------------------
+#    dev            : ВСЕГДА auto + promote-direct
+#    prod-<client>  : ВСЕГДА manual + promote-client-mr
+#    середина (qa/qa2/pre-prod) : настраивается под команду продукта
+#
+#  FLOW ПО ПРОДУКТАМ
+#  -----------------
+#   my-casino    dev→qa→qa2→pre-prod ВСЁ АВТО (+push) ; prod: manual+MR
+#   my-wallet    dev,qa,qa2 авто ; pre-prod MANUAL + PUSH (без MR) ; prod: manual+MR
+#   my-onlyfans  dev,qa,qa2 авто ; pre-prod MANUAL + MR ; prod: manual+MR
+#   my-bank      dev авто ; qa MANUAL+PUSH ; pre-prod MANUAL+MR ; prod: manual+MR
+#   my-shop      dev,qa авто ; (без pre-prod) ; prod из qa: manual+MR
+#
+#  КЛИЕНТЫ × ПРОДУКТЫ
+#  ------------------
+#   vasya : my-casino, my-shop
+#   petya : my-casino, my-wallet
+#   dima  : my-casino, my-wallet, my-onlyfans, my-bank
+#   katya : my-wallet, my-onlyfans, my-shop
+#   oleg  : my-onlyfans, my-bank
+#
+#  ТЕГИ
+#  ----
+#   dev              SHORT_SHA        пишем как есть
+#   qa/qa2/pre-prod  v1.3.0-rc5       пишем как есть
+#   prod-<client>    v1.3.0 + digest  semverParse режет -rcX; деплой repo:v1.3.0@sha256:...
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+#  promote-direct — commit + push сразу (наши стенды)
+# -----------------------------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ClusterPromotionTask
+metadata:
+  name: promote-direct
+spec:
+  vars:
+  - name: gitopsRepo        # обязателен
+  - name: productPath       # обязателен — каталог продукта в репо
+  - name: imageRepo         # обязателен
+  - name: targetBranch      # обязателен — env/dev | env/qa | env/qa2 | env/pre-prod
+  steps:
+  - uses: git-clone
+    config:
+      repoURL: "${{ vars.gitopsRepo }}"
+      checkout:
+      - branch: "${{ vars.targetBranch }}"
+        create: true
+        path: ./out
+  - uses: yaml-update
+    as: pin
+    config:
+      path: "./out/${{ vars.productPath }}/image-values.yaml"
+      updates:
+      - key: image.tag                                    # тег КАК ЕСТЬ (SHORT_SHA / rc)
+        value: "${{ imageFrom(vars.imageRepo).Tag }}"
+      - key: image.digest
+        value: "${{ imageFrom(vars.imageRepo).Digest }}"
+  - uses: git-commit
+    as: commit
+    config:
+      path: ./out
+      message: "${{ ctx.stage }}: ${{ imageFrom(vars.imageRepo).Tag }}"
+  - uses: git-push
+    config:
+      path: ./out
+      targetBranch: "${{ vars.targetBranch }}"
+
+
+# -----------------------------------------------------------------------------
+#  promote-mr — MR + ожидание решения, тег КАК ЕСТЬ (стенд с ревью, напр. pre-prod)
+# -----------------------------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ClusterPromotionTask
+metadata:
+  name: promote-mr
+spec:
+  vars:
+  - name: gitopsRepo
+  - name: productPath
+  - name: imageRepo
+  - name: targetBranch
+  steps:
+  - uses: git-clone
+    config:
+      repoURL: "${{ vars.gitopsRepo }}"
+      checkout:
+      - branch: "${{ vars.targetBranch }}"
+        create: true
+        path: ./out
+  - uses: yaml-update
+    as: pin
+    config:
+      path: "./out/${{ vars.productPath }}/image-values.yaml"
+      updates:
+      - key: image.tag
+        value: "${{ imageFrom(vars.imageRepo).Tag }}"
+      - key: image.digest
+        value: "${{ imageFrom(vars.imageRepo).Digest }}"
+  - uses: git-commit
+    as: commit
+    config:
+      path: ./out
+      message: "${{ ctx.stage }}: ${{ imageFrom(vars.imageRepo).Tag }}"
+  - uses: git-push
+    as: push
+    config:
+      path: ./out
+      generateTargetBranch: true          # ветка kargo/promotion/<promo>
+  - uses: git-open-pr                     # ← MR открывается ЗДЕСЬ
+    as: openPr
+    config:
+      repoURL: "${{ vars.gitopsRepo }}"
+      provider: gitlab
+      sourceBranch: "${{ task.outputs.push.branch }}"
+      targetBranch: "${{ vars.targetBranch }}"
+  - uses: git-wait-for-pr                 # ← висит, пока не смёржат/закроют
+    as: wait
+    retry:
+      timeout: -1                         # ждать решения БЕСКОНЕЧНО
+      errorThreshold: 4294967295          # uint32-max (счётчик накопительный, -1 нельзя)
+    config:
+      repoURL: "${{ vars.gitopsRepo }}"
+      provider: gitlab
+      prNumber: "${{ task.outputs.openPr.pr.id }}"
+      pollInterval: 5m
+
+
+# -----------------------------------------------------------------------------
+#  promote-client-mr — MR в git-ops КЛИЕНТА, тег очищен semverParse (только prod)
+#  Отличие от promote-mr: image.tag = v1.3.0 вместо v1.3.0-rc5
+# -----------------------------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ClusterPromotionTask
+metadata:
+  name: promote-client-mr
+spec:
+  vars:
+  - name: gitopsRepo        # git-ops репозиторий КЛИЕНТА
+  - name: productPath
+  - name: imageRepo
+  - name: targetBranch
+    value: env/prod
+  steps:
+  - uses: git-clone
+    config:
+      repoURL: "${{ vars.gitopsRepo }}"
+      checkout:
+      - branch: "${{ vars.targetBranch }}"
+        create: true
+        path: ./out
+  - uses: yaml-update
+    as: pin
+    config:
+      path: "./out/${{ vars.productPath }}/image-values.yaml"
+      updates:
+      # ЧИСТЫЙ ТЕГ: semverParse режет -rcX  (v1.3.0-rc5 → v1.3.0)
+      - key: image.tag
+        value: "v${{ semverParse(imageFrom(vars.imageRepo).Tag).Major() }}.${{ semverParse(imageFrom(vars.imageRepo).Tag).Minor() }}.${{ semverParse(imageFrom(vars.imageRepo).Tag).Patch() }}"
+      # DIGEST — истина: ровно тот образ, что прошёл стенды
+      - key: image.digest
+        value: "${{ imageFrom(vars.imageRepo).Digest }}"
+  - uses: git-commit
+    as: commit
+    config:
+      path: ./out
+      message: "release v${{ semverParse(imageFrom(vars.imageRepo).Tag).Major() }}.${{ semverParse(imageFrom(vars.imageRepo).Tag).Minor() }}.${{ semverParse(imageFrom(vars.imageRepo).Tag).Patch() }}"
+  - uses: git-push
+    as: push
+    config:
+      path: ./out
+      generateTargetBranch: true
+  - uses: git-open-pr
+    as: openPr
+    config:
+      repoURL: "${{ vars.gitopsRepo }}"
+      provider: gitlab
+      sourceBranch: "${{ task.outputs.push.branch }}"
+      targetBranch: "${{ vars.targetBranch }}"
+  - uses: git-wait-for-pr
+    as: wait
+    retry:
+      timeout: -1
+      errorThreshold: 4294967295
+    config:
+      repoURL: "${{ vars.gitopsRepo }}"
+      provider: gitlab
+      prNumber: "${{ task.outputs.openPr.pr.id }}"
+      pollInterval: 5m
+
+
+# =============================================================================
+#  CREDENTIALS (шаблон — заводить через ESO/Vault, значения НЕ коммитить)
+# =============================================================================
+#  Либо один раз в shared-namespace (global.sharedResources.namespace,
+#  дефолт kargo-shared-resources), либо в namespace каждого Project.
+#  Kargo ищет сначала в namespace Project'а, потом в shared.
+#
+#  apiVersion: v1
+#  kind: Secret
+#  metadata:
+#    name: gitlab-gitops
+#    namespace: kargo-shared-resources
+#    labels:
+#      kargo.akuity.io/cred-type: git
+#  stringData:
+#    repoURL: '^https://gitlab\.aaa/gitops/'
+#    repoURLIsRegex: "true"
+#    username: kargo-bot
+#    password: <Group Access Token, scope api>   # нужен и для clone/push, и для MR
+#  ---
+#  apiVersion: v1
+#  kind: Secret
+#  metadata:
+#    name: gitlab-registry
+#    namespace: kargo-shared-resources
+#    labels:
+#      kargo.akuity.io/cred-type: image
+#  stringData:
+#    repoURL: '^registry\.aaa/'
+#    repoURLIsRegex: "true"
+#    username: kargo-bot
+#    password: <token, scope read_registry>
+# =============================================================================
+
+
+# =============================================================================
+#  ЭКСПЛУАТАЦИЯ
+# =============================================================================
+#  Каталог версий продукта (что прошло стенды):
+#      kargo get freight --project my-casino
+#
+#  Ручной шаг по стенду (там, где авто выключено):
+#      kargo promote --project my-bank --freight <rc> --stage qa
+#
+#  Раскатка ОДНОМУ клиенту:
+#      kargo promote --project my-casino --freight <rc> --stage prod-vasya
+#
+#  Раскатка ВСЕМ клиентам продукта (создаст MR каждому, параллельно):
+#      kargo promote --project my-casino --freight <rc> --downstream-from pre-prod
+#
+#  Откат клиента:
+#      kargo promote --project my-casino --freight <старый-rc> --stage prod-vasya
+#
+#  Отменить зависший промоушен (MR в GitLab закрыть отдельно, Kargo его не трогает):
+#      kargo promote --project my-casino --name <promotion> --abort
+# =============================================================================

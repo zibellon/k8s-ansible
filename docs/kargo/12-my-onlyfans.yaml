@@ -1,0 +1,189 @@
+# =============================================================================
+#  ПРОДУКТ: my-onlyfans   FLOW: авто до qa2, pre-prod руками ЧЕРЕЗ MR
+# =============================================================================
+#   dev       auto   + push
+#   qa        auto   + push
+#   qa2       auto   + push
+#   pre-prod  MANUAL + MR     ← человек жмёт PROMOTE, открывается MR в stands-репо,
+#                               другая команда его ревьюит и мержит
+#   prod-*    MANUAL + MR
+#
+#   Клиенты: dima, katya, oleg
+# =============================================================================
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: my-onlyfans
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: my-onlyfans
+  namespace: my-onlyfans
+spec:
+  promotionPolicies:
+  - stageSelector: { name: dev }
+    autoPromotionEnabled: true
+  - stageSelector: { name: qa }
+    autoPromotionEnabled: true
+  - stageSelector: { name: qa2 }
+    autoPromotionEnabled: true
+  # pre-prod — ручной клик + MR (задача promote-mr)
+  # prod-*   — ручной клик + MR (задача promote-client-mr)
+
+# --- источники образов -------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: dev, namespace: my-onlyfans }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-onlyfans
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^[0-9a-f]{7,40}$']
+      discoveryLimit: 20
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: release, namespace: my-onlyfans }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-onlyfans
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^v[0-9]+\.[0-9]+\.[0-9]+-rc\.?[0-9]+$']
+      discoveryLimit: 50
+
+# --- наши стенды -------------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: dev, namespace: my-onlyfans }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: dev }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-onlyfans }
+        - { name: imageRepo,    value: registry.aaa/my-onlyfans }
+        - { name: targetBranch, value: env/dev }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: qa, namespace: my-onlyfans }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-onlyfans }
+        - { name: imageRepo,    value: registry.aaa/my-onlyfans }
+        - { name: targetBranch, value: env/qa }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: qa2, namespace: my-onlyfans }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [qa] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-onlyfans }
+        - { name: imageRepo,    value: registry.aaa/my-onlyfans }
+        - { name: targetBranch, value: env/qa2 }
+---
+# ВАЖНО: ручной клик + promote-mr → открывается MR в stands-репо, ждём ревью
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: pre-prod, namespace: my-onlyfans }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [qa2] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-onlyfans }
+        - { name: imageRepo,    value: registry.aaa/my-onlyfans }
+        - { name: targetBranch, value: env/pre-prod }
+
+# --- прод клиентов (manual + MR) ---------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-dima, namespace: my-onlyfans }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-dima.git }
+        - { name: productPath, value: my-onlyfans }
+        - { name: imageRepo,   value: registry.aaa/my-onlyfans }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-katya, namespace: my-onlyfans }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-katya.git }
+        - { name: productPath, value: my-onlyfans }
+        - { name: imageRepo,   value: registry.aaa/my-onlyfans }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-oleg, namespace: my-onlyfans }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-oleg.git }
+        - { name: productPath, value: my-onlyfans }
+        - { name: imageRepo,   value: registry.aaa/my-onlyfans }

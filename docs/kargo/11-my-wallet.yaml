@@ -1,0 +1,188 @@
+# =============================================================================
+#  ПРОДУКТ: my-wallet     FLOW: авто до qa2, pre-prod руками БЕЗ MR
+# =============================================================================
+#   dev       auto   + push
+#   qa        auto   + push
+#   qa2       auto   + push
+#   pre-prod  MANUAL + PUSH   ← человек жмёт PROMOTE в UI, коммит уходит СРАЗУ (без MR)
+#   prod-*    MANUAL + MR
+#
+#   Клиенты: petya, dima, katya
+# =============================================================================
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: my-wallet
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: my-wallet
+  namespace: my-wallet
+spec:
+  promotionPolicies:
+  - stageSelector: { name: dev }
+    autoPromotionEnabled: true
+  - stageSelector: { name: qa }
+    autoPromotionEnabled: true
+  - stageSelector: { name: qa2 }
+    autoPromotionEnabled: true
+  # pre-prod — политики НЕТ → ручной клик, но задача promote-direct (без MR)
+  # prod-*   — политик НЕТ → ручной клик + MR
+
+# --- источники образов -------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: dev, namespace: my-wallet }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-wallet
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^[0-9a-f]{7,40}$']
+      discoveryLimit: 20
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: release, namespace: my-wallet }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-wallet
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^v[0-9]+\.[0-9]+\.[0-9]+-rc\.?[0-9]+$']
+      discoveryLimit: 50
+
+# --- наши стенды -------------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: dev, namespace: my-wallet }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: dev }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-wallet }
+        - { name: imageRepo,    value: registry.aaa/my-wallet }
+        - { name: targetBranch, value: env/dev }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: qa, namespace: my-wallet }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-wallet }
+        - { name: imageRepo,    value: registry.aaa/my-wallet }
+        - { name: targetBranch, value: env/qa }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: qa2, namespace: my-wallet }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [qa] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-wallet }
+        - { name: imageRepo,    value: registry.aaa/my-wallet }
+        - { name: targetBranch, value: env/qa2 }
+---
+# ВАЖНО: ручной клик в UI, но задача promote-direct → коммит уходит сразу, без MR
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: pre-prod, namespace: my-wallet }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [qa2] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-wallet }
+        - { name: imageRepo,    value: registry.aaa/my-wallet }
+        - { name: targetBranch, value: env/pre-prod }
+
+# --- прод клиентов (manual + MR) ---------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-petya, namespace: my-wallet }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-petya.git }
+        - { name: productPath, value: my-wallet }
+        - { name: imageRepo,   value: registry.aaa/my-wallet }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-dima, namespace: my-wallet }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-dima.git }
+        - { name: productPath, value: my-wallet }
+        - { name: imageRepo,   value: registry.aaa/my-wallet }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-katya, namespace: my-wallet }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-katya.git }
+        - { name: productPath, value: my-wallet }
+        - { name: imageRepo,   value: registry.aaa/my-wallet }

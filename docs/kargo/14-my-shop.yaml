@@ -1,0 +1,132 @@
+# =============================================================================
+#  ПРОДУКТ: my-shop       FLOW: короткая цепочка — без pre-prod
+# =============================================================================
+#   dev       auto   + push
+#   qa        auto   + push
+#   (pre-prod НЕТ — команда решила, что хватает qa)
+#   prod-*    MANUAL + MR      ← источник = qa, а не pre-prod
+#
+#   Клиенты: vasya, katya
+#   Показывает, что цепочка стендов произвольной длины: prod просто
+#   ссылается на ПОСЛЕДНИЙ стенд через sources.stages.
+# =============================================================================
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: my-shop
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: my-shop
+  namespace: my-shop
+spec:
+  promotionPolicies:
+  - stageSelector: { name: dev }
+    autoPromotionEnabled: true
+  - stageSelector: { name: qa }
+    autoPromotionEnabled: true
+  # prod-* — политик НЕТ → ручной клик + MR
+
+# --- источники образов -------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: dev, namespace: my-shop }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-shop
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^[0-9a-f]{7,40}$']
+      discoveryLimit: 20
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: release, namespace: my-shop }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-shop
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^v[0-9]+\.[0-9]+\.[0-9]+-rc\.?[0-9]+$']
+      discoveryLimit: 50
+
+# --- наши стенды -------------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: dev, namespace: my-shop }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: dev }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-shop }
+        - { name: imageRepo,    value: registry.aaa/my-shop }
+        - { name: targetBranch, value: env/dev }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: qa, namespace: my-shop }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-shop }
+        - { name: imageRepo,    value: registry.aaa/my-shop }
+        - { name: targetBranch, value: env/qa }
+
+# --- прод клиентов (manual + MR, источник = qa) -------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-vasya, namespace: my-shop }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [qa] }              # ← последний стенд здесь = qa
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-vasya.git }
+        - { name: productPath, value: my-shop }
+        - { name: imageRepo,   value: registry.aaa/my-shop }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-katya, namespace: my-shop }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [qa] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-katya.git }
+        - { name: productPath, value: my-shop }
+        - { name: imageRepo,   value: registry.aaa/my-shop }

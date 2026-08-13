@@ -1,0 +1,148 @@
+# =============================================================================
+#  ПРОДУКТ: my-bank       FLOW: строгий — каждый шаг руками
+# =============================================================================
+#   dev       auto   + push        ← единственная автоматика (инвариант)
+#   qa        MANUAL + PUSH        ← даже на qa человек жмёт PROMOTE
+#   pre-prod  MANUAL + MR          ← MR со ревью в stands-репо
+#   prod-*    MANUAL + MR
+#
+#   Клиенты: dima, oleg
+#   (без qa2 — команде хватает одного тест-стенда)
+# =============================================================================
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: my-bank
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: my-bank
+  namespace: my-bank
+spec:
+  promotionPolicies:
+  - stageSelector: { name: dev }
+    autoPromotionEnabled: true
+  # qa / pre-prod / prod-* — политик НЕТ → всё вручную
+
+# --- источники образов -------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: dev, namespace: my-bank }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-bank
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^[0-9a-f]{7,40}$']
+      discoveryLimit: 20
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata: { name: release, namespace: my-bank }
+spec:
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+  - image:
+      repoURL: registry.aaa/my-bank
+      imageSelectionStrategy: NewestBuild
+      allowTagsRegexes: ['^v[0-9]+\.[0-9]+\.[0-9]+-rc\.?[0-9]+$']
+      discoveryLimit: 50
+
+# --- наши стенды -------------------------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: dev, namespace: my-bank }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: dev }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-bank }
+        - { name: imageRepo,    value: registry.aaa/my-bank }
+        - { name: targetBranch, value: env/dev }
+---
+# ВАЖНО: ручной клик даже на qa (в ProjectConfig политики нет), коммит сразу
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: qa, namespace: my-bank }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { direct: true }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-direct, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-bank }
+        - { name: imageRepo,    value: registry.aaa/my-bank }
+        - { name: targetBranch, value: env/qa }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: pre-prod, namespace: my-bank }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [qa] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,   value: https://gitlab.aaa/gitops/stands.git }
+        - { name: productPath,  value: my-bank }
+        - { name: imageRepo,    value: registry.aaa/my-bank }
+        - { name: targetBranch, value: env/pre-prod }
+
+# --- прод клиентов (manual + MR) ---------------------------------------------
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-dima, namespace: my-bank }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-dima.git }
+        - { name: productPath, value: my-bank }
+        - { name: imageRepo,   value: registry.aaa/my-bank }
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata: { name: prod-oleg, namespace: my-bank }
+spec:
+  requestedFreight:
+  - origin: { kind: Warehouse, name: release }
+    sources: { stages: [pre-prod] }
+  promotionTemplate:
+    spec:
+      steps:
+      - task: { name: promote-client-mr, kind: ClusterPromotionTask }
+        as: promo
+        vars:
+        - { name: gitopsRepo,  value: https://gitlab.aaa/gitops/client-oleg.git }
+        - { name: productPath, value: my-bank }
+        - { name: imageRepo,   value: registry.aaa/my-bank }
