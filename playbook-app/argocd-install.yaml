@@ -3,13 +3,15 @@
 # Steps:
 #   1. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
 #   2. argocd/install: CRDs + ArgoCD manifests
-#   3. argocd/post: Ingress (UI + RPC) + default AppProject
-#   4. argocd-git-ops/install: AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications
+#   3. argocd/rbac: ClusterRoles + bindings granting ArgoCD rights across cluster namespaces
+#   4. argocd/post: Ingress (UI + RPC) + default AppProject
+#   5. argocd-git-ops/install: AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications
 #
 # Usage (tags):
-#   ansible-playbook argocd-install.yaml              # full install (pre + install + post + gitops)
+#   ansible-playbook argocd-install.yaml              # full install (pre + install + rbac + post + gitops)
 #   ansible-playbook argocd-install.yaml --tags pre     # only pre (NetworkPolicies + ESO)
 #   ansible-playbook argocd-install.yaml --tags install
+#   ansible-playbook argocd-install.yaml --tags rbac           # only rbac (ClusterRoles + bindings)
 #   ansible-playbook argocd-install.yaml --tags post           # only post (Ingress)
 #   ansible-playbook argocd-install.yaml --tags gitops         # only git-ops AppProjects + Applications
 #   ansible-playbook argocd-install.yaml --tags accounts-sync  # only local-accounts reconcile (rotation entrypoint)
@@ -231,6 +233,56 @@
       vars:
         dto_label_name: "argocd-accounts-distribute"
       tags: [accounts-distribute]
+
+    # =========================================================================
+    # STEP 3.7: ARGOCD/RBAC (права ArgoCD в кластере: определения + привязки)
+    # =========================================================================
+
+    - name: "[argocd-rbac] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argocd-rbac"
+        dto_chart_name: "rbac"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/rbac/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/rbac"
+      tags: [rbac]
+
+    - name: "[argocd-rbac] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argocd-rbac"
+        dto_dir: "{{ remote_charts_dir }}/argocd/rbac"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argocd_rbac_helm_values | to_nice_yaml }}"
+      tags: [rbac]
+
+    - name: "[argocd-rbac] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argocd-rbac"
+        dto_release_name: "argocd-rbac"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/rbac"
+        dto_values_file_path: "{{ remote_charts_dir }}/argocd/rbac/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argocd/rbac-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argocd/rbac-k"
+        dto_patches_list: "{{ argocd_rbac_kustomize_patches }}"
+        dto_target_namespace: "{{ argocd_namespace }}"
+      tags: [rbac]
+
+    - name: "[argocd-rbac] Install or upgrade via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argocd-rbac"
+        dto_helm_command: >
+          helm upgrade --install argocd-rbac {{ remote_charts_dir }}/argocd/rbac-k
+          --namespace {{ argocd_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argocd_rbac_helm_timeout }}
+      tags: [rbac]
 
     # =========================================================================
     # STEP 4: ARGOCD/POST (Ingress UI + RPC)
