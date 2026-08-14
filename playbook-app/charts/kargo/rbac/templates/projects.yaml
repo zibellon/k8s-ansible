@@ -1,0 +1,42 @@
+# =============================================================================
+# KARGO PROJECTS
+#   Объект Project на каждый элемент projects. Cluster-scoped и без spec —
+#   всё его содержимое это имя (в CRD на верхнем уровне только apiVersion,
+#   kind, metadata и status).
+#
+#   Namespace того же имени с меткой kargo.akuity.io/project=true должен
+#   существовать ЗАРАНЕЕ — его заводит cluster-base. Если namespace есть, но
+#   без метки, admission-вебхук отвергает Project с 409; если namespace нет,
+#   вебхук пытается создать его сам.
+#
+#   Порядок внутри релиза значения не имеет: helm применяет неизвестные ему
+#   kind'ы последними, то есть Project уедет после RoleBinding'ов. Биндинг,
+#   сославшийся на ещё не созданную Role, начнёт действовать сам, когда
+#   management-controller создаст роли при первом реконсайле Project'а.
+#
+#   ⚠️ Удаление элемента из projects удаляет Project, а Kargo в ответ удаляет
+#   namespace со всем содержимым (cleanupProject). helm.sh/resource-policy
+#   намеренно НЕ ставится: удаление должно работать штатно, ответственность
+#   за него — на операторе. Если это поведение нужно отключить для конкретного
+#   проекта — аннотация kargo.akuity.io/keep-namespace: "true" через annotations
+#   ниже: Kargo читает её и с Project'а, и с самого namespace.
+#
+#   labels и annotations опциональны и относятся ТОЛЬКО к объекту Project;
+#   на RoleBinding'и из accounts (templates/project-accounts.yaml) они не
+#   распространяются. Отсутствующий блок не рендерится.
+# =============================================================================
+{{- range $project := .Values.projects }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: {{ $project.name }}
+  {{- with $project.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $project.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

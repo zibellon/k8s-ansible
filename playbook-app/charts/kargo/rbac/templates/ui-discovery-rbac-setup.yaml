@@ -1,5 +1,5 @@
 # =============================================================================
-# KARGO CUSTOM DISCOVERY
+# KARGO UI DISCOVERY RBAC SETUP
 #   «Вижу список проектов» — ClusterRole + ClusterRoleBinding, субъектами
 #   которого автоматически становятся ВСЕ сотрудники из customUsers.
 #
@@ -16,30 +16,29 @@
 #   customUsers.namespaces обязан быть релизный namespace — иначе субъект
 #   указывает на несуществующий SA и список проектов у человека пуст.
 #
-#   ⚠️ Правила роли — статичный объект discovery.rules из hosts-vars, чтобы их
-#   можно было переопределить целиком в hosts-vars-override. В них должны быть
+#   ⚠️ Правила роли — статичный объект uiDiscoveryRBACSetup.rules из
+#   hosts-vars, чтобы их можно было переопределить целиком. В них должны быть
 #   ТОЛЬКО cluster-scoped ресурсы: субъекты лежат в глобальном namespace и
 #   потому проверяются как запасной вариант на каждый namespaced-запрос в
 #   каждом проекте — namespaced-правило стало бы грантом сразу везде.
 # =============================================================================
-{{- $discovery := .Values.discovery }}
 {{- if .Values.customUsers }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ $discovery.name }}
+  name: {{ .Values.uiDiscoveryRBACSetup.name }}
 rules:
-{{ toYaml $discovery.rules | indent 2 }}
+{{ toYaml .Values.uiDiscoveryRBACSetup.rules | indent 2 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ $discovery.name }}
+  name: {{ .Values.uiDiscoveryRBACSetup.name }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ $discovery.name }}
+  name: {{ .Values.uiDiscoveryRBACSetup.name }}
 subjects:
   {{- range $user := .Values.customUsers }}
   - kind: ServiceAccount

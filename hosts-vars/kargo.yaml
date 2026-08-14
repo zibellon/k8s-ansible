@@ -201,8 +201,8 @@ all:
     # потому проверяются как запасной вариант на каждый namespaced-запрос в
     # каждом проекте — namespaced-правило стало бы грантом сразу везде.
     # ------
-    kargo_rbac_discovery:
-      name: "kargo-custom-discovery"
+    kargo_rbac_ui_discovery_rbac_setup:
+      name: "kargo-ui-discovery-rbac-setup"
       rules:
         - apiGroups: ["kargo.akuity.io"]
           resources: ["projects"]
@@ -215,9 +215,21 @@ all:
           verbs: ["get", "list", "watch"]
 
     # ------
-    # РАЗДАЧА РОЛЕЙ В ПРОЕКТАХ. name — имя Project, оно же имя namespace.
+    # ПРОЕКТЫ KARGO. Элемент порождает две вещи: сам объект Project (cluster-
+    # scoped, без spec — всё содержимое это имя) и раздачу ролей в его
+    # namespace. name — имя Project, оно же имя namespace.
+    #
+    # Namespace с меткой kargo.akuity.io/project=true заводится СНАРУЖИ, в
+    # cluster-base, и должен существовать заранее: без метки admission-вебхук
+    # отвергает Project, без namespace — вебхук попытается создать его сам.
+    #
+    # ⚠️ Удаление элемента отсюда удаляет Project, а Kargo в ответ удаляет
+    # namespace со всем содержимым. helm.sh/resource-policy намеренно не
+    # ставится — удаление должно работать штатно.
+    #
     # На каждый элемент accounts рендерится RoleBinding в этом namespace:
     # субъект — SA saName в нём же, roleRef — Role или ClusterRole с roleName.
+    # accounts можно опустить: проект без выданных доступов валиден.
     # Права пользователя — ОБЪЕДИНЕНИЕ прав всех совпавших по клеймам SA.
     #
     # Роли, которые Kargo создаёт в namespace каждого Project сам и на которые
@@ -235,8 +247,13 @@ all:
     # Объявляется вручную парой kargo_rbac_cluster_roles +
     # kargo_rbac_cluster_role_bindings, см. пример в hosts-vars-override/.
     #
-    # Формат элемента:
+    # Формат элемента. labels и annotations опциональны и относятся ТОЛЬКО к
+    # объекту Project — на RoleBinding'и из accounts они не распространяются.
+    # Типовой случай для annotations — kargo.akuity.io/keep-namespace: "true":
+    # с ней удаление Project'а не утащит за собой namespace.
     #   - name: "my-wallet"
+    #     labels: {}
+    #     annotations: {}
     #     accounts:
     #       - saName: "petya"
     #         roleType: "Role"
@@ -597,7 +614,7 @@ all:
       rbacClusterRoleBindings: "{{ kargo_rbac_cluster_role_bindings }}"
       rbacRoleBindings: "{{ kargo_rbac_role_bindings }}"
       customUsers: "{{ kargo_custom_users }}"
-      discovery: "{{ kargo_rbac_discovery }}"
+      uiDiscoveryRBACSetup: "{{ kargo_rbac_ui_discovery_rbac_setup }}"
       projects: "{{ kargo_projects }}"
       extraObjects: "{{ kargo_rbac_extra_objects }}"
 
