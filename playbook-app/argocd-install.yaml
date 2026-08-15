@@ -1,11 +1,14 @@
 # =============================================================================
 # Install ArgoCD via local Helm charts
-# Steps:
-#   1. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
-#   2. argocd/install: CRDs + ArgoCD manifests
-#   3. argocd/rbac: ClusterRoles + bindings granting ArgoCD rights across cluster namespaces
-#   4. argocd/post: Ingress (UI + RPC) + default AppProject
-#   5. argocd-git-ops/install: AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications
+# Steps (numbering matches the STEP banners in the body):
+#   1. argocd/crds: CRDs via `kubectl create` (client-side annotation limit)
+#   2. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
+#   3. argocd/install: ArgoCD manifests via kustomize → Helm
+#   4. accounts-sync: local-accounts reconcile (passwords → argocd-secret + Vault mirror)
+#   5. accounts-distribute: account creds → extra Vault paths
+#   6. argocd/rbac: ClusterRoles + bindings granting ArgoCD rights across cluster namespaces
+#   7. argocd/post: Ingress (UI + RPC) + default AppProject
+#   8. argocd-git-ops/install: AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications
 #
 # Usage (tags):
 #   ansible-playbook argocd-install.yaml              # full install (pre + install + rbac + post + gitops)
@@ -73,7 +76,7 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: ARGOCD/INSTALL (CRDs + ArgoCD manifests)
+    # STEP 1: ARGOCD/CRDS (CRDs via kubectl create)
     # =========================================================================
 
     - name: "[argocd-install-crds] Copy crds chart to remote"
@@ -215,7 +218,7 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 3.5: LOCAL ACCOUNTS SYNC
+    # STEP 4: LOCAL ACCOUNTS SYNC
     # =========================================================================
 
     - name: "[argocd-accounts-sync] Sync local accounts"
@@ -225,7 +228,7 @@
       tags: [accounts-sync]
 
     # =========================================================================
-    # STEP 3.6: LOCAL ACCOUNTS DISTRIBUTE (creds → extra Vault paths)
+    # STEP 5: LOCAL ACCOUNTS DISTRIBUTE (creds → extra Vault paths)
     # =========================================================================
 
     - name: "[argocd-accounts-distribute] Distribute account creds to extra Vault paths"
@@ -235,7 +238,7 @@
       tags: [accounts-distribute]
 
     # =========================================================================
-    # STEP 3.7: ARGOCD/RBAC (права ArgoCD в кластере: определения + привязки)
+    # STEP 6: ARGOCD/RBAC (права ArgoCD в кластере: определения + привязки)
     # =========================================================================
 
     - name: "[argocd-rbac] Copy chart to remote"
@@ -285,7 +288,7 @@
       tags: [rbac]
 
     # =========================================================================
-    # STEP 4: ARGOCD/POST (Ingress UI + RPC)
+    # STEP 7: ARGOCD/POST (Ingress UI + RPC)
     # =========================================================================
 
     - name: "[argocd-post] Copy post chart to remote"
@@ -335,7 +338,7 @@
       tags: [post]
 
     # =========================================================================
-    # STEP 5: ARGOCD/GITOPS (AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications)
+    # STEP 8: ARGOCD/GITOPS (AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications)
     # =========================================================================
 
     - name: "[argocd-gitops-default-project] Ensure /opt/yaml directory exists"
