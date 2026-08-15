@@ -84,7 +84,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/c
 
 **Dependency highlights** (see [`components.md`](components.md) §19 for full tier diagram):
 
-- `cluster-base` разнесён надвое: `--tags namespaces` идёт первым (namespace'ы должны существовать до раскатки в них), `--tags rbac` — последним (`RoleBinding` нельзя создать в несуществующем namespace, а его элементы адресуют namespace'ы `traefik-lb` / `seaweedfs` / `argocd` / `argo-events`). Требует `cluster_base_enabled: true`. См. [`components.md`](components.md) §17.13
+- `cluster-base` разнесён надвое: `--tags namespaces` идёт первым (namespace'ы должны существовать до раскатки в них), `--tags rbac` — последним. Namespaced-элементов в stage `rbac` сейчас нет — права ArgoCD переехали в стадию `argocd/rbac`, — но `RoleBinding` в его списках появиться может снова, а создать его в несуществующем namespace нельзя. Требует `cluster_base_enabled: true`. См. [`components.md`](components.md) §17.13
 - `argocd` ставится namespace-scoped — сразу после `argocd-install.yaml` прогнать `argocd-restart.yaml`, иначе контроллер продолжит видеть кластер по старым правам (§4.4). Namespace для приложений заводятся отдельно, до Application — §4.11
 - `cilium` first (CNI — nothing networks until it's up)
 - `cert-manager` before anything with TLS
@@ -125,6 +125,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags node-exporter`, `--tags ksm`, `--tags loki`, `--tags vector`, `--tags grafana` — for `mon-system` (per-workload phases)
 - `--tags cr` — for `vault` (Vault Custom Resource)
 - `--tags configure` — for `teleport` (declarative resources)
+- `--tags rbac` — for `argocd` (six `argocd-managed-*` ClusterRoles + the per-namespace RoleBinding pairs; rebuilt independently of Ingress and Certificate)
 - `--tags gitops` — for `argocd` (AppProjects + Applications)
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
@@ -334,19 +335,20 @@ ansible-playbook ... playbook-system/bastion-proxy-install.yaml --tags verify
 
 ### 4.11 Namespace onboarding (namespace-scoped ArgoCD)
 
-ArgoCD не может создавать `Namespace` ([`components.md`](components.md) §9), поэтому namespace заводится **до** приложения и в другом репозитории. Три шага, порядок обязателен.
+ArgoCD не может создавать `Namespace` ([`components.md`](components.md) §9), поэтому namespace заводится **до** приложения и в другом репозитории. Шаги делятся между двумя компонентами: сам namespace заводит `cluster-base`, права в нём выдаёт стадия `rbac` компонента `argocd`.
 
 ```bash
 # 1. hosts-vars-override/<cluster>/cluster-base.yaml:
-#      cluster_base_namespaces_list          → + {name, labels?, annotations?}
-#      cluster_base_rbac_role_bindings_extra → + пара RoleBinding (deployer + ui) на этот namespace
+#      cluster_base_namespaces_list → + {name, labels?, annotations?}
+#    hosts-vars-override/<cluster>/argocd.yaml:
+#      argocd_rbac_role_bindings    → + пара RoleBinding (deployer + ui) на этот namespace
 # 2. Завести namespace:
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
   playbook-app/cluster-base-install.yaml --tags namespaces
 
 # 3. Выдать в нём права ArgoCD:
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
-  playbook-app/cluster-base-install.yaml --tags rbac
+  playbook-app/argocd-install.yaml --tags rbac
 ```
 
 Дальше — Application в git-ops репозитории. Объявлять `Namespace` в его чарте **не нужно**: ArgoCD его не применит.
@@ -359,7 +361,7 @@ kubectl auth can-i create deployment --as=system:serviceaccount:argocd:argocd-ap
 kubectl auth can-i create namespace  --as=system:serviceaccount:argocd:argocd-application-controller               # no
 ```
 
-**Снятие namespace с ArgoCD.** Убрать пару `RoleBinding` из override, убрать namespace из поля `namespaces` в Vault, прогнать `--tags rbac`. Сам namespace при этом остаётся; удаление записи из `cluster_base_namespaces_list` снесёт его вместе с содержимым (см. [`components.md`](components.md) §17.13).
+**Снятие namespace с ArgoCD.** Убрать пару `RoleBinding` из `argocd_rbac_role_bindings`, убрать namespace из поля `namespaces` в Vault, прогнать `argocd-install.yaml --tags rbac`. Сам namespace при этом остаётся; удаление записи из `cluster_base_namespaces_list` снесёт его вместе с содержимым (см. [`components.md`](components.md) §17.13).
 
 ---
 
