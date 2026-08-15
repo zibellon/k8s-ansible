@@ -213,7 +213,7 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 
 ## 21. Unified Helm Template + Kustomize Pattern (все LOCAL-managed chart phase'ы)
 
-21.1 Применяется ко **всем** LOCAL-managed chart phase'ам — 35 LOCAL_CUSTOM phase'ов + 2 KUSTOMIZE_WRAPPER phase'а через 15 компонентов. Единый flow, единый task.
+21.1 Применяется ко **всем** LOCAL-managed chart phase'ам — 68 LOCAL_CUSTOM phase'ов + 4 KUSTOMIZE_WRAPPER phase'а через 24 компонента. Единый flow, единый task.
 
 21.2 Output structure для каждой phase на `master_manager_fact`:
 
@@ -272,7 +272,7 @@ is guaranteed to be set when the task is called. For tasks that themselves set
   tags: [<phase>]
 ```
 
-21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` в `tasks-copy-helm-values.yaml` — тот же синтаксис что и LOCAL_CUSTOM. В hosts-vars `<c>_<phase>_helm_values` dict содержит как минимум `extraObjects` wiring (см. §22.4 про унификацию). `helm template --namespace` устанавливает `.Release.Namespace` (для resources без explicit `metadata.namespace`). Resources с hardcoded `metadata.namespace` или `subjects[].namespace` в pristine YAML требуют opt-in kustomize transformer (см. §21.7). Patches работают поверх rendered output.
+21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`, `argo-rollouts/install`, `argo-events/install`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` в `tasks-copy-helm-values.yaml` — тот же синтаксис что и LOCAL_CUSTOM. В hosts-vars `<c>_<phase>_helm_values` dict содержит как минимум `extraObjects` wiring (см. §22.4 про унификацию). `helm template --namespace` устанавливает `.Release.Namespace` (для resources без explicit `metadata.namespace`). Resources с hardcoded `metadata.namespace` или `subjects[].namespace` в pristine YAML требуют opt-in kustomize transformer (см. §21.7). Patches работают поверх rendered output.
 
 21.6 Канонические примеры:
 - LOCAL_CUSTOM: `playbook-app/cilium-install.yaml` STEP 1+3 (pre/post) + `hosts-vars/cilium.yaml` `cilium_pre_kustomize_patches`.
@@ -304,11 +304,11 @@ Cluster-scoped ресурсы (ClusterRole, CRD, и т.п.) не трогает.
 
 ## 22. Extra Objects Extension Pattern
 
-22.1 Применяется ко **всем** LOCAL-managed chart phase subdirs — 43 phase subdirs через 15 components. Унифицированный operator-side extension point для добавления произвольных K8s объектов (Service, Ingress, ConfigMap, NetworkPolicy, и т.д.) без правки chart template'ов. Дополняет существующий `<c>_<phase>_kustomize_patches` (который только modifies/deletes existing resources; адд новых через kustomize невозможен).
+22.1 Применяется ко **всем** LOCAL-managed chart phase subdirs — 72 phase subdirs через 24 components. Унифицированный operator-side extension point для добавления произвольных K8s объектов (Service, Ingress, ConfigMap, NetworkPolicy, и т.д.) без правки chart template'ов. Дополняет существующий `<c>_<phase>_kustomize_patches` (который только modifies/deletes existing resources; адд новых через kustomize невозможен).
 
 22.2 На каждый phase subdir — 3 артефакта:
 
-(a) **Template** `playbook-app/charts/<c>/<phase>/templates/extra-objects.yaml` — canonical content, byte-identical во всех 43 файлах:
+(a) **Template** `playbook-app/charts/<c>/<phase>/templates/extra-objects.yaml` — canonical content, byte-identical во всех 72 файлах:
 
 ```yaml
 {{- if .Values.extraObjects }}
@@ -348,7 +348,7 @@ extraObjects: []
 - В `hosts-vars/<c>.yaml` создан стандартный `<c>_<phase>_helm_values` dict (содержит только `extraObjects` wiring).
 - В playbook'е `dto_content: "{}"` заменён на `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` — тот же синтаксис что и во всех остальных phases.
 
-После унификации pattern в playbook'е **идентичен** для всех 43 phase subdirs — никаких различий между KUSTOMIZE_WRAPPER и обычными phases.
+После унификации pattern в playbook'е **идентичен** для всех 72 phase subdirs — никаких различий между KUSTOMIZE_WRAPPER и обычными phases.
 
 22.5 **Override через `hosts-vars-override/<c>.yaml`** — operator замена `<c>_<phase>_extra_objects` на список K8s manifests:
 
