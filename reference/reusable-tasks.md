@@ -365,7 +365,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Input.** `dto_label_name` (required string, log prefix).
 - **Validates (assert).** `dto_label_name` defined + non-empty. Lock-out guard (assert). Schema desired-аккаунтов (name charset, RFC3339 `passwordMtime`, дубликаты) — внутри фильтра (`AnsibleFilterError`).
 - **Output.** `accounts.<name>.password`/`.passwordMtime` в `argocd-secret`; per-account fields (`{plaintext, hash, passwordMtime}`) в Vault `eso-secret/argocd/accounts/creds`. Идентичность (`accounts.<name>: login`) и RBAC применяются отдельно — install-фаза kustomize-патчами.
-- **Callers.** `playbook-app/argocd-install.yaml` STEP 3.5 (tag `[accounts-sync]`, **after** install rollout — нужен живой argocd-server + argocd-secret).
+- **Callers.** `playbook-app/argocd-install.yaml` STEP 4 (tag `[accounts-sync]`, **after** install rollout — нужен живой argocd-server + argocd-secret).
 - **Idempotent.** Yes — diff каждый run; bcrypt только на реальную смену; resync копирует Vault→secret при дрейфе (no-rotation).
 
 ### 1.31a `tasks-argocd-accounts-distribute.yaml`
@@ -374,7 +374,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Input.** `dto_label_name` (required string, log prefix). Convention: passed ONLY at playbook-level invocation; nested includes (`tasks-vault-get-all`, `tasks-vault-put`, `tasks-vault-delete`) inherit via Ansible variable scope.
 - **Validates (assert).** `dto_label_name` defined + non-empty. Target paths unique across all accounts. Each account с `vault_paths` существует в Vault-зеркале с непустым plaintext (иначе «run accounts-sync first»). Computed ConfigMap name DNS-compatible. (последние три — внутри фильтра, `AnsibleFilterError`.)
 - **Output.** Account credentials распределены в Vault paths (via `tasks-vault-put`, fixed keys `username`/`password`), стейл state paths удалены (via `tasks-vault-delete`), ConfigMap state updated.
-- **Callers.** `playbook-app/argocd-install.yaml` STEP 3.6 (tag `[accounts-distribute]`, after accounts-sync — **after** install rollout).
+- **Callers.** `playbook-app/argocd-install.yaml` STEP 5 (tag `[accounts-distribute]`, after accounts-sync — **after** install rollout).
 - **Idempotent.** Yes — change-detection через passwordMtime в ConfigMap state: прогон без изменений = 0 vault-put / 0 CM-apply; put только new/rotated пути, apply только изменённые CM; vault-delete idempotent на missing path.
 
 ### 1.32 `tasks-seaweedfs-bucket-sync.yaml`
