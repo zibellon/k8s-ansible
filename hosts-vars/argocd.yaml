@@ -263,8 +263,16 @@ all:
       - crd/appprojects.argoproj.io
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     argocd_install_extra_objects: []
+    # Cluster-cache batch events processing (env ARGOCD_CLUSTER_CACHE_BATCH_EVENTS_PROCESSING).
+    # Upstream-дефолт = true: watch-события копятся в НЕбуферизованном канале и
+    # применяются к кэшу пачкой раз в controller.cluster.cache.events.processing.interval
+    # (100 мс) — экономия на захватах write-lock кэша. У нас пачка = 1-2 события,
+    # экономии нет; при этом отправка в канал идёт без select по ctx, и при пересборке
+    # cluster cache горутина watch может залипнуть, игнорируя отменённый контекст.
+    # Выключено осознанно — см. reference/components.md §9.
+    argocd_cluster_cache_batch_events_processing: false
     # Install-phase kustomize patches: base = operator patches + generated accounts/RBAC patches.
-    # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure) + generated argocd-cm
+    # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure + cluster-cache batch events) + generated argocd-cm
     # (accounts.<name>: <capabilities> + accounts.<name>.enabled из argocd_local_accounts + admin.enabled) + argocd-rbac-cm
     # (policy.csv из argocd_policy_csv_list).
     # kustomize мержит несколько патчей на один target.
@@ -303,6 +311,7 @@ all:
             name: argocd-cmd-params-cm
           data:
             server.insecure: "true"
+            controller.cluster.cache.batch.events.processing: "{{ argocd_cluster_cache_batch_events_processing | string | lower }}"
       - target:
           kind: ConfigMap
           name: argocd-cm
