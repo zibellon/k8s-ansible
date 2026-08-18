@@ -346,6 +346,17 @@ all:
           path "eso-secret/data/argo-events/*" { capabilities = ["read", "list"] }
           path "eso-secret/metadata/argo-events/*" { capabilities = ["read", "list"] }
       # ---------
+      # ESO: Argo Events (cfg)
+      # Прикладной контур argo-events живёт в отдельном namespace argo-events-cfg.
+      # Namespace совместного владения: SecretStore и каркас ExternalSecret везёт
+      # ansible (фаза cfg), конкретные секреты может добавлять и ansible, и git-ops —
+      # оба ходят в Vault через один SecretStore, поэтому роль одна.
+      # ---------
+      - name: argo-events-cfg.eso-main
+        rules: |
+          path "eso-secret/data/argo-events-cfg/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/argo-events-cfg/*" { capabilities = ["read", "list"] }
+      # ---------
       # ESO: Portainer
       # ---------
       - name: portainer.eso-main
@@ -618,6 +629,15 @@ all:
         bound_service_account_names: eso-main
         policies:
           - argo-events.eso-main
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
+      # ---------
+      # ESO: Argo Events (cfg)
+      # ---------
+      - name: argo-events-cfg.eso-main
+        bound_service_account_namespaces: argo-events-cfg
+        bound_service_account_names: eso-argo-events-cfg
+        policies:
+          - argo-events-cfg.eso-main
         ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
       # ---------
       # ESO: Portainer
