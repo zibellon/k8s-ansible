@@ -1,7 +1,7 @@
 # =============================================================================
 # Install Argo Events (event-driven automation: EventSource → EventBus → Sensor)
 # Steps:
-#   1. argo-events/crds:    CustomResourceDefinitions (kubectl apply)
+#   1. argo-events/crds:    CustomResourceDefinitions (kubectl apply --server-side)
 #   2. argo-events/pre:     NetworkPolicies + cert-manager Issuer + ESO resources
 #   3. argo-events/install: vendored upstream manifests v1.9.11 — controller,
 #                           RBAC and the validating admission webhook
@@ -78,8 +78,9 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: CRDS (kubectl apply — CRD небольшие, лимит аннотации не грозит,
-    # apply даёт идемпотентность и апгрейд при смене версии)
+    # STEP 1: CRDS (kubectl apply --server-side — идемпотентно и обновляет CRD
+    # при смене версии; SSA не пишет last-applied-configuration, поэтому лимит
+    # аннотации в 262144 байта неприменим — единый механизм для всех компонентов)
     # =========================================================================
 
     - name: "[argo-events-crds] Copy chart to remote"
@@ -92,7 +93,9 @@
       tags: [crds]
 
     - name: "[argo-events-crds] Install CRDs via kubectl"
-      command: kubectl apply -f {{ remote_charts_dir }}/argo-events/crds/crds.yaml
+      command: >-
+        kubectl apply --server-side --force-conflicts
+        -f {{ remote_charts_dir }}/argo-events/crds/crds.yaml
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [crds]

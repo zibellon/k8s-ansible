@@ -1,7 +1,7 @@
 # =============================================================================
 # Install ArgoCD via local Helm charts
 # Steps (numbering matches the STEP banners in the body):
-#   1. argocd/crds: CRDs via `kubectl create` (client-side annotation limit)
+#   1. argocd/crds: CRDs via `kubectl apply --server-side` (CRDs exceed the client-side annotation limit)
 #   2. argocd/pre: NetworkPolicies + ESO (ServiceAccount, SecretStore, ExternalSecret)
 #   3. argocd/install: ArgoCD manifests via kustomize → Helm
 #   4. accounts-sync: local-accounts reconcile (passwords → argocd-secret + Vault mirror)
@@ -12,7 +12,7 @@
 #
 # Usage (tags):
 #   ansible-playbook argocd-install.yaml              # full install (crds + pre + install + rbac + post + gitops)
-#   ansible-playbook argocd-install.yaml --tags crds           # only crds (kubectl create)
+#   ansible-playbook argocd-install.yaml --tags crds           # only crds (kubectl apply --server-side)
 #   ansible-playbook argocd-install.yaml --tags pre     # only pre (NetworkPolicies + ESO)
 #   ansible-playbook argocd-install.yaml --tags install
 #   ansible-playbook argocd-install.yaml --tags rbac           # only rbac (ClusterRoles + bindings)
@@ -78,7 +78,7 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: ARGOCD/CRDS (CRDs via kubectl create)
+    # STEP 1: ARGOCD/CRDS (CRDs via kubectl apply --server-side)
     # =========================================================================
 
     - name: "[argocd-install-crds] Copy crds chart to remote"
@@ -91,8 +91,9 @@
       tags: [crds]
 
     - name: "[argocd-install-crds] Install argocd-crds via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
-      failed_when: false
+      command: >-
+        kubectl apply --server-side --force-conflicts
+        -f {{ remote_charts_dir }}/argocd/crds/crds.yaml
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [crds]

@@ -42,7 +42,7 @@ delegate_to: "{{ master_manager_fact }}"
 run_once: true
 ```
 
-5.2 Omitting `run_once: true` causes Ansible to run the task once per host in `hosts: managers` — Helm history duplicates, `kubectl create` double-runs. Always include it.
+5.2 Omitting `run_once: true` causes Ansible to run the task once per host in `hosts: managers` — Helm history duplicates, `kubectl apply` double-runs. Always include it.
 5.3 Never delegate to a hard-coded hostname. Always use `master_manager_fact`.
 5.4 `playbook-system/` plays that perform cluster-wide `kubectl` (e.g. inside `cluster-init.yaml`, `manager-join.yaml`) also delegate to the master manager (the manager currently running the task is often itself the master on first init — that is allowed).
 

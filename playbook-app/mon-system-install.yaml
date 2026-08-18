@@ -5,7 +5,7 @@
 # Single namespace: mon-system. Per-component enable flags gate each phase.
 #
 # Phases (--tags):
-#   crds                  prometheus-operator CRDs (kubectl create)
+#   crds                  prometheus-operator CRDs (kubectl apply --server-side)
 #   pre                   namespace + NetworkPolicies + ESO (SA, SecretStore, ExternalSecret)
 #   prometheus-operator   operator workload (Deployment + RBAC + Service)
 #   prometheus            Prometheus CR + RBAC + Service
@@ -74,7 +74,7 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: CRDs (kubectl create — not helm)
+    # STEP 1: CRDs (kubectl apply --server-side — not helm)
     # =========================================================================
 
     - name: "[mon-system-crds] Copy CRDs to remote"
@@ -88,8 +88,9 @@
       tags: [crds]
 
     - name: "[mon-system-crds] Install prometheus-operator CRDs via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/mon-system/crds/crds.yaml
-      failed_when: false
+      command: >-
+        kubectl apply --server-side --force-conflicts
+        -f {{ remote_charts_dir }}/mon-system/crds/crds.yaml
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       when: mon_system_prometheus_operator_enabled

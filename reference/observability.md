@@ -15,7 +15,7 @@ Lives in `mon-system` namespace. Installed via the `prometheus-operator` tag of 
 The mon-system playbook has 11 tags. Five are dedicated to the Prometheus Operator stack and depend on each other:
 
 ```
-crds                  CustomResourceDefinitions (kubectl create -f, not Helm)
+crds                  CustomResourceDefinitions (kubectl apply --server-side, not Helm)
 prometheus-operator   the operator workload (Deployment + RBAC + Service)
 prometheus            Prometheus CR + RBAC + Service
 alertmanager          Alertmanager CR + AlertmanagerConfig + Service
@@ -25,7 +25,7 @@ post                  Ingress + Certificate for Prometheus / Alertmanager UIs
 
 Composite gates: `prometheus` and `alertmanager` are skipped if `mon_system_prometheus_operator_enabled: false`, regardless of their own flags. The `crds` phase is also gated by `mon_system_prometheus_operator_enabled`.
 
-Each Helm release follows the `mon-system-<phase>` naming pattern. The CRDs phase deploys via `kubectl create -f charts/mon-system/crds/crds.yaml` — the 74771-line CRD bundle would otherwise hit Helm timeouts and complicate `--skip-crds` semantics.
+Each Helm release follows the `mon-system-<phase>` naming pattern. The CRDs phase deploys via `kubectl apply --server-side --force-conflicts -f charts/mon-system/crds/crds.yaml` — the 74771-line CRD bundle would otherwise hit Helm timeouts and complicate `--skip-crds` semantics.
 
 ### 1.2 Prometheus storage
 
@@ -164,4 +164,4 @@ L0 cilium → L1 cert-manager + external-secrets → L2 longhorn → L3 vault �
 | Alertmanager routes match nothing | Label mismatch between `PrometheusRule` and `mon_system_alertmanager_root_config_spec.route` matchers | `kubectl -n mon-system get prometheusrules -o yaml` to inspect actual labels, align matchers |
 | `kubectl -n mon-system get servicemonitors` shows SM but no scrape | Prometheus can't reach the Service (NetworkPolicy?) or port name mismatch | Inspect Prometheus targets UI (`/targets`); verify the Service exists with the expected selector and port name |
 | `--tags prometheus` skipped even though `mon_system_prometheus_enabled: true` | Operator gate is off — composite condition requires both flags | Set `mon_system_prometheus_operator_enabled: true` |
-| `kubectl create -f .../crds.yaml` returns AlreadyExists on re-run | Expected (idempotency) — `failed_when: false` in playbook | No action — CRDs are cluster-scoped, second create is harmless |
+| `kubectl apply --server-side` reports a field-manager conflict | CRD fields are owned by an earlier manager (`kubectl-create`/`kubectl-client-side-apply`) | None — `--force-conflicts` in the playbook takes ownership |

@@ -931,6 +931,24 @@ spec:
               key: applicationsetcontroller.repo.server.strict.tls
               name: argocd-cmd-params-cm
               optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_REPO_SERVER_CA_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.repo.server.ca.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_REPO_SERVER_CLIENT_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.repo.server.client.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_REPO_SERVER_CLIENT_CERT_KEY_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.repo.server.client.cert.key.path
+              name: argocd-cmd-params-cm
+              optional: true
         - name: ARGOCD_APPLICATIONSET_CONTROLLER_REPO_SERVER_TIMEOUT_SECONDS
           valueFrom:
             configMapKeyRef:
@@ -991,7 +1009,7 @@ spec:
               key: applicationsetcontroller.status.max.resources.count
               name: argocd-cmd-params-cm
               optional: true
-        image: quay.io/argoproj/argocd:v3.4.4
+        image: quay.io/argoproj/argocd:v3.5.1
         imagePullPolicy: Always
         name: argocd-applicationset-controller
         ports:
@@ -1021,6 +1039,8 @@ spec:
           name: tmp
         - mountPath: /app/config/reposerver/tls
           name: argocd-repo-server-tls
+        - mountPath: /app/config/reposerver/mtls
+          name: argocd-repo-server-mtls
         - mountPath: /home/argocd/params
           name: argocd-cmd-params-cm
       nodeSelector:
@@ -1051,6 +1071,17 @@ spec:
             path: ca.crt
           optional: true
           secretName: argocd-repo-server-tls
+      - name: argocd-repo-server-mtls
+        secret:
+          items:
+          - key: client.crt
+            path: client.crt
+          - key: client.key
+            path: client.key
+          - key: server-ca.crt
+            path: server-ca.crt
+          optional: true
+          secretName: argocd-repo-server-mtls
       - configMap:
           items:
           - key: applicationsetcontroller.profile.enabled
@@ -1150,7 +1181,7 @@ spec:
         - -n
         - /usr/local/bin/argocd
         - /shared/argocd-dex
-        image: quay.io/argoproj/argocd:v3.4.4
+        image: quay.io/argoproj/argocd:v3.5.1
         imagePullPolicy: Always
         name: copyutil
         securityContext:
@@ -1252,7 +1283,25 @@ spec:
               key: notificationscontroller.repo.server.plaintext
               name: argocd-cmd-params-cm
               optional: true
-        image: quay.io/argoproj/argocd:v3.4.4
+        - name: ARGOCD_NOTIFICATION_CONTROLLER_REPO_SERVER_CA_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: notificationscontroller.repo.server.ca.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_NOTIFICATION_CONTROLLER_REPO_SERVER_CLIENT_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: notificationscontroller.repo.server.client.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_NOTIFICATION_CONTROLLER_REPO_SERVER_CLIENT_CERT_KEY_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: notificationscontroller.repo.server.client.cert.key.path
+              name: argocd-cmd-params-cm
+              optional: true
+        image: quay.io/argoproj/argocd:v3.5.1
         imagePullPolicy: Always
         livenessProbe:
           tcpSocket:
@@ -1269,6 +1318,8 @@ spec:
           name: tls-certs
         - mountPath: /app/config/reposerver/tls
           name: argocd-repo-server-tls
+        - mountPath: /app/config/reposerver/mtls
+          name: argocd-repo-server-mtls
         workingDir: /app
       nodeSelector:
         kubernetes.io/os: linux
@@ -1292,6 +1343,17 @@ spec:
             path: ca.crt
           optional: true
           secretName: argocd-repo-server-tls
+      - name: argocd-repo-server-mtls
+        secret:
+          items:
+          - key: client.crt
+            path: client.crt
+          - key: client.key
+            path: client.key
+          - key: server-ca.crt
+            path: server-ca.crt
+          optional: true
+          secretName: argocd-repo-server-mtls
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1354,7 +1416,7 @@ spec:
         - argocd
         - admin
         - redis-initial-password
-        image: quay.io/argoproj/argocd:v3.4.4
+        image: quay.io/argoproj/argocd:v3.5.1
         imagePullPolicy: IfNotPresent
         name: secret-init
         securityContext:
@@ -1487,6 +1549,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: reposerver.tls.ciphers
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_REPO_SERVER_CLIENT_CA_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: reposerver.client.ca.path
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_REPO_CACHE_EXPIRATION
@@ -1663,7 +1731,7 @@ spec:
           value: /helm-working-dir
         - name: HELM_DATA_HOME
           value: /helm-working-dir
-        image: quay.io/argoproj/argocd:v3.4.4
+        image: quay.io/argoproj/argocd:v3.5.1
         imagePullPolicy: Always
         livenessProbe:
           failureThreshold: 3
@@ -1703,12 +1771,16 @@ spec:
           name: gpg-keyring
         - mountPath: /app/config/reposerver/tls
           name: argocd-repo-server-tls
+        - mountPath: /app/config/reposerver/mtls
+          name: argocd-repo-server-mtls
         - mountPath: /tmp
           name: tmp
         - mountPath: /helm-working-dir
           name: helm-working-dir
         - mountPath: /home/argocd/cmp-server/plugins
           name: plugins
+        - mountPath: /home/argocd/params
+          name: argocd-cmd-params-cm
       initContainers:
       - args:
         - /bin/cp /usr/local/bin/argocd /var/run/argocd/argocd && /bin/ln -sf /var/run/argocd/argocd
@@ -1716,7 +1788,7 @@ spec:
         command:
         - sh
         - -c
-        image: quay.io/argoproj/argocd:v3.4.4
+        image: quay.io/argoproj/argocd:v3.5.1
         name: copyutil
         securityContext:
           allowPrivilegeEscalation: false
@@ -1760,6 +1832,13 @@ spec:
             path: ca.crt
           optional: true
           secretName: argocd-repo-server-tls
+      - name: argocd-repo-server-mtls
+        secret:
+          items:
+          - key: client-ca.crt
+            path: client-ca.crt
+          optional: true
+          secretName: argocd-repo-server-mtls
       - emptyDir: {}
         name: var-files
       - emptyDir: {}
@@ -1945,6 +2024,24 @@ spec:
               key: server.repo.server.strict.tls
               name: argocd-cmd-params-cm
               optional: true
+        - name: ARGOCD_SERVER_REPO_SERVER_CA_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: server.repo.server.ca.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_SERVER_REPO_SERVER_CLIENT_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: server.repo.server.client.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_SERVER_REPO_SERVER_CLIENT_CERT_KEY_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: server.repo.server.client.cert.key.path
+              name: argocd-cmd-params-cm
+              optional: true
         - name: ARGOCD_SERVER_DEX_SERVER_PLAINTEXT
           valueFrom:
             configMapKeyRef:
@@ -2101,6 +2198,18 @@ spec:
               key: server.webhook.parallelism.limit
               name: argocd-cmd-params-cm
               optional: true
+        - name: ARGOCD_SERVER_GLOB_CACHE_SIZE
+          valueFrom:
+            configMapKeyRef:
+              key: server.glob.cache.size
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_SERVER_WEBHOOK_REFRESH_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              key: server.webhook.refresh.workers
+              name: argocd-cmd-params-cm
+              optional: true
         - name: ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_NEW_GIT_FILE_GLOBBING
           valueFrom:
             configMapKeyRef:
@@ -2143,7 +2252,7 @@ spec:
               key: server.sync.replace.allowed
               name: argocd-cmd-params-cm
               optional: true
-        image: quay.io/argoproj/argocd:v3.4.4
+        image: quay.io/argoproj/argocd:v3.5.1
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
@@ -2178,6 +2287,8 @@ spec:
           name: tls-certs
         - mountPath: /app/config/server/tls
           name: argocd-repo-server-tls
+        - mountPath: /app/config/reposerver/mtls
+          name: argocd-repo-server-mtls
         - mountPath: /app/config/dex/tls
           name: argocd-dex-server-tls
         - mountPath: /home/argocd
@@ -2220,6 +2331,17 @@ spec:
             path: ca.crt
           optional: true
           secretName: argocd-dex-server-tls
+      - name: argocd-repo-server-mtls
+        secret:
+          items:
+          - key: client.crt
+            path: client.crt
+          - key: client.key
+            path: client.key
+          - key: server-ca.crt
+            path: server-ca.crt
+          optional: true
+          secretName: argocd-repo-server-mtls
       - configMap:
           items:
           - key: server.profile.enabled
@@ -2325,6 +2447,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: controller.operation.processors
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_HYDRATION_PROCESSORS
+          valueFrom:
+            configMapKeyRef:
+              key: controller.hydration.processors
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_APPLICATION_CONTROLLER_LOGFORMAT
@@ -2445,6 +2573,24 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: controller.repo.server.strict.tls
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER_CA_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: controller.repo.server.ca.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER_CLIENT_CERT_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: controller.repo.server.client.cert.path
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER_CLIENT_CERT_KEY_PATH
+          valueFrom:
+            configMapKeyRef:
+              key: controller.repo.server.client.cert.key.path
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_APPLICATION_CONTROLLER_PERSIST_RESOURCE_HEALTH
@@ -2575,7 +2721,7 @@ spec:
               optional: true
         - name: KUBECACHEDIR
           value: /tmp/kubecache
-        image: quay.io/argoproj/argocd:v3.4.4
+        image: quay.io/argoproj/argocd:v3.5.1
         imagePullPolicy: Always
         name: argocd-application-controller
         ports:
@@ -2598,6 +2744,8 @@ spec:
         volumeMounts:
         - mountPath: /app/config/controller/tls
           name: argocd-repo-server-tls
+        - mountPath: /app/config/reposerver/mtls
+          name: argocd-repo-server-mtls
         - mountPath: /home/argocd
           name: argocd-home
         - mountPath: /home/argocd/params
@@ -2624,6 +2772,17 @@ spec:
             path: ca.crt
           optional: true
           secretName: argocd-repo-server-tls
+      - name: argocd-repo-server-mtls
+        secret:
+          items:
+          - key: client.crt
+            path: client.crt
+          - key: client.key
+            path: client.key
+          - key: server-ca.crt
+            path: server-ca.crt
+          optional: true
+          secretName: argocd-repo-server-mtls
       - configMap:
           items:
           - key: controller.profile.enabled

@@ -1,7 +1,7 @@
 # =============================================================================
 # Install Argo Rollouts (analysis engine for Kargo Stage verification)
 # Steps:
-#   1. argo-rollouts/crds:    CustomResourceDefinitions (kubectl create)
+#   1. argo-rollouts/crds:    CustomResourceDefinitions (kubectl apply --server-side)
 #   2. argo-rollouts/pre:     NetworkPolicies
 #   3. argo-rollouts/install: vendored upstream manifest v1.9.1 (controller + RBAC)
 #   4. argo-rollouts/post:    ServiceMonitor
@@ -53,7 +53,7 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: CRDS (kubectl create — CRD > 256KB, apply не подходит)
+    # STEP 1: CRDS (kubectl apply --server-side — CRD > 256KB, клиентский apply не подходит)
     # =========================================================================
 
     - name: "[argo-rollouts-crds] Copy chart to remote"
@@ -66,8 +66,9 @@
       tags: [crds]
 
     - name: "[argo-rollouts-crds] Install CRDs via kubectl"
-      command: kubectl create -f {{ remote_charts_dir }}/argo-rollouts/crds/crds.yaml
-      failed_when: false
+      command: >-
+        kubectl apply --server-side --force-conflicts
+        -f {{ remote_charts_dir }}/argo-rollouts/crds/crds.yaml
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [crds]
