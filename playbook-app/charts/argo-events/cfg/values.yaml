@@ -1,0 +1,118 @@
+---
+# Namespace прикладного контура. Сюда контроллер реконсайлит CR, здесь же
+# живут шина, поды EventSource и Sensor и поды Job'ов из k8s-триггеров.
+namespace: "argo-events-cfg"
+
+# Namespace самого контроллера — нужен только как namespace субъекта в
+# RoleBinding, который выдаёт контроллеру права здесь.
+controllerNamespace: "argo-events"
+
+# Права контроллера в ЭТОМ namespace — обязательный объект, не операторская
+# настройка: без него контроллер не видит здесь ни одного CR. Правила
+# приходят из inventory. Подробности — templates/controller-rbac.yaml.
+controllerRbac:
+  enabled: true
+  saName: "argo-events-sa"
+  roleName: "argo-events-controller"
+  roleBindingName: "argo-events-controller"
+  rules: []
+
+# NetworkPolicy — комплект из шести политик под общим тумблером. Выключается
+# целиком, если оператор решил возить сеть этого namespace через git-ops.
+networkPolicies:
+  enabled: true
+
+# Argo Events CFG ESO settings
+eso:
+  vaultServerUrl: ""
+  saName: ""
+  roleName: ""
+  secretStoreName: ""
+  kvEnginePath: ""
+  secrets: []
+
+# ESO resources global config
+esoResourcesConfig:
+  secretStoreRefreshInterval: 60
+  externalSecretRefreshInterval: "1m"
+  externalSecretRefreshPolicy: "Periodic"
+
+# Пользовательские RBAC-объекты — пять независимых списков, элементы
+# рендерятся как есть (raw). Связей между списками нет: SA может быть без
+# биндинга, роль без SA, биндинг ссылаться на любую существующую роль.
+# ServiceAccount:      {name, labels?, annotations?}   — в namespace этой фазы
+# Role:                {name, namespace, rules}
+# ClusterRole:         {name, rules}
+# RoleBinding:         {name, namespace, roleRef, subjects}
+# ClusterRoleBinding:  {name, roleRef, subjects}
+rbacServiceAccounts: []
+rbacRoles: []
+rbacClusterRoles: []
+rbacRoleBindings: []
+rbacClusterRoleBindings: []
+
+# EventBus — шина событий. Namespaced: EventSource и Sensor ищут её в своём
+# namespace. spec приходит из inventory целиком и рендерится как есть.
+# labels и annotations опциональны (пустые/отсутствующие не добавляются), но
+# ведут себя по-разному: метки контроллер переносит на StatefulSet шины и
+# реагирует на их изменение реконсиляцией, а аннотации не читает никто —
+# они полезны только внешним инструментам (ArgoCD, reloader, пометки).
+eventBus:
+  enabled: false
+  name: "default"
+  labels: {}
+  annotations: {}
+  spec: {}
+
+# EventSources — каждый принимает ПОЛНЫЙ spec (operator-provided); template
+# оборачивает metadata (name, namespace, + опционально labels и annotations —
+# пустые/отсутствующие не добавляются).
+eventSources: []
+# - name: "webhook"
+#   labels:                                          # optional
+#     app.kubernetes.io/part-of: argo-events
+#   annotations:                                     # optional
+#     events.argoproj.io/leader-election: k8s
+#   spec:
+#     service:
+#       ports:
+#         - port: 12000
+#           targetPort: 12000
+#     webhook:
+#       example:
+#         port: "12000"
+#         endpoint: /example
+#         method: POST
+
+# Sensors — каждый принимает ПОЛНЫЙ spec; правила те же, что у EventSources.
+sensors: []
+# - name: "log"
+#   spec:
+#     dependencies:
+#       - name: webhook-dep
+#         eventSourceName: webhook
+#         eventName: example
+#     triggers:
+#       - template:
+#           name: log-trigger
+#           log: {}
+
+# =============================================================================
+# Common ports (used by NetworkPolicy templates)
+# =============================================================================
+dns:
+  port: 53
+apiserver:
+  port: 6443
+external:
+  httpPort: 80
+  httpsPort: 443
+
+# =============================================================================
+# argo-events component ports
+# =============================================================================
+argoEvents:
+  metricsPort: 7777 # /metrics дочерних подов EventSource, Sensor и шины
+
+# Custom K8s objects to render (operator-side, default empty)
+extraObjects: []
