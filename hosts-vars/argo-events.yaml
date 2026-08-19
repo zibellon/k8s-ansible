@@ -332,71 +332,63 @@ all:
 
     # ------
     # PHASE: cr (EventBus + EventSource + Sensor)
-    # Базовый профиль шины — lite: одна реплика JetStream. Глобальный дефолт
-    # streamConfig.replicas равен 3, поэтому здесь он перекрыт единицей —
-    # иначе поток с кворумом 3 на одной реплике не создастся. HA-профиль
-    # (3 реплики + streamConfig.replicas: 3) при необходимости задаётся в
-    # hosts-vars-override/ — обе величины меняются только вместе.
     # ------
-    argo_events_eventbus_enabled: true
-    argo_events_eventbus_name: "default"
-    # metadata самой шины. Метки контроллер переносит на её StatefulSet и
-    # реагирует на их изменение реконсиляцией; аннотации он не читает вовсе —
-    # они нужны только внешним инструментам (ArgoCD, reloader, пометки).
-    argo_events_eventbus_labels: {}
-    argo_events_eventbus_annotations: {}
-    argo_events_eventbus_jetstream_version: "2.10.29"
-    argo_events_eventbus_jetstream_replicas: 1
-    argo_events_eventbus_stream_replicas: 1
-    # Четверо суток вместо недели. Через шину едут УВЕДОМЛЕНИЯ, и хранить их
-    # неделю незачем: если потребитель лежал дольше, старые сообщения
-    # отправлять уже не надо. За историю платим диском — watch за Application
-    # льёт порядка 340 МБ в сутки (объект ~20 КБ, около 36 приложений, status
-    # переписывается на каждом reconcile контроллера ArgoCD), то есть на этом
-    # окне ожидается порядка 1.4 ГБ.
-    argo_events_eventbus_stream_max_age: "96h"
-    # Жёсткий потолок на диск — страховка на случай, если оценка выше врёт.
-    # Она линейно едет от размера объектов, их количества и частоты reconcile,
-    # то есть от величин, которыми этот файл не управляет. 6 GiB из 10 GiB
-    # тома: примерно четырёхкратный запас к ожидаемым 1.4 ГБ, а оставшиеся
-    # 4 GiB — под состояние консьюмеров, K/V-бакеты сенсоров (в JetStream они
-    # тоже стримы и лежат в том же сторе) и метаданные.
+    # Шины этого namespace. Список: несколько шин в одном namespace допустимы,
+    # EventSource и Sensor выбирают свою по имени через spec.eventBusName
+    # (дефолт "default"). Пусто = ни одной шины, отдельного тумблера нет.
     #
-    # По достижении лимита JetStream вытесняет САМОЕ СТАРОЕ (discard: DiscardOld
-    # по умолчанию), а не отклоняет новое. Для уведомлений это верный размен:
-    # потерять позавчерашнее сообщение не жалко, перестать принимать новые —
-    # нельзя. Заполнение же тома целиком означало бы, что писать некуда и шина
-    # встала вместе с обоими уведомлениями.
+    # Профиль в примере ниже — lite: одна реплика JetStream. HA-профиль
+    # (3 реплики + streamConfig.replicas: 3) задаётся в hosts-vars-override/ —
+    # обе величины меняются ТОЛЬКО ВМЕСТЕ: глобальный дефолт
+    # streamConfig.replicas в апстримном ConfigMap равен 3, и поток с кворумом 3
+    # на одной реплике не создастся.
     #
-    # ⚠️ ЧИСЛО В БАЙТАХ, НЕ СТРОКА. Значение читается viper'ом через GetInt64
-    # (jetstream.go:161), и привычное "6Gi" молча превратится в 0, а ноль
-    # сервер нормализует в -1, то есть в ОТСУТСТВИЕ лимита (проверено на живом
-    # NATS 2.10). Соседний maxAge при этом строку принимает — он читается через
+    # metadata шины: метки контроллер переносит на её StatefulSet и реагирует на
+    # их изменение реконсиляцией; аннотации он не читает вовсе — они нужны
+    # только внешним инструментам (ArgoCD, reloader, пометки).
+    #
+    # ⚠️ streamConfig ПРИМЕНЯЕТСЯ РОВНО ОДИН РАЗ — при СОЗДАНИИ стрима. Стрим
+    # создаёт первый подключившийся EventSource или Sensor (source_jetstream.go:27
+    # / sensor_jetstream.go:50 -> Init -> CreateStream), а не контроллер шины. На
+    # уже существующем стриме CreateStream выходит сразу: "No need to create
+    # Stream as it already exists" (jetstream.go:122-125) — новый конфиг НЕ
+    # применяется. Менять maxAge/maxBytes безболезненно можно только пока
+    # прикладных объектов нет; позже потребуется удалить стрим вручную.
+    #
+    # ⚠️ maxBytes — ЧИСЛО В БАЙТАХ, НЕ СТРОКА. Значение читается viper'ом через
+    # GetInt64 (jetstream.go:161), и привычное "6Gi" молча превратится в 0, а
+    # ноль сервер нормализует в -1, то есть в ОТСУТСТВИЕ лимита (проверено на
+    # живом NATS 2.10). Соседний maxAge строку принимает — он читается через
     # GetDuration. Два ключа рядом с разными правилами, легко перепутать.
-    # 6 * 1024^3 = 6442450944.
-    argo_events_eventbus_stream_max_bytes: 6442450944
-    argo_events_eventbus_storage_class: "lnstr-major-local"
-    argo_events_eventbus_volume_size: "10Gi"
-    argo_events_eventbus_spec:
-      jetstream:
-        version: "{{ argo_events_eventbus_jetstream_version }}"
-        replicas: "{{ argo_events_eventbus_jetstream_replicas }}"
-        persistence:
-          storageClassName: "{{ argo_events_eventbus_storage_class }}"
-          accessMode: ReadWriteOnce
-          volumeSize: "{{ argo_events_eventbus_volume_size }}"
-        # ⚠️ ЭТИ НАСТРОЙКИ ПРИМЕНЯЮТСЯ РОВНО ОДИН РАЗ — при СОЗДАНИИ стрима.
-        # Стрим создаёт первый подключившийся EventSource или Sensor
-        # (source_jetstream.go:27 / sensor_jetstream.go:50 -> Init ->
-        # CreateStream), а не контроллер шины. И CreateStream на уже
-        # существующем стриме выходит сразу: "No need to create Stream as it
-        # already exists" (jetstream.go:122-125) — новый конфиг НЕ применяется.
-        # Поэтому менять maxAge/maxBytes можно безболезненно только пока
-        # прикладных объектов нет. Позже потребуется удалить стрим вручную.
-        streamConfig: |
-          replicas: {{ argo_events_eventbus_stream_replicas }}
-          maxAge: {{ argo_events_eventbus_stream_max_age }}
-          maxBytes: {{ argo_events_eventbus_stream_max_bytes }}
+    #
+    # Откуда числа примера. Через шину едут УВЕДОМЛЕНИЯ, и хранить их неделю
+    # незачем: если потребитель лежал дольше, старые сообщения слать уже не надо
+    # — отсюда 96h. Watch за Application льёт порядка 340 МБ в сутки (объект
+    # ~20 КБ, около 36 приложений, status переписывается на каждом reconcile
+    # контроллера ArgoCD), то есть на этом окне ожидается порядка 1.4 ГБ.
+    # Потолок 6 GiB из тома 10 GiB — четырёхкратный запас к оценке; оставшиеся
+    # 4 GiB под состояние консьюмеров, K/V-бакеты сенсоров (в JetStream они тоже
+    # стримы и лежат в том же сторе) и метаданные. По достижении лимита
+    # JetStream вытесняет САМОЕ СТАРОЕ (discard: DiscardOld по умолчанию), а не
+    # отклоняет новое: потерять позавчерашнее уведомление не жалко, перестать
+    # принимать новые — нельзя. 6 * 1024^3 = 6442450944.
+    # ------
+    argo_events_event_buses: []
+    # - name: "default"
+    #   labels: {}
+    #   annotations: {}
+    #   spec:
+    #     jetstream:
+    #       version: "2.10.29"
+    #       replicas: 1
+    #       persistence:
+    #         storageClassName: "lnstr-major-local"
+    #         accessMode: ReadWriteOnce
+    #         volumeSize: "10Gi"
+    #       streamConfig: |
+    #         replicas: 1
+    #         maxAge: 96h
+    #         maxBytes: 6442450944
     # Списки прикладных объектов: элемент — {name, labels?, annotations?, spec},
     # spec рендерится как есть.
     #
@@ -414,19 +406,15 @@ all:
     argo_events_cr_helm_timeout: "5m"
     argo_events_cr_rollout_timeout: "600s"
     # StatefulSet шины создаёт контроллер асинхронно после появления CR —
-    # tasks-wait-rollout.yaml ретраит до его появления.
-    argo_events_cr_rollout_resources:
-      - "statefulset.apps/eventbus-{{ argo_events_eventbus_name }}-js"
+    # tasks-wait-rollout.yaml ретраит до его появления. Одна запись на каждую
+    # шину из argo_events_event_buses: "statefulset.apps/eventbus-<name>-js".
+    # Пусто, пока шин нет: ждать нечего.
+    argo_events_cr_rollout_resources: []
     argo_events_cr_extra_objects: []
     argo_events_cr_kustomize_patches: []
     argo_events_cr_helm_values:
       namespace: "{{ argo_events_namespace }}"
-      eventBus:
-        enabled: "{{ argo_events_eventbus_enabled }}"
-        name: "{{ argo_events_eventbus_name }}"
-        labels: "{{ argo_events_eventbus_labels }}"
-        annotations: "{{ argo_events_eventbus_annotations }}"
-        spec: "{{ argo_events_eventbus_spec }}"
+      eventBuses: "{{ argo_events_event_buses }}"
       eventSources: "{{ argo_events_event_sources }}"
       sensors: "{{ argo_events_sensors }}"
       extraObjects: "{{ argo_events_cr_extra_objects }}"
@@ -476,13 +464,9 @@ all:
     # ------
     argo_events_cfg_helm_timeout: "5m"
     argo_events_cfg_rollout_timeout: "600s"
-    # Шина второго namespace. Профиль по умолчанию тот же, что у основного —
-    # различать их имеет смысл только если кластеру нужны разные конфигурации.
-    argo_events_cfg_eventbus_enabled: false
-    argo_events_cfg_eventbus_name: "{{ argo_events_eventbus_name }}"
-    argo_events_cfg_eventbus_labels: "{{ argo_events_eventbus_labels }}"
-    argo_events_cfg_eventbus_annotations: "{{ argo_events_eventbus_annotations }}"
-    argo_events_cfg_eventbus_spec: "{{ argo_events_eventbus_spec }}"
+    # Шины второго namespace — независимый список. Контракт элемента и пример
+    # профиля те же, что у argo_events_event_buses в блоке фазы cr выше.
+    argo_events_cfg_event_buses: []
     # StatefulSet шины создаёт контроллер асинхронно после появления CR —
     # tasks-wait-rollout.yaml ретраит до его появления. Пусто, пока шину этой
     # фазы не подняли: при eventBus.enabled=false ждать нечего.
@@ -537,12 +521,7 @@ all:
       rbacClusterRoles: "{{ argo_events_cfg_rbac_cluster_roles }}"
       rbacRoleBindings: "{{ argo_events_cfg_rbac_role_bindings }}"
       rbacClusterRoleBindings: "{{ argo_events_cfg_rbac_cluster_role_bindings }}"
-      eventBus:
-        enabled: "{{ argo_events_cfg_eventbus_enabled }}"
-        name: "{{ argo_events_cfg_eventbus_name }}"
-        labels: "{{ argo_events_cfg_eventbus_labels }}"
-        annotations: "{{ argo_events_cfg_eventbus_annotations }}"
-        spec: "{{ argo_events_cfg_eventbus_spec }}"
+      eventBuses: "{{ argo_events_cfg_event_buses }}"
       eventSources: "{{ argo_events_cfg_event_sources }}"
       sensors: "{{ argo_events_cfg_sensors }}"
       podMonitor:
