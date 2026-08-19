@@ -1,24 +1,28 @@
 # =============================================================================
-# EVENTBUS (raw spec, rendered as-is from inventory)
+# EVENTBUSES
 #   Шина, через которую EventSource доставляет события Sensor'ам. Контроллер
-#   по этому CR создаёт StatefulSet eventbus-<name>-js, его Service и секреты.
+#   по каждому CR создаёт StatefulSet eventbus-<name>-js, его Service и секреты.
+#
+#   Список, а не одиночный объект: продукт допускает несколько шин в одном
+#   namespace — EventSource и Sensor выбирают свою по имени через
+#   spec.eventBusName (дефолт "default"), и ищут её в СВОЁМ namespace.
 # =============================================================================
 
-{{- if .Values.eventBus.enabled }}
+{{- range .Values.eventBuses }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: EventBus
 metadata:
-  name: {{ .Values.eventBus.name }}
-  namespace: {{ .Values.namespace }}
-  {{- if .Values.eventBus.labels }}
+  name: {{ .name }}
+  namespace: "{{ $.Values.namespace }}"
+  {{- if .labels }}
   labels:
-    {{- toYaml .Values.eventBus.labels | nindent 4 }}
+    {{- toYaml .labels | nindent 4 }}
   {{- end }}
-  {{- if .Values.eventBus.annotations }}
+  {{- if .annotations }}
   annotations:
-    {{- toYaml .Values.eventBus.annotations | nindent 4 }}
+    {{- toYaml .annotations | nindent 4 }}
   {{- end }}
 spec:
-  {{- toYaml .Values.eventBus.spec | nindent 2 }}
+  {{- toYaml .spec | nindent 2 }}
 {{- end }}

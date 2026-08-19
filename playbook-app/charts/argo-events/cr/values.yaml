@@ -2,18 +2,38 @@
 # Namespace
 namespace: "argo-events"
 
-# EventBus — шина событий. Namespaced: EventSource и Sensor ищут её в своём
-# namespace. spec приходит из inventory целиком и рендерится как есть.
-# labels и annotations опциональны (пустые/отсутствующие не добавляются), но
+# EventBuses — каждый элемент принимает ПОЛНЫЙ spec из inventory; template
+# оборачивает только metadata. Список, а не одиночный объект: несколько шин в
+# одном namespace допустимы, EventSource и Sensor выбирают свою по имени через
+# spec.eventBusName (дефолт "default") и ищут её в СВОЁМ namespace.
+# labels и annotations опциональны (пустые/отсутствующие не добавляются) и
 # ведут себя по-разному: метки контроллер переносит на StatefulSet шины и
 # реагирует на их изменение реконсиляцией, а аннотации не читает никто —
 # они полезны только внешним инструментам (ArgoCD, reloader, пометки).
-eventBus:
-  enabled: false
-  name: "default"
-  labels: {}
-  annotations: {}
-  spec: {}
+eventBuses: []
+# - name: "default"
+#   labels:                                          # optional
+#     app.kubernetes.io/part-of: argo-events
+#   spec:
+#     jetstream:
+#       version: "2.10.29"
+#       replicas: 1
+#       persistence:
+#         storageClassName: "lnstr-major-local"
+#         accessMode: ReadWriteOnce
+#         volumeSize: "10Gi"
+#       # ⚠️ streamConfig применяется РОВНО ОДИН РАЗ — при создании стрима, и
+#       # создаёт его первый подключившийся EventSource или Sensor, а не
+#       # контроллер шины: на существующем стриме новый конфиг НЕ применяется.
+#       # replicas обязан быть согласован с числом реплик JetStream — при одной
+#       # реплике глобальный дефолт 3 поток не создаст.
+#       # ⚠️ maxBytes — ЧИСЛО В БАЙТАХ. Строка "6Gi" молча станет 0, а ноль
+#       # сервер нормализует в -1, то есть в ОТСУТСТВИЕ лимита. Соседний maxAge
+#       # строку принимает. 6 * 1024^3 = 6442450944.
+#       streamConfig: |
+#         replicas: 1
+#         maxAge: 96h
+#         maxBytes: 6442450944
 
 # EventSources — каждый принимает ПОЛНЫЙ spec (operator-provided); template
 # оборачивает metadata (name, namespace, + опционально labels и annotations —
