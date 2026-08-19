@@ -15,9 +15,29 @@ all:
     # Component enable flag (default false, opt-in): guards install start.
     argo_events_enabled: false
 
-    # Namespace совпадает с тем, что захардкожен в upstream-манифесте
-    # (metadata.namespace + subjects[].namespace в ClusterRoleBinding).
+    # Namespace КОНТРОЛЛЕРА. Совпадает с тем, что захардкожен в upstream-
+    # манифесте (metadata.namespace + subjects[].namespace в RoleBinding).
     argo_events_namespace: "argo-events"
+
+    # ------
+    # ВТОРОЙ (ПРИКЛАДНОЙ) NAMESPACE — опциональная надстройка, по умолчанию
+    # выключена. При false компонент ведёт себя ровно как апстрим: контроллер
+    # запущен с --namespaced без --managed-namespace, то есть смотрит в свой
+    # собственный namespace, и всё — шина, EventSource, Sensor, их права —
+    # живёт там же через фазы pre / rbac / cr.
+    #
+    # При true к манифесту контроллера подмешивается патч с --managed-namespace,
+    # и появляется фаза cfg, которая обслуживает второй namespace. Это именно
+    # ДОБАВЛЕНИЕ: основной namespace продолжает работать как работал, оба контура
+    # независимы, оператор наполняет любой из них или оба.
+    #
+    # ⚠️ Второй namespace — СОВМЕСТНОГО владения: часть объектов везёт фаза cfg,
+    # часть — ArgoCD из git-ops. Уникальность имён между ними на операторе:
+    # совпадение роняет весь релиз на invalid ownership metadata
+    # (playbook-conventions.md §17.12).
+    # ------
+    argo_events_cfg_enabled: false
+    argo_events_cfg_namespace: "argo-events-cfg"
 
     # ------
     # Порты (из upstream-исходников, менять нельзя без смены версии).
@@ -38,6 +58,50 @@ all:
     argo_events_image: "quay.io/argoproj/argo-events:{{ argo_events_version }}"
     # Апстрим ставит Always под плавающий тег; тег мы пиним, поэтому IfNotPresent.
     argo_events_image_pull_policy: "IfNotPresent"
+
+    # ------
+    # ПРАВА КОНТРОЛЛЕРА ВО ВТОРОМ NAMESPACE.
+    # Апстримный namespace-install.yaml кладёт Role только рядом с контроллером —
+    # он предполагает, что контроллер и CR в одном namespace, и для штатного
+    # режима этого достаточно. Когда включён второй namespace, контроллеру нужен
+    # там свой комплект; его рендерит фаза cfg.
+    # Локальный Role апстрима НЕ трогается ни в одном из режимов.
+    # ------
+    # Имя SA задано апстримом, менять нельзя без смены версии манифеста.
+    argo_events_controller_sa_name: "argo-events-sa"
+    argo_events_controller_managed_role_name: "argo-events-controller"
+    argo_events_controller_managed_role_binding_name: "argo-events-controller"
+    # Полный апстримный набор: во втором namespace контроллер создаёт и удаляет
+    # дочерние Deployment/StatefulSet/Service/ConfigMap/Secret/PVC и правит
+    # статусы CR. Урезать здесь нечего — это ровно то, что он делает.
+    argo_events_controller_managed_role_rules:
+      - apiGroups: [""]
+        resources: ["events"]
+        verbs: ["create", "patch"]
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - apiGroups: ["argoproj.io"]
+        resources:
+          - sensors
+          - sensors/finalizers
+          - sensors/status
+          - eventsources
+          - eventsources/finalizers
+          - eventsources/status
+          - eventbus
+          - eventbus/finalizers
+          - eventbus/status
+        verbs: ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+      - apiGroups: [""]
+        resources: ["pods", "pods/exec", "configmaps", "services", "persistentvolumeclaims"]
+        verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+      - apiGroups: [""]
+        resources: ["secrets"]
+        verbs: ["create", "get", "update", "list", "patch", "delete"]
+      - apiGroups: ["apps"]
+        resources: ["deployments", "statefulsets"]
+        verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
 
     # ------
     # PHASE: crds (kubectl apply — CRD маленькие, лимит аннотации не грозит)
@@ -62,6 +126,24 @@ all:
     eso_vault_integration_argo_events_secrets: []
 
     eso_vault_integration_argo_events_secrets_extra: []
+
+    # ------
+    # ESO второго namespace. Каркас (SA + SecretStore) фаза cfg поднимает всегда,
+    # список секретов пуст. Оператор волен наполнять его отсюда либо создавать
+    # ExternalSecret'ы из git-ops поверх того же SecretStore — Vault-роль в обоих
+    # случаях одна, argo-events-cfg.eso-main.
+    # ⚠️ sa_name отличается от сквозного eso-main намеренно: namespace общий с
+    # git-ops, и generic-имя — кандидат на коллизию, роняющую весь релиз.
+    # ------
+    eso_vault_integration_argo_events_cfg:
+      sa_name: "eso-argo-events-cfg"
+      role_name: "argo-events-cfg.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    eso_vault_integration_argo_events_cfg_secrets: []
+
+    eso_vault_integration_argo_events_cfg_secrets_extra: []
 
     # ------
     # cert-manager Issuer. Ingress'ов у компонента пока нет, поэтому тумблер
@@ -185,9 +267,33 @@ all:
                     imagePullPolicy: "{{ argo_events_image_pull_policy }}"
     # Операторское расширение (hosts-vars-override/): ресурсы, nodeSelector,
     # tolerations и прочее прикладываются сюда отдельными патчами.
+    # Подмешивается в патчи install ТОЛЬКО при argo_events_cfg_enabled.
+    # ⚠️ args — []string без patchMergeKey: strategic merge ЗАМЕНЯЕТ список
+    # целиком, поэтому апстримные элементы перечислены заново. Потерять
+    # `controller` — под падает сразу; потерять `--namespaced` — контроллер тихо
+    # становится cluster-wide и упирается в отсутствие ClusterRole.
+    argo_events_cfg_managed_namespace_patch:
+      target:
+        kind: Deployment
+        name: controller-manager
+      patch: |-
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: controller-manager
+        spec:
+          template:
+            spec:
+              containers:
+                - name: controller-manager
+                  args:
+                    - controller
+                    - --namespaced
+                    - --managed-namespace={{ argo_events_cfg_namespace }}
     argo_events_install_kustomize_patches_extra: []
     argo_events_install_kustomize_patches: >-
       {{ argo_events_kustomize_patches_base
+         + ([argo_events_cfg_managed_namespace_patch] if argo_events_cfg_enabled | bool else [])
          + argo_events_install_kustomize_patches_extra }}
     # Helm values для KUSTOMIZE_WRAPPER install phase — только extraObjects wiring
     argo_events_install_helm_values:
@@ -349,3 +455,102 @@ all:
         scrapeTimeout: "{{ argo_events_pod_monitor_scrape_timeout }}"
         labels: "{{ argo_events_pod_monitor_labels }}"
       extraObjects: "{{ argo_events_post_extra_objects }}"
+
+    # ------
+    # PHASE: cfg (второй namespace целиком) — ОПЦИОНАЛЬНАЯ, гейт argo_events_cfg_enabled.
+    # Отдельный релиз в argo_events_cfg_namespace: сам заводит namespace через
+    # --create-namespace и везёт туда ESO-каркас, пять RBAC-списков, права
+    # контроллера, NetworkPolicy, PodMonitor и прикладные CR. По сути это pre +
+    # rbac + cr, применённые ко второму namespace.
+    #
+    # ⚠️ ПОЛНЫЙ КАРКАС, ПУСТЫЕ ЗНАЧЕНИЯ. Фаза умеет отрендерить всё, но включены
+    # по умолчанию только NetworkPolicy, права контроллера и PodMonitor — то, без
+    # чего namespace небезопасен, неработоспособен или не виден мониторингу.
+    #
+    # ⚠️ Списки этой фазы НЕЗАВИСИМЫ от одноимённых списков основного namespace.
+    # Включение второго контура ничего не переносит — оно добавляет; оба namespace
+    # могут нести свои шину, EventSource и Sensor одновременно.
+    #
+    # ⚠️ namespace-transform у фазы НЕ включается: он переписывает
+    # subjects[].namespace, и права контроллера уехали бы не тому SA.
+    # ------
+    argo_events_cfg_helm_timeout: "5m"
+    argo_events_cfg_rollout_timeout: "600s"
+    # Шина второго namespace. Профиль по умолчанию тот же, что у основного —
+    # различать их имеет смысл только если кластеру нужны разные конфигурации.
+    argo_events_cfg_eventbus_enabled: false
+    argo_events_cfg_eventbus_name: "{{ argo_events_eventbus_name }}"
+    argo_events_cfg_eventbus_labels: "{{ argo_events_eventbus_labels }}"
+    argo_events_cfg_eventbus_annotations: "{{ argo_events_eventbus_annotations }}"
+    argo_events_cfg_eventbus_spec: "{{ argo_events_eventbus_spec }}"
+    # StatefulSet шины создаёт контроллер асинхронно после появления CR —
+    # tasks-wait-rollout.yaml ретраит до его появления. Пусто, пока шину этой
+    # фазы не подняли: при eventBus.enabled=false ждать нечего.
+    argo_events_cfg_rollout_resources: []
+    # Прикладные CR второго namespace. Пусты по умолчанию.
+    # ⚠️ Один объект не может иметь двух владельцев: если поток описан в git-ops,
+    # здесь его быть не должно, иначе helm и ArgoCD начнут переписывать его друг
+    # за другом. Граница проходит по объекту, а не по namespace.
+    argo_events_cfg_event_sources: []
+    argo_events_cfg_sensors: []
+    # Пять сырых RBAC-списков второго namespace — те же контракты, что у фазы
+    # rbac. Сюда же кладутся cluster-scoped гранты потоков (например, watch за
+    # Kargo Promotions во всех проектах): они cluster-scoped, но выданы SA,
+    # который живёт здесь.
+    argo_events_cfg_rbac_service_accounts: []
+    argo_events_cfg_rbac_roles: []
+    argo_events_cfg_rbac_cluster_roles: []
+    argo_events_cfg_rbac_role_bindings: []
+    argo_events_cfg_rbac_cluster_role_bindings: []
+    # Комплект из шести политик. Выключается целиком, если оператор решил возить
+    # сеть этого namespace через git-ops — тогда имена на нём.
+    argo_events_cfg_network_policies_enabled: true
+    # Монитор прикладных подов этого namespace. Независим от одноимённого
+    # тумблера фазы post, который обслуживает основной namespace.
+    argo_events_cfg_pod_monitor_workloads_enabled: true
+    argo_events_cfg_extra_objects: []
+    argo_events_cfg_kustomize_patches: []
+    argo_events_cfg_helm_values:
+      namespace: "{{ argo_events_cfg_namespace }}"
+      controllerNamespace: "{{ argo_events_namespace }}"
+      controllerRbac:
+        enabled: true
+        saName: "{{ argo_events_controller_sa_name }}"
+        roleName: "{{ argo_events_controller_managed_role_name }}"
+        roleBindingName: "{{ argo_events_controller_managed_role_binding_name }}"
+        rules: "{{ argo_events_controller_managed_role_rules }}"
+      networkPolicies:
+        enabled: "{{ argo_events_cfg_network_policies_enabled }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_argo_events_cfg.sa_name }}"
+        roleName: "{{ eso_vault_integration_argo_events_cfg.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_argo_events_cfg.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_argo_events_cfg.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_argo_events_cfg_secrets + (eso_vault_integration_argo_events_cfg_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      rbacServiceAccounts: "{{ argo_events_cfg_rbac_service_accounts }}"
+      rbacRoles: "{{ argo_events_cfg_rbac_roles }}"
+      rbacClusterRoles: "{{ argo_events_cfg_rbac_cluster_roles }}"
+      rbacRoleBindings: "{{ argo_events_cfg_rbac_role_bindings }}"
+      rbacClusterRoleBindings: "{{ argo_events_cfg_rbac_cluster_role_bindings }}"
+      eventBus:
+        enabled: "{{ argo_events_cfg_eventbus_enabled }}"
+        name: "{{ argo_events_cfg_eventbus_name }}"
+        labels: "{{ argo_events_cfg_eventbus_labels }}"
+        annotations: "{{ argo_events_cfg_eventbus_annotations }}"
+        spec: "{{ argo_events_cfg_eventbus_spec }}"
+      eventSources: "{{ argo_events_cfg_event_sources }}"
+      sensors: "{{ argo_events_cfg_sensors }}"
+      podMonitor:
+        workloads:
+          enabled: "{{ argo_events_cfg_pod_monitor_workloads_enabled }}"
+        interval: "{{ argo_events_pod_monitor_interval }}"
+        scrapeTimeout: "{{ argo_events_pod_monitor_scrape_timeout }}"
+        labels: "{{ argo_events_pod_monitor_labels }}"
+      argoEvents:
+        metricsPort: "{{ argo_events_metrics_port }}"
+      extraObjects: "{{ argo_events_cfg_extra_objects }}"
