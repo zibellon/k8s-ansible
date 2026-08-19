@@ -87,6 +87,39 @@
       run_once: true
       tags: [always]
 
+    - name: "[argo-events-pre-check] Assert main-namespace CR lists are empty when cfg is enabled"
+      assert:
+        that:
+          - argo_events_event_buses | length == 0
+          - argo_events_event_sources | length == 0
+          - argo_events_sensors | length == 0
+        fail_msg: >-
+          argo_events_cfg_enabled=true, но списки CR основного namespace не пусты.
+          Контроллер запускается с --managed-namespace и видит CR РОВНО В ОДНОМ
+          namespace — во втором: --managed-namespace принимает одно значение и
+          кладётся единственным ключом в кэш контроллера. Объекты фазы cr
+          останутся в кластере без реконсиляции — подов не появится, а
+          существующие перестанут обновляться, молча и без ошибок в логе.
+          Перенеси их в argo_events_cfg_* либо выключи argo_events_cfg_enabled.
+      when: argo_events_cfg_enabled | bool
+      run_once: true
+      tags: [always]
+
+    - name: "[argo-events-pre-check] Assert cfg CR lists are empty when cfg is disabled"
+      assert:
+        that:
+          - argo_events_cfg_event_buses | length == 0
+          - argo_events_cfg_event_sources | length == 0
+          - argo_events_cfg_sensors | length == 0
+        fail_msg: >-
+          argo_events_cfg_enabled=false, но списки CR второго namespace заполнены.
+          Фаза cfg не выполняется, и эти объекты никуда не поедут — конфигурация
+          мёртвая. Включи argo_events_cfg_enabled либо перенеси их в списки
+          основного namespace.
+      when: not argo_events_cfg_enabled | bool
+      run_once: true
+      tags: [always]
+
     - name: "[argo-events-pre-check] Forbid kube-system namespace (cfg)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
       vars:
