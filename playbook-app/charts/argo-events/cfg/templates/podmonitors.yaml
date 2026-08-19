@@ -1,0 +1,45 @@
+# =============================================================================
+# PODMONITOR ПРИКЛАДНОГО NAMESPACE ARGO EVENTS (Prometheus Operator)
+#   Только поды, которые контроллер порождает по CR. Монитор контроллера
+#   остаётся у фазы post: сам контроллер живёт в своём namespace и в этот
+#   не переезжает.
+#
+#   Тёзка с тем же именем есть в namespace контроллера — коллизии нет,
+#   PodMonitor namespaced.
+#
+#   ⚠️ Требует установленного mon-system: без CRD PodMonitor релиз откатится
+#   на --atomic. Поэтому тумблер, а не безусловный объект.
+# =============================================================================
+{{- if .Values.podMonitor.workloads.enabled }}
+---
+# Поды EventSource, Sensor и EventBus. Их состав меняется в рантайме вместе с
+# CR, поэтому селектор задан по метке `controller`, которую проставляет
+# контроллер, а не по именам конкретных объектов.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: argo-events-workloads
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: argo-events
+    app.kubernetes.io/component: workloads
+    {{- with .Values.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  podMetricsEndpoints:
+    - port: metrics
+      interval: {{ .Values.podMonitor.interval | quote }}
+      scrapeTimeout: {{ .Values.podMonitor.scrapeTimeout | quote }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchExpressions:
+      - key: controller
+        operator: In
+        values:
+          - eventsource-controller
+          - sensor-controller
+          - eventbus-controller
+{{- end }}
