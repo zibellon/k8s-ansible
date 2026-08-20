@@ -3,43 +3,45 @@
 # Steps:
 #   1. argo-events/crds:    CustomResourceDefinitions (kubectl apply --server-side)
 #   2. argo-events/pre:     NetworkPolicies + cert-manager Issuer + ESO resources
-#   3. argo-events/install: vendored upstream manifests v1.9.11 — controller,
+#   3. argo-events/rbac:    ServiceAccounts + Roles + bindings for EventSource/Sensor
+#                           pods, плюс права контроллера в managed-namespace
+#   4. argo-events/install: vendored upstream manifests v1.9.11 — controller,
 #                           RBAC and the validating admission webhook
-#   4. argo-events/rbac:    ServiceAccounts + Roles + bindings for EventSource/Sensor pods
 #   5. argo-events/cr:      EventBus + EventSources + Sensors
 #   6. argo-events/post:    PodMonitors
-#   7. argo-events/cfg:     ОПЦИОНАЛЬНО (argo_events_cfg_enabled) — второй
-#                           namespace целиком: ESO, RBAC, права контроллера,
-#                           NetworkPolicies, PodMonitor, EventBus/EventSources/Sensors
+#
+# ⚠️ ПОРЯДОК rbac ПЕРЕД install ОБЯЗАТЕЛЕН, если задан argo_events_managed_namespace.
+#    Контроллер стартует уже нацеленным на чужой namespace; без прав там его кэш
+#    не синхронизируется, controller-runtime не дожидается за CacheSyncTimeout
+#    (2 минуты) и процесс завершается — под уходит в CrashLoopBackOff. Отказ
+#    ОТЛОЖЕННЫЙ: readiness это healthz.Ping, отвечает 200 независимо от кэша,
+#    поэтому helm --wait успевает счесть install успешным, а падение начинается
+#    уже после него.
 #
 # Usage (tags):
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-install.yaml
 #   ansible-playbook ... --tags crds
 #   ansible-playbook ... --tags pre
-#   ansible-playbook ... --tags install
 #   ansible-playbook ... --tags rbac
+#   ansible-playbook ... --tags install
 #   ansible-playbook ... --tags cr
 #   ansible-playbook ... --tags post
-#   ansible-playbook ... --tags cfg
 #
 # Prerequisites:
 #   - Cilium installed (NetworkPolicy enforcement)
-#   - Vault installed/unsealed; Vault policies+roles synced (argo-events.eso-main,
-#     плюс argo-events-cfg.eso-main при argo_events_cfg_enabled)
+#   - Vault installed/unsealed; Vault policies+roles synced (argo-events.eso-main)
 #   - External Secrets Operator installed
 #   - Storage class available for the JetStream EventBus PVCs
 #   - mon-system installed if PodMonitors are enabled
 #
-# NOTE: контроллер ставится NAMESPACED. По умолчанию (argo_events_cfg_enabled:
-#       false) он смотрит в свой собственный namespace, и весь прикладной контур
-#       живёт там же — это штатный апстримный режим, ничего доделывать не нужно.
-#       При argo_events_cfg_enabled: true к манифесту контроллера подмешивается
-#       --managed-namespace и появляется фаза cfg со вторым namespace. Флаг
-#       принимает ровно одно значение — списка namespace у продукта нет.
-#       Это ДОБАВЛЕНИЕ, а не переезд: основной namespace продолжает работать как
-#       работал, оба контура независимы и наполняются каждый своими списками.
-#       Второй namespace — СОВМЕСТНОГО владения с git-ops, уникальность имён
-#       между ними на операторе.
+# NOTE: контроллер ставится NAMESPACED и по умолчанию видит CR только в своём
+#       собственном namespace — это штатный апстримный режим, доделывать нечего.
+#       Если задан argo_events_managed_namespace, к манифесту подмешивается
+#       --managed-namespace, и контроллер смотрит ТУДА ВМЕСТО своего namespace:
+#       флаг принимает ровно одно значение, списка namespace у продукта нет.
+#       Тот namespace создаёт cluster-base, а его содержимое — забота оператора
+#       (у нас git-ops). Компонент отвечает только за контроллер и за права,
+#       которые контроллеру там нужны; их выдаёт стадия rbac.
 #       Собственного UI у argo-events нет.
 #       Валидирующий admission webhook — безусловная часть фазы install: он сам
 #       выпускает себе сертификат и сам регистрирует ValidatingWebhookConfiguration
@@ -74,60 +76,6 @@
         dto_target_namespace: "{{ argo_events_namespace }}"
       tags: [always]
 
-    - name: "[argo-events-pre-check] Assert cfg namespace is separate"
-      assert:
-        that:
-          - argo_events_cfg_namespace | length > 0
-          - argo_events_cfg_namespace != argo_events_namespace
-        fail_msg: >-
-          argo_events_cfg_namespace must be non-empty and differ from argo_events_namespace —
-          второй контур обязан жить в отдельном namespace, иначе релиз argo-events-cfg
-          начнёт спорить за объекты с релизами основного namespace.
-      when: argo_events_cfg_enabled | bool
-      run_once: true
-      tags: [always]
-
-    - name: "[argo-events-pre-check] Assert main-namespace CR lists are empty when cfg is enabled"
-      assert:
-        that:
-          - argo_events_event_buses | length == 0
-          - argo_events_event_sources | length == 0
-          - argo_events_sensors | length == 0
-        fail_msg: >-
-          argo_events_cfg_enabled=true, но списки CR основного namespace не пусты.
-          Контроллер запускается с --managed-namespace и видит CR РОВНО В ОДНОМ
-          namespace — во втором: --managed-namespace принимает одно значение и
-          кладётся единственным ключом в кэш контроллера. Объекты фазы cr
-          останутся в кластере без реконсиляции — подов не появится, а
-          существующие перестанут обновляться, молча и без ошибок в логе.
-          Перенеси их в argo_events_cfg_* либо выключи argo_events_cfg_enabled.
-      when: argo_events_cfg_enabled | bool
-      run_once: true
-      tags: [always]
-
-    - name: "[argo-events-pre-check] Assert cfg CR lists are empty when cfg is disabled"
-      assert:
-        that:
-          - argo_events_cfg_event_buses | length == 0
-          - argo_events_cfg_event_sources | length == 0
-          - argo_events_cfg_sensors | length == 0
-        fail_msg: >-
-          argo_events_cfg_enabled=false, но списки CR второго namespace заполнены.
-          Фаза cfg не выполняется, и эти объекты никуда не поедут — конфигурация
-          мёртвая. Включи argo_events_cfg_enabled либо перенеси их в списки
-          основного namespace.
-      when: not argo_events_cfg_enabled | bool
-      run_once: true
-      tags: [always]
-
-    - name: "[argo-events-pre-check] Forbid kube-system namespace (cfg)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
-      vars:
-        dto_label_name: "argo-events-pre-check"
-        dto_target_namespace: "{{ argo_events_cfg_namespace }}"
-      when: argo_events_cfg_enabled | bool
-      tags: [always]
-
     - name: "[argo-events-install-init] Verify Vault config"
       include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
       vars:
@@ -141,16 +89,6 @@
         dto_eso_secrets_list: "{{ eso_vault_integration_argo_events_secrets + (eso_vault_integration_argo_events_secrets_extra | default([])) }}"
         dto_eso_integration_object: "{{ eso_vault_integration_argo_events }}"
         dto_namespace: "{{ argo_events_namespace }}"
-      tags: [always]
-
-    - name: "[argo-events-install-init] Verify ESO config (cfg)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
-      vars:
-        dto_label_name: "argo-events-install-init"
-        dto_eso_secrets_list: "{{ eso_vault_integration_argo_events_cfg_secrets + (eso_vault_integration_argo_events_cfg_secrets_extra | default([])) }}"
-        dto_eso_integration_object: "{{ eso_vault_integration_argo_events_cfg }}"
-        dto_namespace: "{{ argo_events_cfg_namespace }}"
-      when: argo_events_cfg_enabled | bool
       tags: [always]
 
     # =========================================================================
@@ -234,7 +172,58 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 3: INSTALL (vendored upstream manifest)
+    # STEP 3: RBAC (ServiceAccounts + Roles + bindings + права контроллера)
+    # Идёт перед cr: Sensor ссылается на ServiceAccount по имени.
+    # =========================================================================
+
+    - name: "[argo-events-rbac] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-events-rbac"
+        dto_chart_name: "rbac"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/rbac/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/rbac"
+      tags: [rbac]
+
+    - name: "[argo-events-rbac] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argo-events-rbac"
+        dto_dir: "{{ remote_charts_dir }}/argo-events/rbac"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argo_events_rbac_helm_values | to_nice_yaml }}"
+      tags: [rbac]
+
+    - name: "[argo-events-rbac] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argo-events-rbac"
+        dto_release_name: "argo-events-rbac"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/rbac"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/rbac/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/rbac-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/rbac-k"
+        dto_patches_list: "{{ argo_events_rbac_kustomize_patches }}"
+        dto_target_namespace: "{{ argo_events_namespace }}"
+      tags: [rbac]
+
+    - name: "[argo-events-rbac] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argo-events-rbac"
+        dto_helm_command: >
+          helm upgrade --install argo-events-rbac {{ remote_charts_dir }}/argo-events/rbac-k
+          --namespace {{ argo_events_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argo_events_rbac_helm_timeout }}
+      tags: [rbac]
+
+    # =========================================================================
+    # STEP 4: INSTALL (vendored upstream manifest)
     # =========================================================================
 
     - name: "[argo-events-install] Copy chart to remote"
@@ -296,57 +285,6 @@
         dto_rollout_timeout: "{{ argo_events_install_rollout_timeout }}"
         dto_rollout_resources_list: "{{ argo_events_install_rollout_resources }}"
       tags: [install]
-
-    # =========================================================================
-    # STEP 4: RBAC (ServiceAccounts + Roles + bindings)
-    # Идёт перед cr: Sensor ссылается на ServiceAccount по имени.
-    # =========================================================================
-
-    - name: "[argo-events-rbac] Copy chart to remote"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
-      vars:
-        dto_label_name: "argo-events-rbac"
-        dto_chart_name: "rbac"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/rbac/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/rbac"
-      tags: [rbac]
-
-    - name: "[argo-events-rbac] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
-      vars:
-        dto_label_name: "argo-events-rbac"
-        dto_dir: "{{ remote_charts_dir }}/argo-events/rbac"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ argo_events_rbac_helm_values | to_nice_yaml }}"
-      tags: [rbac]
-
-    - name: "[argo-events-rbac] Build kustomize artifact"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
-      vars:
-        dto_label_name: "argo-events-rbac"
-        dto_release_name: "argo-events-rbac"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/rbac"
-        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/rbac/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/rbac-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/rbac-k"
-        dto_patches_list: "{{ argo_events_rbac_kustomize_patches }}"
-        dto_target_namespace: "{{ argo_events_namespace }}"
-      tags: [rbac]
-
-    - name: "[argo-events-rbac] Install via Helm (async)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
-      vars:
-        dto_label_name: "argo-events-rbac"
-        dto_helm_command: >
-          helm upgrade --install argo-events-rbac {{ remote_charts_dir }}/argo-events/rbac-k
-          --namespace {{ argo_events_namespace }}
-          --create-namespace
-          --cleanup-on-fail
-          --atomic
-          --wait
-          --wait-for-jobs
-          --timeout {{ argo_events_rbac_helm_timeout }}
-      tags: [rbac]
 
     # =========================================================================
     # STEP 5: CR (EventBus + EventSources + Sensors)
@@ -460,81 +398,6 @@
       tags: [post]
 
     # =========================================================================
-    # STEP 7: CFG (второй namespace целиком) — ОПЦИОНАЛЬНАЯ ФАЗА
-    # Выполняется только при argo_events_cfg_enabled. Отдельный релиз, который
-    # сам заводит namespace через --create-namespace и везёт туда ESO-каркас,
-    # пять RBAC-списков, ОБЯЗАТЕЛЬНЫЕ права контроллера в этом namespace,
-    # NetworkPolicies, PodMonitor и прикладные CR.
-    #
-    # Фазы выше при этом ничего не теряют: основной namespace продолжает
-    # обслуживаться pre / rbac / cr / post, оба контура независимы.
-    #
-    # ⚠️ namespace-transform НЕ включается: он переписывает subjects[].namespace,
-    # и RoleBinding контроллера указал бы на SA во втором namespace вместо SA
-    # контроллера. Симптом был бы неотличим от потерянного --managed-namespace.
-    # =========================================================================
-
-    - name: "[argo-events-cfg] Copy chart to remote"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
-      vars:
-        dto_label_name: "argo-events-cfg"
-        dto_chart_name: "cfg"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/cfg/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/cfg"
-      when: argo_events_cfg_enabled | bool
-      tags: [cfg]
-
-    - name: "[argo-events-cfg] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
-      vars:
-        dto_label_name: "argo-events-cfg"
-        dto_dir: "{{ remote_charts_dir }}/argo-events/cfg"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ argo_events_cfg_helm_values | to_nice_yaml }}"
-      when: argo_events_cfg_enabled | bool
-      tags: [cfg]
-
-    - name: "[argo-events-cfg] Build kustomize artifact"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
-      vars:
-        dto_label_name: "argo-events-cfg"
-        dto_release_name: "argo-events-cfg"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/cfg"
-        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/cfg/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/cfg-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/cfg-k"
-        dto_patches_list: "{{ argo_events_cfg_kustomize_patches }}"
-        dto_target_namespace: "{{ argo_events_cfg_namespace }}"
-      when: argo_events_cfg_enabled | bool
-      tags: [cfg]
-
-    - name: "[argo-events-cfg] Install via Helm (async)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
-      vars:
-        dto_label_name: "argo-events-cfg"
-        dto_helm_command: >
-          helm upgrade --install argo-events-cfg {{ remote_charts_dir }}/argo-events/cfg-k
-          --namespace {{ argo_events_cfg_namespace }}
-          --create-namespace
-          --cleanup-on-fail
-          --atomic
-          --wait
-          --wait-for-jobs
-          --timeout {{ argo_events_cfg_helm_timeout }}
-      when: argo_events_cfg_enabled | bool
-      tags: [cfg]
-
-    - name: "[argo-events-cfg] Wait for rollout"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
-      vars:
-        dto_label_name: "argo-events-cfg"
-        dto_rollout_namespace: "{{ argo_events_cfg_namespace }}"
-        dto_rollout_timeout: "{{ argo_events_cfg_rollout_timeout }}"
-        dto_rollout_resources_list: "{{ argo_events_cfg_rollout_resources }}"
-      when: argo_events_cfg_enabled | bool
-      tags: [cfg]
-
-    # =========================================================================
     # VERIFICATION
     # =========================================================================
 
@@ -559,22 +422,6 @@
         dto_np_namespace: "{{ argo_events_namespace }}"
       tags: [always]
 
-    - name: "[argo-events-verify] Show pods in {{ argo_events_cfg_namespace }}"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
-      vars:
-        dto_label_name: "argo-events-verify"
-        dto_pods_namespace: "{{ argo_events_cfg_namespace }}"
-      when: argo_events_cfg_enabled | bool
-      tags: [always]
-
-    - name: "[argo-events-verify] Show NetworkPolicies in {{ argo_events_cfg_namespace }}"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
-      vars:
-        dto_label_name: "argo-events-verify"
-        dto_np_namespace: "{{ argo_events_cfg_namespace }}"
-      when: argo_events_cfg_enabled | bool
-      tags: [always]
-
     - name: "[argo-events-verify] Show info"
       debug:
         msg:
@@ -594,29 +441,9 @@
       run_once: true
       tags: [always]
 
-    - name: "[argo-events-verify] Show cfg info"
-      debug:
-        msg:
-          - "=============================================="
-          - "ВТОРОЙ NAMESPACE: {{ argo_events_cfg_namespace }}"
-          - "=============================================="
-          - "Контроллер обязан быть запущен с --managed-namespace, проверить:"
-          - "  kubectl -n {{ argo_events_namespace }} get deploy controller-manager -o jsonpath='{.spec.template.spec.containers[0].args}'"
-          - "Права контроллера во втором namespace:"
-          - "  kubectl -n {{ argo_events_cfg_namespace }} get role,rolebinding {{ argo_events_controller_managed_role_name }}"
-          - "Состояние объектов:"
-          - "  kubectl -n {{ argo_events_cfg_namespace }} get eventbus,eventsources,sensors"
-          - "=============================================="
-      when: argo_events_cfg_enabled | bool
-      delegate_to: "{{ master_manager_fact }}"
-      run_once: true
-      tags: [always]
-
     - name: "[argo-events-verify] Installation complete"
       debug:
-        msg: >-
-          argo-events-pre + argo-events + argo-events-rbac + argo-events-cr +
-          argo-events-post{{ ' + argo-events-cfg' if argo_events_cfg_enabled | bool else '' }}: OK
+        msg: "argo-events-pre + argo-events-rbac + argo-events + argo-events-cr + argo-events-post: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
