@@ -1,0 +1,23 @@
+# =============================================================================
+# VPN allowlist для кластера БЕЗ Cloudflare. Middleware vpn-only сверяет
+# sourceRange с RemoteAddr — реальным peer'ом соединения, поэтому ipStrategy не
+# нужен. UI без собственной авторизации (Traefik dashboard, Hubble, Prometheus)
+# закрываются флагом <c>_ui_vpn_only_enabled: true.
+# =============================================================================
+all:
+  vars:
+    vpn_ips:
+      - "1.2.3.4/24"
+      - "2.3.4.5/32"
+
+    vpn_traefik_middlewares:
+      - name: vpn-only
+        spec:
+          ipAllowList:
+            sourceRange: "{{ vpn_ips }}"
+
+    vpn_ingress_middlewares: "{{ traefik_namespace }}-vpn-only@kubernetescrd"
+
+    vpn_ingress_route_middlewares:
+      - name: vpn-only
+        namespace: "{{ traefik_namespace }}"

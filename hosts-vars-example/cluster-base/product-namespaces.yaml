@@ -1,0 +1,31 @@
+# =============================================================================
+# Только ПРОДУКТОВЫЕ namespace — те, куда раскатываются приложения. ArgoCD
+# ставится namespace-scoped и создавать Namespace не может, поэтому каждый
+# заводится здесь и ДО первого Application. Системные namespace тут объявлять
+# НЕЛЬЗЯ: cr-namespace argo-events создаёт стадия argo-events/pre-cfg,
+# namespace Kargo-проектов — стадия kargo/cfg, три служебных namespace чарта
+# kargo — сам апстримный чарт. Дубль здесь = второй владелец объекта и падение
+# релиза на invalid ownership metadata. Аннотация sync-options защищает от
+# удаления ArgoCD, но НЕ от helm: удаление записи отсюда сносит namespace со
+# всем содержимым на следующем прогоне.
+# =============================================================================
+all:
+  vars:
+    cluster_base_enabled: true
+
+    cluster_base_namespaces_list:
+      - name: "my-app-dev"
+        annotations:
+          argocd.argoproj.io/sync-options: "Delete=false,Prune=false"
+      - name: "my-app-qa"
+        annotations:
+          argocd.argoproj.io/sync-options: "Delete=false,Prune=false"
+      - name: "my-app-prod"
+        annotations:
+          argocd.argoproj.io/sync-options: "Delete=false,Prune=false"
+      - name: "another-app-dev"
+        annotations:
+          argocd.argoproj.io/sync-options: "Delete=false,Prune=false"
+      - name: "another-app-prod"
+        annotations:
+          argocd.argoproj.io/sync-options: "Delete=false,Prune=false"

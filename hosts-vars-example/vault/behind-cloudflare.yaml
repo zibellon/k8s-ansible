@@ -1,0 +1,35 @@
+# =============================================================================
+# Vault за Cloudflare: HTTPS терминируется на CDN, origin отдаёт HTTP, поэтому
+# issuer/tls/certificate выключены. VPN не включаем сознательно — у Vault UI
+# своя авторизация, и закрытие allowlist'ом сломало бы доступ инженерам вне
+# VPN. redirect_uri для OIDC остаётся https:// — его формирует внешний домен.
+# =============================================================================
+all:
+  vars:
+    vault_ui_ingress_class_name: "traefik-lb"
+    vault_cert_manager_issuer_enabled: false
+
+    vault_ui_domain: "vault-ui.example.com"
+    vault_ui_ingress_enabled: true
+    vault_ui_ingress_tls_enabled: false
+    vault_ui_certificate_enabled: false
+    vault_ui_vpn_only_enabled: false
+
+    vault_oidc_enabled: true
+    vault_userpass_enabled: false
+    vault_oidc_client_id: "000000000000000001"
+    vault_oidc_allowed_redirect_uris:
+      - "{{ vault_oidc_ui_redirect_uri }}"
+
+    vault_groups_extra:
+      - name: "vault-admins"
+        type: external
+        policies:
+          - vault-admin
+        metadata:
+          source: "zitadel"
+
+    vault_group_aliases_extra:
+      - name: "cluster-admin-rw@my-org.auth.example.com"
+        mountpath: "{{ vault_oidc_mount_path }}"
+        group: "vault-admins"

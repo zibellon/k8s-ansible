@@ -1,0 +1,33 @@
+# =============================================================================
+# Longhorn как storage-стек кластера, UI через Ingress с TLS на origin
+# (cert-manager, ACME HTTP-01). Longhorn и LINSTOR взаимоисключающи — если
+# включён этот файл, linstor в кластере не ставится.
+# ⚠️ У Longhorn UI НЕТ собственной авторизации: кто открыл страницу, тот может
+# удалять тома и снапшоты. В любом контуре, кроме полностью закрытого, его
+# закрывают VPN allowlist'ом (longhorn_ui_vpn_only_enabled: true).
+# storage_classes пуст по умолчанию — классы объявляются здесь явно.
+# =============================================================================
+all:
+  vars:
+    longhorn_enabled: true
+
+    longhorn_ui_ingress_class_name: "traefik-lb"
+    longhorn_cert_manager_issuer_enabled: true
+
+    longhorn_ui_domain: "longhorn-ui.example.com"
+    longhorn_ui_https_secret_name: "cert-longhorn-ui"
+    longhorn_ui_ingress_enabled: true
+    longhorn_ui_ingress_tls_enabled: true
+    longhorn_ui_certificate_enabled: true
+    longhorn_ui_vpn_only_enabled: true
+
+    longhorn_storage_classes:
+      - name: "longhorn-r2"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "Immediate"
+        provisioner: driver.longhorn.io
+        parameters:
+          numberOfReplicas: "2"
+          staleReplicaTimeout: "30"
+          fsType: "ext4"

@@ -1,0 +1,33 @@
+# =============================================================================
+# Longhorn, UI через Ingress БЕЗ TLS на origin: HTTPS терминируется на внешнем
+# слое, до сервера доходит HTTP — поэтому issuer, ingress_tls и certificate
+# выключены.
+# ⚠️ У Longhorn UI НЕТ собственной авторизации, и внешний слой сам по себе её не
+# добавляет. Панель управления томами кластера обязана оставаться за VPN
+# allowlist'ом: vpn_only_enabled здесь true не для перестраховки, а потому что
+# без него страница с кнопкой «удалить том» публична.
+# =============================================================================
+all:
+  vars:
+    longhorn_enabled: true
+
+    longhorn_ui_ingress_class_name: "traefik-lb"
+    longhorn_cert_manager_issuer_enabled: false
+
+    longhorn_ui_domain: "longhorn-ui.example.com"
+    longhorn_ui_https_secret_name: "cert-longhorn-ui"
+    longhorn_ui_ingress_enabled: true
+    longhorn_ui_ingress_tls_enabled: false
+    longhorn_ui_certificate_enabled: false
+    longhorn_ui_vpn_only_enabled: true
+
+    longhorn_storage_classes:
+      - name: "longhorn-r2"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "Immediate"
+        provisioner: driver.longhorn.io
+        parameters:
+          numberOfReplicas: "2"
+          staleReplicaTimeout: "30"
+          fsType: "ext4"

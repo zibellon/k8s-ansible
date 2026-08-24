@@ -1,0 +1,32 @@
+# =============================================================================
+# Teleport: web UI через Ingress БЕЗ TLS на origin — HTTPS терминируется на
+# внешнем слое, до сервера доходит HTTP. Флаги влияют ТОЛЬКО на веб-ingress;
+# ssh, reverse tunnel и kube — отдельные L4-порты мимо Traefik, там TLS свой и
+# он не отключается, а accept_proxy включён под внешний HAProxy.
+# ⚠️ teleport_external_url остаётся https:// — это адрес, который Teleport
+# отдаёт клиентам tsh и в ссылках, и он описывает точку ВХОДА, а не origin.
+# Внешний слой обязан проставлять X-Forwarded-Proto: https.
+# ⚠️ Взвесить перед выбором: у tsh, веб-терминала и file-transfer длинные
+# WebSocket-сессии, и проксирующие CDN часто рвут их по idle-таймауту. В
+# эталонном прод-кластере Teleport поэтому оставлен на end-to-end TLS
+# (домен в DNS-only), см. ui-ingress-cert-manager.yaml.
+# =============================================================================
+all:
+  vars:
+    teleport_domain: "teleport.example.com"
+    teleport_external_url: "https://teleport.example.com"
+
+    teleport_ingress_class_name: "traefik-lb"
+    teleport_cert_manager_issuer_enabled: false
+    teleport_vpn_only_enabled: false
+
+    teleport_ui_ingress_enabled: true
+    teleport_ui_ingress_tls_enabled: false
+    teleport_ui_certificate_enabled: false
+
+    teleport_data_storage_class: "lnstr-major-multi-sync"
+    teleport_data_storage_size: "4Gi"
+
+    teleport_ssh_accept_proxy: true
+    teleport_reverse_tunnel_accept_proxy: true
+    teleport_kube_accept_proxy: true

@@ -1,0 +1,56 @@
+# =============================================================================
+# Боевой ZITADEL: по три реплики на zitadel и zitadel-login, все три workload'а
+# (включая PostgreSQL) прибиты к worker-нодам nodeSelector'ом, у каждого свои
+# requests/limits. zitadel_admin_email — первый human-админ, создаётся один раз
+# при greenfield-bootstrap и после него не меняется.
+# =============================================================================
+all:
+  vars:
+    zitadel_enabled: true
+
+    zitadel_ingress_class_name: "traefik-lb"
+    zitadel_cert_manager_issuer_enabled: true
+    zitadel_vpn_only_enabled: false
+
+    zitadel_domain: "auth.example.com"
+    zitadel_ui_ingress_enabled: true
+    zitadel_ui_ingress_tls_enabled: true
+    zitadel_ui_certificate_enabled: true
+
+    zitadel_admin_email: "zitadel-admin@example.com"
+
+    zitadel_postgresql_storage_class: "lnstr-worker-multi-sync"
+    zitadel_postgresql_storage_size: "4Gi"
+
+    zitadel_helm_values_replica_count: 3
+    zitadel_helm_values_login_replica_count: 3
+
+    zitadel_helm_values_resources:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+    zitadel_helm_values_node_selector:
+      node-role.kubernetes.io/worker: ""
+
+    zitadel_helm_values_login_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    zitadel_helm_values_login_node_selector:
+      node-role.kubernetes.io/worker: ""
+
+    zitadel_postgresql_resources:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+    zitadel_postgresql_node_selector:
+      node-role.kubernetes.io/worker: ""

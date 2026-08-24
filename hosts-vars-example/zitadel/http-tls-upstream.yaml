@@ -1,0 +1,33 @@
+# =============================================================================
+# ZITADEL с Ingress БЕЗ TLS на origin: HTTPS терминируется на внешнем слое, до
+# сервера доходит HTTP. Для ZITADEL это штатный режим, а не обход: сам продукт
+# TLS не терминирует никогда (в базе TLS.Enabled: false), а ExternalSecure: true
+# и ExternalPort: 443 лишь заставляют его АНОНСИРОВАТЬ https://-адреса —
+# в issuer, discovery-документе и redirect'ах.
+# ⚠️ Из этого следует жёсткое требование: внешний слой ОБЯЗАН реально
+# терминировать TLS и проставлять X-Forwarded-Proto: https. Если до ZITADEL
+# дойдёт запрос, помеченный как http, он всё равно ответит https://-ссылками —
+# OIDC-клиенты сломаются на несовпадении issuer, а вход уйдёт в петлю
+# редиректов. Отключить ExternalSecure нельзя: значение захардкожено в базе.
+# zitadel_domain ИММУТАБЕЛЕН после первого деплоя — он же ExternalDomain.
+# =============================================================================
+all:
+  vars:
+    zitadel_enabled: true
+
+    zitadel_ingress_class_name: "traefik-lb"
+    zitadel_cert_manager_issuer_enabled: false
+    zitadel_vpn_only_enabled: false
+
+    zitadel_domain: "auth.example.com"
+    zitadel_ui_ingress_enabled: true
+    zitadel_ui_ingress_tls_enabled: false
+    zitadel_ui_certificate_enabled: false
+
+    zitadel_admin_email: "zitadel-admin@example.com"
+
+    zitadel_postgresql_storage_class: "lnstr-worker-multi-sync"
+    zitadel_postgresql_storage_size: "4Gi"
+
+    zitadel_helm_values_replica_count: 2
+    zitadel_helm_values_login_replica_count: 2

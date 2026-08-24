@@ -1,0 +1,27 @@
+# =============================================================================
+# То же плюс вторая реплика контроллера. У вендоренного манифеста своих
+# helm-values нет, поэтому replicas меняется kustomize-патчем, и патч
+# ДОБАВЛЯЕТСЯ к базовому (image-pin), а не заменяет его. Схема active-passive:
+# leader election включён по умолчанию, standby не держит informer'ов. Флаг
+# --leader-elect добавлять не нужно и в false ставить нельзя. Разжалованная
+# реплика перезапускается — это норма, но даёт шум в алертах на restart-count.
+# =============================================================================
+all:
+  vars:
+    argo_rollouts_enabled: true
+
+    argo_rollouts_service_monitor_enabled: true
+    argo_rollouts_service_monitor_interval: "30s"
+    argo_rollouts_service_monitor_scrape_timeout: "15s"
+
+    argo_rollouts_install_kustomize_patches_extra:
+      - target:
+          kind: Deployment
+          name: argo-rollouts
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: argo-rollouts
+          spec:
+            replicas: 2

@@ -1,0 +1,74 @@
+# =============================================================================
+# Kargo без OIDC: вход только под локальным admin (break-glass). Пароль,
+# bcrypt-хеш и token signing key генерятся ОДИН раз при install
+# (seed-if-missing) и не ротируются — смена signing key инвалидирует все
+# выданные токены. Открытый пароль читать в Vault eso-secret/kargo/admin/creds.
+# external-webhooks-server поднят, но наружу не опубликован: гейты независимы,
+# workload живёт, а Ingress и Certificate выключены — значит push-события от
+# git и registry не приходят и Warehouse обновляются по polling-интервалу.
+# Ставить ПОСЛЕ argo-rollouts.
+# =============================================================================
+all:
+  vars:
+    kargo_enabled: true
+
+    kargo_cert_manager_issuer_enabled: true
+    kargo_ui_domain: "kargo.example.com"
+    kargo_ui_ingress_enabled: true
+    kargo_ui_ingress_tls_enabled: true
+    kargo_ui_certificate_enabled: true
+
+    kargo_external_webhooks_enabled: true
+    kargo_webhooks_ingress_enabled: false
+    kargo_webhooks_ingress_tls_enabled: false
+    kargo_webhooks_certificate_enabled: false
+
+    kargo_oidc_enabled: false
+
+    kargo_node_selector:
+      node-role.kubernetes.io/worker: ""
+
+    kargo_api_resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "384Mi"
+    kargo_controller_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "768Mi"
+    kargo_management_controller_resources:
+      requests:
+        cpu: "25m"
+        memory: "64Mi"
+      limits:
+        cpu: "300m"
+        memory: "192Mi"
+    kargo_webhooks_server_resources:
+      requests:
+        cpu: "25m"
+        memory: "64Mi"
+      limits:
+        cpu: "300m"
+        memory: "192Mi"
+    kargo_external_webhooks_server_resources:
+      requests:
+        cpu: "25m"
+        memory: "64Mi"
+      limits:
+        cpu: "300m"
+        memory: "192Mi"
+    kargo_garbage_collector_resources:
+      requests:
+        cpu: "25m"
+        memory: "64Mi"
+      limits:
+        cpu: "300m"
+        memory: "192Mi"
+
+    kargo_git_client_email: "kargo@example.com"

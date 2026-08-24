@@ -1,0 +1,46 @@
+# =============================================================================
+# GitLab с Ingress БЕЗ TLS на origin: HTTPS терминируется на внешнем слое (CDN,
+# edge-балансировщик, сервис-меш), до сервера доходит уже HTTP. Поэтому
+# cert_manager_issuer, ingress_tls и certificate выключены у ВСЕХ трёх доменов
+# сразу — issuer один на компонент, оставить его включённым при отключённых
+# Certificate бессмысленно.
+# ⚠️ Взвесить перед выбором: registry и git-push гоняют крупные тела запросов, и
+# у проксирующих CDN на них стоят лимиты; ACME HTTP-01 через такой слой тоже не
+# доходит до origin. В эталонном прод-кластере GitLab поэтому оставлен на
+# cert-manager (домены в DNS-only), см. prod-ha-with-oidc.yaml.
+# Внешний слой ОБЯЗАН проставлять X-Forwarded-Proto: https, иначе GitLab начнёт
+# строить ссылки и redirect'ы на http:// и словит петлю редиректов.
+# =============================================================================
+all:
+  vars:
+    gitlab_enabled: true
+
+    gitlab_ingress_class_name: "traefik-lb"
+    gitlab_vpn_only_enabled: false
+    gitlab_cert_manager_issuer_enabled: false
+
+    gitlab_base_domain: "gitlab.example.com"
+
+    gitlab_ui_domain: "gitlab.example.com"
+    gitlab_ui_ingress_enabled: true
+    gitlab_ui_ingress_tls_enabled: false
+    gitlab_ui_certificate_enabled: false
+
+    gitlab_registry_domain: "gitlab-registry.example.com"
+    gitlab_registry_ingress_enabled: true
+    gitlab_registry_ingress_tls_enabled: false
+    gitlab_registry_certificate_enabled: false
+
+    gitlab_pages_domain: "gitlab-pages.example.com"
+    gitlab_pages_ingress_enabled: true
+    gitlab_pages_ingress_tls_enabled: false
+    gitlab_pages_certificate_enabled: false
+
+    gitlab_ssh_accept_proxy: true
+
+    gitlab_postgresql_storage_class: "lnstr-worker-multi-sync"
+    gitlab_postgresql_storage_size: "10Gi"
+    gitlab_redis_storage_class: "lnstr-worker-multi-sync"
+    gitlab_redis_storage_size: "2Gi"
+    gitlab_gitaly_storage_class: "lnstr-worker-multi-sync"
+    gitlab_gitaly_storage_size: "10Gi"

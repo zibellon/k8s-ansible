@@ -1,0 +1,117 @@
+# =============================================================================
+# Kargo с OIDC и раздачей доступов. Kargo — public PKCE-клиент: client secret
+# не используется нигде, в inventory только clientId. Приложение в IdP: тип
+# User Agent (SPA), метод PKCE, redirect https://<домен>/login, обязательно
+# включённый «User Info inside ID Token» — Kargo не ходит в userinfo.
+# clientId ОБЯЗАН быть в кавычках: без них YAML сделает из него integer.
+# Отказ здесь МОЛЧАЛИВЫЙ — enabled: true с пустым clientId не роняет под,
+# health-check зелёный, сломан только вход.
+# Дефолтной роли у Kargo НЕТ: без совпадения по claim пользователь получает 403
+# и не видит даже список проектов. Админы мапятся на ЧАРТОВЫЙ SA kargo-admin
+# через kargo_oidc_admins_claims — свой SA получил бы лишь первый из пяти
+# грантов. Обычные сотрудники — в kargo_custom_users: namespace kargo в списке
+# ОБЯЗАТЕЛЕН, иначе ListProjects (cluster-scoped запрос) не авторизуется.
+# Проекты и их namespace создаёт одним релизом стадия cfg; Role kargo-viewer в
+# namespace проекта заводит management-controller сам, руками её не создавать.
+# =============================================================================
+all:
+  vars:
+    kargo_enabled: true
+
+    kargo_cert_manager_issuer_enabled: false
+    kargo_ui_domain: "kargo.example.com"
+    kargo_ui_ingress_enabled: true
+    kargo_ui_ingress_tls_enabled: false
+    kargo_ui_certificate_enabled: false
+
+    kargo_external_webhooks_enabled: true
+    kargo_webhooks_ingress_enabled: false
+    kargo_webhooks_ingress_tls_enabled: false
+    kargo_webhooks_certificate_enabled: false
+
+    kargo_oidc_enabled: true
+    kargo_oidc_client_id: "000000000000000002"
+    kargo_oidc_additional_scopes:
+      - "urn:zitadel:iam:org:id:000000000000000000"
+    kargo_oidc_cli_client_id: ""
+
+    kargo_oidc_admins_claims:
+      preferred_username:
+        - "cluster-admin-rw@my-org.auth.example.com"
+
+    kargo_custom_users:
+      - saName: "alice-smith"
+        annotations:
+          rbac.kargo.akuity.io/claims: '{"preferred_username":["alice.smith@my-org.auth.example.com"]}'
+        namespaces:
+          - "kargo"
+          - "kargo-my-app"
+          - "kargo-another-app"
+
+    kargo_projects:
+      - name: "kargo-my-app"
+        annotations:
+          kargo.akuity.io/keep-namespace: "true"
+        accounts:
+          - saName: "alice-smith"
+            roleType: "Role"
+            roleName: "kargo-viewer"
+      - name: "kargo-another-app"
+        annotations:
+          kargo.akuity.io/keep-namespace: "true"
+        accounts:
+          - saName: "alice-smith"
+            roleType: "Role"
+            roleName: "kargo-viewer"
+
+    kargo_node_selector:
+      node-role.kubernetes.io/worker: ""
+
+    kargo_api_replica_count: 2
+    kargo_webhooks_server_replica_count: 2
+    kargo_external_webhooks_server_replica_count: 2
+
+    kargo_api_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "512Mi"
+    kargo_controller_resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "2000m"
+        memory: "1Gi"
+    kargo_management_controller_resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+    kargo_webhooks_server_resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+    kargo_external_webhooks_server_resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+    kargo_garbage_collector_resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+
+    kargo_git_client_email: "kargo@example.com"

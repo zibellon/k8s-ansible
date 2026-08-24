@@ -1,0 +1,52 @@
+# =============================================================================
+# Минимальный набор S3-доступов: одна managed-политика, одна identity под неё и
+# один бакет. Модель identity-based: actions оставляют пустым, права дают
+# через policy_names. access_key задаётся здесь (это не секрет), а secret_key
+# генерится и раскладывается по vault_paths — по одному пути на каждого
+# потребителя секрета. Бакет получает owner из identity.
+# =============================================================================
+all:
+  vars:
+    seaweedfs_identity_s3_admin:
+      name: s3-admin
+      account_id: s3-admin
+      actions: ["Admin"]
+      keys:
+        - access_key: "CHANGE-ME-access-key-s3-admin"
+
+    seaweedfs_managed_policies_extra:
+      - name: my-app-rw
+        document:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "MyAppFullAccess"
+              Effect: "Allow"
+              Action:
+                - "s3:GetObject"
+                - "s3:PutObject"
+                - "s3:DeleteObject"
+                - "s3:ListBucket"
+                - "s3:GetBucketLocation"
+              Resource:
+                - "arn:aws:s3:::my-app-files"
+                - "arn:aws:s3:::my-app-files/*"
+
+    seaweedfs_identities_extra:
+      - name: anonymous
+        actions: []
+      - name: my-app
+        account_id: my-app
+        actions: []
+        policy_names: ["my-app-rw"]
+        keys:
+          - access_key: "CHANGE-ME-access-key-my-app"
+            vault_paths:
+              - "eso-secret/my-app-prod/s3"
+
+    seaweedfs_sync_buckets_extra:
+      - name: my-app-files
+        owner: "my-app"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"

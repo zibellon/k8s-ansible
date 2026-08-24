@@ -1,0 +1,107 @@
+# =============================================================================
+# Боевой SeaweedFS: S3-endpoint и admin UI за Cloudflare (origin HTTP, TLS на
+# CDN), master и filer UI без ingress вовсе — внутренние потребители ходят в
+# in-cluster Service, наружу эти панели не нужны. По одной volume-группе на
+# каждый worker, все в общей стойке. filer/s3/worker в трёх репликах.
+# ВНИМАНИЕ: внутренние клиенты (Loki, GitLab) обязаны ходить на Service, а не
+# на публичный домен, иначе трафик уйдёт через CDN и обратно.
+# =============================================================================
+all:
+  vars:
+    seaweedfs_enabled: true
+
+    seaweedfs_ingress_class_name: "traefik-lb"
+    seaweedfs_cert_manager_issuer_enabled: false
+
+    seaweedfs_s3_domain: "s3.example.com"
+    seaweedfs_s3_ingress_enabled: true
+    seaweedfs_s3_ingress_tls_enabled: false
+    seaweedfs_s3_certificate_enabled: false
+    seaweedfs_s3_vpn_only_enabled: false
+
+    seaweedfs_master_ui_domain: "s3-master.example.com"
+    seaweedfs_master_ui_ingress_enabled: false
+    seaweedfs_master_ui_ingress_tls_enabled: false
+    seaweedfs_master_ui_certificate_enabled: false
+    seaweedfs_master_ui_vpn_only_enabled: false
+
+    seaweedfs_filer_ui_domain: "s3-filer.example.com"
+    seaweedfs_filer_ui_ingress_enabled: false
+    seaweedfs_filer_ui_ingress_tls_enabled: false
+    seaweedfs_filer_ui_certificate_enabled: false
+    seaweedfs_filer_ui_vpn_only_enabled: false
+
+    seaweedfs_admin_ui_domain: "s3-admin.example.com"
+    seaweedfs_admin_ui_ingress_enabled: true
+    seaweedfs_admin_ui_ingress_tls_enabled: false
+    seaweedfs_admin_ui_certificate_enabled: false
+    seaweedfs_admin_ui_vpn_only_enabled: false
+
+    seaweedfs_postgresql_storage_class: "lnstr-major-multi-sync"
+    seaweedfs_postgresql_storage_size: "4Gi"
+
+    seaweedfs_helm_values_filer_replica_count: 3
+    seaweedfs_helm_values_s3_replica_count: 3
+    seaweedfs_helm_values_worker_replica_count: 3
+
+    seaweedfs_helm_values_master_volume_size_limit_mb: 1000
+    seaweedfs_helm_values_master_config: |
+      [master.volume_growth]
+      copy_1 = 1
+      copy_2 = 2
+      copy_3 = 3
+      copy_other = 1
+      threshold = 1.0
+      disable = false
+
+    seaweedfs_helm_values_master_data_storage_size: "4Gi"
+    seaweedfs_helm_values_master_data_storage_class: "lnstr-major-multi-sync"
+    seaweedfs_helm_values_admin_data_storage_size: "4Gi"
+    seaweedfs_helm_values_admin_data_storage_class: "lnstr-major-multi-sync"
+
+    seaweedfs_helm_values_volumes:
+      workers-shared-1-dc-1:
+        enabled: true
+        replicas: 1
+        dataCenter: "dc-1"
+        rack: "workers-shared-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "30Gi"
+            storageClass: "lnstr-worker-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          kubernetes.io/hostname: k8s-worker-1
+        resources: "{{ seaweedfs_helm_values_volume_resources }}"
+      workers-shared-2-dc-1:
+        enabled: true
+        replicas: 1
+        dataCenter: "dc-1"
+        rack: "workers-shared-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "30Gi"
+            storageClass: "lnstr-worker-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          kubernetes.io/hostname: k8s-worker-2
+        resources: "{{ seaweedfs_helm_values_volume_resources }}"
+      workers-shared-3-dc-1:
+        enabled: true
+        replicas: 1
+        dataCenter: "dc-1"
+        rack: "workers-shared-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "30Gi"
+            storageClass: "lnstr-worker-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          kubernetes.io/hostname: k8s-worker-3
+        resources: "{{ seaweedfs_helm_values_volume_resources }}"

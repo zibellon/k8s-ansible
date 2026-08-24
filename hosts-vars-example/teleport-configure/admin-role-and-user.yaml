@@ -1,0 +1,56 @@
+# =============================================================================
+# Декларативные роли и пользователи Teleport (CR TeleportRoleV8 + TeleportUser),
+# применяются отдельным плейбуком teleport-configure. Показана роль полного
+# админа: доступ ко всем узлам, kubernetes_groups system:masters и все ресурсы.
+# Пустые *_extra списки означают «ничего не заводить» — это валидное состояние.
+# =============================================================================
+all:
+  vars:
+    teleport_configure_roles_extra:
+      - name: cluster-admin
+        labels: {}
+        annotations: {}
+        spec:
+          allow:
+            logins: [root, ubuntu, admin]
+            node_labels:
+              '*': ['*']
+            kubernetes_groups: [system:masters]
+            kubernetes_users: [admin]
+            kubernetes_labels:
+              '*': ['*']
+            kubernetes_resources:
+              - kind: '*'
+                name: '*'
+                namespace: '*'
+                verbs: ['*']
+                api_group: '*'
+            db_labels:
+              '*': ['*']
+            db_names: ['*']
+            db_users: ['*']
+            app_labels:
+              '*': ['*']
+            rules:
+              - resources: ['*']
+                verbs: ['*']
+          options:
+            max_session_ttl: 30h0m0s
+            forward_agent: true
+            port_forwarding: true
+            client_idle_timeout: "0"
+            disconnect_expired_cert: false
+            ssh_file_copy: true
+
+    teleport_configure_users_extra:
+      - name: alice-smith
+        labels: {}
+        annotations: {}
+        spec:
+          roles: [cluster-admin]
+          traits:
+            logins: [root, ubuntu, admin]
+            kubernetes_groups: [system:masters]
+            kubernetes_users: [admin]
+            db_names: ['*']
+            db_users: ['*']

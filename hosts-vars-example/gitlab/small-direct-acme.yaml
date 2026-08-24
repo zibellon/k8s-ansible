@@ -1,0 +1,64 @@
+# =============================================================================
+# GitLab на маленьком кластере: три домена (web, registry, pages) напрямую с
+# TLS на origin через cert-manager, ssh без proxy-protocol. Отдельно подняты
+# ресурсы Job'а миграций: на первом install он создаёт всю схему БД и грузит
+# весь Rails — базового лимита не хватает, Job уходит в OOMKilled и helm
+# --atomic откатывает установку.
+# =============================================================================
+all:
+  vars:
+    gitlab_enabled: true
+
+    gitlab_ingress_class_name: "traefik-lb"
+    gitlab_vpn_only_enabled: false
+    gitlab_cert_manager_issuer_enabled: true
+
+    gitlab_base_domain: "gitlab.example.com"
+
+    gitlab_ui_domain: "gitlab.example.com"
+    gitlab_ui_ingress_enabled: true
+    gitlab_ui_ingress_tls_enabled: true
+    gitlab_ui_certificate_enabled: true
+
+    gitlab_registry_domain: "gitlab-registry.example.com"
+    gitlab_registry_ingress_enabled: true
+    gitlab_registry_ingress_tls_enabled: true
+    gitlab_registry_certificate_enabled: true
+
+    gitlab_pages_domain: "gitlab-pages.example.com"
+    gitlab_pages_ingress_enabled: true
+    gitlab_pages_ingress_tls_enabled: true
+    gitlab_pages_certificate_enabled: true
+
+    gitlab_ssh_accept_proxy: false
+
+    gitlab_postgresql_storage_class: "lnstr-worker-multi-sync"
+    gitlab_redis_storage_class: "lnstr-worker-multi-sync"
+    gitlab_gitaly_storage_class: "lnstr-worker-multi-sync"
+    gitlab_postgresql_storage_size: "2Gi"
+    gitlab_redis_storage_size: "1Gi"
+    gitlab_gitaly_storage_size: "2Gi"
+
+    gitlab_helm_values_migrations_resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+
+    gitlab_helm_values_toolbox_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "1.5Gi"
+
+    gitlab_postgresql_resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1536Mi"

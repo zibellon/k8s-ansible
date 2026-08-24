@@ -1,0 +1,155 @@
+# =============================================================================
+# ArgoCD без OIDC: вход только под локальными аккаунтами. Встроенный admin
+# ОТКЛЮЧЁН, вместо него admin-rw (role:admin) и admin-ro (role:readonly) —
+# аккаунт с role:admin ОБЯЗАН остаться хотя бы один, иначе lock-out. Пароли
+# генерит стадия accounts-sync и кладёт в Vault eso-secret/argocd/accounts/creds;
+# ротация = сдвинуть passwordMtime у аккаунта и прогнать --tags accounts-sync.
+# Имя локального аккаунта можно ссылать в AppProject.spec.roles[].groups как
+# есть — ArgoCD биндит строку-username к роли проекта через Casbin.
+# Права ArgoCD в namespace: cluster-wide грант ровно один и только на чтение
+# (argocd-managed-ns-reader), остальное — пара RoleBinding на каждый namespace.
+# =============================================================================
+all:
+  vars:
+    argocd_enabled: true
+
+    argocd_ingress_class_name: "traefik-lb"
+    argocd_cert_manager_issuer_enabled: true
+    argocd_vpn_only_enabled: false
+
+    argocd_external_url: "https://argocd.example.com"
+    argocd_ui_domain: "argocd.example.com"
+    argocd_ui_ingress_enabled: true
+    argocd_ui_ingress_tls_enabled: true
+    argocd_ui_certificate_enabled: true
+
+    argocd_oidc_enabled: false
+
+    argocd_builtin_admin_enabled: false
+
+    argocd_local_accounts:
+      - name: admin-rw
+        passwordMtime: "2026-01-01T00:00:00Z"
+        enabled: true
+        capabilities: "login, apiKey"
+      - name: admin-ro
+        passwordMtime: "2026-01-01T00:00:00Z"
+        enabled: true
+        capabilities: "login"
+      - name: dev-alice
+        passwordMtime: "2026-01-01T00:00:00Z"
+        enabled: true
+        capabilities: "login"
+
+    argocd_policy_csv_list:
+      - "g, admin-rw, role:admin"
+      - "g, admin-ro, role:readonly"
+
+    argocd_git_ops_app_projects:
+      - name: prj-my-app
+        annotations:
+          argocd.argoproj.io/sync-options: Delete=false
+        spec:
+          description: "My application project"
+          sourceRepos: ["*"]
+          destinations:
+            - server: "*"
+              namespace: "*"
+          clusterResourceWhitelist:
+            - group: "*"
+              kind: "*"
+          namespaceResourceWhitelist:
+            - group: "*"
+              kind: "*"
+          roles:
+            - name: viewer
+              description: "Read-only: applications + logs get in prj-my-app"
+              policies:
+                - "p, proj:prj-my-app:viewer, applications, get, prj-my-app/*, allow"
+                - "p, proj:prj-my-app:viewer, logs, get, prj-my-app/*, allow"
+              groups:
+                - dev-alice
+            - name: operator
+              description: "viewer + Deployment restart in prj-my-app"
+              policies:
+                - "p, proj:prj-my-app:operator, applications, get, prj-my-app/*, allow"
+                - "p, proj:prj-my-app:operator, logs, get, prj-my-app/*, allow"
+                - "p, proj:prj-my-app:operator, applications, action/apps/Deployment/restart, prj-my-app/*, allow"
+              groups:
+                - dev-alice
+
+    argocd_git_ops_applications:
+      - name: my-app-dev
+        annotations:
+          argocd.argoproj.io/sync-options: Delete=false
+        spec:
+          project: prj-my-app
+          source:
+            repoURL: "https://github.com/argoproj/argocd-example-apps.git"
+            targetRevision: HEAD
+            path: guestbook
+          destination:
+            server: https://kubernetes.default.svc
+            namespace: my-app-dev
+
+    argocd_cfg_rbac_cluster_roles:
+      - name: "argocd-managed-ns-reader"
+        rules:
+          - apiGroups: [""]
+            resources: ["namespaces"]
+            verbs: ["get", "list", "watch"]
+      - name: "argocd-managed-deployer"
+        rules:
+          - apiGroups: ["*"]
+            resources: ["*"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+      - name: "argocd-managed-ui"
+        rules:
+          - apiGroups: ["*"]
+            resources: ["*"]
+            verbs: ["delete", "get", "patch"]
+          - apiGroups: [""]
+            resources: ["events"]
+            verbs: ["list"]
+          - apiGroups: [""]
+            resources: ["pods", "pods/log"]
+            verbs: ["get"]
+          - apiGroups: [""]
+            resources: ["pods/exec"]
+            verbs: ["create"]
+          - apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["create"]
+
+    argocd_cfg_rbac_cluster_role_bindings:
+      - name: "argocd-managed-ns-reader"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ns-reader"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+
+    argocd_cfg_rbac_role_bindings:
+      - name: "argocd-managed-deployer"
+        namespace: "my-app-dev"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-deployer"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+      - name: "argocd-managed-ui"
+        namespace: "my-app-dev"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ui"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"

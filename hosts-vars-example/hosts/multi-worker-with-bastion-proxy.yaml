@@ -1,0 +1,94 @@
+# =============================================================================
+# Инвентарь: 1 manager + 5 worker + внешний edge-прокси в группе bastion_proxy.
+# bastion_proxy — это HAProxy-фронт перед кластером, НЕ ssh-jump-host: на нём
+# НЕЛЬЗЯ ставить is_bastion (коллизия с поиском jump-host'а). Метки
+# resource-type=shared разводят LINSTOR-пулы и SeaweedFS-стойки по типам узлов.
+# =============================================================================
+all:
+  children:
+    managers:
+      hosts:
+        k8s-manager-1:
+          ansible_host: "203.0.113.10"
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-manager-password"
+          new_hostname: k8s-manager-1
+          is_master: true
+          is_bastion: false
+          internal_ip: "203.0.113.10"
+          api_server_advertise_address: "203.0.113.10"
+          api_server_bind_port: 6443
+          longhorn_node_tags: []
+          teleport_ssh_agent_node_labels: {}
+          node_labels:
+            - "node.kubernetes.io/resource-type=shared"
+
+    workers:
+      hosts:
+        k8s-worker-1:
+          ansible_host: "203.0.113.21"
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-worker-password"
+          new_hostname: k8s-worker-1
+          internal_ip: "203.0.113.21"
+          longhorn_node_tags: []
+          teleport_ssh_agent_node_labels: {}
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+            - "node.kubernetes.io/resource-type=shared"
+
+        k8s-worker-2:
+          ansible_host: "203.0.113.22"
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-worker-password"
+          new_hostname: k8s-worker-2
+          internal_ip: "203.0.113.22"
+          longhorn_node_tags: []
+          teleport_ssh_agent_node_labels: {}
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+            - "node.kubernetes.io/resource-type=shared"
+
+        k8s-worker-3:
+          ansible_host: "203.0.113.23"
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-worker-password"
+          new_hostname: k8s-worker-3
+          internal_ip: "203.0.113.23"
+          longhorn_node_tags: []
+          teleport_ssh_agent_node_labels: {}
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+            - "node.kubernetes.io/resource-type=shared"
+
+        k8s-worker-4:
+          ansible_host: "203.0.113.24"
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-worker-password"
+          new_hostname: k8s-worker-4
+          internal_ip: "203.0.113.24"
+          longhorn_node_tags: []
+          teleport_ssh_agent_node_labels: {}
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+            - "node.kubernetes.io/resource-type=shared"
+
+        k8s-worker-5:
+          ansible_host: "203.0.113.25"
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-worker-password"
+          new_hostname: k8s-worker-5
+          internal_ip: "203.0.113.25"
+          longhorn_node_tags: []
+          teleport_ssh_agent_node_labels: {}
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+            - "node.kubernetes.io/resource-type=shared"
+
+    bastion_proxy:
+      hosts:
+        bastion-proxy-1:
+          ansible_host: 198.51.100.10
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-bastion-password"
+          new_hostname: bastion-proxy-1

@@ -1,0 +1,363 @@
+# =============================================================================
+# ArgoCD за Cloudflare, вход через OIDC, git-ops по схеме app-of-apps.
+# clientId в кавычках ОБЯЗАТЕЛЬНО (без них YAML сделает integer); client secret
+# — только в Vault. Директория-источник у ArgoCD НЕ рекурсивна, поэтому на три
+# поддиректории заводятся три отдельных app-of-apps, а не один на корень.
+# resources-finalizer намеренно НЕ ставится: он означал бы каскадное удаление —
+# снос такого Application утащил бы за собой все созданные им AppProject,
+# Application и namespace продуктов вместе с PVC.
+# Доступ к git: ssh_known_hosts подставляется kustomize-патчем (strategic-merge
+# перезаписывает ключ ЦЕЛИКОМ — upstream github/gitlab.com теряются), а сам
+# ssh-ключ приезжает из Vault ExternalSecret'ом с меткой repo-creds. На один
+# репозиторий — ровно один Secret: при нескольких с одинаковым repoUrl ArgoCD
+# берёт тот, что первым вернёт kube-api.
+# Права: cluster-wide грант ровно один и только на чтение. В СОБСТВЕННОМ
+# namespace argocd биндится ТОЛЬКО ui — deployer снят намеренно, иначе коммит в
+# git-ops мог бы положить туда Pod с SA контроллера или с примонтированным
+# argocd-secret. Это единственная граница: поля AppProject защитой не являются.
+# После --tags cfg ОБЯЗАТЕЛЕН argocd-restart: открытые watch переживают отзыв RBAC.
+# =============================================================================
+all:
+  vars:
+    argocd_enabled: true
+
+    argocd_ingress_class_name: "traefik-lb"
+    argocd_cert_manager_issuer_enabled: false
+    argocd_vpn_only_enabled: false
+
+    argocd_external_url: "https://argocd.example.com"
+    argocd_ui_domain: "argocd.example.com"
+    argocd_ui_ingress_enabled: true
+    argocd_ui_ingress_tls_enabled: false
+    argocd_ui_certificate_enabled: false
+
+    argocd_oidc_enabled: true
+    argocd_oidc_client_id: "000000000000000003"
+    argocd_oidc_requested_scopes: '["openid", "profile", "email", "offline_access", "urn:zitadel:iam:org:id:000000000000000000"]'
+    argocd_oidc_name: "ZITADEL"
+    argocd_oidc_issuer: "https://{{ zitadel_domain }}"
+    argocd_oidc_refresh_token_threshold: "2h"
+
+    argocd_builtin_admin_enabled: false
+
+    argocd_local_accounts:
+      - name: admin-rw
+        passwordMtime: "2026-01-01T00:00:00Z"
+        enabled: true
+        capabilities: "login, apiKey"
+      - name: admin-ro
+        passwordMtime: "2026-01-01T00:00:00Z"
+        enabled: true
+        capabilities: "login"
+
+    argocd_policy_csv_list:
+      - "g, admin-rw, role:admin"
+      - "g, admin-ro, role:readonly"
+      - "g, cluster-admin-rw@my-org.auth.example.com, role:admin"
+
+    argocd_pre_extra_objects:
+      - apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: "allow-repo-server-extra"
+          namespace: "{{ argocd_namespace }}"
+        spec:
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-repo-server
+          policyTypes:
+            - Egress
+          egress:
+            - ports:
+                - protocol: TCP
+                  port: 22
+                - protocol: TCP
+                  port: 443
+
+    argocd_git_ops_app_projects:
+      - name: root
+        annotations:
+          argocd.argoproj.io/sync-options: Delete=false
+        spec:
+          sourceRepos: ["*"]
+          sourceNamespaces: ["*"]
+          destinations:
+            - name: "*"
+              namespace: "*"
+              server: "*"
+          clusterResourceWhitelist:
+            - group: "*"
+              kind: "*"
+          namespaceResourceWhitelist:
+            - group: "*"
+              kind: "*"
+
+    argocd_git_ops_applications:
+      - name: app-of-apps-projects
+        spec:
+          project: root
+          revisionHistoryLimit: 3
+          source:
+            repoURL: "ssh://git@git.example.com:22/my-org/infra.git"
+            targetRevision: master
+            path: argocd-system/projects
+          destination:
+            server: https://kubernetes.default.svc
+          syncPolicy:
+            automated:
+              prune: true
+              selfHeal: true
+              allowEmpty: true
+            syncOptions:
+              - SkipDryRunOnMissingResource=true
+              - ApplyOutOfSyncOnly=true
+              - PrunePropagationPolicy=background
+            retry:
+              limit: 5
+              backoff:
+                duration: "20s"
+                factor: 1
+                maxDuration: "30s"
+
+      - name: app-of-apps-apps
+        spec:
+          project: root
+          revisionHistoryLimit: 3
+          source:
+            repoURL: "ssh://git@git.example.com:22/my-org/infra.git"
+            targetRevision: master
+            path: argocd-system/apps
+          destination:
+            server: https://kubernetes.default.svc
+          syncPolicy:
+            automated:
+              prune: true
+              selfHeal: true
+              allowEmpty: true
+            syncOptions:
+              - SkipDryRunOnMissingResource=true
+              - ApplyOutOfSyncOnly=true
+              - PrunePropagationPolicy=background
+            retry:
+              limit: 5
+              backoff:
+                duration: "20s"
+                factor: 1
+                maxDuration: "30s"
+
+      - name: app-of-apps-application-sets
+        spec:
+          project: root
+          revisionHistoryLimit: 3
+          source:
+            repoURL: "ssh://git@git.example.com:22/my-org/infra.git"
+            targetRevision: master
+            path: argocd-system/application-sets
+          destination:
+            server: https://kubernetes.default.svc
+          syncPolicy:
+            automated:
+              prune: true
+              selfHeal: true
+              allowEmpty: true
+            syncOptions:
+              - SkipDryRunOnMissingResource=true
+              - ApplyOutOfSyncOnly=true
+              - PrunePropagationPolicy=background
+            retry:
+              limit: 5
+              backoff:
+                duration: "20s"
+                factor: 1
+                maxDuration: "30s"
+
+    eso_vault_integration_argocd_secrets_extra:
+      - external_secret_name: "eso-argocd-git-ops-infra-ssh"
+        vault_path: "/argocd/git-ops/infra-ssh/creds"
+        refresh_interval: "1m"
+        body:
+          target:
+            name: "eso-argocd-git-ops-infra-ssh"
+            template:
+              engineVersion: v2
+              metadata:
+                labels:
+                  argocd.argoproj.io/secret-type: repo-creds
+          dataFrom:
+            - extract:
+                key: "{{ eso_vault_integration_argocd.kv_engine_path }}/data/argocd/git-ops/infra-ssh/creds"
+
+    argocd_install_kustomize_patches_extra:
+      - target:
+          kind: ConfigMap
+          name: argocd-ssh-known-hosts-cm
+        patch: |-
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: argocd-ssh-known-hosts-cm
+          data:
+            ssh_known_hosts: |
+              git.example.com ssh-ed25519 AAAA-REPLACE-WITH-ssh-keyscan-OUTPUT
+              git.example.com ecdsa-sha2-nistp256 AAAA-REPLACE-WITH-ssh-keyscan-OUTPUT
+
+    argocd_cfg_rbac_cluster_roles:
+      - name: "argocd-managed-ns-reader"
+        rules:
+          - apiGroups: [""]
+            resources: ["namespaces"]
+            verbs: ["get", "list", "watch"]
+      - name: "argocd-managed-deployer"
+        rules:
+          - apiGroups: ["*"]
+            resources: ["*"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+      - name: "argocd-managed-ui"
+        rules:
+          - apiGroups: ["*"]
+            resources: ["*"]
+            verbs: ["delete", "get", "patch"]
+          - apiGroups: [""]
+            resources: ["events"]
+            verbs: ["list"]
+          - apiGroups: [""]
+            resources: ["pods", "pods/log"]
+            verbs: ["get"]
+          - apiGroups: [""]
+            resources: ["pods/exec"]
+            verbs: ["create"]
+          - apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["create"]
+      - name: "argocd-managed-system-config"
+        rules:
+          - apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies", "ingresses"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+          - apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+          - apiGroups: ["cert-manager.io"]
+            resources: ["certificates"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+      - name: "argocd-managed-system-config-ui"
+        rules:
+          - apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies", "ingresses"]
+            verbs: ["get", "patch", "delete"]
+          - apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "patch", "delete"]
+          - apiGroups: ["cert-manager.io"]
+            resources: ["certificates"]
+            verbs: ["get", "patch", "delete"]
+          - apiGroups: [""]
+            resources: ["events"]
+            verbs: ["list"]
+
+    argocd_cfg_rbac_cluster_role_bindings:
+      - name: "argocd-managed-ns-reader"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ns-reader"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+
+    argocd_cfg_rbac_role_bindings:
+      - name: "argocd-managed-ui"
+        namespace: "{{ argocd_namespace }}"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ui"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"
+
+      - name: "argocd-managed-deployer"
+        namespace: "{{ argo_events_cr_namespace }}"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-deployer"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+      - name: "argocd-managed-ui"
+        namespace: "{{ argo_events_cr_namespace }}"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ui"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"
+
+      - name: "argocd-managed-deployer"
+        namespace: "kargo-my-app"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-deployer"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+      - name: "argocd-managed-ui"
+        namespace: "kargo-my-app"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ui"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"
+
+      - name: "argocd-managed-deployer"
+        namespace: "my-app-prod"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-deployer"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+      - name: "argocd-managed-ui"
+        namespace: "my-app-prod"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ui"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"
+
+      - name: "argocd-managed-system-config"
+        namespace: "traefik-lb"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-system-config"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+      - name: "argocd-managed-system-config-ui"
+        namespace: "traefik-lb"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-system-config-ui"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"

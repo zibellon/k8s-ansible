@@ -1,0 +1,48 @@
+# =============================================================================
+# ВАРИАНТ 1: ОДИН namespace. argo_events_cr_namespace пустой — апстримный
+# режим, контроллер видит CR в СВОЁМ namespace, и весь прикладной контур (шина,
+# EventSource, Sensor) лежит там же. Права контроллера отдельно выдавать не
+# надо: хватает Role из вендоренного namespace-install.yaml, а стадия pre-cfg
+# рендерит ноль объектов. Если содержимое приезжает из git-ops, ArgoCD нужна
+# пара RoleBinding (deployer + ui) в namespace argo-events — с оговоркой, что
+# там же живёт контроллер, и deployer позволяет коммиту положить Pod с его SA.
+# streamConfig применяется РОВНО ОДИН РАЗ при создании стрима; maxBytes — число
+# в БАЙТАХ, строка "6Gi" молча станет нулём, а ноль означает отсутствие лимита.
+# =============================================================================
+all:
+  vars:
+    argo_events_enabled: true
+
+    argo_events_cr_namespace: ""
+
+    argo_events_pod_monitor_workloads_enabled: true
+
+    argo_events_event_buses:
+      - name: default
+        spec:
+          jetstream:
+            version: 2.10.10
+            replicas: 3
+            persistence:
+              storageClassName: lnstr-worker-multi-sync
+              accessMode: ReadWriteOnce
+              volumeSize: 5Gi
+            streamConfig: |
+              maxAge: 72h
+              maxBytes: 1073741824
+              replicas: 3
+
+    argo_events_event_sources:
+      - name: webhook
+        spec:
+          service:
+            ports:
+              - port: 12000
+                targetPort: 12000
+          webhook:
+            example:
+              endpoint: /example
+              method: POST
+              port: "12000"
+
+    argo_events_sensors: []

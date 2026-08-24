@@ -1,0 +1,30 @@
+# =============================================================================
+# VPN allowlist для кластера ЗА Cloudflare. Реальный клиентский IP приходит в
+# X-Forwarded-For, поэтому нужен вариант vpn-only-cf с ipStrategy.depth: 1 —
+# берётся адрес, который Cloudflare дописывает справа, правее любого
+# клиентского XFF-спуфа. Требует forwardedHeaders.insecure на entrypoint'ах
+# Traefik. Оба middleware объявлены, но кластер использует CF-вариант.
+# =============================================================================
+all:
+  vars:
+    vpn_ips:
+      - "1.2.3.4/24"
+      - "2.3.4.5/32"
+
+    vpn_traefik_middlewares:
+      - name: vpn-only
+        spec:
+          ipAllowList:
+            sourceRange: "{{ vpn_ips }}"
+      - name: vpn-only-cf
+        spec:
+          ipAllowList:
+            sourceRange: "{{ vpn_ips }}"
+            ipStrategy:
+              depth: 1
+
+    vpn_ingress_middlewares: "{{ traefik_namespace }}-vpn-only-cf@kubernetescrd"
+
+    vpn_ingress_route_middlewares:
+      - name: vpn-only-cf
+        namespace: "{{ traefik_namespace }}"

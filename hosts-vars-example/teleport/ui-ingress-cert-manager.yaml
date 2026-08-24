@@ -1,0 +1,28 @@
+# =============================================================================
+# Teleport: web UI через Ingress с TLS на origin — сертификат выпускает
+# cert-manager по ACME HTTP-01, Traefik его отдаёт.
+# Эти три флага управляют ТОЛЬКО веб-ingress'ом. Слушатели ssh, reverse tunnel
+# и kube — это отдельные L4-порты, они идут мимо Traefik и на них влияют только
+# *_accept_proxy (см. direct.yaml / behind-bastion-proxy.yaml).
+# teleport_domain ИММУТАБЕЛЕН после первого деплоя: он же clusterName, и его
+# смена означает переустановку с потерей состояния кластера Teleport.
+# =============================================================================
+all:
+  vars:
+    teleport_domain: "teleport.example.com"
+    teleport_external_url: "https://teleport.example.com"
+
+    teleport_ingress_class_name: "traefik-lb"
+    teleport_cert_manager_issuer_enabled: true
+    teleport_vpn_only_enabled: false
+
+    teleport_ui_ingress_enabled: true
+    teleport_ui_ingress_tls_enabled: true
+    teleport_ui_certificate_enabled: true
+
+    teleport_data_storage_class: "lnstr-worker-multi-sync"
+    teleport_data_storage_size: "4Gi"
+
+    teleport_ssh_accept_proxy: false
+    teleport_reverse_tunnel_accept_proxy: false
+    teleport_kube_accept_proxy: false

@@ -1,0 +1,195 @@
+# =============================================================================
+# Несколько потребителей S3 плюс публичное чтение. На каждого — своя политика,
+# своя identity и свои бакеты; ключи одной identity могут разъезжаться по
+# нескольким путям Vault, если секрет нужен разным namespace'ам. Отдельная
+# политика anonymous-read вешается на identity anonymous и открывает GetObject
+# всем — в неё попадают ТОЛЬКО те бакеты, содержимое которых публично.
+# vault_paths для встроенных компонентов ссылаются на их eso_vault_integration_*,
+# чтобы путь не разъехался с тем, откуда компонент читает секрет.
+# =============================================================================
+all:
+  vars:
+    seaweedfs_identity_s3_admin:
+      name: s3-admin
+      account_id: s3-admin
+      actions: ["Admin"]
+      keys:
+        - access_key: "CHANGE-ME-access-key-s3-admin"
+
+    seaweedfs_managed_policies_extra:
+      - name: gitlab-rw
+        document:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "GitLabFullAccess"
+              Effect: "Allow"
+              Action:
+                - "s3:GetObject"
+                - "s3:PutObject"
+                - "s3:DeleteObject"
+                - "s3:ListBucket"
+                - "s3:GetBucketLocation"
+              Resource:
+                - "arn:aws:s3:::gitlab-registry"
+                - "arn:aws:s3:::gitlab-registry/*"
+                - "arn:aws:s3:::gitlab-artifacts"
+                - "arn:aws:s3:::gitlab-artifacts/*"
+                - "arn:aws:s3:::gitlab-uploads"
+                - "arn:aws:s3:::gitlab-uploads/*"
+                - "arn:aws:s3:::gitlab-packages"
+                - "arn:aws:s3:::gitlab-packages/*"
+                - "arn:aws:s3:::gitlab-backups"
+                - "arn:aws:s3:::gitlab-backups/*"
+      - name: gitlab-runner-rw
+        document:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "GitLabRunnerFullAccess"
+              Effect: "Allow"
+              Action:
+                - "s3:GetObject"
+                - "s3:PutObject"
+                - "s3:DeleteObject"
+                - "s3:ListBucket"
+                - "s3:GetBucketLocation"
+              Resource:
+                - "arn:aws:s3:::gitlab-runner-cache"
+                - "arn:aws:s3:::gitlab-runner-cache/*"
+      - name: loki-rw
+        document:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "LokiFullAccess"
+              Effect: "Allow"
+              Action:
+                - "s3:GetObject"
+                - "s3:PutObject"
+                - "s3:DeleteObject"
+                - "s3:ListBucket"
+                - "s3:GetBucketLocation"
+              Resource:
+                - "arn:aws:s3:::loki-logs"
+                - "arn:aws:s3:::loki-logs/*"
+      - name: my-app-rw
+        document:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "MyAppFullAccess"
+              Effect: "Allow"
+              Action:
+                - "s3:GetObject"
+                - "s3:PutObject"
+                - "s3:DeleteObject"
+                - "s3:ListBucket"
+                - "s3:GetBucketLocation"
+              Resource:
+                - "arn:aws:s3:::my-app-private"
+                - "arn:aws:s3:::my-app-private/*"
+                - "arn:aws:s3:::my-app-public-img"
+                - "arn:aws:s3:::my-app-public-img/*"
+      - name: anonymous-read
+        document:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "AnonymousPublicRead"
+              Effect: "Allow"
+              Action:
+                - "s3:GetObject"
+                - "s3:ListBucket"
+              Resource:
+                - "arn:aws:s3:::my-app-public-img"
+                - "arn:aws:s3:::my-app-public-img/*"
+
+    seaweedfs_identities_extra:
+      - name: anonymous
+        actions: []
+        policy_names: ["anonymous-read"]
+      - name: gitlab
+        account_id: gitlab
+        actions: []
+        policy_names: ["gitlab-rw"]
+        keys:
+          - access_key: "CHANGE-ME-access-key-gitlab"
+            vault_paths:
+              - "{{ eso_vault_integration_gitlab.kv_engine_path }}{{ gitlab_secret_object_store_connection_config.vault_path }}"
+      - name: gitlab-runner
+        account_id: gitlab-runner
+        actions: []
+        policy_names: ["gitlab-runner-rw"]
+        keys:
+          - access_key: "CHANGE-ME-access-key-gitlab-runner"
+            vault_paths:
+              - "{{ eso_vault_integration_gitlab_runner.kv_engine_path }}{{ gitlab_runner_secret_s3_creds.vault_path }}"
+      - name: loki
+        account_id: loki
+        actions: []
+        policy_names: ["loki-rw"]
+        keys:
+          - access_key: "CHANGE-ME-access-key-loki"
+            vault_paths:
+              - "{{ eso_vault_integration_mon_system.kv_engine_path }}{{ mon_system_secret_loki_s3_creds.vault_path }}"
+      - name: my-app
+        account_id: my-app
+        actions: []
+        policy_names: ["my-app-rw"]
+        keys:
+          - access_key: "CHANGE-ME-access-key-my-app"
+            vault_paths:
+              - "eso-secret/my-app-prod/s3"
+              - "eso-secret/my-app-dev/s3"
+
+    seaweedfs_sync_buckets_extra:
+      - name: gitlab-registry
+        owner: "gitlab"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: gitlab-artifacts
+        owner: "gitlab"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: gitlab-uploads
+        owner: "gitlab"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: gitlab-packages
+        owner: "gitlab"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: gitlab-backups
+        owner: "gitlab"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: gitlab-runner-cache
+        owner: "gitlab-runner"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: loki-logs
+        owner: "loki"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: my-app-private
+        owner: "my-app"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"
+      - name: my-app-public-img
+        owner: "my-app"
+        replication: "001"
+        volumeGrowthCount: 2
+        rack: "workers-1"
+        dataCenter: "dc-1"

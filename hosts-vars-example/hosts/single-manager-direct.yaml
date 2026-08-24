@@ -1,0 +1,50 @@
+# =============================================================================
+# Инвентарь: 1 manager + 2 worker, прямой доступ по публичному IP менеджера.
+# Manager помечен is_bastion — воркеры ходят через него ProxyCommand'ом и он
+# ребутится последним. Bastion-proxy группы нет. Все значения — плейсхолдеры.
+# =============================================================================
+all:
+  children:
+    managers:
+      hosts:
+        k8s-manager-1:
+          ansible_host: 203.0.113.10
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-manager-password"
+          new_hostname: k8s-manager-1
+          is_master: true
+          is_bastion: true
+          internal_ip: "10.0.0.10"
+          api_server_advertise_address: "10.0.0.10"
+          api_server_bind_port: 6443
+          teleport_ssh_agent_node_labels:
+            role: manager
+            env: production
+
+    workers:
+      vars:
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p ubuntu@203.0.113.10"'
+      hosts:
+        k8s-worker-1:
+          ansible_host: 10.0.0.21
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-worker-password"
+          new_hostname: k8s-worker-1
+          internal_ip: "10.0.0.21"
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+          teleport_ssh_agent_node_labels:
+            role: worker
+            env: production
+
+        k8s-worker-2:
+          ansible_host: 10.0.0.22
+          ansible_user: ubuntu
+          ansible_password: "CHANGE-ME-worker-password"
+          new_hostname: k8s-worker-2
+          internal_ip: "10.0.0.22"
+          node_labels:
+            - "node-role.kubernetes.io/worker="
+          teleport_ssh_agent_node_labels:
+            role: worker
+            env: production

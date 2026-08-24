@@ -1,0 +1,69 @@
+# =============================================================================
+# Vault с входом через OIDC (ZITADEL). Цепочка привязки прав:
+# claim preferred_username -> group_alias.name -> group -> group.policies.
+# Порядок включения: сначала --tags pre (SA + SecretStore), затем
+# --tags vault-cr (политика и роль vault.eso-main), затем clientSecret в Vault
+# (vault kv put eso-secret/vault/oidc clientSecret=...), и только потом
+# enabled: true. Блоки groups/aliases держать в паре с vault_oidc_enabled:
+# при выключенном OIDC alias резолвит accessor несуществующего mount'а и весь
+# прогон bank-vaults падает. userpass выключен: purge гасит mount вместе со
+# всеми юзерами, аварийный вход остаётся только по root-токену из
+# vault-unseal-keys. name алиаса = ТОЧНОЕ значение preferred_username.
+# =============================================================================
+all:
+  vars:
+    vault_ui_ingress_class_name: "traefik-lb"
+    vault_cert_manager_issuer_enabled: true
+
+    vault_ui_domain: "vault-ui.example.com"
+    vault_ui_ingress_enabled: true
+    vault_ui_ingress_tls_enabled: true
+    vault_ui_certificate_enabled: true
+    vault_ui_vpn_only_enabled: false
+
+    vault_oidc_enabled: true
+    vault_userpass_enabled: false
+    vault_oidc_client_id: "000000000000000001"
+    vault_oidc_allowed_redirect_uris:
+      - "{{ vault_oidc_ui_redirect_uri }}"
+
+    vault_groups_extra:
+      - name: "vault-admins"
+        type: external
+        policies:
+          - vault-admin
+        metadata:
+          source: "zitadel"
+      - name: "vault-user-alice-smith"
+        type: external
+        policies:
+          - user-alice-smith
+        metadata:
+          source: "zitadel"
+      - name: "vault-user-bob-jones"
+        type: external
+        policies:
+          - user-bob-jones
+        metadata:
+          source: "zitadel"
+
+    vault_group_aliases_extra:
+      - name: "cluster-admin-rw@my-org.auth.example.com"
+        mountpath: "{{ vault_oidc_mount_path }}"
+        group: "vault-admins"
+      - name: "alice.smith@my-org.auth.example.com"
+        mountpath: "{{ vault_oidc_mount_path }}"
+        group: "vault-user-alice-smith"
+      - name: "bob.jones@my-org.auth.example.com"
+        mountpath: "{{ vault_oidc_mount_path }}"
+        group: "vault-user-bob-jones"
+
+    vault_policies_extra:
+      - name: user-alice-smith
+        rules: |
+          path "secret/data/alice-smith/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "secret/metadata/alice-smith/*" { capabilities = ["read", "list", "delete"] }
+      - name: user-bob-jones
+        rules: |
+          path "secret/data/bob-jones/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+          path "secret/metadata/bob-jones/*" { capabilities = ["read", "list", "delete"] }

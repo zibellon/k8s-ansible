@@ -1,0 +1,124 @@
+# =============================================================================
+# Боевой GitLab: stateless-компоненты по две реплики, вход через OIDC,
+# ssh за внешним HAProxy (accept_proxy: true — фронт шлёт proxy-protocol-v2).
+# Домены НЕ проксируются CDN, TLS выпускает cert-manager по ACME HTTP-01:
+# registry и git-push через проксирующий CDN упираются в лимиты на размер тела.
+# clientId и clientSecret OIDC — только в Vault eso-secret/gitlab/oidc.
+# Root-пароль тоже живёт в Vault и применяется через --tags config-root.
+# =============================================================================
+all:
+  vars:
+    gitlab_enabled: true
+
+    gitlab_ingress_class_name: "traefik-lb"
+    gitlab_vpn_only_enabled: false
+    gitlab_cert_manager_issuer_enabled: true
+
+    gitlab_base_domain: "gitlab.example.com"
+
+    gitlab_ui_domain: "gitlab.example.com"
+    gitlab_ui_ingress_enabled: true
+    gitlab_ui_ingress_tls_enabled: true
+    gitlab_ui_certificate_enabled: true
+
+    gitlab_registry_domain: "gitlab-registry.example.com"
+    gitlab_registry_ingress_enabled: true
+    gitlab_registry_ingress_tls_enabled: true
+    gitlab_registry_certificate_enabled: true
+
+    gitlab_pages_domain: "gitlab-pages.example.com"
+    gitlab_pages_ingress_enabled: true
+    gitlab_pages_ingress_tls_enabled: true
+    gitlab_pages_certificate_enabled: true
+
+    gitlab_ssh_accept_proxy: true
+
+    gitlab_oidc_enabled: true
+    gitlab_oidc_label: "ZITADEL"
+    gitlab_oidc_issuer: "https://{{ zitadel_domain }}"
+    gitlab_oidc_scopes: '["openid", "profile", "email", "urn:zitadel:iam:org:id:000000000000000000"]'
+
+    gitlab_postgresql_storage_class: "lnstr-worker-multi-sync"
+    gitlab_postgresql_storage_size: "10Gi"
+    gitlab_redis_storage_class: "lnstr-worker-multi-sync"
+    gitlab_redis_storage_size: "2Gi"
+    gitlab_gitaly_storage_class: "lnstr-worker-multi-sync"
+    gitlab_gitaly_storage_size: "10Gi"
+
+    gitlab_helm_values_webservice_min_replicas: 2
+    gitlab_helm_values_webservice_max_replicas: 2
+    gitlab_helm_values_sidekiq_min_replicas: 2
+    gitlab_helm_values_sidekiq_max_replicas: 2
+    gitlab_helm_values_registry_min_replicas: 2
+    gitlab_helm_values_registry_max_replicas: 2
+    gitlab_helm_values_shell_min_replicas: 2
+    gitlab_helm_values_shell_max_replicas: 2
+
+    gitlab_helm_values_webservice_resources:
+      requests:
+        cpu: "600m"
+        memory: "2.5Gi"
+      limits:
+        memory: "4Gi"
+    gitlab_helm_values_sidekiq_resources:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+      limits:
+        memory: "4Gi"
+    gitlab_helm_values_gitaly_resources:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+      limits:
+        memory: "4Gi"
+    gitlab_helm_values_registry_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    gitlab_helm_values_shell_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+    gitlab_helm_values_pages_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    gitlab_helm_values_toolbox_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "1.5Gi"
+    gitlab_helm_values_migrations_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "1.5Gi"
+
+    gitlab_postgresql_resources:
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+    gitlab_redis_resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"

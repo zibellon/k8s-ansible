@@ -1,0 +1,149 @@
+# =============================================================================
+# Боевой LINSTOR: пулы разведены по типам узлов (manager / worker-shared), а
+# StorageClass'ы собраны в три тира — manager-only, major (manager+worker) и
+# worker-only, каждый в вариантах local (autoPlace 1) и multi-sync (autoPlace 2,
+# DRBD Protocol C). UI за Cloudflare, поэтому TLS на origin выключен и панель
+# закрыта VPN — своей авторизации у неё нет. Списки НЕ *_extra: каждый
+# заменяет базовый целиком.
+# =============================================================================
+all:
+  vars:
+    linstor_ui_ingress_class_name: "traefik-lb"
+    linstor_cert_manager_issuer_enabled: false
+    linstor_ui_domain: "linstor-ui.example.com"
+    linstor_ui_ingress_enabled: true
+    linstor_ui_ingress_tls_enabled: false
+    linstor_ui_certificate_enabled: false
+    linstor_ui_vpn_only_enabled: true
+
+    linstor_ha_controller_args:
+      - /agent
+      - --v=1
+      - --fail-over-timeout=8m
+
+    linstor_cluster_helm_values_properties:
+      - name: DrbdOptions/PeerDevice/c-min-rate
+        value: "25600"
+      - name: DrbdOptions/PeerDevice/c-max-rate
+        value: "153600"
+      - name: DrbdOptions/PeerDevice/c-fill-target
+        value: "20480"
+      - name: DrbdOptions/PeerDevice/c-plan-ahead
+        value: "20"
+
+      - name: DrbdOptions/Net/verify-alg
+        value: "crc32c"
+
+      - name: DrbdOptions/Resource/quorum
+        value: "majority"
+      - name: DrbdOptions/Resource/on-no-quorum
+        value: "suspend-io"
+      - name: DrbdOptions/Resource/on-suspended-primary-outdated
+        value: "force-secondary"
+      - name: DrbdOptions/Resource/on-no-data-accessible
+        value: "suspend-io"
+      - name: DrbdOptions/auto-add-quorum-tiebreaker
+        value: "True"
+
+      - name: DrbdOptions/AutoEvictAfterTime
+        value: "60"
+      - name: DrbdOptions/AutoEvictMaxDisconnectedNodes
+        value: "34"
+      - name: DrbdOptions/AutoEvictAllowEviction
+        value: "true"
+
+    linstor_cluster_helm_values_linstor_satellite_configurations:
+      - name: manager
+        nodeSelector:
+          node-role.kubernetes.io/control-plane: ""
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-satellite
+                resources: {}
+        storagePools:
+          - name: lnstr-file-thin-manager
+            fileThinPool:
+              directory: /var/lib/linstor-pools/lnstr-file-thin-manager
+      - name: worker-shared
+        nodeSelector:
+          node-role.kubernetes.io/worker: ""
+          node.kubernetes.io/resource-type: shared
+        podTemplate:
+          spec:
+            nodeSelector: {}
+            affinity: {}
+            containers:
+              - name: linstor-satellite
+                resources: {}
+        storagePools:
+          - name: lnstr-file-thin-worker-shared
+            fileThinPool:
+              directory: /var/lib/linstor-pools/lnstr-file-thin-worker-shared
+
+    linstor_cluster_helm_values_storage_classes:
+      - name: "lnstr-manager-local"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "1"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          csi.storage.k8s.io/fstype: "ext4"
+      - name: "lnstr-manager-multi-sync"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "2"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+          csi.storage.k8s.io/fstype: "ext4"
+      - name: "lnstr-major-local"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "1"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker-shared"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          csi.storage.k8s.io/fstype: "ext4"
+      - name: "lnstr-major-multi-sync"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "2"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-manager lnstr-file-thin-worker-shared"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+          csi.storage.k8s.io/fstype: "ext4"
+      - name: "lnstr-worker-local"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "1"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker-shared"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          csi.storage.k8s.io/fstype: "ext4"
+      - name: "lnstr-worker-multi-sync"
+        allowVolumeExpansion: true
+        reclaimPolicy: "Retain"
+        volumeBindingMode: "WaitForFirstConsumer"
+        provisioner: linstor.csi.linbit.com
+        parameters:
+          linstor.csi.linbit.com/autoPlace: "2"
+          linstor.csi.linbit.com/storagePool: "lnstr-file-thin-worker-shared"
+          linstor.csi.linbit.com/allowRemoteVolumeAccess: "false"
+          property.linstor.csi.linbit.com/DrbdOptions/Net/protocol: "C"
+          csi.storage.k8s.io/fstype: "ext4"

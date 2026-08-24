@@ -1,0 +1,26 @@
+# =============================================================================
+# Traefik dashboard напрямую, TLS на origin через cert-manager (ACME HTTP-01).
+# Дополнительно показан ESO-секрет: кастомный TLS-сертификат приезжает из Vault
+# в k8s Secret и может быть подставлен в IngressRoute вместо ACME.
+# =============================================================================
+all:
+  vars:
+    traefik_dashboard_ingress_class_name: "traefik-lb"
+    traefik_cert_manager_issuer_enabled: true
+
+    traefik_dashboard_domain: "traefik-dashboard.example.com"
+    traefik_dashboard_ingress_enabled: true
+    traefik_dashboard_ingress_tls_enabled: true
+    traefik_dashboard_certificate_enabled: true
+    traefik_dashboard_vpn_only_enabled: false
+
+    eso_vault_integration_traefik_secrets_extra:
+      - external_secret_name: "traefik-custom-cert"
+        vault_path: "/traefik/custom/creds"
+        refresh_interval: "1m"
+        body:
+          target:
+            name: "traefik-custom-cert"
+          dataFrom:
+            - extract:
+                key: "{{ eso_vault_integration_traefik.kv_engine_path }}/data/traefik/custom/creds"

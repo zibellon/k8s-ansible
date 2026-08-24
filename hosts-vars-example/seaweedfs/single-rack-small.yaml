@@ -1,0 +1,111 @@
+# =============================================================================
+# SeaweedFS на маленьком кластере: по одной volume-группе на каждый узел, все в
+# ЕДИНОЙ стойке — при bucket replication 001 («вторая копия в другой стойке
+# нет, но на другом сервере») это даёт две копии на двух разных серверах.
+# Control-plane-узел участвует в хранении, поэтому у него tolerations. dataDir
+# берёт strict-local класс: реплицирует уже сам SeaweedFS, дублировать это
+# DRBD-репликацией не нужно. volume_growth.threshold 1.0 не даёт мастеру
+# наплодить лишних томов.
+# =============================================================================
+all:
+  vars:
+    seaweedfs_enabled: true
+
+    seaweedfs_ingress_class_name: "traefik-lb"
+    seaweedfs_cert_manager_issuer_enabled: true
+
+    seaweedfs_s3_domain: "s3.example.com"
+    seaweedfs_s3_ingress_enabled: true
+    seaweedfs_s3_ingress_tls_enabled: true
+    seaweedfs_s3_certificate_enabled: true
+    seaweedfs_s3_vpn_only_enabled: false
+
+    seaweedfs_master_ui_domain: "s3-master.example.com"
+    seaweedfs_master_ui_ingress_enabled: true
+    seaweedfs_master_ui_ingress_tls_enabled: true
+    seaweedfs_master_ui_certificate_enabled: true
+    seaweedfs_master_ui_vpn_only_enabled: true
+
+    seaweedfs_filer_ui_domain: "s3-filer.example.com"
+    seaweedfs_filer_ui_ingress_enabled: true
+    seaweedfs_filer_ui_ingress_tls_enabled: true
+    seaweedfs_filer_ui_certificate_enabled: true
+    seaweedfs_filer_ui_vpn_only_enabled: true
+
+    seaweedfs_admin_ui_domain: "s3-admin.example.com"
+    seaweedfs_admin_ui_ingress_enabled: true
+    seaweedfs_admin_ui_ingress_tls_enabled: true
+    seaweedfs_admin_ui_certificate_enabled: true
+    seaweedfs_admin_ui_vpn_only_enabled: false
+
+    seaweedfs_helm_values_s3_replica_count: 1
+
+    seaweedfs_postgresql_storage_class: "lnstr-worker-multi-sync"
+    seaweedfs_helm_values_admin_data_storage_class: "lnstr-worker-multi-sync"
+    seaweedfs_helm_values_master_data_storage_class: "lnstr-worker-multi-sync"
+
+    seaweedfs_helm_values_master_config: |
+      [master.volume_growth]
+      copy_1 = 1
+      copy_2 = 2
+      copy_3 = 3
+      copy_other = 1
+      threshold = 1.0
+      disable = false
+
+    seaweedfs_helm_values_worker_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+    seaweedfs_helm_values_volumes:
+      managers-1-dc-1:
+        enabled: true
+        replicas: 1
+        dataCenter: "dc-1"
+        rack: "workers-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "3Gi"
+            storageClass: "lnstr-major-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          kubernetes.io/hostname: k8s-manager-1
+        tolerations: |
+          - operator: Exists
+        resources: "{{ seaweedfs_helm_values_volume_resources }}"
+      workers-1-dc-1:
+        enabled: true
+        replicas: 1
+        dataCenter: "dc-1"
+        rack: "workers-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "3Gi"
+            storageClass: "lnstr-major-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          kubernetes.io/hostname: k8s-worker-1
+        resources: "{{ seaweedfs_helm_values_volume_resources }}"
+      workers-2-dc-1:
+        enabled: true
+        replicas: 1
+        dataCenter: "dc-1"
+        rack: "workers-1"
+        dataDirs:
+          - name: data1
+            type: "persistentVolumeClaim"
+            size: "3Gi"
+            storageClass: "lnstr-major-local"
+            maxVolumes: 0
+        logs: {}
+        nodeSelector: |
+          kubernetes.io/hostname: k8s-worker-2
+        resources: "{{ seaweedfs_helm_values_volume_resources }}"

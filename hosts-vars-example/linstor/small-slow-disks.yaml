@@ -1,0 +1,47 @@
+# =============================================================================
+# LINSTOR на маленьком кластере с медленными дисками: скорости ресинка DRBD
+# занижены, чтобы фоновая синхронизация не выедала весь I/O. Список properties
+# заменяет базовый ЦЕЛИКОМ — это не *_extra, частичного слияния не будет.
+# data-integrity-alg намеренно отсутствует: это debug-фича, она рвёт
+# соединение и запускает ресинк на ложных mismatch под нагрузкой.
+# =============================================================================
+all:
+  vars:
+    linstor_ui_ingress_class_name: "traefik-lb"
+    linstor_cert_manager_issuer_enabled: true
+    linstor_ui_domain: "linstor-ui.example.com"
+    linstor_ui_ingress_enabled: true
+    linstor_ui_ingress_tls_enabled: true
+    linstor_ui_certificate_enabled: true
+    linstor_ui_vpn_only_enabled: false
+
+    linstor_cluster_helm_values_properties:
+      - name: DrbdOptions/PeerDevice/c-min-rate
+        value: "4096"
+      - name: DrbdOptions/PeerDevice/c-max-rate
+        value: "8192"
+      - name: DrbdOptions/PeerDevice/c-fill-target
+        value: "4096"
+      - name: DrbdOptions/PeerDevice/c-plan-ahead
+        value: "20"
+
+      - name: DrbdOptions/Net/verify-alg
+        value: "crc32c"
+
+      - name: DrbdOptions/Resource/quorum
+        value: "majority"
+      - name: DrbdOptions/Resource/on-no-quorum
+        value: "suspend-io"
+      - name: DrbdOptions/Resource/on-suspended-primary-outdated
+        value: "force-secondary"
+      - name: DrbdOptions/Resource/on-no-data-accessible
+        value: "suspend-io"
+      - name: DrbdOptions/auto-add-quorum-tiebreaker
+        value: "True"
+
+      - name: DrbdOptions/AutoEvictAfterTime
+        value: "60"
+      - name: DrbdOptions/AutoEvictMaxDisconnectedNodes
+        value: "34"
+      - name: DrbdOptions/AutoEvictAllowEviction
+        value: "true"

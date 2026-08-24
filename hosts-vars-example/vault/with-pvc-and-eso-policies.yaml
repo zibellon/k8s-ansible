@@ -1,0 +1,57 @@
+# =============================================================================
+# Vault с постоянным хранилищем на LINSTOR и набором ESO-политик. PVC задаётся
+# volumeClaimTemplates StatefulSet'а; storageClassName с autoPlace 2 держит
+# вторую реплику данных на другом узле. Дальше — по одной паре
+# «политика + kubernetes-роль» на каждый namespace-потребитель: политика даёт
+# read+list на data и metadata своего префикса, роль привязывает её к
+# ServiceAccount eso-main в этом namespace. Имя роли всегда <namespace>.eso-main.
+# =============================================================================
+all:
+  vars:
+    vault_spec_volume_mounts:
+      - name: vault-data
+        mountPath: /vault/data
+
+    vault_spec_volume_claim_templates:
+      - metadata:
+          name: vault-data
+        spec:
+          accessModes: [ReadWriteOnce]
+          storageClassName: lnstr-major-multi-sync
+          resources:
+            requests:
+              storage: 4Gi
+
+    vault_policies_extra:
+      - name: eso-argo-events-cfg
+        rules: |
+          path "eso-secret/data/argo-events-cfg/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/argo-events-cfg/*" { capabilities = ["read", "list"] }
+      - name: eso-my-app-prod
+        rules: |
+          path "eso-secret/data/my-app-prod/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/my-app-prod/*" { capabilities = ["read", "list"] }
+      - name: eso-my-app-dev
+        rules: |
+          path "eso-secret/data/my-app-dev/*" { capabilities = ["read", "list"] }
+          path "eso-secret/metadata/my-app-dev/*" { capabilities = ["read", "list"] }
+
+    vault_auth_kubernetes_roles_extra:
+      - name: argo-events-cfg.eso-main
+        bound_service_account_namespaces: argo-events-cfg
+        bound_service_account_names: eso-main
+        policies:
+          - eso-argo-events-cfg
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
+      - name: my-app-prod.eso-main
+        bound_service_account_namespaces: my-app-prod
+        bound_service_account_names: eso-main
+        policies:
+          - eso-my-app-prod
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"
+      - name: my-app-dev.eso-main
+        bound_service_account_namespaces: my-app-dev
+        bound_service_account_names: eso-main
+        policies:
+          - eso-my-app-dev
+        ttl: "{{ vault_auth_kubernetes_roles_default_ttl }}"

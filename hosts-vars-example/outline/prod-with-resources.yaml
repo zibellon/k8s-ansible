@@ -1,0 +1,61 @@
+# =============================================================================
+# Боевой Outline: за Cloudflare (origin HTTP), приложение и обе его БД
+# (PostgreSQL, Redis) прибиты к worker-нодам и с явными requests/limits.
+# Хранилища на LINSTOR с репликой на другом узле. Публичный S3-хост обязателен —
+# вложения браузер тянет напрямую, минуя приложение.
+# =============================================================================
+all:
+  vars:
+    outline_enabled: true
+
+    outline_ingress_class_name: "traefik-lb"
+    outline_cert_manager_issuer_enabled: false
+
+    outline_ui_domain: "wiki.example.com"
+    outline_ui_tls_secret_name: "cert-outline"
+    outline_ui_ingress_enabled: true
+    outline_ui_ingress_tls_enabled: false
+    outline_ui_certificate_enabled: false
+    outline_ui_vpn_only_enabled: false
+
+    outline_s3_upload_bucket_url: "https://s3.example.com"
+
+    outline_oidc_enabled: true
+    outline_oidc_name: "ZITADEL"
+    outline_oidc_username_claim: "preferred_username"
+    outline_oidc_scopes: "openid profile email offline_access urn:zitadel:iam:org:id:000000000000000000"
+
+    outline_postgresql_storage_class: "lnstr-worker-multi-sync"
+    outline_postgresql_storage_size: "4Gi"
+    outline_redis_storage_class: "lnstr-worker-multi-sync"
+    outline_redis_storage_size: "1Gi"
+
+    outline_resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+    outline_node_selector:
+      node-role.kubernetes.io/worker: ""
+
+    outline_postgresql_resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    outline_postgresql_node_selector:
+      node-role.kubernetes.io/worker: ""
+
+    outline_redis_resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+    outline_redis_node_selector:
+      node-role.kubernetes.io/worker: ""

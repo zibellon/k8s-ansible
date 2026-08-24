@@ -1,0 +1,75 @@
+# =============================================================================
+# ВАРИАНТ 2: ДВА namespace. Контроллер живёт в argo-events, а смотрит в чужой
+# argo-events-cfg — непустая строка включает и патч --managed-namespace, и
+# рендер самого namespace вместе с правами контроллера в нём стадией pre-cfg,
+# поэтому pre-cfg идёт ПЕРЕД install. Контроллер видит CR РОВНО В ОДНОМ
+# namespace: это ПЕРЕНОС реконсиляции, а не расширение, поэтому списки CR
+# своего namespace обязаны остаться пустыми. Прикладной контур приезжает из
+# git-ops, ArgoCD нужна пара RoleBinding в argo-events-cfg (и не нужна в
+# argo-events). Cluster-scoped watch'еры объявлены здесь: ArgoCD такие объекты
+# создать не может — вербов на cluster-scoped ресурсы у него нет. Имена SA —
+# из git-ops-чарта; рассинхрон тихий: биндинг висит, а watch получает Forbidden.
+# =============================================================================
+all:
+  vars:
+    argo_events_enabled: true
+
+    argo_events_cr_namespace: "argo-events-cfg"
+
+    argo_events_pod_monitor_workloads_enabled: false
+
+    argo_events_event_buses: []
+    argo_events_event_sources: []
+    argo_events_sensors: []
+
+    argo_events_rbac_roles:
+      - name: "argo-events-deploy-notify-jobs"
+        namespace: "{{ argo_events_cr_namespace }}"
+        rules:
+          - apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["create"]
+
+    argo_events_rbac_role_bindings:
+      - name: "argo-events-deploy-notify-jobs"
+        namespace: "{{ argo_events_cr_namespace }}"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: "argo-events-deploy-notify-jobs"
+        subjects:
+          - kind: ServiceAccount
+            name: "sensor-telegram"
+            namespace: "{{ argo_events_cr_namespace }}"
+
+    argo_events_rbac_cluster_roles:
+      - name: "argo-events-cfg-kargo-promotions-watcher"
+        rules:
+          - apiGroups: ["kargo.akuity.io"]
+            resources: ["promotions"]
+            verbs: ["list", "watch"]
+      - name: "argo-events-cfg-argocd-applications-watcher"
+        rules:
+          - apiGroups: ["argoproj.io"]
+            resources: ["applications"]
+            verbs: ["list", "watch"]
+
+    argo_events_rbac_cluster_role_bindings:
+      - name: "argo-events-cfg-kargo-promotions-watcher"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argo-events-cfg-kargo-promotions-watcher"
+        subjects:
+          - kind: ServiceAccount
+            name: "event-source-kargo-promotions"
+            namespace: "{{ argo_events_cr_namespace }}"
+      - name: "argo-events-cfg-argocd-applications-watcher"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argo-events-cfg-argocd-applications-watcher"
+        subjects:
+          - kind: ServiceAccount
+            name: "event-source-argocd-applications"
+            namespace: "{{ argo_events_cr_namespace }}"
