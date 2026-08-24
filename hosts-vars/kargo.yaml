@@ -79,7 +79,7 @@ all:
     # Реальные значения — в hosts-vars-override/<cluster>/kargo.yaml.
     #
     # ЗДЕСЬ живёт весь кастомный RBAC, относящийся строго к Kargo. В cluster-base
-    # он НЕ выносится: там остаются namespace'ы и то, что не принадлежит ни одному
+    # он НЕ выносится: там остаются продуктовые namespace'ы и то, что не принадлежит
     # компоненту.
     #
     # ⚠️ ИМЕНОВАНИЕ. Объекты уезжают в ЧУЖИЕ namespace (проектные, которыми владеют
@@ -215,13 +215,15 @@ all:
           verbs: ["get", "list", "watch"]
 
     # ------
-    # ПРОЕКТЫ KARGO. Элемент порождает две вещи: сам объект Project (cluster-
-    # scoped, без spec — всё содержимое это имя) и раздачу ролей в его
-    # namespace. name — имя Project, оно же имя namespace.
+    # ПРОЕКТЫ KARGO. Элемент порождает три вещи: сам namespace, объект Project
+    # (cluster-scoped, без spec — всё содержимое это имя) и раздачу ролей в
+    # этом namespace. name — имя Project, оно же имя namespace.
     #
-    # Namespace с меткой kargo.akuity.io/project=true заводится СНАРУЖИ, в
-    # cluster-base, и должен существовать заранее: без метки admission-вебхук
-    # отвергает Project, без namespace — вебхук попытается создать его сам.
+    # Namespace с меткой kargo.akuity.io/project=true заводится ЗДЕСЬ ЖЕ, тем
+    # же helm-релизом стадии cfg: владельцем namespace должен быть релиз,
+    # которому namespace нужен. Метка обязательна — без неё admission-вебхук
+    # отвергает Project с 409; без namespace вебхук создал бы его сам, без
+    # наших меток и аннотаций.
     #
     # ⚠️ Удаление элемента отсюда удаляет Project, а Kargo в ответ удаляет
     # namespace со всем содержимым. helm.sh/resource-policy намеренно не
@@ -235,8 +237,8 @@ all:
     # Роли, которые Kargo создаёт в namespace каждого Project сам и на которые
     # можно ссылаться как на Role: kargo-admin, kargo-promoter, kargo-viewer.
     #
-    # ⚠️ Порядок онбординга: namespace (cluster-base) → объект Project →
-    # --tags rbac. Role, на которую ссылается roleRef, создаёт
+    # ⚠️ Онбординг проекта теперь ОДНА операция: добавить элемент сюда и
+    # прогнать --tags cfg. Role, на которую ссылается roleRef, создаёт
     # management-controller при первом реконсайле Project'а; ссылка на ещё не
     # созданную роль допустима — биндинг начнёт действовать, когда роль
     # появится, — но при обратном порядке будет окно, где человек залогинен и
@@ -247,9 +249,10 @@ all:
     # Объявляется вручную парой kargo_rbac_cluster_roles +
     # kargo_rbac_cluster_role_bindings, см. пример в hosts-vars-override/.
     #
-    # Формат элемента. labels и annotations опциональны и относятся ТОЛЬКО к
-    # объекту Project — на RoleBinding'и из accounts они не распространяются.
-    # Типовой случай для annotations — kargo.akuity.io/keep-namespace: "true":
+    # Формат элемента. labels и annotations опциональны; на RoleBinding'и из
+    # accounts ни те, ни другие не распространяются. labels уходят только на
+    # объект Project, annotations — И на Project, И на namespace: типовой
+    # случай kargo.akuity.io/keep-namespace: "true" Kargo читает с обоих, и
     # с ней удаление Project'а не утащит за собой namespace.
     #   - name: "my-wallet"
     #     labels: {}
@@ -598,15 +601,19 @@ all:
         keep: true
 
     # ------
-    # PHASE: rbac (пользовательские SA, Role, ClusterRole и биндинги)
-    # Отдельный релиз, чтобы выдача прав пересобиралась через --tags rbac
-    # независимо от Ingress и Certificate. Идёт ПОСЛЕ install: ClusterRole'и,
-    # на которые могут ссылаться биндинги, создаёт upstream-чарт.
+    # PHASE: cfg (Projects с их namespace + пользовательские SA, Role,
+    # ClusterRole и биндинги)
+    # Отдельный релиз и последняя стадия: ClusterRole'и, на которые могут
+    # ссылаться биндинги, создаёт upstream-чарт стадии install, а namespace
+    # проектов заводится здесь же, в одном релизе с самими Project — владельцем
+    # namespace должен быть тот релиз, которому namespace нужен.
+    # ⚠️ Содержательные переменные сохраняют префикс kargo_rbac_*: он описывает
+    # ТИП объекта (RBAC), а не стадию, и их задают override.
     # ------
-    kargo_rbac_helm_timeout: "5m"
-    kargo_rbac_extra_objects: []
-    kargo_rbac_kustomize_patches: []
-    kargo_rbac_helm_values:
+    kargo_cfg_helm_timeout: "5m"
+    kargo_cfg_extra_objects: []
+    kargo_cfg_kustomize_patches: []
+    kargo_cfg_helm_values:
       namespace: "{{ kargo_namespace }}"
       rbacServiceAccounts: "{{ kargo_rbac_service_accounts }}"
       rbacRoles: "{{ kargo_rbac_roles }}"
@@ -616,7 +623,7 @@ all:
       customUsers: "{{ kargo_custom_users }}"
       uiDiscoveryRBACSetup: "{{ kargo_rbac_ui_discovery_rbac_setup }}"
       projects: "{{ kargo_projects }}"
-      extraObjects: "{{ kargo_rbac_extra_objects }}"
+      extraObjects: "{{ kargo_cfg_extra_objects }}"
 
     # ------
     # PHASE: post (Ingress + Certificate)

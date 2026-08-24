@@ -1,0 +1,32 @@
+# =============================================================================
+# NAMESPACE ПРОЕКТА
+#   Один Namespace на элемент projects, в том же релизе, что и сам Project.
+#   Заводится здесь, а не в cluster-base: владельцем namespace должен быть тот
+#   же helm-релиз, которому namespace нужен, иначе создатель и владелец
+#   расходятся — именно так однажды осиротел managed-namespace argo-events.
+#
+#   Метка kargo.akuity.io/project: "true" ОБЯЗАТЕЛЬНА. Namespace без неё
+#   заставляет admission-вебхук отвергнуть Project с 409; namespace'а нет
+#   вовсе — вебхук создаёт его сам, без наших меток и аннотаций.
+#
+#   Аннотации элемента переносятся и сюда, и на объект Project: Kargo читает
+#   kargo.akuity.io/keep-namespace с обоих. Без переноса защита от
+#   cleanupProject была бы односторонней. Метки элемента остаются только у
+#   Project — namespace несёт лишь обязательную.
+#
+#   Порядок применения внутри релиза: Namespace — известный helm kind и уходит
+#   рано, Project — неизвестный и уходит последним.
+# =============================================================================
+{{- range $project := .Values.projects }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $project.name }}
+  labels:
+    kargo.akuity.io/project: "true"
+  {{- with $project.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
