@@ -8,7 +8,7 @@ all:
     #
     # Контроллер ставится NAMESPACED и по умолчанию видит CR только в своём
     # собственном namespace. Направить его в другой namespace можно переменной
-    # argo_events_managed_namespace ниже.
+    # argo_events_cr_namespace ниже.
     # Собственного UI у argo-events нет.
     # =========================================================================
 
@@ -20,7 +20,7 @@ all:
     argo_events_namespace: "argo-events"
 
     # ------
-    # MANAGED NAMESPACE — куда смотрит контроллер.
+    # CR NAMESPACE — куда смотрит контроллер.
     # Пусто (дефолт) — апстримное поведение: --namespaced без
     # --managed-namespace, контроллер видит CR в своём собственном namespace,
     # и там ему хватает Role из вендоренного манифеста. Доделывать нечего.
@@ -34,7 +34,10 @@ all:
     # Компонент отвечает только за права контроллера в нём (стадия rbac);
     # содержимое namespace — забота оператора.
     # ------
-    argo_events_managed_namespace: ""
+    argo_events_cr_namespace: ""
+    # Метки и аннотации объекта Namespace. Пустые не рендерятся.
+    argo_events_cr_namespace_labels: {}
+    argo_events_cr_namespace_annotations: {}
 
     # ------
     # Порты (из upstream-исходников, менять нельзя без смены версии).
@@ -57,7 +60,7 @@ all:
     argo_events_image_pull_policy: "IfNotPresent"
 
     # ------
-    # ПРАВА КОНТРОЛЛЕРА В MANAGED NAMESPACE.
+    # ПРАВА КОНТРОЛЛЕРА В CR NAMESPACE.
     # Апстримный namespace-install.yaml кладёт Role только рядом с контроллером —
     # он предполагает, что контроллер и CR в одном namespace, и для штатного
     # режима этого достаточно. Когда контроллер направлен в другой namespace,
@@ -67,12 +70,12 @@ all:
     # ------
     # Имя SA задано апстримом, менять нельзя без смены версии манифеста.
     argo_events_controller_sa_name: "argo-events-sa"
-    argo_events_controller_managed_role_name: "argo-events-controller"
-    argo_events_controller_managed_role_binding_name: "argo-events-controller"
-    # Полный апстримный набор: в managed-namespace контроллер создаёт и удаляет
+    argo_events_controller_cr_ns_role_name: "argo-events-controller"
+    argo_events_controller_cr_ns_role_binding_name: "argo-events-controller"
+    # Полный апстримный набор: в cr-namespace контроллер создаёт и удаляет
     # дочерние Deployment/StatefulSet/Service/ConfigMap/Secret/PVC и правит
     # статусы CR. Урезать здесь нечего — это ровно то, что он делает.
-    argo_events_controller_managed_role_rules:
+    argo_events_controller_cr_ns_role_rules:
       - apiGroups: [""]
         resources: ["events"]
         verbs: ["create", "patch"]
@@ -247,12 +250,12 @@ all:
                     imagePullPolicy: "{{ argo_events_image_pull_policy }}"
     # Операторское расширение (hosts-vars-override/): ресурсы, nodeSelector,
     # tolerations и прочее прикладываются сюда отдельными патчами.
-    # Подмешивается в патчи install ТОЛЬКО при непустом argo_events_managed_namespace.
+    # Подмешивается в патчи install ТОЛЬКО при непустом argo_events_cr_namespace.
     # ⚠️ args — []string без patchMergeKey: strategic merge ЗАМЕНЯЕТ список
     # целиком, поэтому апстримные элементы перечислены заново. Потерять
     # `controller` — под падает сразу; потерять `--namespaced` — контроллер тихо
     # становится cluster-wide и упирается в отсутствие ClusterRole.
-    argo_events_managed_namespace_patch:
+    argo_events_cr_namespace_patch:
       target:
         kind: Deployment
         name: controller-manager
@@ -269,42 +272,40 @@ all:
                   args:
                     - controller
                     - --namespaced
-                    - --managed-namespace={{ argo_events_managed_namespace }}
+                    - --managed-namespace={{ argo_events_cr_namespace }}
     argo_events_install_kustomize_patches_extra: []
     argo_events_install_kustomize_patches: >-
       {{ argo_events_kustomize_patches_base
-         + ([argo_events_managed_namespace_patch] if argo_events_managed_namespace | length > 0 else [])
+         + ([argo_events_cr_namespace_patch] if argo_events_cr_namespace | length > 0 else [])
          + argo_events_install_kustomize_patches_extra }}
     # Helm values для KUSTOMIZE_WRAPPER install phase — только extraObjects wiring
     argo_events_install_helm_values:
       extraObjects: "{{ argo_events_install_extra_objects }}"
 
     # ------
-    # PHASE: pre-cfg (managed namespace + обязательные права контроллера в нём)
+    # PHASE: pre-cfg (cr namespace + обязательные права контроллера в нём)
     # Стадия идёт ПЕРЕД install и без kustomize namespace-трансформера: он
     # переименовал бы объект Namespace и переписал чужой metadata.namespace.
-    # Положить это ПОСЛЕ install тоже нельзя — без прав в managed-namespace
+    # Положить это ПОСЛЕ install тоже нельзя — без прав в cr-namespace
     # кэш контроллера не синхронизируется и процесс завершается за
     # CacheSyncTimeout, причём отказ отложенный: readiness это healthz.Ping.
-    # При пустом argo_events_managed_namespace или его равенстве
+    # При пустом argo_events_cr_namespace или его равенстве
     # argo_events_namespace стадия рендерит ноль объектов.
     # ------
     argo_events_pre_cfg_helm_timeout: "5m"
-    # Метки и аннотации объекта Namespace. Пустые не рендерятся.
-    argo_events_managed_namespace_labels: {}
-    argo_events_managed_namespace_annotations: {}
     argo_events_pre_cfg_extra_objects: []
     argo_events_pre_cfg_kustomize_patches: []
     argo_events_pre_cfg_helm_values:
       namespace: "{{ argo_events_namespace }}"
+      crNamespace:
+        name: "{{ argo_events_cr_namespace }}"
+        labels: "{{ argo_events_cr_namespace_labels }}"
+        annotations: "{{ argo_events_cr_namespace_annotations }}"
       controllerRbac:
-        managedNamespace: "{{ argo_events_managed_namespace }}"
         saName: "{{ argo_events_controller_sa_name }}"
-        roleName: "{{ argo_events_controller_managed_role_name }}"
-        roleBindingName: "{{ argo_events_controller_managed_role_binding_name }}"
-        rules: "{{ argo_events_controller_managed_role_rules }}"
-      managedNamespaceLabels: "{{ argo_events_managed_namespace_labels }}"
-      managedNamespaceAnnotations: "{{ argo_events_managed_namespace_annotations }}"
+        roleName: "{{ argo_events_controller_cr_ns_role_name }}"
+        roleBindingName: "{{ argo_events_controller_cr_ns_role_binding_name }}"
+        rules: "{{ argo_events_controller_cr_ns_role_rules }}"
       extraObjects: "{{ argo_events_pre_cfg_extra_objects }}"
 
     # ------

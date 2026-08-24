@@ -3,14 +3,14 @@
 # Steps:
 #   1. argo-events/crds:    CustomResourceDefinitions (kubectl apply --server-side)
 #   2. argo-events/pre:     NetworkPolicies + cert-manager Issuer + ESO resources
-#   3. argo-events/pre-cfg: managed namespace + обязательные права контроллера в нём
+#   3. argo-events/pre-cfg: cr namespace + обязательные права контроллера в нём
 #   4. argo-events/install: vendored upstream manifests v1.9.11 — controller,
 #                           RBAC and the validating admission webhook
 #   5. argo-events/post:    PodMonitors
 #   6. argo-events/cfg:     операторский RBAC (SA + Roles + bindings для
 #                           EventSource и Sensor) + EventBus + EventSources + Sensors
 #
-# ⚠️ ПОРЯДОК pre-cfg ПЕРЕД install ОБЯЗАТЕЛЕН, если argo_events_managed_namespace
+# ⚠️ ПОРЯДОК pre-cfg ПЕРЕД install ОБЯЗАТЕЛЕН, если argo_events_cr_namespace
 #    задан и не равен argo_events_namespace. Контроллер стартует уже нацеленным на
 #    чужой namespace; без самого namespace и без прав в нём кэш контроллера не
 #    синхронизируется, controller-runtime не дожидается за CacheSyncTimeout
@@ -18,7 +18,7 @@
 #    ОТЛОЖЕННЫЙ: readiness это healthz.Ping, отвечает 200 независимо от кэша,
 #    поэтому helm --wait успевает счесть install успешным, а падение начинается
 #    уже после него. Почему стадия отдельная, а не часть install — в шапке
-#    charts/argo-events/pre-cfg/templates/managed-namespace.yaml.
+#    charts/argo-events/pre-cfg/templates/cr-namespace.yaml.
 #
 # Usage (tags):
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-install.yaml
@@ -38,7 +38,7 @@
 #
 # NOTE: контроллер ставится NAMESPACED и по умолчанию видит CR только в своём
 #       собственном namespace — это штатный апстримный режим, доделывать нечего.
-#       Если задан argo_events_managed_namespace, к манифесту подмешивается
+#       Если задан argo_events_cr_namespace, к манифесту подмешивается
 #       --managed-namespace, и контроллер смотрит ТУДА ВМЕСТО своего namespace:
 #       флаг принимает ровно одно значение, списка namespace у продукта нет.
 #       Тот namespace создаёт cluster-base, а его содержимое — забота оператора
@@ -174,12 +174,12 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 3: PRE-CFG (managed namespace + обязательные права контроллера)
+    # STEP 3: PRE-CFG (cr namespace + обязательные права контроллера)
     # Идёт ПЕРЕД install и БЕЗ kustomize namespace-трансформера: трансформер
     # переименовал бы объект Namespace и переписал чужой metadata.namespace у
     # Role/RoleBinding. Положить это в install или в cfg нельзя — см. шапку
-    # charts/argo-events/pre-cfg/templates/managed-namespace.yaml.
-    # При пустом argo_events_managed_namespace или его равенстве
+    # charts/argo-events/pre-cfg/templates/cr-namespace.yaml.
+    # При пустом argo_events_cr_namespace или его равенстве
     # argo_events_namespace стадия рендерит ноль объектов.
     # =========================================================================
 

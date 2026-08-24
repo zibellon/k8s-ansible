@@ -1,29 +1,29 @@
 # =============================================================================
-# MANAGED NAMESPACE
+# CR NAMESPACE
 #   Namespace, в который направлен контроллер через --managed-namespace.
 #   Заводится здесь, а не в cluster-base: владельцем namespace должен быть тот
 #   же helm-релиз, которому namespace нужен, иначе они расходятся. Ровно так
 #   этот namespace однажды и осиротел — его создавал релиз демонтированной
 #   фазы через --create-namespace, а объявлен он не был нигде.
 #
-#   Условие рендера — непустой managedNamespace И его неравенство namespace
+#   Условие рендера — непустой crNamespace.name И его неравенство namespace
 #   компонента. При равенстве создавать нечего: namespace компонента заводит
 #   --create-namespace install-релиза.
 #
 #   ⚠️ Стадия pre-cfg обязана идти БЕЗ kustomize namespace-трансформера: он
 #   переименовывает объект Namespace и переписывает чужие metadata.namespace.
 # =============================================================================
-{{- if and .Values.controllerRbac.managedNamespace (ne .Values.controllerRbac.managedNamespace .Values.namespace) }}
+{{- if and .Values.crNamespace.name (ne .Values.crNamespace.name .Values.namespace) }}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ .Values.controllerRbac.managedNamespace }}
-  {{- with .Values.managedNamespaceLabels }}
+  name: {{ .Values.crNamespace.name }}
+  {{- with .Values.crNamespace.labels }}
   labels:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.managedNamespaceAnnotations }}
+  {{- with .Values.crNamespace.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

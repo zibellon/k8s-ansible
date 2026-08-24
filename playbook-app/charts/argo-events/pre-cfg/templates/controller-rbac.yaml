@@ -1,6 +1,6 @@
 # =============================================================================
 # ПРАВА КОНТРОЛЛЕРА В ЧУЖОМ NAMESPACE
-#   Рендерится ТОЛЬКО когда задан controllerRbac.managedNamespace, то есть
+#   Рендерится ТОЛЬКО когда задан crNamespace.name, то есть
 #   когда оператор направил контроллер в другой namespace через
 #   --managed-namespace. Пустое значение — апстримный режим: контроллер
 #   работает в своём namespace, и там ему хватает Role из вендоренного
@@ -14,18 +14,18 @@
 #   200 независимо от кэша, поэтому helm --wait успевает счесть установку
 #   успешной. Потерять такой объект правкой override нельзя.
 #
-#   ⚠️ Объект ложится в ЧУЖОЙ namespace (managedNamespace), а субъект живёт в
+#   ⚠️ Объект ложится в ЧУЖОЙ namespace (crNamespace.name), а субъект живёт в
 #   СВОЁМ (namespace) — это разные значения, и путать их нельзя: биндинг
 #   указал бы на несуществующий SA, а симптом был бы неотличим от потерянного
 #   --managed-namespace.
 # =============================================================================
-{{- if and .Values.controllerRbac.managedNamespace (ne .Values.controllerRbac.managedNamespace .Values.namespace) }}
+{{- if and .Values.crNamespace.name (ne .Values.crNamespace.name .Values.namespace) }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ .Values.controllerRbac.roleName }}
-  namespace: {{ .Values.controllerRbac.managedNamespace }}
+  namespace: {{ .Values.crNamespace.name }}
 rules:
 {{ toYaml .Values.controllerRbac.rules | indent 2 }}
 ---
@@ -33,7 +33,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ .Values.controllerRbac.roleBindingName }}
-  namespace: {{ .Values.controllerRbac.managedNamespace }}
+  namespace: {{ .Values.crNamespace.name }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
