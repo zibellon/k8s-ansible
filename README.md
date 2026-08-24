@@ -580,6 +580,71 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/gitlab-runner-install.yaml`
 
 ## ---
+## ARGO-ТРОЙКА: argocd + kargo + argo-events. ПОРЯДОК УСТАНОВКИ И ПРАВА
+## ---
+## Правило: сначала ВСЕ ТРИ ставятся БЕЗ стадии cfg (только контроллеры), и лишь потом cfg - в особом порядке
+## Гонять эти плейбуки БЕЗ `--tags` на голом кластере НЕЛЬЗЯ: без тегов отработает и cfg, а он опирается
+## на объекты, которых на этом шаге еще нет. На живом кластере (все уже стоит) - можно без тегов
+## ---
+## ВОЛНА 1 - контроллеры. Порядок ВНУТРИ волны произволен
+##   `argocd-install.yaml      --tags crds,pre,install,post`
+##   `kargo-install.yaml       --tags pre,install,post`
+##   `argo-events-install.yaml --tags crds,pre,pre-cfg,install,post`
+## ---
+## ВОЛНА 2 - cfg. Порядок ОБЯЗАТЕЛЕН
+##   1) `kargo-install.yaml       --tags cfg` - создает namespace Kargo-проектов вместе с самим Project
+##   2) `argo-events-install.yaml --tags cfg` - позиция средняя = соглашение, его namespace создан в волне 1
+##   3) `argocd-install.yaml      --tags cfg` - RoleBinding едет в namespace из шага 1, раньше него нельзя
+##   4) `argocd-restart.yaml` - ОБЯЗАТЕЛЕН. helm upgrade не пересоздает под контроллера, а уже открытые
+##      watch переживают отзыв RBAC: без рестарта ограничение применяется наполовину
+##   5) `cluster-base-install.yaml --tags rbac` - последним, RoleBinding нельзя создать в несуществующем NS
+## ---
+## ПРАВА. Общее для всех трех
+## ---
+## ArgoCD ставится namespace-scoped. Cluster-wide грант у него РОВНО ОДИН и только на чтение:
+## argocd-managed-ns-reader (namespaces get/list/watch) через ClusterRoleBinding
+## Все остальное - ПАРА RoleBinding на КАЖДЫЙ namespace, куда ArgoCD что-либо кладет:
+##   `argocd-managed-deployer` -> SA argocd-application-controller (движок sync, пишет манифесты)
+##   `argocd-managed-ui`       -> SA argocd-server (действия оператора в UI/CLI, логи, exec)
+## Объявляются в `argocd_cfg_rbac_role_bindings` (hosts-vars-override/<cluster>/argocd.yaml)
+## ⚠️ Одного RoleBinding МАЛО: namespace обязан быть еще и в VAULT eso-secret/argocd/clusters/in-cluster,
+##    поле namespaces. Иначе кеш контроллера туда не заглянет - см. раздел cluster-base, Важно_4
+## ---
+## ПРАВА. kargo
+## ---
+## - namespace `kargo` - заводит сам helm-релиз (--create-namespace)
+## - `kargo-cluster-secrets` / `kargo-shared-resources` / `kargo-system-resources` - заводит апстримный чарт
+## - namespace КАЖДОГО проекта - заводит стадия `kargo --tags cfg`, одним релизом с Project
+## - ArgoCD в namespace проекта - пара deployer + ui, ЕСЛИ содержимое проекта едет из git-ops
+## - Role `kargo-viewer` в namespace проекта создает management-controller САМ - руками не заводить
+## - Доступы людей: `kargo_custom_users` (SA в каждом перечисленном namespace; релизный `kargo` ОБЯЗАТЕЛЕН,
+##   без него ListProjects не авторизуется и список проектов пуст) + роли в `kargo_projects`
+## - В namespace `argocd` правá Kargo НЕ нужны: argocd.integrationEnabled=false, связь только через git-ops репо
+## ---
+## ПРАВА. argo-events - ДВА ВАРИАНТА
+## ---
+## ВАРИАНТ 1. ОДИН namespace (`argo-events`). `argo_events_cr_namespace` ПУСТОЙ
+## Апстримный режим: контроллер видит CR в СВОЕМ namespace, весь прикладной контур лежит там же
+## - права контроллера - НЕ нужны. Хватает Role из вендоренного namespace-install.yaml
+## - стадия `pre-cfg` - рендерит НОЛЬ объектов (шаблон под гейтом). Релиз пустой, прогон безвреден
+## - ArgoCD в `argo-events` - пара deployer + ui ОБЯЗАТЕЛЬНА, если EventBus/EventSource/Sensor едут из git-ops
+## - ⚠️ В этом же namespace живет контроллер. deployer тут = коммит в git-ops может положить Pod с
+##   serviceAccountName контроллера. Взвесить, прежде чем выдавать
+## ---
+## ВАРИАНТ 2. ДВА namespace (`argo-events` + `argo-events-cfg`). Так стоит на 1520-tech-prod-1
+## `argo_events_cr_namespace: "argo-events-cfg"` - контроллер смотрит ТУДА ВМЕСТО своего
+## - namespace `argo-events-cfg` - заводит стадия `pre-cfg`. В cluster-base его объявлять НЕЛЬЗЯ (два владельца)
+## - права контроллера в `argo-events-cfg` - Role + RoleBinding, стадия `pre-cfg` СТАВИТ ИХ САМА, автоматически.
+##   Объект ложится в ЧУЖОЙ namespace, а субъект (SA контроллера) остается в СВОЕМ - путать нельзя
+## - ArgoCD в `argo-events-cfg` - пара deployer + ui: весь прикладной контур едет из git-ops
+## - ArgoCD в `argo-events` - НЕ нужен: в namespace контроллера git-ops ничего не кладет
+## - cluster-scoped watch потоков (Promotion, Application) - `argo_events_rbac_cluster_roles` +
+##   `_cluster_role_bindings`. Эти объекты ArgoCD создать не может: вербов на cluster-scoped у него нет
+## - ⚠️ Контроллер видит CR РОВНО В ОДНОМ namespace. Включение чужого = ПЕРЕНОС реконсиляции, а не
+##   расширение: списки CR своего namespace (`argo_events_event_buses` / `_event_sources` / `_sensors`)
+##   обязаны остаться ПУСТЫМИ, иначе объекты там просто не реконсайлятся
+
+## ---
 ## argocd. yaml -> helm
 ## ---
 ## Есть UI, доступен по URL -> требуется Certificate (cert-manager-CRD)
