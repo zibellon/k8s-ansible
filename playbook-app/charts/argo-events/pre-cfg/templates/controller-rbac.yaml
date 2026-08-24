@@ -1,0 +1,45 @@
+# =============================================================================
+# ПРАВА КОНТРОЛЛЕРА В ЧУЖОМ NAMESPACE
+#   Рендерится ТОЛЬКО когда задан controllerRbac.managedNamespace, то есть
+#   когда оператор направил контроллер в другой namespace через
+#   --managed-namespace. Пустое значение — апстримный режим: контроллер
+#   работает в своём namespace, и там ему хватает Role из вендоренного
+#   манифеста.
+#
+#   Объект ОБЯЗАТЕЛЬНЫЙ, поэтому отдельным шаблоном, а не элементом
+#   операторских списков rbacRoles/rbacRoleBindings: без него кэш контроллера
+#   не синхронизируется, controller-runtime не дожидается его за
+#   CacheSyncTimeout (2 минуты) и процесс завершается — под уходит в
+#   CrashLoopBackOff. Отказ отложенный: readiness это healthz.Ping, он отвечает
+#   200 независимо от кэша, поэтому helm --wait успевает счесть установку
+#   успешной. Потерять такой объект правкой override нельзя.
+#
+#   ⚠️ Объект ложится в ЧУЖОЙ namespace (managedNamespace), а субъект живёт в
+#   СВОЁМ (namespace) — это разные значения, и путать их нельзя: биндинг
+#   указал бы на несуществующий SA, а симптом был бы неотличим от потерянного
+#   --managed-namespace.
+# =============================================================================
+{{- if and .Values.controllerRbac.managedNamespace (ne .Values.controllerRbac.managedNamespace .Values.namespace) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.controllerRbac.roleName }}
+  namespace: {{ .Values.controllerRbac.managedNamespace }}
+rules:
+{{ toYaml .Values.controllerRbac.rules | indent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.controllerRbac.roleBindingName }}
+  namespace: {{ .Values.controllerRbac.managedNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.controllerRbac.roleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.controllerRbac.saName }}
+    namespace: {{ .Values.namespace }}
+{{- end }}
