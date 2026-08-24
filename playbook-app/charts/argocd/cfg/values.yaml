@@ -1,10 +1,29 @@
 ---
-# Namespace
+# RBAC, выдаваемый ServiceAccount'ам ArgoCD, — пять независимых списков, по
+# одному на тип. Элемент несёт полную спецификацию объекта; шаблон рендерит
+# его как есть, ничего не вычисляя. labels/annotations опциональны у всех пяти
+# типов: отсутствующие блоки не рендерятся.
+# Ключа namespace в values нет намеренно: объекты уезжают в ЧУЖИЕ namespace, и
+# каждый namespaced-элемент несёт свой собственный.
+# Связей между списками нет: ClusterRole может жить без привязки, биндинг —
+# ссылаться на роль, созданную не здесь.
+#   ServiceAccount:      {name, namespace, labels?, annotations?}
+#   Role:                {name, namespace, labels?, annotations?, rules}
+#   ClusterRole:         {name, labels?, annotations?, rules}
+#   RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
+#   ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
+rbacServiceAccounts: []
+rbacRoles: []
+rbacClusterRoles: []
+rbacRoleBindings: []
+rbacClusterRoleBindings: []
+
+# Namespace объектов git-ops (AppProject и Application живут в namespace
+# контроллера — см. инвариант CLAUDE.md §0).
 namespace: "argocd"
 
 # AppProjects — каждый принимает ПОЛНЫЙ spec (operator-provided); template оборачивает
 # metadata (name, namespace, + опционально annotations — пустой/отсутствует → не добавляется).
-appProjects: []
 # - name: "prj-root"
 #   annotations:                                     # optional; пустой/отсутствует → не добавляется
 #     argocd.argoproj.io/sync-options: Delete=false
@@ -17,10 +36,10 @@ appProjects: []
 #     clusterResourceWhitelist:
 #       - group: "*"
 #         kind: "*"
+appProjects: []
 
 # Applications — каждый принимает ПОЛНЫЙ spec; template добавляет namespace + опционально
 # annotations + finalizers (пустой/отсутствует → не добавляется).
-applications: []
 # - name: "app-of-apps-root"
 #   annotations:                                     # optional; пустой/отсутствует → не добавляется
 #     argocd.argoproj.io/sync-options: Delete=false
@@ -37,6 +56,7 @@ applications: []
 #     syncPolicy:
 #       automated: {prune: true, selfHeal: true, allowEmpty: true}
 #       retry: {limit: 5, backoff: {duration: "20s", factor: 1, maxDuration: "30s"}}
+applications: []
 
 # Custom K8s objects to render (operator-side, default empty)
 extraObjects: []

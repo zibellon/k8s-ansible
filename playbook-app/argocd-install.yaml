@@ -6,18 +6,16 @@
 #   3. argocd/install: ArgoCD manifests via kustomize → Helm
 #   4. accounts-sync: local-accounts reconcile (passwords → argocd-secret + Vault mirror)
 #   5. accounts-distribute: account creds → extra Vault paths
-#   6. argocd/rbac: ClusterRoles + bindings granting ArgoCD rights across cluster namespaces
-#   7. argocd/post: Ingress (UI + RPC) + default AppProject
-#   8. argocd-git-ops/install: AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications
+#   6. argocd/post: Ingress (UI + RPC) + default AppProject
+#   7. argocd/cfg: AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications
 #
 # Usage (tags):
-#   ansible-playbook argocd-install.yaml              # full install (crds + pre + install + rbac + post + gitops)
+#   ansible-playbook argocd-install.yaml              # full install (crds + pre + install + post + cfg)
 #   ansible-playbook argocd-install.yaml --tags crds           # only crds (kubectl apply --server-side)
 #   ansible-playbook argocd-install.yaml --tags pre     # only pre (NetworkPolicies + ESO)
 #   ansible-playbook argocd-install.yaml --tags install
-#   ansible-playbook argocd-install.yaml --tags rbac           # only rbac (ClusterRoles + bindings)
 #   ansible-playbook argocd-install.yaml --tags post           # only post (Ingress)
-#   ansible-playbook argocd-install.yaml --tags gitops         # only git-ops AppProjects + Applications
+#   ansible-playbook argocd-install.yaml --tags cfg             # only cfg AppProjects + Applications
 #   ansible-playbook argocd-install.yaml --tags accounts-sync  # only local-accounts reconcile (rotation entrypoint)
 #   ansible-playbook argocd-install.yaml --tags accounts-distribute  # only creds distribution to extra Vault paths
 #
@@ -241,57 +239,7 @@
       tags: [accounts-distribute]
 
     # =========================================================================
-    # STEP 6: ARGOCD/RBAC (права ArgoCD в кластере: определения + привязки)
-    # =========================================================================
-
-    - name: "[argocd-rbac] Copy chart to remote"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
-      vars:
-        dto_label_name: "argocd-rbac"
-        dto_chart_name: "rbac"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/rbac/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/rbac"
-      tags: [rbac]
-
-    - name: "[argocd-rbac] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
-      vars:
-        dto_label_name: "argocd-rbac"
-        dto_dir: "{{ remote_charts_dir }}/argocd/rbac"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ argocd_rbac_helm_values | to_nice_yaml }}"
-      tags: [rbac]
-
-    - name: "[argocd-rbac] Build kustomize artifact"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
-      vars:
-        dto_label_name: "argocd-rbac"
-        dto_release_name: "argocd-rbac"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/rbac"
-        dto_values_file_path: "{{ remote_charts_dir }}/argocd/rbac/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argocd/rbac-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argocd/rbac-k"
-        dto_patches_list: "{{ argocd_rbac_kustomize_patches }}"
-        dto_target_namespace: "{{ argocd_namespace }}"
-      tags: [rbac]
-
-    - name: "[argocd-rbac] Install or upgrade via Helm (async)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
-      vars:
-        dto_label_name: "argocd-rbac"
-        dto_helm_command: >
-          helm upgrade --install argocd-rbac {{ remote_charts_dir }}/argocd/rbac-k
-          --namespace {{ argocd_namespace }}
-          --create-namespace
-          --cleanup-on-fail
-          --atomic
-          --wait
-          --wait-for-jobs
-          --timeout {{ argocd_rbac_helm_timeout }}
-      tags: [rbac]
-
-    # =========================================================================
-    # STEP 7: ARGOCD/POST (Ingress UI + RPC)
+    # STEP 6: ARGOCD/POST (Ingress UI + RPC)
     # =========================================================================
 
     - name: "[argocd-post] Copy post chart to remote"
@@ -341,10 +289,12 @@
       tags: [post]
 
     # =========================================================================
-    # STEP 8: ARGOCD/GITOPS (AppProjects + Applications from argocd_git_ops_app_projects + argocd_git_ops_applications)
+    # STEP 7: ARGOCD/CFG (RBAC ArgoCD в кластере + git-ops AppProjects и Applications)
+    # Порядок внутри релиза: RBAC — известные helm kind'ы и уходят рано, AppProject
+    # и Application — неизвестные и уходят последними.
     # =========================================================================
 
-    - name: "[argocd-gitops-default-project] Ensure /opt/yaml directory exists"
+    - name: "[argocd-cfg-default-project] Ensure /opt/yaml directory exists"
       file:
         path: /opt/yaml
         state: directory
@@ -352,9 +302,9 @@
       when: argocd_gitops_default_project_update | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      tags: [gitops]
+      tags: [cfg]
 
-    - name: "[argocd-gitops-default-project] Render default-project lockdown manifest"
+    - name: "[argocd-cfg-default-project] Render default-project lockdown manifest"
       copy:
         dest: "/opt/yaml/argocd-default-appproject.yaml"
         mode: "0644"
@@ -362,66 +312,66 @@
       when: argocd_gitops_default_project_update | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      tags: [gitops]
+      tags: [cfg]
 
-    - name: "[argocd-gitops-default-project] Apply default-project lockdown (ArgoCD-owned, raw apply)"
+    - name: "[argocd-cfg-default-project] Apply default-project lockdown (ArgoCD-owned, raw apply)"
       command: kubectl apply -f /opt/yaml/argocd-default-appproject.yaml
       when: argocd_gitops_default_project_update | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      tags: [gitops]
+      tags: [cfg]
 
-    - name: "[argocd-gitops] Copy git-ops install chart to remote"
+    - name: "[argocd-cfg] Copy cfg chart to remote"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
       vars:
-        dto_label_name: "argocd-gitops"
-        dto_chart_name: "gitops"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/gitops/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/gitops"
-      tags: [gitops]
+        dto_label_name: "argocd-cfg"
+        dto_chart_name: "cfg"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argocd/cfg/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/cfg"
+      tags: [cfg]
 
-    - name: "[argocd-gitops] Create values file"
+    - name: "[argocd-cfg] Create values file"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
       vars:
-        dto_label_name: "argocd-gitops"
-        dto_dir: "{{ remote_charts_dir }}/argocd/gitops"
+        dto_label_name: "argocd-cfg"
+        dto_dir: "{{ remote_charts_dir }}/argocd/cfg"
         dto_filename: "values-override.yaml"
-        dto_content: "{{ argocd_gitops_helm_values | to_nice_yaml }}"
-      tags: [gitops]
+        dto_content: "{{ argocd_cfg_helm_values | to_nice_yaml }}"
+      tags: [cfg]
 
-    - name: "[argocd-gitops] Build kustomize artifact"
+    - name: "[argocd-cfg] Build kustomize artifact"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
       vars:
-        dto_label_name: "argocd-gitops"
-        dto_release_name: "argocd-gitops"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/gitops"
-        dto_values_file_path: "{{ remote_charts_dir }}/argocd/gitops/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argocd/gitops-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argocd/gitops-k"
-        dto_patches_list: "{{ argocd_gitops_kustomize_patches }}"
+        dto_label_name: "argocd-cfg"
+        dto_release_name: "argocd-cfg"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argocd/cfg"
+        dto_values_file_path: "{{ remote_charts_dir }}/argocd/cfg/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argocd/cfg-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argocd/cfg-k"
+        dto_patches_list: "{{ argocd_cfg_kustomize_patches }}"
         dto_target_namespace: "{{ argocd_namespace }}"
-      tags: [gitops]
+      tags: [cfg]
 
-    - name: "[argocd-gitops] Install or upgrade via Helm (async)"
+    - name: "[argocd-cfg] Install or upgrade via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
-        dto_label_name: "argocd-gitops"
+        dto_label_name: "argocd-cfg"
         dto_helm_command: >
-          helm upgrade --install argocd-gitops {{ remote_charts_dir }}/argocd/gitops-k
+          helm upgrade --install argocd-cfg {{ remote_charts_dir }}/argocd/cfg-k
           --namespace {{ argocd_namespace }}
           --create-namespace
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ argocd_gitops_helm_timeout }}
-      tags: [gitops]
+          --timeout {{ argocd_cfg_helm_timeout }}
+      tags: [cfg]
 
-    - name: "[argocd-gitops] Get Application status"
+    - name: "[argocd-cfg] Get Application status"
       command: >
         kubectl get application {{ item.name }}
         -n {{ argocd_namespace }}
         -o jsonpath='{.status.sync.status} / {.status.health.status}'
-      register: _local_argocd_gitops_app_status
+      register: _local_argocd_cfg_app_status
       changed_when: false
       failed_when: false
       loop: "{{ argocd_git_ops_applications }}"
@@ -429,17 +379,17 @@
         label: "{{ item.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      tags: [gitops]
+      tags: [cfg]
 
-    - name: "[argocd-gitops] Show Application status"
+    - name: "[argocd-cfg] Show Application status"
       debug:
         msg: "{{ item.item.name }}: {{ item.stdout }}"
-      loop: "{{ _local_argocd_gitops_app_status.results }}"
+      loop: "{{ _local_argocd_cfg_app_status.results }}"
       loop_control:
         label: "{{ item.item.name }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
-      tags: [gitops]
+      tags: [cfg]
 
     # =========================================================================
     # VERIFICATION
@@ -469,7 +419,7 @@
     - name: "[argocd-verify] Installation complete"
       debug:
         msg:
-          - "argocd-pre + argocd + argocd-post + argocd-git-ops + accounts-sync: OK"
+          - "argocd-pre + argocd + argocd-post + argocd-cfg + accounts-sync: OK"
           - "Local-account passwords are stored in Vault mirror: {{ eso_vault_integration_argocd.kv_engine_path }}{{ argocd_accounts_vault_path }}"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true

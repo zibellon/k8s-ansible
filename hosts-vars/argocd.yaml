@@ -399,45 +399,6 @@ all:
     # Helm values для KUSTOMIZE_WRAPPER install phase — содержит только extraObjects wiring
     argocd_install_helm_values:
       extraObjects: "{{ argocd_install_extra_objects }}"
-    # --- PHASE: rbac ---
-    # Права, которые ArgoCD получает в кластере: ClusterRole-определения и
-    # привязки к его ServiceAccount'ам (argocd-application-controller — движок
-    # sync, argocd-server — действия оператора в UI/CLI).
-    # ⚠️ Не путать с argocd-rbac-cm: тот про Casbin-политику ВНУТРИ ArgoCD
-    # (argocd_policy_csv_list, кто из людей что может в UI). Здесь — RBAC
-    # самого Kubernetes: чем ArgoCD распоряжается в кластере.
-    # Правило владения (components.md §17.13): RBAC компонента объявляется в
-    # стадии rbac ЭТОГО компонента; в cluster-base остаются namespace'ы и
-    # объекты без единственного владельца.
-    # ⚠️ Объекты рендерятся в cluster scope и в ЧУЖИЕ namespace, которыми
-    # владеют другие helm-релизы. Совпадение имени роняет ВЕСЬ релиз на
-    # invalid ownership metadata (playbook-conventions.md §17.12) — это штатная
-    # защита, --take-ownership не используется. Приём — префикс-маркер
-    # владельца в имени: argocd-managed-*.
-    # Пять независимых списков, по одному на тип; связей между ними шаблоны не
-    # проверяют. Все пусты: значения — в hosts-vars-override/<cluster>/argocd.yaml.
-    #   ServiceAccount:      {name, namespace, labels?, annotations?}
-    #   Role:                {name, namespace, labels?, annotations?, rules}
-    #   ClusterRole:         {name, labels?, annotations?, rules}
-    #   RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
-    #   ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
-    argocd_rbac_helm_timeout: "3m"
-    argocd_rbac_service_accounts: []
-    argocd_rbac_roles: []
-    argocd_rbac_cluster_roles: []
-    argocd_rbac_role_bindings: []
-    argocd_rbac_cluster_role_bindings: []
-    # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    argocd_rbac_extra_objects: []
-    # Rbac-phase kustomize patches (operator-side customization, default empty)
-    argocd_rbac_kustomize_patches: []
-    argocd_rbac_helm_values:
-      rbacServiceAccounts: "{{ argocd_rbac_service_accounts }}"
-      rbacRoles: "{{ argocd_rbac_roles }}"
-      rbacClusterRoles: "{{ argocd_rbac_cluster_roles }}"
-      rbacRoleBindings: "{{ argocd_rbac_role_bindings }}"
-      rbacClusterRoleBindings: "{{ argocd_rbac_cluster_role_bindings }}"
-      extraObjects: "{{ argocd_rbac_extra_objects }}"
     # --- PHASE: post ---
     argocd_post_helm_timeout: "5m"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
@@ -460,8 +421,11 @@ all:
         scrapeTimeout: "15s"
         labels: {}
       extraObjects: "{{ argocd_post_extra_objects }}"
-    # --- PHASE: gitops ---
-    argocd_gitops_helm_timeout: "3m"
+    # --- PHASE: cfg (RBAC ArgoCD + git-ops AppProjects и Applications) ---
+    # Единый релиз: RBAC и git-ops объекты ставятся вместе, последней стадией.
+    # Порядок внутри релиза безопасен — RBAC известные helm kind'ы и уходят
+    # рано, AppProject и Application неизвестные и уходят последними.
+    argocd_cfg_helm_timeout: "3m"
     # ------
     # ArgoCD git-ops setup — full-spec модель.
     # AppProjects + Applications задаются ПОЛНЫМ spec'ом; chart оборачивает
@@ -471,7 +435,7 @@ all:
     argocd_git_ops_app_projects: []
     argocd_git_ops_applications: []
     # Default AppProject lockdown. ArgoCD АВТО-создаёт `default` project (permissive: source/dest/* = '*')
-    # и НЕ даёт его удалить — только модифицировать (оф. дока). Применяется raw `kubectl apply` в gitops-фазе,
+    # и НЕ даёт его удалить — только модифицировать (оф. дока). Применяется raw `kubectl apply` в фазе cfg,
     # ЕСЛИ непусто (НЕ через helm-чарт — default-project ArgoCD-owned). Дефолт снимает ВСЕ права (deny-by-default);
     # приложения переводи в явные проекты. {} = пропустить (оставить permissive default).
     argocd_gitops_default_project_update:
@@ -490,13 +454,45 @@ all:
         namespaceResourceBlacklist:
           - group: "*"
             kind: "*"
+    # --- RBAC ArgoCD в кластере (часть стадии cfg) ---
+    # Права, которые ArgoCD получает в кластере: ClusterRole-определения и
+    # привязки к его ServiceAccount'ам (argocd-application-controller — движок
+    # sync, argocd-server — действия оператора в UI/CLI).
+    # ⚠️ Не путать с argocd-rbac-cm: тот про Casbin-политику ВНУТРИ ArgoCD
+    # (argocd_policy_csv_list, кто из людей что может в UI). Здесь — RBAC
+    # самого Kubernetes: чем ArgoCD распоряжается в кластере.
+    # Правило владения (components.md §17.13): RBAC компонента объявляется в
+    # стадии cfg ЭТОГО компонента; в cluster-base остаются namespace'ы и
+    # объекты без единственного владельца.
+    # ⚠️ Объекты рендерятся в cluster scope и в ЧУЖИЕ namespace, которыми
+    # владеют другие helm-релизы. Совпадение имени роняет ВЕСЬ релиз на
+    # invalid ownership metadata (playbook-conventions.md §17.12) — это штатная
+    # защита, --take-ownership не используется. Приём — префикс-маркер
+    # владельца в имени: argocd-managed-*.
+    # Пять независимых списков, по одному на тип; связей между ними шаблоны не
+    # проверяют. Все пусты: значения — в hosts-vars-override/<cluster>/argocd.yaml.
+    #   ServiceAccount:      {name, namespace, labels?, annotations?}
+    #   Role:                {name, namespace, labels?, annotations?, rules}
+    #   ClusterRole:         {name, labels?, annotations?, rules}
+    #   RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
+    #   ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
+    argocd_cfg_rbac_service_accounts: []
+    argocd_cfg_rbac_roles: []
+    argocd_cfg_rbac_cluster_roles: []
+    argocd_cfg_rbac_role_bindings: []
+    argocd_cfg_rbac_cluster_role_bindings: []
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    argocd_gitops_extra_objects: []
-    # GitOps-phase kustomize patches (operator-side customization, default empty)
-    argocd_gitops_kustomize_patches: []
-    # GitOps-phase values (AppProjects + Applications chart)
-    argocd_gitops_helm_values:
+    argocd_cfg_extra_objects: []
+    # Cfg-phase kustomize patches (operator-side customization, default empty)
+    argocd_cfg_kustomize_patches: []
+    # Cfg-phase values (RBAC + AppProjects + Applications в одном чарте)
+    argocd_cfg_helm_values:
+      rbacServiceAccounts: "{{ argocd_cfg_rbac_service_accounts }}"
+      rbacRoles: "{{ argocd_cfg_rbac_roles }}"
+      rbacClusterRoles: "{{ argocd_cfg_rbac_cluster_roles }}"
+      rbacRoleBindings: "{{ argocd_cfg_rbac_role_bindings }}"
+      rbacClusterRoleBindings: "{{ argocd_cfg_rbac_cluster_role_bindings }}"
       namespace: "{{ argocd_namespace }}"
       appProjects: "{{ argocd_git_ops_app_projects }}"
       applications: "{{ argocd_git_ops_applications }}"
-      extraObjects: "{{ argocd_gitops_extra_objects }}"
+      extraObjects: "{{ argocd_cfg_extra_objects }}"
