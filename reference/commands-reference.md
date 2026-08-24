@@ -376,7 +376,7 @@ kubectl auth can-i create deployment --as=system:serviceaccount:argocd:argocd-ap
 kubectl auth can-i create namespace  --as=system:serviceaccount:argocd:argocd-application-controller               # no
 ```
 
-**Снятие namespace с ArgoCD.** Убрать пару `RoleBinding` из `argocd_cfg_rbac_role_bindings`, убрать namespace из поля `namespaces` в Vault, прогнать `argocd-install.yaml --tags rbac`. Сам namespace при этом остаётся; удаление записи из `cluster_base_namespaces_list` снесёт его вместе с содержимым (см. [`components.md`](components.md) §17.13).
+**Снятие namespace с ArgoCD.** Убрать пару `RoleBinding` из `argocd_cfg_rbac_role_bindings`, убрать namespace из поля `namespaces` в Vault, прогнать `argocd-install.yaml --tags cfg`. Сам namespace при этом остаётся; удаление записи из `cluster_base_namespaces_list` снесёт его вместе с содержимым (см. [`components.md`](components.md) §17.13).
 
 ---
 
