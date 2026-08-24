@@ -96,7 +96,7 @@ This is a fundamental Ansible limitation, not a project choice. The single user 
 
 10.1 Use `tasks-copy-chart.yaml` — it archives, ships, and extracts. Faster and more reliable than `synchronize` for large charts.
 10.2 `chart_local_src` MUST end with `/` (trailing slash). `chart_remote_dest` MUST NOT end with `/`.
-10.3 `dto_chart_name` MUST equal the phase subdirectory name (`pre`, `post`, `install`, `cr`, `gitops`, `configure`, `postgresql`, `redis`, `minio`, etc.). It is used as the temp archive file name on the operator's machine (e.g. `/tmp/pre.tgz`), not as the Helm release name. Helm release name is composed separately in the helm command as `<c>-<phase>`.
+10.3 `dto_chart_name` MUST equal the phase subdirectory name (`pre`, `post`, `install`, `crds`, `cfg`, `pre-cfg`, `cr`, `rbac`, `namespaces`, `configure`, `postgresql`, `redis`, etc.). It is used as the temp archive file name on the operator's machine (e.g. `/tmp/pre.tgz`), not as the Helm release name. Helm release name is composed separately in the helm command as `<c>-<phase>`.
 
 ## 11. Comment Banner (install playbook template)
 

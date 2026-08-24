@@ -139,9 +139,9 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags prometheus` — for `mon-system` (Prometheus CR)
 - `--tags alertmanager` — for `mon-system` (Alertmanager CR)
 - `--tags node-exporter`, `--tags ksm`, `--tags loki`, `--tags vector`, `--tags grafana` — for `mon-system` (per-workload phases)
-- `--tags cr` — for `vault` (Vault Custom Resource)
+- `--tags operator`, `--tags vault-cr`, `--tags unseal-keys` — for `vault` (bank-vaults operator OCI chart / Vault CR + StatefulSet rollout / wait for unsealer Secret and distribute creds to all managers). Тега `cr` у компонента нет
 - `--tags configure` — for `teleport` (declarative resources)
-- `--tags cfg` — for `argocd` (five `argocd-managed-*` ClusterRoles + the per-namespace RoleBinding pairs + AppProjects + Applications — one release, rebuilt independently of Ingress and Certificate)
+- `--tags cfg` — for `argocd` (five `argocd-managed-*` ClusterRoles + the per-namespace RoleBinding pairs + default-project lockdown + AppProjects + Applications) and for `kargo` (`Project`'ы вместе с их namespace + ServiceAccount'ы людей + ClusterRoles и bindings). Одним релизом, независимо от Ingress и Certificate. ⚠️ Порядок `kargo` → `argocd`: RoleBinding едет в namespace Kargo-проектов, а их создаёт `kargo/cfg`
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
 - `--tags pre-cfg`, `--tags cfg` — for `argo-events` (cr namespace + обязательные права контроллера в нём / операторские ServiceAccounts, Roles и bindings + EventBuses, EventSources, Sensors). ⚠️ `pre-cfg` идёт **перед** `install`, а не после: без namespace и прав в нём контроллер уходит в CrashLoopBackOff, причём отказ отложенный — `helm --wait` успевает счесть install успешным. См. [`components.md`](components.md) §17.11
