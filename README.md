@@ -608,12 +608,13 @@
 ## - `ansible-playbook -i ... playbook-app/argocd-install.yaml --tags install` - синхронизировать аккаунты и политики (ConfigMap)
 ## - `ansible-playbook -i ... playbook-app/argocd-install.yaml --tags accounts-sync` - синхронизировать пароли от аккаунтов в VAULT + k8s.secret
 ## ---
-## `--tags crds, pre, install, accounts-sync, post, gitops`
+## `--tags crds, pre, install, post, cfg` + точечные `accounts-sync`, `accounts-distribute`
+## Стадий `rbac` и `gitops` больше нет - обе слились в единую `cfg`
 ## ---
 ##
 - установка + конфигурация
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml`
-  - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), lockdown default-project (gitops), локальные аккаунты (accounts-sync)
+  - Ставится: argocd, network-policy, ingress (argocd-ui, h2c-grpc), lockdown default-project (cfg), локальные аккаунты (accounts-sync)
   - Локальные аккаунты (login + пароль, включая custom-admin) — декларативно через `argocd_local_accounts` в `hosts-vars-override/`; пароли генерятся в рантайме и кладутся в Vault `eso-secret/argocd/accounts/creds`. Ротация: bump `passwordMtime` у аккаунта → `argocd-install.yaml --tags accounts-sync`.
   - Контракт для внешнего git-ops repo: имена из `argocd_local_accounts` ссылаются в `AppProject.spec.roles[].groups` как есть (строка-username ArgoCD биндит её к роли проекта через Casbin). Custom-admin получает глобальный `role:admin` через `argocd_policy_csv_list` здесь.
 - обновление (версия)
@@ -634,7 +635,7 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml`
 
 ## ---
-## argocd-git-ops. yaml -> helm
+## argocd. стадия `cfg` (бывшие `rbac` + `gitops`). yaml -> helm
 ## ---
 ## Установка всех необходимых ресурсов k8s - для git-ops паттерна
 ## Тут нет запуска компонентов (Deployment, CronJob и так далее)
@@ -654,19 +655,21 @@
 ## ---
 ## Важно_4: последовательность установки
 ## - настроить необходимые конфиги для argo-cd-git-ops (`hosts-vars-override/`)
-## - `argocd_git_ops_apps` (какие проекты и приложения нужно создать)
+## - `argocd_git_ops_app_projects` + `argocd_git_ops_applications` (какие проекты и приложения нужно создать)
 ## - `eso_vault_integration_argocd_extra`
 ## - секреты типа: `git_ops_repo_pattern`/`git_ops_repo_direct`
-## - установить `argocd-git-ops` + проверить что все ресурсы установились корректно
+## - прогнать стадию `cfg` + проверить что все ресурсы установились корректно
 ## - Создать ssh-keys (private + public) + положить их в Vault (ESO - создаст из них k8s.secret)
-## - Создать репозитории (URL которых указаны в `argocd_git_ops_apps`) + добавить к ним deploy-keys (чтобы argocd имел к ним доступ)
+## - Создать репозитории (URL которых указаны в `argocd_git_ops_applications`) + добавить к ним deploy-keys (чтобы argocd имел к ним доступ)
 ## ---
 ## Параметры в `hosts-vars/` + `hosts-vars-override/`
 ## ---
 ##
 - установка + обновление (конфиг)
-  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml --tags gitops`
-  - Ставится: argo-proj + argo-application
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml --tags cfg`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml`
+  - Ставится: ClusterRole `argocd-managed-*` + RoleBinding по namespace, lockdown default-project, AppProject, Application
+  - ⚠️ Порядок: `kargo --tags cfg` -> `argocd --tags cfg`. RoleBinding едет в namespace Kargo-проектов, а их создает стадия kargo/cfg
 
 ## ---
 ## argo-rollouts. yaml -> helm
@@ -913,8 +916,10 @@
 ## ---
 ## Важно_5. Заведение namespace для нового продукта - ДВА шага, и оба до Application в git-ops
 ## ArgoCD ставится namespace-scoped и создавать Namespace не может
-## 1) запись в cluster_base_namespaces_list -> прогон --tags namespaces
-## 2) пара RoleBinding (deployer + ui) в cluster_base_rbac_role_bindings_extra -> прогон --tags rbac
+## 1) запись в cluster_base_namespaces_list -> прогон `cluster-base --tags namespaces`
+## 2) пара RoleBinding (deployer + ui) в `argocd_cfg_rbac_role_bindings` (hosts-vars-override/<cluster>/argocd.yaml)
+##    -> прогон `argocd --tags cfg` + `argocd-restart`. С переходом на стадию cfg права ArgoCD уехали из cluster-base,
+##    namespaced-элементов в stage rbac сейчас нет
 ## Объявлять Namespace в чарте продукта НЕ нужно - ArgoCD его не применит
 ## ---
 ## `--tags namespaces, rbac`
