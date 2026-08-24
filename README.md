@@ -686,18 +686,115 @@
   - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-rollouts-restart.yaml`
 
 ## ---
-## argo-events
+## argo-events. yaml -> helm
 ## ---
+## Компонент отвечает ТОЛЬКО за контроллер и вебхук. Прикладной контур (шина,
+## EventSource, Sensor) может жить либо в том же namespace, либо в ЧУЖОМ.
 ## ---
+## Куда смотрит контроллер — одна переменная `argo_events_cr_namespace`
+## - пусто (дефолт) = апстримный режим, контроллер видит CR в СВОЁМ namespace
+## - задано = к манифесту подмешивается патч `--managed-namespace`, и контроллер
+##   смотрит ТУДА ВМЕСТО своего. Отдельного bool-тумблера нет: непустая строка и
+##   есть признак включения
+## ⚠️ Контроллер видит CR РОВНО В ОДНОМ namespace. Это ограничение продукта:
+##    `--managed-namespace` принимает одно значение и кладётся единственным
+##    ключом в кэш контроллера. Значит включение чужого namespace — это ПЕРЕНОС
+##    реконсиляции, а не расширение: CR в своём namespace перестанут обновляться
 ## ---
+## ⚠️ Порядок стадий: `crds -> pre -> pre-cfg -> install -> post -> cfg`
+##    `pre-cfg` идёт ПЕРЕД `install` не для красоты. На холодном старте без прав
+##    в cr-namespace контроллер НЕ деградирует, а УМИРАЕТ: кэш не
+##    синхронизируется, controller-runtime не дожидается за CacheSyncTimeout
+##    (2 минуты) и процесс завершается -> CrashLoopBackOff.
+##    Отказ ОТЛОЖЕННЫЙ: readiness это healthz.Ping, отвечает 200 независимо от
+##    кэша, поэтому под успевает стать Ready и `helm --wait` считает install
+##    успешным. Падение начинается уже после того, как playbook отрапортовал ОК.
+##    Работает перестановка потому, что субъекты в биндингах Kubernetes НЕ
+##    валидируются: RoleBinding создаётся раньше, чем появится сам SA.
 ## ---
+## Что берётся из cluster-base — НИЧЕГО
+## - namespace `argo-events` компонент создаёт сам (`--create-namespace`)
+## - cr-namespace (если задан) компонент создаёт сам же — стадия `pre-cfg`,
+##   шаблон `charts/argo-events/pre-cfg/templates/cr-namespace.yaml`. Объявлять
+##   его в `cluster-base` НЕЛЬЗЯ: получится второй владелец объекта
+## ---
+## Что кладёт ansible в cr-namespace — РОВНО ДВЕ вещи
+## - права контроллера: Role + RoleBinding, шаблон `charts/argo-events/pre-cfg/
+##   templates/controller-rbac.yaml`, рендерится автоматически при непустом
+##   `argo_events_cr_namespace`. Объект ложится в ЧУЖОЙ namespace, а
+##   субъект (SA контроллера) остаётся в СВОЁМ — путать нельзя
+## - то, что оператор сам объявил в `argo_events_rbac_*` списках
+## Всё остальное там (NetworkPolicy, ESO, PodMonitor, прикладные CR) — НЕ забота
+## компонента. Кладёт владелец содержимого, у нас это git-ops через ArgoCD
+## ---
+- Установка + конфигурация
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-events-install.yaml`
+  - Отдельные стадии: `--tags crds|pre|pre-cfg|install|post|cfg`
+- обновление (версия)
+  - Вендоренный апстрим-манифест — `namespace-install.yaml` тега `vX.Y.Z` МИНУС три CRD
+    - `git -C sources/argo-events show vX.Y.Z:manifests/namespace-install.yaml | sed -n '121,$p' > playbook-app/charts/argo-events/install/templates/install.yaml`
+    - CRD ставит отдельная стадия `crds`. Внутри helm-релиза они означали бы, что
+      `helm uninstall` каскадом снесёт все EventBus/EventSource/Sensor
+  - Обновить `argo_events_version` в `hosts-vars/`
+- EventBus — МАССИВ `argo_events_event_buses`, пустой по умолчанию
+  - Шина не поднимется сама: элемент со спекой заводится в `hosts-vars-override/`
+  - Профиль с пояснениями — закомментированным примером в `hosts-vars/argo-events.yaml`
+  - ⚠️ `streamConfig.replicas` обязан совпадать с числом реплик JetStream:
+    глобальный дефолт в апстримном ConfigMap равен 3, на одной реплике поток не создастся
+  - ⚠️ `maxBytes` — ЧИСЛО В БАЙТАХ. Строка "6Gi" молча станет нулём, а ноль
+    сервер нормализует в -1, то есть в ОТСУТСТВИЕ лимита
+  - ⚠️ streamConfig применяется РОВНО ОДИН РАЗ при создании стрима, и создаёт
+    его первый подключившийся EventSource или Sensor. Менять позже — только
+    удалив стрим вручную
+- есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-events-restart.yaml`
+  - Перекатывает только два Deployment namespace контроллера. Шину, EventSource
+    и Sensor не трогает: их создаёт контроллер, а перекат шины рвёт доставку
+## ---
+## Смена cr-namespace на живом кластере
+## - Если в целевом namespace уже есть объекты от прошлой установки, они могут
+##   принадлежать другому helm-релизу -> стадия `pre-cfg` упрётся в
+##   `invalid ownership metadata`. Сначала снести старый релиз
+##   (`helm -n <ns> uninstall <release>`), потом ставить
+## - Между сносом и стадией `pre-cfg` контроллер останется без прав. Уже
+##   ЗАПУЩЕННЫЙ контроллер это переживает (рефлекторы ретраят, процесс жив),
+##   умирает только холодный старт
 
 ## ---
-## kargo
+## kargo. официальный helm-chart
 ## ---
+## Движок промоушенов. Стадии: `pre -> install -> post -> cfg`
 ## ---
+## Что берётся из cluster-base — НИЧЕГО
+## - namespace `kargo` компонент создаёт сам
+## - namespace КАЖДОГО Kargo-проекта заводит стадия `cfg`, в одном релизе с
+##   самим Project. Обязательную метку `kargo.akuity.io/project: "true"` шаблон
+##   ставит сам; аннотация `kargo.akuity.io/keep-namespace: "true"` берётся из
+##   элемента `kargo_projects` и уезжает и на namespace, и на Project
+## - namespace `kargo-cluster-secrets`, `kargo-shared-resources`,
+##   `kargo-system-resources` создаёт САМ апстримный чарт. В cluster-base их
+##   объявлять НЕЛЬЗЯ — получится второй владелец и релиз упадёт
 ## ---
+## Порядок онбординга нового проекта
+## 1. `kargo --tags cfg` — namespace проекта + Project + права. Role
+##    `kargo-viewer` в namespace проекта создаёт management-controller сам,
+##    вручную не заводить
+## 2. `argocd --tags cfg` — RoleBinding в этот namespace, если проектом
+##    управляет ArgoCD. Порядок kargo -> argocd ОБЯЗАТЕЛЕН: namespace, в который
+##    ArgoCD получает права, создаёт стадия kargo/cfg
 ## ---
+- Установка + конфигурация
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-install.yaml`
+  - Отдельные стадии: `--tags pre|install|post|cfg`
+- Проекты и доступы — декларативно в `hosts-vars-override/`
+  - `kargo_projects` — список проектов
+  - `kargo_custom_users` — доступы. У Kargo НЕТ роли по умолчанию: права
+    выдаются аннотацией с claims на любом ServiceAccount
+- обновление (версия)
+  - Обновить версию чарта в `hosts-vars/kargo.yaml`
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-install.yaml`
+- есть отдельный playbook для перезапуска
+  - `ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-restart.yaml`
 
 
 ## ---
