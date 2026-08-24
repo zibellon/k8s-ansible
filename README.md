@@ -886,13 +886,21 @@
 ## cluster-base
 ## namespaces + RBAC. yaml -> helm
 ## ---
-## Глобальный компонент: заводит namespace'ы кластера и выдает в них права. Не привязан к приложению
+## Глобальный компонент: заводит ПРОДУКТОВЫЕ namespace'ы кластера и выдает в них права. Не привязан к приложению
 ## Нет workload, нет ESO, нет ingress -> поэтому два stage (namespaces + rbac), а не три фазы (pre + install + post)
 ## Два helm-релиза в двух своих namespace: cluster-base-namespaces (ns=cluster-namespaces) + cluster-base-rbac (ns=cluster-rbac)
 ## Объекты живут в ЧУЖИХ namespace или в cluster scope. Сам компонент своих подов не имеет
 ## Шесть списков объектов, по одному на тип: namespaces, ServiceAccount, Role, ClusterRole, RoleBinding, ClusterRoleBinding
 ## Элемент списка = ПОЛНАЯ спецификация объекта. Шаблон рендерит его как есть, ничего не вычисляя
 ## Базовые списки в hosts-vars/cluster-base.yaml ПУСТЫЕ. Все объекты задаются в hosts-vars-override/<cluster>/
+## ---
+## ⚠️ В stage `namespaces` по задумке лежат ТОЛЬКО ПРОДУКТОВЫЕ namespace - те, в которые раскатываются приложения
+## Никаких СИСТЕМНЫХ namespace тут быть не должно: свои системные namespace заводят САМИ компоненты
+##   - `argo-events-cfg` (cr-namespace) -> стадия `argo-events --tags pre-cfg`
+##   - namespace каждого Kargo-проекта -> стадия `kargo --tags cfg`, одним релизом с самим Project
+##   - `kargo-cluster-secrets` / `kargo-shared-resources` / `kargo-system-resources` -> сам апстримный чарт kargo
+##   - namespace самих компонентов (argocd, kargo, argo-events, ...) -> их же helm-релиз (`--create-namespace`)
+## Объявить такой namespace еще и здесь = ДВА владельца одного объекта -> stage падает на invalid ownership metadata
 ## ---
 ## Важно_1. Порядок stage. namespaces - до продуктов, rbac - после установки компонентов, чьи namespace он трогает
 ## RoleBinding нельзя создать в несуществующем namespace. Поэтому rbac идет последним (traefik-lb, seaweedfs, argocd, argo-events)
