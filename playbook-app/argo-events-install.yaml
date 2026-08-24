@@ -3,29 +3,31 @@
 # Steps:
 #   1. argo-events/crds:    CustomResourceDefinitions (kubectl apply --server-side)
 #   2. argo-events/pre:     NetworkPolicies + cert-manager Issuer + ESO resources
-#   3. argo-events/rbac:    ServiceAccounts + Roles + bindings for EventSource/Sensor
-#                           pods, плюс права контроллера в managed-namespace
+#   3. argo-events/pre-cfg: managed namespace + обязательные права контроллера в нём
 #   4. argo-events/install: vendored upstream manifests v1.9.11 — controller,
 #                           RBAC and the validating admission webhook
-#   5. argo-events/cr:      EventBus + EventSources + Sensors
-#   6. argo-events/post:    PodMonitors
+#   5. argo-events/post:    PodMonitors
+#   6. argo-events/cfg:     операторский RBAC (SA + Roles + bindings для
+#                           EventSource и Sensor) + EventBus + EventSources + Sensors
 #
-# ⚠️ ПОРЯДОК rbac ПЕРЕД install ОБЯЗАТЕЛЕН, если задан argo_events_managed_namespace.
-#    Контроллер стартует уже нацеленным на чужой namespace; без прав там его кэш
-#    не синхронизируется, controller-runtime не дожидается за CacheSyncTimeout
+# ⚠️ ПОРЯДОК pre-cfg ПЕРЕД install ОБЯЗАТЕЛЕН, если argo_events_managed_namespace
+#    задан и не равен argo_events_namespace. Контроллер стартует уже нацеленным на
+#    чужой namespace; без самого namespace и без прав в нём кэш контроллера не
+#    синхронизируется, controller-runtime не дожидается за CacheSyncTimeout
 #    (2 минуты) и процесс завершается — под уходит в CrashLoopBackOff. Отказ
 #    ОТЛОЖЕННЫЙ: readiness это healthz.Ping, отвечает 200 независимо от кэша,
 #    поэтому helm --wait успевает счесть install успешным, а падение начинается
-#    уже после него.
+#    уже после него. Почему стадия отдельная, а не часть install — в шапке
+#    charts/argo-events/pre-cfg/templates/managed-namespace.yaml.
 #
 # Usage (tags):
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-install.yaml
 #   ansible-playbook ... --tags crds
 #   ansible-playbook ... --tags pre
-#   ansible-playbook ... --tags rbac
+#   ansible-playbook ... --tags pre-cfg
 #   ansible-playbook ... --tags install
-#   ansible-playbook ... --tags cr
 #   ansible-playbook ... --tags post
+#   ansible-playbook ... --tags cfg
 #
 # Prerequisites:
 #   - Cilium installed (NetworkPolicy enforcement)
@@ -172,55 +174,60 @@
       tags: [pre]
 
     # =========================================================================
-    # STEP 3: RBAC (ServiceAccounts + Roles + bindings + права контроллера)
-    # Идёт перед cr: Sensor ссылается на ServiceAccount по имени.
+    # STEP 3: PRE-CFG (managed namespace + обязательные права контроллера)
+    # Идёт ПЕРЕД install и БЕЗ kustomize namespace-трансформера: трансформер
+    # переименовал бы объект Namespace и переписал чужой metadata.namespace у
+    # Role/RoleBinding. Положить это в install или в cfg нельзя — см. шапку
+    # charts/argo-events/pre-cfg/templates/managed-namespace.yaml.
+    # При пустом argo_events_managed_namespace или его равенстве
+    # argo_events_namespace стадия рендерит ноль объектов.
     # =========================================================================
 
-    - name: "[argo-events-rbac] Copy chart to remote"
+    - name: "[argo-events-pre-cfg] Copy chart to remote"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
       vars:
-        dto_label_name: "argo-events-rbac"
-        dto_chart_name: "rbac"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/rbac/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/rbac"
-      tags: [rbac]
+        dto_label_name: "argo-events-pre-cfg"
+        dto_chart_name: "pre-cfg"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/pre-cfg/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/pre-cfg"
+      tags: [pre-cfg]
 
-    - name: "[argo-events-rbac] Create values file"
+    - name: "[argo-events-pre-cfg] Create values file"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
       vars:
-        dto_label_name: "argo-events-rbac"
-        dto_dir: "{{ remote_charts_dir }}/argo-events/rbac"
+        dto_label_name: "argo-events-pre-cfg"
+        dto_dir: "{{ remote_charts_dir }}/argo-events/pre-cfg"
         dto_filename: "values-override.yaml"
-        dto_content: "{{ argo_events_rbac_helm_values | to_nice_yaml }}"
-      tags: [rbac]
+        dto_content: "{{ argo_events_pre_cfg_helm_values | to_nice_yaml }}"
+      tags: [pre-cfg]
 
-    - name: "[argo-events-rbac] Build kustomize artifact"
+    - name: "[argo-events-pre-cfg] Build kustomize artifact"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
       vars:
-        dto_label_name: "argo-events-rbac"
-        dto_release_name: "argo-events-rbac"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/rbac"
-        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/rbac/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/rbac-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/rbac-k"
-        dto_patches_list: "{{ argo_events_rbac_kustomize_patches }}"
+        dto_label_name: "argo-events-pre-cfg"
+        dto_release_name: "argo-events-pre-cfg"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/pre-cfg"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/pre-cfg/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/pre-cfg-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/pre-cfg-k"
+        dto_patches_list: "{{ argo_events_pre_cfg_kustomize_patches }}"
         dto_target_namespace: "{{ argo_events_namespace }}"
-      tags: [rbac]
+      tags: [pre-cfg]
 
-    - name: "[argo-events-rbac] Install via Helm (async)"
+    - name: "[argo-events-pre-cfg] Install via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
-        dto_label_name: "argo-events-rbac"
+        dto_label_name: "argo-events-pre-cfg"
         dto_helm_command: >
-          helm upgrade --install argo-events-rbac {{ remote_charts_dir }}/argo-events/rbac-k
+          helm upgrade --install argo-events-pre-cfg {{ remote_charts_dir }}/argo-events/pre-cfg-k
           --namespace {{ argo_events_namespace }}
           --create-namespace
           --cleanup-on-fail
           --atomic
           --wait
           --wait-for-jobs
-          --timeout {{ argo_events_rbac_helm_timeout }}
-      tags: [rbac]
+          --timeout {{ argo_events_pre_cfg_helm_timeout }}
+      tags: [pre-cfg]
 
     # =========================================================================
     # STEP 4: INSTALL (vendored upstream manifest)
@@ -287,68 +294,7 @@
       tags: [install]
 
     # =========================================================================
-    # STEP 5: CR (EventBus + EventSources + Sensors)
-    # StatefulSet шины создаёт контроллер асинхронно после появления CR —
-    # tasks-wait-rollout.yaml ретраит до его появления.
-    # =========================================================================
-
-    - name: "[argo-events-cr] Copy chart to remote"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
-      vars:
-        dto_label_name: "argo-events-cr"
-        dto_chart_name: "cr"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/cr/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/cr"
-      tags: [cr]
-
-    - name: "[argo-events-cr] Create values file"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
-      vars:
-        dto_label_name: "argo-events-cr"
-        dto_dir: "{{ remote_charts_dir }}/argo-events/cr"
-        dto_filename: "values-override.yaml"
-        dto_content: "{{ argo_events_cr_helm_values | to_nice_yaml }}"
-      tags: [cr]
-
-    - name: "[argo-events-cr] Build kustomize artifact"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
-      vars:
-        dto_label_name: "argo-events-cr"
-        dto_release_name: "argo-events-cr"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/cr"
-        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/cr/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/cr-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/cr-k"
-        dto_patches_list: "{{ argo_events_cr_kustomize_patches }}"
-        dto_target_namespace: "{{ argo_events_namespace }}"
-      tags: [cr]
-
-    - name: "[argo-events-cr] Install via Helm (async)"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
-      vars:
-        dto_label_name: "argo-events-cr"
-        dto_helm_command: >
-          helm upgrade --install argo-events-cr {{ remote_charts_dir }}/argo-events/cr-k
-          --namespace {{ argo_events_namespace }}
-          --create-namespace
-          --cleanup-on-fail
-          --atomic
-          --wait
-          --wait-for-jobs
-          --timeout {{ argo_events_cr_helm_timeout }}
-      tags: [cr]
-
-    - name: "[argo-events-cr] Wait for rollout"
-      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
-      vars:
-        dto_label_name: "argo-events-cr"
-        dto_rollout_namespace: "{{ argo_events_namespace }}"
-        dto_rollout_timeout: "{{ argo_events_cr_rollout_timeout }}"
-        dto_rollout_resources_list: "{{ argo_events_cr_rollout_resources }}"
-      tags: [cr]
-
-    # =========================================================================
-    # STEP 6: POST (PodMonitors)
+    # STEP 5: POST (PodMonitors)
     # =========================================================================
 
     - name: "[argo-events-post] Copy chart to remote"
@@ -396,6 +342,68 @@
           --wait-for-jobs
           --timeout {{ argo_events_post_helm_timeout }}
       tags: [post]
+
+    # =========================================================================
+    # STEP 6: CFG (операторский RBAC + прикладные CR)
+    # Всё, что не контроллер. Идёт последним: EventSource и Sensor ссылаются на
+    # ServiceAccount по имени, а StatefulSet шины создаёт контроллер асинхронно
+    # после появления CR — tasks-wait-rollout.yaml ретраит до его появления.
+    # =========================================================================
+
+    - name: "[argo-events-cfg] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-events-cfg"
+        dto_chart_name: "cfg"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-events/cfg/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/cfg"
+      tags: [cfg]
+
+    - name: "[argo-events-cfg] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argo-events-cfg"
+        dto_dir: "{{ remote_charts_dir }}/argo-events/cfg"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argo_events_cfg_helm_values | to_nice_yaml }}"
+      tags: [cfg]
+
+    - name: "[argo-events-cfg] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argo-events-cfg"
+        dto_release_name: "argo-events-cfg"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-events/cfg"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-events/cfg/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-events/cfg-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-events/cfg-k"
+        dto_patches_list: "{{ argo_events_cfg_kustomize_patches }}"
+        dto_target_namespace: "{{ argo_events_namespace }}"
+      tags: [cfg]
+
+    - name: "[argo-events-cfg] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argo-events-cfg"
+        dto_helm_command: >
+          helm upgrade --install argo-events-cfg {{ remote_charts_dir }}/argo-events/cfg-k
+          --namespace {{ argo_events_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argo_events_cfg_helm_timeout }}
+      tags: [cfg]
+
+    - name: "[argo-events-cfg] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "argo-events-cfg"
+        dto_rollout_namespace: "{{ argo_events_namespace }}"
+        dto_rollout_timeout: "{{ argo_events_cfg_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ argo_events_cfg_rollout_resources }}"
+      tags: [cfg]
 
     # =========================================================================
     # VERIFICATION

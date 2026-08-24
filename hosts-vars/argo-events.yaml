@@ -280,46 +280,35 @@ all:
       extraObjects: "{{ argo_events_install_extra_objects }}"
 
     # ------
-    # PHASE: rbac (права для ServiceAccount'ов источников и сенсоров)
-    # Пять независимых сырых списков; связей между ними нет. EventSource типа
-    # resource требует SA с list/watch на наблюдаемый ресурс, Sensor с k8s- или
-    # argoWorkflow-триггером — SA с create/update на целевой ресурс.
-    # SA:                  {name, annotations?, labels?}
-    # Role / ClusterRole:  {name, rules}
-    # RoleBinding:         {name, namespace, roleRef, subjects}
-    # ClusterRoleBinding:  {name, roleRef, subjects}
-    #
-    # ⚠️ ПУСТЫ НАМЕРЕННО — по той же причине, что argo_events_event_sources
-    # и argo_events_sensors ниже: права заводятся рядом со своим потоком, в
-    # git-ops продукте deploy-notify. Здесь остаётся только каркас фазы.
+    # PHASE: pre-cfg (managed namespace + обязательные права контроллера в нём)
+    # Стадия идёт ПЕРЕД install и без kustomize namespace-трансформера: он
+    # переименовал бы объект Namespace и переписал чужой metadata.namespace.
+    # Положить это ПОСЛЕ install тоже нельзя — без прав в managed-namespace
+    # кэш контроллера не синхронизируется и процесс завершается за
+    # CacheSyncTimeout, причём отказ отложенный: readiness это healthz.Ping.
+    # При пустом argo_events_managed_namespace или его равенстве
+    # argo_events_namespace стадия рендерит ноль объектов.
     # ------
-    argo_events_rbac_helm_timeout: "5m"
-    argo_events_rbac_service_accounts: []
-    argo_events_rbac_roles: []
-    argo_events_rbac_cluster_roles: []
-    argo_events_rbac_role_bindings: []
-    argo_events_rbac_cluster_role_bindings: []
-    argo_events_rbac_extra_objects: []
-    argo_events_rbac_kustomize_patches: []
-    argo_events_rbac_helm_values:
+    argo_events_pre_cfg_helm_timeout: "5m"
+    # Метки и аннотации объекта Namespace. Пустые не рендерятся.
+    argo_events_managed_namespace_labels: {}
+    argo_events_managed_namespace_annotations: {}
+    argo_events_pre_cfg_extra_objects: []
+    argo_events_pre_cfg_kustomize_patches: []
+    argo_events_pre_cfg_helm_values:
       namespace: "{{ argo_events_namespace }}"
-      # Права контроллера в managed-namespace. При пустом managedNamespace чарт
-      # не рендерит ничего — это и есть апстримный режим.
       controllerRbac:
         managedNamespace: "{{ argo_events_managed_namespace }}"
         saName: "{{ argo_events_controller_sa_name }}"
         roleName: "{{ argo_events_controller_managed_role_name }}"
         roleBindingName: "{{ argo_events_controller_managed_role_binding_name }}"
         rules: "{{ argo_events_controller_managed_role_rules }}"
-      rbacServiceAccounts: "{{ argo_events_rbac_service_accounts }}"
-      rbacRoles: "{{ argo_events_rbac_roles }}"
-      rbacClusterRoles: "{{ argo_events_rbac_cluster_roles }}"
-      rbacRoleBindings: "{{ argo_events_rbac_role_bindings }}"
-      rbacClusterRoleBindings: "{{ argo_events_rbac_cluster_role_bindings }}"
-      extraObjects: "{{ argo_events_rbac_extra_objects }}"
+      managedNamespaceLabels: "{{ argo_events_managed_namespace_labels }}"
+      managedNamespaceAnnotations: "{{ argo_events_managed_namespace_annotations }}"
+      extraObjects: "{{ argo_events_pre_cfg_extra_objects }}"
 
     # ------
-    # PHASE: cr (EventBus + EventSource + Sensor)
+    # PHASE: cfg (операторский RBAC + EventBus + EventSource + Sensor)
     # ------
     # Шины этого namespace. Список: несколько шин в одном namespace допустимы,
     # EventSource и Sensor выбирают свою по имени через spec.eventBusName
@@ -391,21 +380,39 @@ all:
     # Если понадобился новый поток — он заводится в git-ops, а не здесь.
     argo_events_event_sources: []
     argo_events_sensors: []
-    argo_events_cr_helm_timeout: "5m"
-    argo_events_cr_rollout_timeout: "600s"
+    # Пять независимых сырых списков операторских RBAC-объектов; связей между
+    # ними нет. EventSource типа resource требует SA с list/watch на
+    # наблюдаемый ресурс, Sensor с k8s- или argoWorkflow-триггером — SA с
+    # create/update на целевой ресурс.
+    # SA:                  {name, annotations?, labels?}
+    # Role / ClusterRole:  {name, rules}
+    # RoleBinding:         {name, namespace, roleRef, subjects}
+    # ClusterRoleBinding:  {name, roleRef, subjects}
+    argo_events_rbac_service_accounts: []
+    argo_events_rbac_roles: []
+    argo_events_rbac_cluster_roles: []
+    argo_events_rbac_role_bindings: []
+    argo_events_rbac_cluster_role_bindings: []
+    argo_events_cfg_helm_timeout: "5m"
+    argo_events_cfg_rollout_timeout: "600s"
     # StatefulSet шины создаёт контроллер асинхронно после появления CR —
     # tasks-wait-rollout.yaml ретраит до его появления. Одна запись на каждую
     # шину из argo_events_event_buses: "statefulset.apps/eventbus-<name>-js".
     # Пусто, пока шин нет: ждать нечего.
-    argo_events_cr_rollout_resources: []
-    argo_events_cr_extra_objects: []
-    argo_events_cr_kustomize_patches: []
-    argo_events_cr_helm_values:
+    argo_events_cfg_rollout_resources: []
+    argo_events_cfg_extra_objects: []
+    argo_events_cfg_kustomize_patches: []
+    argo_events_cfg_helm_values:
       namespace: "{{ argo_events_namespace }}"
+      rbacServiceAccounts: "{{ argo_events_rbac_service_accounts }}"
+      rbacRoles: "{{ argo_events_rbac_roles }}"
+      rbacClusterRoles: "{{ argo_events_rbac_cluster_roles }}"
+      rbacRoleBindings: "{{ argo_events_rbac_role_bindings }}"
+      rbacClusterRoleBindings: "{{ argo_events_rbac_cluster_role_bindings }}"
       eventBuses: "{{ argo_events_event_buses }}"
       eventSources: "{{ argo_events_event_sources }}"
       sensors: "{{ argo_events_sensors }}"
-      extraObjects: "{{ argo_events_cr_extra_objects }}"
+      extraObjects: "{{ argo_events_cfg_extra_objects }}"
 
     # ------
     # PHASE: post (PodMonitor'ы)
