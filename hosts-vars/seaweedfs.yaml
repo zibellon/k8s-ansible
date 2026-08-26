@@ -363,7 +363,7 @@ all:
     seaweedfs_helm_url: "https://seaweedfs.github.io/seaweedfs/helm"
     seaweedfs_helm_repo_name: "seaweedfs"
     seaweedfs_helm_chart_name: "seaweedfs"
-    seaweedfs_helm_chart_version: "4.41.0"
+    seaweedfs_helm_chart_version: "4.44.0"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     seaweedfs_install_extra_objects: []
     # Install-phase kustomize patches (operator-side customization, default empty)
@@ -389,6 +389,27 @@ all:
     # между рестартами. Отдельного knob'а под телеметрию в чарте НЕТ — только extraArgs.
     seaweedfs_helm_values_master_extra_args:
       - "-telemetry=false"
+    # S3: extra CLI-флаги для `weed s3`. Чарт рендерит их в command
+    # (templates/s3/s3-deployment.yaml — range .Values.s3.extraArgs), сразу после
+    # -port.iceberg. Активный default (не []) — применяется на всех кластерах.
+    #   -port.lance=0        — с 4.43 (upstream #10841) `weed s3` безусловно поднимает
+    #                          Lance Namespace REST-каталог на 9101 (дефолт флага 9101 > 0):
+    #                          реестр неймспейсов/таблиц формата Lance, аналог Iceberg REST
+    #                          catalog на 8181. Чарт флаг не передаёт, containerPort и Service
+    #                          на него не заводит, ServiceMonitor его не видит. Потребителей
+    #                          Lance нет; 0 гасит листенер. Учти: аутентификация там не
+    #                          спасает — при пустом -iam.config DefaultEffect="Allow", и
+    #                          lance/server.go Auth на неуспехе ПРОПУСКАЕТ запрос.
+    #   -autoCreateBucket=false — с 4.42 неявное создание бакета при upload'е (для admin-
+    #                          identity) стало флагом с дефолтом true. false оставляет
+    #                          единственный путь появления бакета — bucket-sync.
+    # ВНИМАНИЕ: оба флага существуют только с 4.43 / 4.42 соответственно. На более старом
+    # образе неизвестный флаг обрывает разбор (flag.FlagSet) и под НЕ стартует — значение
+    # нельзя выкатывать раньше, чем поедет соответствующая версия. При откате чарта ниже
+    # 4.43 этот список надо опустошить тем же прогоном.
+    seaweedfs_helm_values_s3_extra_args:
+      - "-port.lance=0"
+      - "-autoCreateBucket=false"
     # Filer: -maxMB — размер чанка при chunked-записи. Бинарный дефолт weed = 4
     # (weed/command/filer.go: "split files larger than the limit"); комментарий
     # "default 32" в upstream values.yaml НЕВЕРЕН.
@@ -561,6 +582,8 @@ all:
       enableAuth: true
       existingConfigSecret: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
       resources: "{{ seaweedfs_helm_values_s3_resources }}"
+      # Extra CLI-флаги gateway'я — см. knob выше.
+      extraArgs: "{{ seaweedfs_helm_values_s3_extra_args }}"
     seaweedfs_helm_values_admin:
       enabled: true
       replicas: "{{ seaweedfs_helm_values_admin_replica_count }}"
