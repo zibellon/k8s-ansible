@@ -451,15 +451,27 @@ all:
       - deployment.apps/kargo-webhooks-server
       - deployment.apps/kargo-external-webhooks-server
     # Helm chart source (переопределить в hosts-vars-override/ для airgap).
-    # ВНИМАНИЕ: v1.11 ещё НЕ выпущен (в реестре только 1.11.0-rc.*).
-    # 1.10.9 — последний GA. В 1.10.9 у Kargo нет Prometheus-метрик вообще.
+    # Мы на линии 1.10.x. 1.10.11 к 1.10.9 — это ТОЛЬКО смена образа: дерево
+    # charts/ у этих тегов байт-в-байт совпадает, отличаются лишь version и
+    # appVersion в Chart.yaml, и рендер с нашими values даёт дельту только в
+    # метках helm.sh/chart и app.kubernetes.io/version. Зато 1.10.11 закрывает
+    # GHSA-gp97-g7w8-w8c7: в 1.10.9 и 1.10.10 refresh-эндпоинты не проверяют
+    # авторизацию вообще, и любой аутентифицированный принципал (включая
+    # read-only) может форсировать refresh любого Stage/Warehouse/Project.
+    # Линия 1.11 выпущена (1.11.3 — актуальная) и приносит метрики Prometheus,
+    # которых на 1.10.x нет вовсе, но переход туда не косметический: там
+    # allowTags/ignoreTags у подписок Warehouse становятся ЖЁСТКОЙ ошибкой,
+    # переписан авто-промоушен, и оттуда пропал generic_escalation.go, который
+    # на линии 1.10 есть. Разбор — в reference/components.md §17.9.
     kargo_helm_is_oci: true
     kargo_helm_url: "oci://ghcr.io/akuity/kargo-charts/kargo"
     kargo_helm_repo_name: ""
     kargo_helm_chart_name: ""
-    kargo_helm_chart_version: "1.10.9"
-    # Тег образа пиним явно, не полагаясь на Chart.AppVersion.
-    kargo_image_tag: "v1.10.9"
+    kargo_helm_chart_version: "1.10.11"
+    # Тег образа пиним явно, не полагаясь на Chart.AppVersion. ДВИГАТЬ ТОЛЬКО В
+    # ПАРЕ с kargo_helm_chart_version — с 1.11 расхождение не ловится ничем (см.
+    # assert в playbook-app/kargo-install.yaml).
+    kargo_image_tag: "v1.10.11"
     kargo_api_replica_count: 1
     # Реплики только у stateless-workload'ов. У controller и
     # management-controller в чарте 1.10.9 replicas: 1 захардкожен, leader
