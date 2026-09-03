@@ -51,6 +51,24 @@
       run_once: true
       tags: [always]
 
+    # Чарт и тег образа — две независимые переменные, и с 1.11 их расхождение
+    # НЕ ловится ничем: чарт 1.11+ рендерит пробы api как httpGet /healthz, а
+    # этот роут есть только в образе 1.11+. У образа 1.10.x любой неизвестный
+    # путь уходит в SPA-заглушку, которая отдаёт index.html с кодом 200 — все
+    # три пробы вечно зелёные, helm --atomic --wait доволен, rollout status
+    # доволен, а health-gating у API выключен. Обратная пара падает громко.
+    # Поэтому связь проверяется здесь, а не постфактум.
+    - name: "[kargo-install] Assert chart version and image tag match"
+      assert:
+        that:
+          - kargo_image_tag == 'v' ~ kargo_helm_chart_version
+        fail_msg: >-
+          kargo_image_tag ({{ kargo_image_tag }}) must be 'v' + kargo_helm_chart_version
+          ({{ kargo_helm_chart_version }}). Bumping one without the other is not caught by
+          helm, --atomic or rollout status.
+      run_once: true
+      tags: [always]
+
     - name: "[kargo-pre-check] Validate target"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
       vars:
