@@ -439,10 +439,20 @@ all:
     # ------
     # PHASE: install (upstream chart из OCI)
     # ------
-    kargo_install_helm_timeout: "10m"
-    kargo_install_rollout_timeout: "600s"
+    # Таймауты рассчитаны на худший случай раската, а не на нормальный: с 1.11
+    # у external-webhooks-server появился startupProbe (initialDelay 10s,
+    # failureThreshold 30, period 10s) — это 310 с бюджета НА ПОД, а при двух
+    # репликах и дефолтной стратегии (maxUnavailable=0, maxSurge=1) поды едут
+    # строго по одному, то есть 620 с на один Deployment. Прежние 600 с/10m
+    # обрезали этот случай, причём progressDeadlineSeconds нигде не задан и
+    # дефолтные 600 с срабатывали в ту же секунду — падение становилось
+    # неотличимо по причине. На здоровом образе реальная готовность — секунды.
+    kargo_install_helm_timeout: "15m"
+    # Таймаут применяется kubectl'ом К КАЖДОМУ ресурсу отдельно (см.
+    # tasks-wait-rollout.yaml), поэтому бюджет тоже подушный, не суммарный.
+    kargo_install_rollout_timeout: "900s"
     # Restart-phase rollout wait timeout (kargo-restart.yaml)
-    kargo_install_restart_rollout_timeout: "600s"
+    kargo_install_restart_rollout_timeout: "900s"
     # Deployments waited on after install
     kargo_install_rollout_resources:
       - deployment.apps/kargo-api
@@ -451,31 +461,43 @@ all:
       - deployment.apps/kargo-webhooks-server
       - deployment.apps/kargo-external-webhooks-server
     # Helm chart source (переопределить в hosts-vars-override/ для airgap).
-    # Мы на линии 1.10.x. 1.10.11 к 1.10.9 — это ТОЛЬКО смена образа: дерево
-    # charts/ у этих тегов байт-в-байт совпадает, отличаются лишь version и
-    # appVersion в Chart.yaml, и рендер с нашими values даёт дельту только в
-    # метках helm.sh/chart и app.kubernetes.io/version. Зато 1.10.11 закрывает
-    # GHSA-gp97-g7w8-w8c7: в 1.10.9 и 1.10.10 refresh-эндпоинты не проверяют
-    # авторизацию вообще, и любой аутентифицированный принципал (включая
-    # read-only) может форсировать refresh любого Stage/Warehouse/Project.
-    # Линия 1.11 выпущена (1.11.3 — актуальная) и приносит метрики Prometheus,
-    # которых на 1.10.x нет вовсе, но переход туда не косметический: там
-    # allowTags/ignoreTags у подписок Warehouse становятся ЖЁСТКОЙ ошибкой,
-    # переписан авто-промоушен, и оттуда пропал generic_escalation.go, который
-    # на линии 1.10 есть. Разбор — в reference/components.md §17.9.
+    # Линия 1.11. Переход 1.10.11 -> 1.11.3 сделан после проверки трёх гейтов на
+    # живом кластере, и ни один из них не был формальностью:
+    #   1) allowTags/ignoreTags у подписок Warehouse с v1.11.0 — ЖЁСТКАЯ ошибка,
+    #      обрывающая discovery ВСЕГО склада (admission её не ловит: subscriptions
+    #      в CRD объявлены x-kubernetes-preserve-unknown-fields). Проверено: все
+    #      подписки уже на allowTagsRegexes и в кластере, и в git-ops.
+    #   2) Удалён guard, косвенно державший вручную «приколотые» Stage, а hold'ы
+    #      ему на замену на момент апгрейда пусты по определению. Проверено: все
+    #      авто-Stage стоят на своём кандидате, сдвигать нечего.
+    #   3) Одобренный Freight из origin, который Stage не запрашивает, перестаёт
+    #      действовать. Проверено: таких нет.
+    # ⚠️ ПРИ СЛЕДУЮЩЕМ АПГРЕЙДЕ гейт (1) проверять заново — Warehouse'ы живут в
+    # git-ops, а не здесь, и поля исчезнут только в v1.13.0.
+    # Что 1.11 даёт: git ls-remote коротко замыкает неизменившийся remote (у нас
+    # все склады опрашиваются по интервалу — external-webhooks наружу не
+    # публикуется), стабы Argo Rollouts подтянуты к v1.9.0 под наш v1.9.1,
+    # починен пост-логин редирект OIDC, появились метрики Prometheus (порт 9090,
+    # все гейты по умолчанию выключены).
+    # Чем платим: из линии 1.11 пропал pkg/server/rbac/generic_escalation.go,
+    # который есть на 1.10.x — ветку release-1.11 отрезали до прихода фикса и не
+    # портировали. Пока живём на 1.11: не привязывать людей к ролям kargo-admin
+    # и kargo-promoter в проектных namespace, kargo_oidc_project_creators_claims
+    # держать пустым. Полный разбор — reference/components.md §17.9.
     kargo_helm_is_oci: true
     kargo_helm_url: "oci://ghcr.io/akuity/kargo-charts/kargo"
     kargo_helm_repo_name: ""
     kargo_helm_chart_name: ""
-    kargo_helm_chart_version: "1.10.11"
+    kargo_helm_chart_version: "1.11.3"
     # Тег образа пиним явно, не полагаясь на Chart.AppVersion. ДВИГАТЬ ТОЛЬКО В
     # ПАРЕ с kargo_helm_chart_version — с 1.11 расхождение не ловится ничем (см.
     # assert в playbook-app/kargo-install.yaml).
-    kargo_image_tag: "v1.10.11"
+    kargo_image_tag: "v1.11.3"
     kargo_api_replica_count: 1
     # Реплики только у stateless-workload'ов. У controller и
-    # management-controller в чарте 1.10.9 replicas: 1 захардкожен, leader
-    # election в Kargo нет вообще — вторая реплика дала бы дублирующиеся
+    # management-controller в чарте replicas: 1 захардкожен (проверено на
+    # 1.10.x и 1.11.3), leader election в Kargo нет вообще — вторая реплика
+    # дала бы дублирующиеся
     # промоушены. Масштабирование controller'а — только шардированием.
     kargo_webhooks_server_replica_count: 1
     kargo_external_webhooks_server_replica_count: 1
@@ -500,8 +522,8 @@ all:
     # ПОЛ интервала опроса Warehouse. Контроллер поднимает до этого значения
     # любой spec.interval, который меньше (GetInterval в warehouse_types.go), и
     # именно это значение уходит в RequeueAfter — то есть контроллер физически
-    # не просыпается чаще. Дефолт чарта 1.10.9 — 5m0s, и он молча обесценивал
-    # spec.interval: 1m0s у Warehouse'ов.
+    # не просыпается чаще. Дефолт чарта — 5m0s (не менялся ни в 1.10.x, ни в
+    # 1.11.3), и он молча обесценивал spec.interval: 1m0s у Warehouse'ов.
     kargo_controller_warehouse_min_reconciliation_interval: "1m0s"
     # Garbage collector: глубина отката ограничена этими значениями.
     kargo_gc_schedule: "0 * * * *"
