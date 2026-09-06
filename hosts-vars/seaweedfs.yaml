@@ -363,7 +363,7 @@ all:
     seaweedfs_helm_url: "https://seaweedfs.github.io/seaweedfs/helm"
     seaweedfs_helm_repo_name: "seaweedfs"
     seaweedfs_helm_chart_name: "seaweedfs"
-    seaweedfs_helm_chart_version: "4.44.0"
+    seaweedfs_helm_chart_version: "4.45.0"
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     seaweedfs_install_extra_objects: []
     # Install-phase kustomize patches (operator-side customization, default empty)
@@ -379,46 +379,36 @@ all:
     seaweedfs_helm_values_master_volume_size_limit_mb: 200
     seaweedfs_helm_values_master_default_replication: "000"
     # --- CLI-флаги бинаря (телеметрия / write-path) ---
-    # Master: extra CLI-флаги для `weed master`. Чарт рендерит их в command
-    # (templates/master/master-statefulset.yaml:177 — range .Values.master.extraArgs).
-    # -telemetry=false — с 4.41 (upstream #10488) дефолт флага -telemetry перевёрнут
-    # false→true: leader-мастер через 61 s после старта и далее раз в 24 h POST'ит
-    # статистику кластера (topology_id / version / os / счётчики серверов+томов /
-    # total_disk_bytes) на https://telemetry.seaweedfs.com/api/collect. topology_id —
-    # UUID, персистируемый в raft (MaxVolumeIdCommand.TopologyId), т.е. стабильный
-    # между рестартами. Отдельного knob'а под телеметрию в чарте НЕТ — только extraArgs.
+    # Master: extra CLI-флаги (master-statefulset.yaml — range .Values.master.extraArgs).
+    # -telemetry=false — с 4.41 (#10488) дефолт перевёрнут false→true: leader-мастер раз в 24 h
+    # POST'ит topology_id (UUID в raft, стабилен между рестартами) / version / os / счётчики
+    # серверов+томов / total_disk_bytes на telemetry.seaweedfs.com. Knob'а в чарте нет — только extraArgs.
     seaweedfs_helm_values_master_extra_args:
       - "-telemetry=false"
-    # S3: extra CLI-флаги для `weed s3`. Чарт рендерит их в command
-    # (templates/s3/s3-deployment.yaml — range .Values.s3.extraArgs), сразу после
-    # -port.iceberg. Активный default (не []) — применяется на всех кластерах.
-    #   -port.lance=0        — с 4.43 (upstream #10841) `weed s3` безусловно поднимает
-    #                          Lance Namespace REST-каталог на 9101 (дефолт флага 9101 > 0):
-    #                          реестр неймспейсов/таблиц формата Lance, аналог Iceberg REST
-    #                          catalog на 8181. Чарт флаг не передаёт, containerPort и Service
-    #                          на него не заводит, ServiceMonitor его не видит. Потребителей
-    #                          Lance нет; 0 гасит листенер. Учти: аутентификация там не
-    #                          спасает — при пустом -iam.config DefaultEffect="Allow", и
-    #                          lance/server.go Auth на неуспехе ПРОПУСКАЕТ запрос.
-    #   -autoCreateBucket=false — с 4.42 неявное создание бакета при upload'е (для admin-
-    #                          identity) стало флагом с дефолтом true. false оставляет
-    #                          единственный путь появления бакета — bucket-sync.
-    # ВНИМАНИЕ: оба флага существуют только с 4.43 / 4.42 соответственно. На более старом
-    # образе неизвестный флаг обрывает разбор (flag.FlagSet) и под НЕ стартует — значение
-    # нельзя выкатывать раньше, чем поедет соответствующая версия. При откате чарта ниже
-    # 4.43 этот список надо опустошить тем же прогоном.
+    # S3: Lance Namespace REST-каталог (аналог Iceberg REST на 8181). Потребителей нет — гасим.
+    # С 4.43 (#10841) `weed s3` поднимал его безусловно; с чарта 4.45 (#11049) это values-ключ,
+    # и чарт ВСЕГДА рендерит -port.lance=<lancePort|default 0> ПЕРЕД extraArgs — флаг там стал
+    # избыточен и убран. 0 гасит разом: листенер 9101; containerPort + Service-порт swfs-lance;
+    # ВТОРОЙ контейнер worker-lance (Rust weed-worker) в поде воркера — хелпер
+    # seaweedfs.worker.lanceNamespaceUrl непуст при s3.enabled && s3.lancePort, а контейнер идёт
+    # БЕЗ resources и с эндпоинтом lance-metrics:9328, который NP allow-for-monitoring не пускает.
+    # Безопасность: при пустом -iam.config DefaultEffect="Allow", а lance/server.go Auth на
+    # неуспехе ПРОПУСКАЕТ запрос. ТОЛЬКО НЕквотированный int: строка '0' в Go-шаблоне truthy →
+    # контейнер вернётся, а Service получит port: 0, который apiserver отвергнет.
+    # При откате чарта ниже 4.45 ключ игнорируется — тем же прогоном вернуть "-port.lance=0" в extraArgs.
+    seaweedfs_helm_values_s3_lance_port: 0
+    # S3: extra CLI-флаги (s3-deployment.yaml — range .Values.s3.extraArgs), сразу после -port.lance.
+    #   -autoCreateBucket=false — с 4.42 неявное создание бакета при upload'е (admin-identity) стало
+    #   флагом с дефолтом true; false оставляет единственный путь появления бакета — bucket-sync.
+    # ВНИМАНИЕ: флаг только с 4.42 — на старом образе неизвестный флаг обрывает flag.FlagSet и под НЕ стартует.
     seaweedfs_helm_values_s3_extra_args:
-      - "-port.lance=0"
       - "-autoCreateBucket=false"
     # Filer: -maxMB — размер чанка при chunked-записи. Бинарный дефолт weed = 4
-    # (weed/command/filer.go: "split files larger than the limit"); комментарий
-    # "default 32" в upstream values.yaml НЕВЕРЕН.
-    # До 4.41 S3-gateway резал чанк фиксированно по 8 MiB (хардкод const chunkSize
-    # в s3api_object_handlers_put.go, -maxMB на S3 не влиял). С 4.41 (upstream #10439)
-    # gateway читает это значение у filer'а ОДИН раз при старте и режет им свои чанки,
-    # поэтому без явного пина чанк молча упал бы 8 → 4 MiB: x2 needles, x2 Assign-RPC
-    # к единственному мастеру, x2 POST'ов на volume-серверы и x2 записей в chunk-list
-    # (Postgres filemeta) на каждом объекте > 4 MiB. 8 = сохраняем поведение 4.40.
+    # (weed/command/filer.go); комментарий "default 32" в upstream values.yaml НЕВЕРЕН.
+    # До 4.41 S3-gateway резал фиксированно по 8 MiB (хардкод chunkSize, -maxMB на него не влиял).
+    # С 4.41 (#10439) gateway читает значение у filer'а ОДИН раз при старте, поэтому без пина чанк
+    # молча упал бы 8 → 4 MiB: x2 needles, x2 Assign-RPC к единственному мастеру, x2 POST'ов на
+    # volume-серверы и x2 записей в chunk-list (Postgres filemeta) на каждом объекте > 4 MiB.
     seaweedfs_helm_values_filer_max_mb: 8
     # Master: стратегия роста томов (едет в master.toml → секция [master.volume_growth]).
     # База держит ПОЛНУЮ структуру со значениями, равными дефолтам бинаря
@@ -582,6 +572,8 @@ all:
       enableAuth: true
       existingConfigSecret: "{{ seaweedfs_secret_s3_bootstrap.body.target.name }}"
       resources: "{{ seaweedfs_helm_values_s3_resources }}"
+      # Lance Namespace REST-каталог (0 = выключен) — см. knob выше.
+      lancePort: "{{ seaweedfs_helm_values_s3_lance_port }}"
       # Extra CLI-флаги gateway'я — см. knob выше.
       extraArgs: "{{ seaweedfs_helm_values_s3_extra_args }}"
     seaweedfs_helm_values_admin:
