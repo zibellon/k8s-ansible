@@ -209,7 +209,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Purpose.** Read the `vault-unsealer-secret` from the live cluster, decode, write to `/etc/kubernetes/vault-unseal.json` on managers.
 - **Input.** `dto_label_name`.
 - **Output.** Local file on each manager (0600, root:root).
-- **Callers.** `manager-join.yaml` (so new managers have unseal keys), `vault-install.yaml` post-phase.
+- **Callers.** `vault-install.yaml` (`unseal-keys` phase), `vault-rotate.yaml`. `manager-join.yaml` does not use it — it copies the file from the master directly.
 - **Idempotent.** Overwrites if secret changed.
 
 ### 1.15a `tasks-wait-secret.yaml`

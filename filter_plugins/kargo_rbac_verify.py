@@ -2,7 +2,7 @@
 Kargo RBAC consistency compute layer — pure Python filter plugin.
 Used by playbook-app/tasks/tasks-kargo-rbac-verify.yaml.
 
-Проверяет согласованность двух списков стадии kargo/rbac — kargo_custom_users
+Проверяет согласованность двух списков стадии kargo/cfg — kargo_custom_users
 и kargo_projects, — которые шаблоны чарта рендерят БЕЗ каких-либо проверок.
 Все интересные ошибки здесь либо молчаливые (объект создаётся, прав нет), либо
 роняют helm на дубликате имени; ни одну из них шаблон не поймает.

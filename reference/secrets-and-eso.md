@@ -42,7 +42,7 @@ Depth reference for the Vault + External Secrets Operator subsystem. For the big
 
 Key guarantees:
 
-- There is exactly one Vault pod (single-node Raft). The unseal shares live encrypted at rest in `vault-unsealer-secret` in the `vault` namespace, and in plaintext at `/etc/kubernetes/vault-unseal.json` on every manager (mode 0600). New managers receive the file via `tasks-vault-distribute-creds.yaml` during join.
+- There is exactly one Vault pod (single-node Raft). The unseal shares live encrypted at rest in `vault-unsealer-secret` in the `vault` namespace, and in plaintext at `/etc/kubernetes/vault-unseal.json` on every manager (mode 0600). New managers receive the file during join (`manager-join.yaml` copies it from the master).
 - ESO has cluster-wide scope. Each ESO-integrated component owns a `SecretStore` CR in its own namespace and one or more `ExternalSecret` CRs.
 - Only the `eso-secret/` KV engine is exposed to ESO policies. The `secret/` engine is for humans.
 
@@ -403,7 +403,7 @@ Checklist — keep strictly in order.
 
 10. **Apply the new Vault policy/role**:
     ```
-    ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/vault-install.yaml --tags install
+    ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/vault-install.yaml --tags vault-cr
     ```
 
 11. **Install the component**:
@@ -473,10 +473,10 @@ All under `eso-secret/` KV engine.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ExternalSecret` stuck in `SecretSyncedError` | Vault policy missing `read` on the path, or role doesn't bind the SA | Run `vault-install.yaml --tags install` after updating policies; inspect `ExternalSecret` status for error detail |
+| `ExternalSecret` stuck in `SecretSyncedError` | Vault policy missing `read` on the path, or role doesn't bind the SA | Run `vault-install.yaml --tags vault-cr` after updating policies; inspect `ExternalSecret` status for error detail |
 | `SecretStore` shows `ValidationFailed` | `role_name` missing in Vault or `kubernetes` auth mount path wrong | Confirm merged `vault_auth_kubernetes_roles + vault_auth_kubernetes_roles_extra` has the role (run `tasks-vault-config-verify.yaml`); check bank-vaults logs |
 | K8s Secret exists but pod doesn't see new value | Pod was not restarted after Secret change | `<c>-restart.yaml` (Reloader will automate this in future) |
 | Vault sealed after reboot | Auto-unseal CronJob didn't run | Run manually on a manager: `kubectl -n vault exec vault-0 -- vault operator unseal <key>` × threshold |
-| New manager can't unseal | `/etc/kubernetes/vault-unseal.json` missing | Re-run `tasks-vault-distribute-creds.yaml` (part of `manager-join.yaml`) |
+| New manager can't unseal | `/etc/kubernetes/vault-unseal.json` missing | Run `vault-install.yaml --tags unseal-keys`, or re-run `manager-join.yaml` for that manager |
 | `tasks-vault-config-verify.yaml` fails "duplicate policy names in merged vault_policies" | Base + `_extra` both define the same policy name | Remove duplicate from `_extra`; only triggered by `vault-install.yaml`, not by component install playbooks |
 | `tasks-eso-verify.yaml` fails "duplicate external_secret_name in dto_eso_secrets_list" | Base + `_extra` (or multiple `_extra` entries) define ExternalSecrets with the same `external_secret_name` | Rename one of the conflicting entries |

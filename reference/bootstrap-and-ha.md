@@ -89,7 +89,7 @@ All four require `--limit` (enforced by `tasks-require-limit.yaml`). Run both in
 2. `tasks-set-master-manager` + `tasks-set-is-cluster-init` + `tasks-set-is-node-joined` — collect cluster state facts; reports `is_cluster_init: true`, identifies `master_manager_fact`.
 3. On master: `kubeadm init phase upload-certs --upload-certs` — prints a cert key valid ~2h.
 4. **Distribute ETCD encryption config**: slurp `/etc/kubernetes/pki/encryption-config.yaml` from master → write on joiner, mode 0600.
-5. **Distribute Vault unseal creds (if Vault installed)**: `tasks-vault-distribute-creds.yaml` writes `/etc/kubernetes/vault-unseal.json`.
+5. **Distribute Vault unseal creds (if Vault installed)**: slurp `/etc/kubernetes/vault-unseal.json` from master → write on joiner, mode 0600.
 6. On master: `kubeadm token create --print-join-command --certificate-key <key>`.
 7. On joiner: run the join command **plus** `--apiserver-advertise-address` + `--apiserver-bind-port` from the joiner's host vars.
 8. `tasks-kubelet-health-wait`.
@@ -348,7 +348,7 @@ Note: these three playbooks intentionally do **not** use `tasks-require-limit.ya
 | HAProxy backend list stale after manager change | `haproxy-apiserver-lb-update.yaml`. |
 | New node join hangs at TLS handshake | Cilium host firewall missing the new IP — run `cilium-install.yaml --tags post` with the updated inventory, then retry join. |
 | `/etc/kubernetes/pki/encryption-config.yaml` missing on a manager | Re-run `manager-join.yaml` for that manager (distributes from the master); or manually `scp` from master (mode 0600). |
-| `/etc/kubernetes/vault-unseal.json` missing on a manager | Re-run `tasks-vault-distribute-creds.yaml` (standalone by running `vault-install.yaml --tags post` or via `manager-join.yaml`). |
+| `/etc/kubernetes/vault-unseal.json` missing on a manager | Run `vault-install.yaml --tags unseal-keys` (runs `tasks-vault-distribute-creds.yaml` for all managers), or re-run `manager-join.yaml` for that manager (copies the file from the master). |
 | Vault rekey прервался посередине | Temp-файл `{{ vault_rekey_temp_file_path }}` на `master_manager_fact` остался с новыми ключами. Повторный запуск `vault-rotate.yaml` детектирует его и довыполнит recovery (K8s Secret + distribute). Если в Vault висит незавершённый rekey, а temp-файла нет (ручной rekey помимо playbook'а) — сделать `vault operator rekey -cancel` и запустить playbook заново. |
 | Interrupted dpkg transaction on a host (`E: dpkg was interrupted`) | Run `ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-system/preflight.yaml --limit <host>` — the `dpkg --configure -a` step recovers the transaction. Happens automatically on any re-run of `full-node-install.yaml` (preflight is Step 3). |
 | `kubeadm init` hangs 4min on `wait-control-plane` then fails with `kube-apiserver ... context deadline exceeded` | etcd cannot bind because `api_server_advertise_address` for this manager points to an IP not on any interface (`bind: cannot assign requested address` in `crictl logs <etcd-id>`). Fix `hosts-vars-override/hosts.yaml` for `{{ inventory_hostname }}`, then `kubeadm reset --force` + `rm -rf /var/lib/etcd/* /etc/kubernetes/manifests/* /etc/cni/net.d/*` on the host, then re-run `cluster-init.yaml`. The `preflight.yaml` (Step 3 of `full-node-install.yaml`) now asserts this up-front so the wrong IP is caught in seconds instead of minutes. |

@@ -225,9 +225,9 @@ all:
     # отвергает Project с 409; без namespace вебхук создал бы его сам, без
     # наших меток и аннотаций.
     #
-    # ⚠️ Удаление элемента отсюда удаляет Project, а Kargo в ответ удаляет
-    # namespace со всем содержимым. helm.sh/resource-policy намеренно не
-    # ставится — удаление должно работать штатно.
+    # ⚠️ Удаление элемента отсюда удаляет namespace со всем содержимым: он в
+    # том же релизе, его сносит helm; keep-namespace от этого не спасает.
+    # helm.sh/resource-policy намеренно не ставится — удаление штатное.
     #
     # На каждый элемент accounts рендерится RoleBinding в этом namespace:
     # субъект — SA saName в нём же, roleRef — Role или ClusterRole с roleName.
@@ -244,16 +244,16 @@ all:
     # появится, — но при обратном порядке будет окно, где человек залогинен и
     # бесправен.
     #
-    # ⚠️ «Вижу список проектов» этим списком НЕ выдаётся: для cluster-scoped
+    # «Вижу список проектов» этим списком НЕ выдаётся: для cluster-scoped
     # запроса нужен ClusterRoleBinding, а здесь рендерятся только RoleBinding'и.
-    # Объявляется вручную парой kargo_rbac_cluster_roles +
-    # kargo_rbac_cluster_role_bindings, см. пример в hosts-vars-override/.
+    # Его генерирует kargo_rbac_ui_discovery_rbac_setup автоматически для всех
+    # kargo_custom_users.
     #
     # Формат элемента. labels и annotations опциональны; на RoleBinding'и из
     # accounts ни те, ни другие не распространяются. labels уходят только на
     # объект Project, annotations — И на Project, И на namespace: типовой
-    # случай kargo.akuity.io/keep-namespace: "true" Kargo читает с обоих, и
-    # с ней удаление Project'а не утащит за собой namespace.
+    # случай kargo.akuity.io/keep-namespace: "true" Kargo читает с обоих; она
+    # спасает namespace только от удаления Project'а в обход helm.
     #   - name: "my-wallet"
     #     labels: {}
     #     annotations: {}
