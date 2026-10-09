@@ -461,44 +461,33 @@ all:
       - deployment.apps/kargo-webhooks-server
       - deployment.apps/kargo-external-webhooks-server
     # Helm chart source (переопределить в hosts-vars-override/ для airgap).
-    # Линия 1.11. Переход 1.10.11 -> 1.11.3 сделан после проверки трёх гейтов на
-    # живом кластере, и ни один из них не был формальностью:
-    #   1) allowTags/ignoreTags у подписок Warehouse с v1.11.0 — ЖЁСТКАЯ ошибка,
-    #      обрывающая discovery ВСЕГО склада (admission её не ловит: subscriptions
-    #      в CRD объявлены x-kubernetes-preserve-unknown-fields). Проверено: все
-    #      подписки уже на allowTagsRegexes и в кластере, и в git-ops.
-    #   2) Удалён guard, косвенно державший вручную «приколотые» Stage, а hold'ы
-    #      ему на замену на момент апгрейда пусты по определению. Проверено: все
-    #      авто-Stage стоят на своём кандидате, сдвигать нечего.
-    #   3) Одобренный Freight из origin, который Stage не запрашивает, перестаёт
-    #      действовать. Проверено: таких нет.
-    # ⚠️ ПРИ СЛЕДУЮЩЕМ АПГРЕЙДЕ гейт (1) проверять заново — Warehouse'ы живут в
-    # git-ops, а не здесь, и поля исчезнут только в v1.13.0.
-    # Что 1.11 даёт: git ls-remote коротко замыкает неизменившийся remote (у нас
-    # все склады опрашиваются по интервалу — external-webhooks наружу не
-    # публикуется), стабы Argo Rollouts подтянуты к v1.9.0 под наш v1.9.1,
-    # починен пост-логин редирект OIDC, появились метрики Prometheus (порт 9090,
-    # все гейты по умолчанию выключены).
-    # Чем платим: из линии 1.11 пропал pkg/server/rbac/generic_escalation.go,
-    # который есть на 1.10.x — ветку release-1.11 отрезали до прихода фикса и не
-    # портировали. Пока живём на 1.11: не привязывать людей к ролям kargo-admin
-    # и kargo-promoter в проектных namespace, kargo_oidc_project_creators_claims
-    # держать пустым. Полный разбор — reference/components.md §17.9.
+    # Линия 1.12 — последняя 1.x: v1.13 не будет, дальше 2.0. Разбор апгрейдов
+    # 1.10.11 -> 1.11.3 -> 1.12.3 — reference/components.md §17.9.
+    # ⚠️ ПЕРЕД КАЖДЫМ АПГРЕЙДОМ (включая 2.0) проверять в git-ops, что у подписок
+    # Warehouse нет allowTags/ignoreTags: это ЖЁСТКАЯ ошибка, обрывающая
+    # discovery всего склада, а admission её не ловит (subscriptions в CRD —
+    # x-kubernetes-preserve-unknown-fields). Обещанное удаление полей в v1.13.0
+    # не состоялось — в 1.12.x они по-прежнему ломают склад.
+    # 1.12 вернула pkg/server/rbac/generic_escalation.go (на всей линии 1.11 его
+    # нет): kargo-promoter в проектных namespace выдаётся без оговорок. Проектный
+    # kargo-admin и kargo_oidc_project_creators_claims по-прежнему не выдавать —
+    # уже не из-за версии: secrets '*' (git-ops PAT) и analysistemplates '*'
+    # (Job без PodSecurity).
     kargo_helm_is_oci: true
     kargo_helm_url: "oci://ghcr.io/akuity/kargo-charts/kargo"
     kargo_helm_repo_name: ""
     kargo_helm_chart_name: ""
-    kargo_helm_chart_version: "1.11.3"
+    kargo_helm_chart_version: "1.12.3"
     # Тег образа пиним явно, не полагаясь на Chart.AppVersion. ДВИГАТЬ ТОЛЬКО В
     # ПАРЕ с kargo_helm_chart_version — с 1.11 расхождение не ловится ничем (см.
     # assert в playbook-app/kargo-install.yaml).
-    kargo_image_tag: "v1.11.3"
+    kargo_image_tag: "v1.12.3"
     kargo_api_replica_count: 1
     # Реплики только у stateless-workload'ов. У controller и
     # management-controller в чарте replicas: 1 захардкожен (проверено на
-    # 1.10.x и 1.11.3), leader election в Kargo нет вообще — вторая реплика
-    # дала бы дублирующиеся
-    # промоушены. Масштабирование controller'а — только шардированием.
+    # 1.10.x, 1.11.3 и 1.12.3), leader election в Kargo нет вообще — вторая
+    # реплика дала бы дублирующиеся промоушены. Масштабирование controller'а —
+    # только шардированием.
     kargo_webhooks_server_replica_count: 1
     kargo_external_webhooks_server_replica_count: 1
     # Scheduling задаём ТОЛЬКО в global.*: per-component ключи чарта не
@@ -508,6 +497,10 @@ all:
     kargo_affinity: {}
     kargo_api_resources: {}
     kargo_controller_resources: {}
+    # management-controller (с 1.12) на КАЖДОМ старте читает все Secret'ы
+    # кластера одним LIST без пагинации, а проб у него нет: OOM не видят ни
+    # helm, ни rollout status. Лимит памяти — с запасом к
+    # `kubectl get --raw /api/v1/secrets | wc -c` (пик ≈ 3× плюс база).
     kargo_management_controller_resources: {}
     kargo_webhooks_server_resources: {}
     kargo_external_webhooks_server_resources: {}
@@ -523,7 +516,8 @@ all:
     # любой spec.interval, который меньше (GetInterval в warehouse_types.go), и
     # именно это значение уходит в RequeueAfter — то есть контроллер физически
     # не просыпается чаще. Дефолт чарта — 5m0s (не менялся ни в 1.10.x, ни в
-    # 1.11.3), и он молча обесценивал spec.interval: 1m0s у Warehouse'ов.
+    # 1.11.3, ни в 1.12.3), и он молча обесценивал spec.interval: 1m0s у
+    # Warehouse'ов.
     kargo_controller_warehouse_min_reconciliation_interval: "1m0s"
     # Garbage collector: глубина отката ограничена этими значениями.
     kargo_gc_schedule: "0 * * * *"

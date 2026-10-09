@@ -1003,7 +1003,7 @@ ArgoCD ставится namespace-scoped. Cluster-wide грант у него **
 #### Права: kargo
 
 - namespace `kargo` заводит сам helm-релиз (`--create-namespace`).
-- `kargo-cluster-secrets`, `kargo-shared-resources`, `kargo-system-resources` заводит апстримный чарт.
+- `kargo-shared-resources`, `kargo-system-resources` заводит апстримный чарт (легаси `kargo-cluster-secrets` убран из чарта в 1.12 и удалён при апгрейде).
 - namespace **каждого** проекта заводит стадия `kargo --tags cfg`, одним релизом с `Project`.
 - ArgoCD в namespace проекта — пара deployer + ui, **если** содержимое проекта едет из git-ops.
 - `Role` `kargo-viewer` в namespace проекта создаёт management-controller **сам** — руками не заводить.
@@ -1257,7 +1257,7 @@ CRD ставит отдельная стадия `crds`. Внутри helm-ре�
 
 - namespace `kargo` компонент создаёт сам.
 - namespace **каждого** Kargo-проекта заводит стадия `cfg`, в одном релизе с самим `Project`. Обязательную метку `kargo.akuity.io/project: "true"` шаблон ставит сам; аннотация `kargo.akuity.io/keep-namespace: "true"` берётся из элемента `kargo_projects` и уезжает и на namespace, и на `Project`.
-- namespace `kargo-cluster-secrets`, `kargo-shared-resources` и `kargo-system-resources` создаёт **сам апстримный чарт**. В `cluster-base` их объявлять **нельзя** — получится второй владелец и релиз упадёт.
+- namespace `kargo-shared-resources` и `kargo-system-resources` создаёт **сам апстримный чарт**. В `cluster-base` их объявлять **нельзя** — получится второй владелец и релиз упадёт.
 
 **Порядок онбординга нового проекта.**
 
@@ -1338,7 +1338,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-
 |---|---|
 | `argo-events-cfg` (cr-namespace) | стадия `argo-events --tags pre-cfg` |
 | namespace каждого Kargo-проекта | стадия `kargo --tags cfg`, одним релизом с самим `Project` |
-| `kargo-cluster-secrets`, `kargo-shared-resources`, `kargo-system-resources` | сам апстримный чарт kargo |
+| `kargo-shared-resources`, `kargo-system-resources` | сам апстримный чарт kargo |
 | namespace самих компонентов (`argocd`, `kargo`, `argo-events`, …) | их же helm-релиз (`--create-namespace`) |
 
 > ⚠️ Объявить такой namespace ещё и здесь = **два владельца** одного объекта → stage падает на `invalid ownership metadata`.
