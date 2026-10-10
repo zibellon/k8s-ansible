@@ -413,6 +413,16 @@ all:
     mon_system_prometheus_spec_retention_size: "4GiB"
     mon_system_prometheus_spec_storage_size: "6Gi"
     mon_system_prometheus_spec_storage_class: "lnstr-major-local"
+    # Resources (per-cluster override). Пик памяти — checkpoint WAL после компакции head.
+    mon_system_prometheus_spec_resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    # Окно startupProbe под replay WAL: оператор даёт ceil(N/60) проб с периодом ≈60s; без поля — 15s × 60 = 900s.
+    mon_system_prometheus_spec_maximum_startup_duration_seconds: 3600
     # ---------
     mon_system_prometheus_spec:
       podMetadata:
@@ -430,6 +440,7 @@ all:
       imagePullPolicy: IfNotPresent
       version: "v3.7.2"
       replicas: "{{ mon_system_prometheus_spec_replica_count }}"
+      maximumStartupDurationSeconds: "{{ mon_system_prometheus_spec_maximum_startup_duration_seconds }}"
       logLevel: info
       logFormat: json
       retention: "{{ mon_system_prometheus_spec_retention }}"
@@ -474,13 +485,7 @@ all:
       tolerations: []
       nodeSelector:
         kubernetes.io/os: linux
-      resources:
-        requests:
-          cpu: 200m
-          memory: 512Mi
-        limits:
-          cpu: 1000m
-          memory: 2Gi
+      resources: "{{ mon_system_prometheus_spec_resources }}"
       alerting:
         alertmanagers:
           - namespace: mon-system
