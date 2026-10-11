@@ -125,7 +125,7 @@ all:
       - crd/linstorsatellites.piraeus.io
     piraeus_operator_helm_is_oci: true
     piraeus_operator_helm_url: "oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus"
-    piraeus_operator_helm_chart_version: "2.10.7"
+    piraeus_operator_helm_chart_version: "2.12.0"
 
     # Operator replica count (SCALE)
     piraeus_operator_helm_values_replica_count: 1
@@ -180,12 +180,13 @@ all:
       # Kubernetes сам эвакуирует поды ~через 5 мин (tolerationSeconds=300)
       # HA-controller добивает на 6 минуте
       # DEFAULT: 5s
+      # С v1.3.4 этот же таймаут откладывает и lost-quorum taint своего узла (раньше ~10s)
       - --fail-over-timeout=6m
       # --- Прочие флаги (upstream-дефолты) ---
       # ---
       # ВНИМАНИЕ: НЕ добавлять сюда kubectl-стиль флаги из genericclioptions.ConfigFlags
       # (--request-timeout, --namespace, --server, --kubeconfig, --context, --token, --certificate-authority).
-      # HA-controller (cmd/agent/main.go v1.3.2) строит k8s-клиент через cfgflags.ToRESTConfig()
+      # HA-controller (cmd/agent/main.go v1.3.4) строит k8s-клиент через cfgflags.ToRESTConfig()
       # внутри — clientcmd DeferredLoadingClientConfig, in-cluster fallback срабатывает ТОЛЬКО если merged-конфиг равен bare-дефолту
       # Любой ConfigFlags-override (например --request-timeout выставляет overrides.Timeout) → детект отключается
       # → клиент уходит на http://localhost:8080 → DaemonSet не Ready.
