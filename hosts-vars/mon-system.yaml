@@ -365,6 +365,15 @@ all:
     #   3. prometheus image   — mon_system_prometheus_spec.image / .version (выше)
     #   4. alertmanager image — mon_system_alertmanager_spec.image / .version (выше)
     mon_system_prometheus_operator_rollout_timeout: "300s"
+    # Resources (per-cluster override). Подставляется в kustomize-патч ниже и мержится
+    # с upstream-ресурсами Deployment: {} их не снимает — задавать requests и limits целиком.
+    mon_system_prometheus_operator_resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        cpu: 200m
+        memory: 200Mi
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     mon_system_prometheus_operator_extra_objects: []
     # kustomize patches применяются tasks-helm-template-kustomize-build.yaml перед helm install.
@@ -387,13 +396,7 @@ all:
                   kubernetes.io/os: linux
                 containers:
                   - name: prometheus-operator
-                    resources:
-                      limits:
-                        cpu: 200m
-                        memory: 200Mi
-                      requests:
-                        cpu: 100m
-                        memory: 100Mi
+                    resources: {{ mon_system_prometheus_operator_resources | to_json }}
     # Helm values для KUSTOMIZE_WRAPPER prometheus-operator phase — содержит только extraObjects wiring
     mon_system_prometheus_operator_helm_values:
       extraObjects: "{{ mon_system_prometheus_operator_extra_objects }}"
@@ -512,6 +515,14 @@ all:
     mon_system_alertmanager_spec_replica_count: 1
     mon_system_alertmanager_spec_storage_size: "4Gi"
     mon_system_alertmanager_spec_storage_class: "lnstr-major-local"
+    # Resources (per-cluster override).
+    mon_system_alertmanager_spec_resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
     # ---------
     mon_system_alertmanager_spec:
       podMetadata:
@@ -557,13 +568,7 @@ all:
       tolerations: []
       nodeSelector:
         kubernetes.io/os: linux
-      resources:
-        requests:
-          cpu: 50m
-          memory: 64Mi
-        limits:
-          cpu: 200m
-          memory: 256Mi
+      resources: "{{ mon_system_alertmanager_spec_resources }}"
     # AlertmanagerConfig root spec (referenced via spec.alertmanagerConfiguration.name)
     mon_system_alertmanager_root_config_spec:
       route:
@@ -595,6 +600,14 @@ all:
     mon_system_node_exporter_helm_timeout: "3m"
     mon_system_node_exporter_rollout_timeout: "120s"
     mon_system_node_exporter_image: "quay.io/prometheus/node-exporter:v1.11.1"
+    # Resources (per-cluster override).
+    mon_system_node_exporter_resources:
+      requests:
+        cpu: 50m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     mon_system_node_exporter_extra_objects: []
     # Node-exporter-phase kustomize patches (operator-side customization, default empty)
@@ -617,19 +630,21 @@ all:
         - operator: "Exists"
       nodeSelector:
         kubernetes.io/os: linux
-      resources:
-        requests:
-          cpu: 50m
-          memory: 32Mi
-        limits:
-          cpu: 200m
-          memory: 128Mi
+      resources: "{{ mon_system_node_exporter_resources }}"
       extraObjects: "{{ mon_system_node_exporter_extra_objects }}"
 
     # --- PHASE: ksm ---
     mon_system_ksm_helm_timeout: "3m"
     mon_system_ksm_rollout_timeout: "60s"
     mon_system_ksm_image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0"
+    # Resources (per-cluster override).
+    mon_system_ksm_resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     mon_system_ksm_extra_objects: []
     # Ksm-phase kustomize patches (operator-side customization, default empty)
@@ -646,13 +661,7 @@ all:
       tolerations: []
       nodeSelector:
         kubernetes.io/os: linux
-      resources:
-        requests:
-          cpu: 50m
-          memory: 64Mi
-        limits:
-          cpu: 200m
-          memory: 256Mi
+      resources: "{{ mon_system_ksm_resources }}"
       extraObjects: "{{ mon_system_ksm_extra_objects }}"
 
     # --- PHASE: loki ---
@@ -675,6 +684,14 @@ all:
     mon_system_loki_s3_secret_key_secret_key: "secretKey"
     # emptyDir size cap for Loki local volume (WAL + index cache + compactor scratch)
     mon_system_loki_emptydir_size_limit: "4Gi"
+    # Resources (per-cluster override).
+    mon_system_loki_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2048Mi"
     # Full loki-config.yaml as block scalar — override entire variable in
     # hosts-vars-override/mon-system.yaml to change any parameter. Jinja
     # substitutions: port, S3 endpoint/bucket/region/path-style/insecure
@@ -749,19 +766,21 @@ all:
       tolerations: []
       nodeSelector:
         node-role.kubernetes.io/worker: ""
-      resources:
-        requests:
-          cpu: "100m"
-          memory: "256Mi"
-        limits:
-          cpu: "1200m"
-          memory: "1536Mi"
+      resources: "{{ mon_system_loki_resources }}"
       extraObjects: "{{ mon_system_loki_extra_objects }}"
 
     # --- PHASE: vector ---
     mon_system_vector_helm_timeout: "5m"
     mon_system_vector_rollout_timeout: "180s"
     mon_system_vector_image: "docker.io/timberio/vector:0.50.0-debian"
+    # Resources (per-cluster override).
+    mon_system_vector_resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
     # Full vector-config.yaml as block scalar — override entire variable in
     # hosts-vars-override/mon-system.yaml to change any parameter.
     # Endpoint Loki resolved by Ansible: loki.{{ mon_system_namespace }}.svc.cluster.local:{{ mon_system_loki_port }}
@@ -918,13 +937,7 @@ all:
       tolerations:
         - operator: "Exists"
       nodeSelector: {}
-      resources:
-        requests:
-          cpu: "100m"
-          memory: "256Mi"
-        limits:
-          cpu: "1"
-          memory: "1Gi"
+      resources: "{{ mon_system_vector_resources }}"
       extraObjects: "{{ mon_system_vector_extra_objects }}"
 
     # --- PHASE: grafana-postgresql ---
@@ -933,6 +946,8 @@ all:
     mon_system_grafana_postgresql_image: "docker.io/postgres:17.9-alpine3.23"
     mon_system_grafana_postgresql_storage_class: "lnstr-major-multi-sync"
     mon_system_grafana_postgresql_storage_size: "10Gi"
+    # Resources (per-cluster override).
+    mon_system_grafana_postgresql_resources: {}
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     mon_system_grafana_postgresql_extra_objects: []
     # grafana-postgresql phase kustomize patches (operator-side customization, default empty)
@@ -954,7 +969,7 @@ all:
       nodeSelector:
         node-role.kubernetes.io/worker: ""
       affinity: {}
-      resources: {}
+      resources: "{{ mon_system_grafana_postgresql_resources }}"
       extraObjects: "{{ mon_system_grafana_postgresql_extra_objects }}"
 
     # OIDC-блок для Grafana generic_oauth (вынесен из mon_system_grafana_helm_values — снижаем вложенность).
@@ -982,6 +997,8 @@ all:
     mon_system_grafana_helm_timeout: "3m"
     mon_system_grafana_rollout_timeout: "120s"
     mon_system_grafana_image: "docker.io/grafana/grafana:12.4.2"
+    # Resources (per-cluster override).
+    mon_system_grafana_resources: {}
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     mon_system_grafana_extra_objects: []
     # Grafana-phase kustomize patches (operator-side customization, default empty)
@@ -1015,7 +1032,7 @@ all:
       tolerations: []
       nodeSelector:
         node-role.kubernetes.io/worker: ""
-      resources: {}
+      resources: "{{ mon_system_grafana_resources }}"
       extraObjects: "{{ mon_system_grafana_extra_objects }}"
 
     # --- PHASE: post ---
