@@ -1,23 +1,22 @@
 # =============================================================================
-# Install Teleport (official Helm chart, SQLite backend on Longhorn PVC)
+# Install Teleport (upstream Helm chart teleport-cluster + local charts)
 # Steps:
-#   1. teleport/pre:       NetworkPolicies
-#   2. teleport:           main chart (standalone, SQLite + Longhorn PVC)
-#   3. teleport/post:      Ingress (Traefik HTTPS) + HAProxy TCP (SSH + tunnel)
+#   1. teleport/pre:       NetworkPolicies + cert-manager Issuer + Certificate прокси
+#   2. teleport:           upstream chart (standalone, SQLite + файлы аудита на PVC auth,
+#                          proxy multiplex, TLS прокси = секрет из шага 1)
+#   3. teleport/post:      Traefik IngressRouteTCP (tls.passthrough) + PodMonitor
 #   4. teleport/configure: Roles, Users, и все остальные CRDs via Teleport Operator
 #
-# Usage (tags):
-#   ansible-playbook teleport-install.yaml              # full install
-#   ansible-playbook teleport-install.yaml --tags pre   # only pre (NetworkPolicies)
-#   ansible-playbook teleport-install.yaml --tags install
-#   ansible-playbook teleport-install.yaml --tags post  # only post (Ingress + HAProxy TCP)
-#   ansible-playbook teleport-install.yaml --tags configure  # Roles, Users, CRDs
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-install.yaml
+#   ansible-playbook ... --tags pre
+#   ansible-playbook ... --tags install
+#   ansible-playbook ... --tags post
+#   ansible-playbook ... --tags configure
 #
 # Prerequisites:
-#   - Longhorn must be installed (storage for SQLite PVC)
-#   - cert-manager + ClusterIssuer must be configured
-#   - Traefik must be installed
-#   - HAProxy Ingress Controller must be installed
+#   - LINSTOR (storage class для PVC auth), cert-manager, Traefik
+#   - DNS teleport_domain (DNS-only) -> bastion-proxy (prod) / IP ноды (без бастиона)
 #
 # NOTE: teleport_cluster_name is immutable after first deploy.
 #       Do NOT change it after the cluster is initialized.
@@ -56,14 +55,14 @@
       tags: [always]
 
     # =========================================================================
-    # STEP 1: INSTALL PRE (ESO Resources, NetworkPolicies)
+    # STEP 1: INSTALL PRE (NetworkPolicies, Issuer, Certificate)
     # =========================================================================
 
     - name: "[teleport-pre] Copy chart to remote"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
       vars:
         dto_label_name: "teleport-pre"
-        dto_chart_name: "teleport-pre"
+        dto_chart_name: "pre"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/teleport/pre/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/teleport/pre"
       tags: [pre]
@@ -101,12 +100,23 @@
           --cleanup-on-fail
           --atomic
           --wait
+          --wait-for-jobs
           --timeout {{ teleport_pre_helm_timeout }}
       tags: [pre]
 
     # =========================================================================
     # STEP 2: INSTALL TELEPORT
     # =========================================================================
+
+    # Под прокси (и predeploy-хук чарта) монтирует TLS-секрет как обязательный
+    # том: без выпущенного сертификата helm --atomic откатится по таймауту.
+    - name: "[teleport-install] Wait for proxy TLS secret"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "teleport-install"
+        dto_wait_secret_name: "{{ teleport_tls_secret_name }}"
+        dto_wait_secret_namespace: "{{ teleport_namespace }}"
+      tags: [install]
 
     - name: "[teleport-install] Add Helm repository"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-add-helm-repo.yaml"
@@ -147,7 +157,7 @@
       tags: [install]
 
     # =========================================================================
-    # WAIT FOR TELEPORT CRDs (created by Teleport Operator)
+    # WAIT FOR TELEPORT CRDs (rendered by the operator subchart of release teleport)
     # =========================================================================
 
     - name: "[teleport-install] Wait for CRDs"
@@ -162,19 +172,19 @@
       vars:
         dto_label_name: "teleport-install"
         dto_rollout_namespace: "{{ teleport_namespace }}"
-        dto_rollout_timeout: "{{ teleport_rollout_timeout }}"
-        dto_rollout_resources_list: "{{ teleport_rollout_resources }}"
+        dto_rollout_timeout: "{{ teleport_install_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ teleport_install_rollout_resources }}"
       tags: [install]
 
     # =========================================================================
-    # STEP 3: INSTALL POST CHART (Ingress + HAProxy TCP)
+    # STEP 3: INSTALL POST CHART (IngressRouteTCP passthrough + PodMonitor)
     # =========================================================================
 
     - name: "[teleport-post] Copy chart to remote"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
       vars:
         dto_label_name: "teleport-post"
-        dto_chart_name: "teleport-post"
+        dto_chart_name: "post"
         dto_chart_local_src: "{{ project_root }}/playbook-app/charts/teleport/post/"
         dto_chart_remote_dest: "{{ remote_charts_dir }}/teleport/post"
       tags: [post]
@@ -212,6 +222,7 @@
           --cleanup-on-fail
           --atomic
           --wait
+          --wait-for-jobs
           --timeout {{ teleport_post_helm_timeout }}
       tags: [post]
 
@@ -296,8 +307,8 @@
           - "TELEPORT INSTALLATION COMPLETE"
           - "=============================================="
           - "Teleport UI:     https://{{ teleport_domain }}"
-          - "SSH proxy:       {{ teleport_domain }}:{{ teleport_ssh_port }}"
-          - "Reverse tunnel:  {{ teleport_domain }}:{{ teleport_reverse_tunnel_port }}"
+          - "tsh / kubectl:   tsh login --proxy={{ teleport_web_public_addr }} --user=<user>"
+          - "                 tsh kube login {{ teleport_kube_cluster_name }}"
           - ""
           - "To get invite link for superadmin (run once after first install):"
           - "  kubectl exec -n {{ teleport_namespace }} deploy/teleport-auth -- tctl users reset superadmin"
@@ -311,7 +322,7 @@
 
     - name: "[teleport-verify] Installation complete"
       debug:
-        msg: "teleport-pre + teleport-auth + teleport-proxy + teleport-post: OK"
+        msg: "teleport-pre + teleport + teleport-post + teleport-configure: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]

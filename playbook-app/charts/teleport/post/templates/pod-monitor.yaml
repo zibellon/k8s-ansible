@@ -1,0 +1,33 @@
+# =============================================================================
+# PODMONITOR FOR TELEPORT (Prometheus Operator)
+#   auth + proxy: метрики на порту diag (:3000, /metrics). Оператор Teleport
+#   под селектор не попадает. Имя не совпадает с PodMonitor upstream-чарта
+#   (= имя релиза teleport), иначе конфликт владения helm.
+# =============================================================================
+{{- if .Values.podMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: teleport-auth-proxy
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: teleport-cluster
+    {{- with .Values.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  podTargetLabels:
+    - app.kubernetes.io/component
+  podMetricsEndpoints:
+    - port: diag
+      path: /metrics
+      interval: {{ .Values.podMonitor.interval | quote }}
+      scrapeTimeout: {{ .Values.podMonitor.scrapeTimeout | quote }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      {{- toYaml .Values.podMonitor.selector | nindent 6 }}
+{{- end }}
