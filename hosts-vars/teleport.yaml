@@ -1,6 +1,6 @@
 all:
   vars:
-    # Флаг компонента (default false, opt-in): guard в teleport-install.yaml и teleport-restart.yaml.
+    # Флаг компонента (default false, opt-in): guard в teleport-install.yaml, teleport-restart.yaml и teleport-ssh-agent-install.yaml.
     teleport_enabled: false
 
     # ------
@@ -10,7 +10,6 @@ all:
     # НЕИЗМЕНЯЕМ после первого деплоя (смена = переустановка с потерей состояния).
     teleport_domain: "teleport-k8s-v2.drawapp.ru"
     teleport_cluster_name: "{{ teleport_domain }}"
-    teleport_external_url: "https://teleport-k8s-v2.drawapp.ru"
     # Имя Kubernetes-кластера внутри Teleport (tsh kube ls, контексты kubeconfig) и его метки
     # (по ним роли матчат кластер через kubernetes_labels).
     teleport_kube_cluster_name: "drawapp-k8s-v2"
@@ -429,11 +428,30 @@ all:
       extraObjects: "{{ teleport_cfg_extra_objects }}"
 
     # ---------
-    # SSH-AGENT
+    # SSH-AGENT (systemd на managers:workers — teleport-ssh-agent-install.yaml)
     # ---------
 
-    # Data directory on the node (config is always at /etc/teleport.yaml)
+    # Версия агента = версия работающего кластера (сверяется с подом auth; агент новее auth
+    # кластер не примет). Обновление: сначала teleport-install.yaml, потом агенты.
+    teleport_ssh_agent_version: "18.11.1"
+    # apt-репозиторий Teleport (Community-пакет teleport). Канал = stable/v<мажор teleport_ssh_agent_version>,
+    # меняется вместе с версией.
+    teleport_ssh_agent_apt_key_url: "https://apt.releases.teleport.dev/gpg"
+    teleport_ssh_agent_apt_keyring: "/etc/apt/keyrings/teleport-archive-keyring.asc"
+    teleport_ssh_agent_apt_repo_url: "https://apt.releases.teleport.dev/ubuntu"
+    teleport_ssh_agent_apt_channel: "stable/v18"
+    # Идентичность ноды (сертификаты, host_uuid). Повторный прогон её НЕ стирает.
     teleport_ssh_agent_data_dir: "/var/lib/teleport"
-
-    # Log level
+    # Файл с токеном подключения: пишется только для нод, которых Teleport не видит;
+    # Teleport читает его лишь в момент подключения.
+    teleport_ssh_agent_join_token_path: "/etc/teleport-join-token"
+    teleport_ssh_agent_join_token_ttl: "15m"
     teleport_ssh_agent_log_level: "INFO"
+    # Статические метки ноды (матчинг node_labels в ролях); per-host значения — в hosts.yaml.
+    teleport_ssh_agent_node_labels: {}
+    # Ожидание, пока каждая нода появится в Teleport
+    teleport_ssh_agent_join_wait:
+      retries: 30
+      delay: 10
+    # Деструктивно: стереть идентичность ноды и подключить заново (только с --limit).
+    teleport_ssh_agent_reset_identity: false
