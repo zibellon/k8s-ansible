@@ -305,39 +305,128 @@ all:
         selector: "{{ teleport_pod_monitor_selector }}"
       extraObjects: "{{ teleport_post_extra_objects }}"
     # ---
-    # --- PHASE: configure ---
-    teleport_configure_helm_timeout: "5m"
+    # --- PHASE: cfg (роли и пользователи Teleport + RBAC Kubernetes для их групп) ---
+    # Роли и пользователи — CR оператора Teleport (TeleportRoleV8 / TeleportUser) в namespace teleport.
+    # Полная синхронизация: элемент убран из списков -> helm удаляет CR -> оператор удаляет объект
+    # в Teleport (у пользователя — вместе с паролем и MFA). Пароль не декларативен: первый вход —
+    # по ссылке `tctl users reset <user>`. Права в Kubernetes даёт не Teleport, а RBAC на группу из
+    # kubernetes_groups роли (Teleport ходит в apiserver через impersonation).
+    teleport_cfg_helm_timeout: "5m"
+    # Группа Kubernetes полного доступа (ClusterRoleBinding -> ClusterRole cluster-admin).
+    teleport_cfg_kube_admin_group: "teleport:cluster-admin"
+    # Роли (TeleportRoleV8). Имя не должно совпадать с preset-ролью Teleport (access, editor, ...).
+    # logins = traits.logins пользователя: агент создаёт OS-пользователя при входе и удаляет его
+    # после завершения сессии (insecure-drop), sudo без пароля. У такого пользователя нет домашнего
+    # каталога (HOME=/); группа с тем же именем, уже существующая на ноде, блокирует вход.
+    teleport_cfg_roles:
+      # Полный доступ, включая управление Teleport (роли, пользователи, токены).
+      - name: superadmin
+        labels: {}
+        annotations: {}
+        spec:
+          allow:
+            rules:
+              - resources: ["*"]
+                verbs: ["*"]
+            logins: ["{% raw %}{{internal.logins}}{% endraw %}"]
+            node_labels:
+              "*": "*"
+            host_sudoers: ["ALL=(ALL) NOPASSWD: ALL"]
+            kubernetes_labels:
+              "*": "*"
+            kubernetes_groups: ["{{ teleport_cfg_kube_admin_group }}"]
+            kubernetes_resources:
+              - kind: "*"
+                api_group: "*"
+                namespace: "*"
+                name: "*"
+                verbs: ["*"]
+          options:
+            max_session_ttl: 12h0m0s
+            create_host_user_mode: insecure-drop
+            create_host_user_default_shell: /bin/bash
+      # kubectl cluster-admin + SSH с sudo, без управления Teleport.
+      - name: admin
+        labels: {}
+        annotations: {}
+        spec:
+          allow:
+            logins: ["{% raw %}{{internal.logins}}{% endraw %}"]
+            node_labels:
+              "*": "*"
+            host_sudoers: ["ALL=(ALL) NOPASSWD: ALL"]
+            kubernetes_labels:
+              "*": "*"
+            kubernetes_groups: ["{{ teleport_cfg_kube_admin_group }}"]
+            kubernetes_resources:
+              - kind: "*"
+                api_group: "*"
+                namespace: "*"
+                name: "*"
+                verbs: ["*"]
+          options:
+            max_session_ttl: 12h0m0s
+            create_host_user_mode: insecure-drop
+            create_host_user_default_shell: /bin/bash
+    teleport_cfg_roles_extra: []
+    # Пользователи (TeleportUser). traits.logins — имя OS-пользователя на нодах.
+    teleport_cfg_users:
+      - name: superadmin
+        labels: {}
+        annotations: {}
+        spec:
+          roles: [superadmin]
+          traits:
+            logins: [superadmin]
+    teleport_cfg_users_extra: []
+    # RBAC Kubernetes для групп из kubernetes_groups. Объекты в cluster scope / чужих namespace —
+    # имя только с префиксом teleport-managed-* (playbook-conventions.md §17.12).
+    #   ClusterRole:         {name, labels?, annotations?, rules}
+    #   ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
+    #   RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
+    teleport_cfg_rbac_cluster_roles: []
+    teleport_cfg_rbac_cluster_roles_extra: []
+    teleport_cfg_rbac_cluster_role_bindings:
+      - name: teleport-managed-cluster-admin
+        labels: {}
+        annotations: {}
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-admin
+        subjects:
+          - apiGroup: rbac.authorization.k8s.io
+            kind: Group
+            name: "{{ teleport_cfg_kube_admin_group }}"
+    teleport_cfg_rbac_cluster_role_bindings_extra: []
+    teleport_cfg_rbac_role_bindings: []
+    teleport_cfg_rbac_role_bindings_extra: []
+    # Перед apply оператор перезапускается: на старте он применяет ВСЕ CR (исправляет дрейф,
+    # сделанный в UI/tctl) и получает свежий сертификат. Результат проверяется в самом Teleport.
+    teleport_cfg_operator_rollout_resources:
+      - deployment.apps/teleport-operator
+    teleport_cfg_operator_rollout_timeout: "300s"
+    # tctl внутри пода auth (встроенная Admin-идентичность, без RBAC и MFA)
+    teleport_tctl_exec_target: "deployment/teleport-auth"
+    teleport_cfg_reconcile_wait:
+      retries: 30
+      delay: 5
+    # Объекты не из IaC, которые не надо показывать в отчёте (bootstrap upstream-чарта).
+    teleport_cfg_unmanaged_ignore_roles: ["operator"]
+    teleport_cfg_unmanaged_ignore_users: []
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    teleport_configure_extra_objects: []
-    # Configure-phase kustomize patches (operator-side customization, default empty)
-    teleport_configure_kustomize_patches: []
-    # Configure-phase values (Teleport Operator CRDs chart)
-    # Все teleport_configure_* переменные определены в hosts-vars/teleport-configure.yaml
-    teleport_configure_helm_values:
+    teleport_cfg_extra_objects: []
+    # Cfg-phase kustomize patches (operator-side customization, default empty)
+    teleport_cfg_kustomize_patches: []
+    # Cfg-phase values (Teleport Operator CRs + RBAC Kubernetes)
+    teleport_cfg_helm_values:
       namespace: "{{ teleport_namespace }}"
-      roles: "{{ teleport_configure_roles + teleport_configure_roles_extra }}"
-      users: "{{ teleport_configure_users + teleport_configure_users_extra }}"
-      bots: "{{ teleport_configure_bots + teleport_configure_bots_extra }}"
-      provisionTokens: "{{ teleport_configure_provision_tokens + teleport_configure_provision_tokens_extra }}"
-      apps: "{{ teleport_configure_apps + teleport_configure_apps_extra }}"
-      databases: "{{ teleport_configure_databases + teleport_configure_databases_extra }}"
-      githubConnectors: "{{ teleport_configure_github_connectors + teleport_configure_github_connectors_extra }}"
-      oidcConnectors: "{{ teleport_configure_oidc_connectors + teleport_configure_oidc_connectors_extra }}"
-      samlConnectors: "{{ teleport_configure_saml_connectors + teleport_configure_saml_connectors_extra }}"
-      accessLists: "{{ teleport_configure_access_lists + teleport_configure_access_lists_extra }}"
-      trustedClusters: "{{ teleport_configure_trusted_clusters + teleport_configure_trusted_clusters_extra }}"
-      loginRules: "{{ teleport_configure_login_rules + teleport_configure_login_rules_extra }}"
-      accessMonitoringRules: "{{ teleport_configure_access_monitoring_rules + teleport_configure_access_monitoring_rules_extra }}"
-      oktaImportRules: "{{ teleport_configure_okta_import_rules + teleport_configure_okta_import_rules_extra }}"
-      opensshServers: "{{ teleport_configure_openssh_servers + teleport_configure_openssh_servers_extra }}"
-      opensshEiceServers: "{{ teleport_configure_openssh_eice_servers + teleport_configure_openssh_eice_servers_extra }}"
-      workloadIdentities: "{{ teleport_configure_workload_identities + teleport_configure_workload_identities_extra }}"
-      inferenceModels: "{{ teleport_configure_inference_models + teleport_configure_inference_models_extra }}"
-      inferencePolicies: "{{ teleport_configure_inference_policies + teleport_configure_inference_policies_extra }}"
-      inferenceSecrets: "{{ teleport_configure_inference_secrets + teleport_configure_inference_secrets_extra }}"
-      autoupdateConfigs: "{{ teleport_configure_autoupdate_configs + teleport_configure_autoupdate_configs_extra }}"
-      autoupdateVersions: "{{ teleport_configure_autoupdate_versions + teleport_configure_autoupdate_versions_extra }}"
-      extraObjects: "{{ teleport_configure_extra_objects }}"
+      roles: "{{ teleport_cfg_roles + teleport_cfg_roles_extra }}"
+      users: "{{ teleport_cfg_users + teleport_cfg_users_extra }}"
+      rbacClusterRoles: "{{ teleport_cfg_rbac_cluster_roles + teleport_cfg_rbac_cluster_roles_extra }}"
+      rbacClusterRoleBindings: "{{ teleport_cfg_rbac_cluster_role_bindings + teleport_cfg_rbac_cluster_role_bindings_extra }}"
+      rbacRoleBindings: "{{ teleport_cfg_rbac_role_bindings + teleport_cfg_rbac_role_bindings_extra }}"
+      extraObjects: "{{ teleport_cfg_extra_objects }}"
 
     # ---------
     # SSH-AGENT

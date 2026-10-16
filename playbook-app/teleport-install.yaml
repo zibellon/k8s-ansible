@@ -5,14 +5,15 @@
 #   2. teleport:           upstream chart (standalone, SQLite + файлы аудита на PVC auth,
 #                          proxy multiplex, TLS прокси = секрет из шага 1)
 #   3. teleport/post:      Traefik IngressRouteTCP (tls.passthrough) + PodMonitor
-#   4. teleport/configure: Roles, Users, и все остальные CRDs via Teleport Operator
+#   4. teleport/cfg:       роли + пользователи Teleport (CR оператора) + RBAC Kubernetes
+#                          для их групп; проверка до apply и сверка с Teleport после
 #
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-install.yaml
 #   ansible-playbook ... --tags pre
 #   ansible-playbook ... --tags install
 #   ansible-playbook ... --tags post
-#   ansible-playbook ... --tags configure
+#   ansible-playbook ... --tags cfg
 #
 # Prerequisites:
 #   - LINSTOR (storage class для PVC auth), cert-manager, Traefik
@@ -31,6 +32,9 @@
   vars:
     # Имена локальных фактов — единая точка объявления (вынос из хардкода)
     _local_teleport_helm_chart_source_key: "_local_teleport_helm_chart_source"
+    _local_teleport_cfg_violations_key: "_local_teleport_cfg_violations"
+    _local_teleport_cfg_roles_diff_key: "_local_teleport_cfg_roles_diff"
+    _local_teleport_cfg_users_diff_key: "_local_teleport_cfg_users_diff"
 
   tasks:
     - name: "[teleport-install] Assert component enabled"
@@ -227,53 +231,190 @@
       tags: [post]
 
     # =========================================================================
-    # STEP 4: CONFIGURE (все CRDs via Teleport Operator)
+    # STEP 4: CFG (роли и пользователи Teleport + RBAC Kubernetes)
     # =========================================================================
 
-    - name: "[teleport-configure] Copy chart to remote"
+    # Шаблоны чарта рендерят списки без проверок: ошибки здесь молчаливые
+    # (группа без биндинга — нет прав) или роняют helm (дубликат имени).
+    - name: "[teleport-cfg] Compute cfg violations"
+      set_fact:
+        "{{ _local_teleport_cfg_violations_key }}": >-
+          {{ teleport_cfg_helm_values.roles
+             | teleport_cfg_verify(teleport_cfg_helm_values.users,
+                                   teleport_cfg_helm_values.rbacClusterRoles,
+                                   teleport_cfg_helm_values.rbacClusterRoleBindings,
+                                   teleport_cfg_helm_values.rbacRoleBindings,
+                                   teleport_namespace) }}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Assert no cfg violations"
+      assert:
+        that:
+          - lookup('vars', _local_teleport_cfg_violations_key) | length == 0
+        fail_msg: |
+          [teleport-cfg] verify failed ({{ lookup('vars', _local_teleport_cfg_violations_key) | length }} violations):
+          {% for v in lookup('vars', _local_teleport_cfg_violations_key) %}
+            - {{ v }}
+          {% endfor %}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    # Зачем рестарт — см. teleport_cfg_operator_rollout_resources (hosts-vars/teleport.yaml).
+    - name: "[teleport-cfg] Restart Teleport operator"
+      command: kubectl rollout restart {{ item }} -n {{ teleport_namespace }}
+      loop: "{{ teleport_cfg_operator_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Wait for operator rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "teleport-cfg"
+        dto_rollout_namespace: "{{ teleport_namespace }}"
+        dto_rollout_timeout: "{{ teleport_cfg_operator_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ teleport_cfg_operator_rollout_resources }}"
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Copy chart to remote"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
       vars:
-        dto_label_name: "teleport-configure"
-        dto_chart_name: "teleport-configure"
-        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/teleport/configure/"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/teleport/configure"
-      tags: [configure]
+        dto_label_name: "teleport-cfg"
+        dto_chart_name: "cfg"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/teleport/cfg/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/teleport/cfg"
+      tags: [cfg]
 
-    - name: "[teleport-configure] Create values file"
+    - name: "[teleport-cfg] Create values file"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
       vars:
-        dto_label_name: "teleport-configure"
-        dto_dir: "{{ remote_charts_dir }}/teleport/configure"
+        dto_label_name: "teleport-cfg"
+        dto_dir: "{{ remote_charts_dir }}/teleport/cfg"
         dto_filename: "values-override.yaml"
-        dto_content: "{{ teleport_configure_helm_values | to_nice_yaml }}"
-      tags: [configure]
+        dto_content: "{{ teleport_cfg_helm_values | to_nice_yaml }}"
+      tags: [cfg]
 
-    - name: "[teleport-configure] Build kustomize artifact"
+    - name: "[teleport-cfg] Build kustomize artifact"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
       vars:
-        dto_label_name: "teleport-configure"
-        dto_release_name: "teleport-configure"
-        dto_chart_remote_dest: "{{ remote_charts_dir }}/teleport/configure"
-        dto_values_file_path: "{{ remote_charts_dir }}/teleport/configure/values-override.yaml"
-        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/teleport/configure-k-tmp"
-        dto_kustomize_final_dir: "{{ remote_charts_dir }}/teleport/configure-k"
-        dto_patches_list: "{{ teleport_configure_kustomize_patches }}"
+        dto_label_name: "teleport-cfg"
+        dto_release_name: "teleport-cfg"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/teleport/cfg"
+        dto_values_file_path: "{{ remote_charts_dir }}/teleport/cfg/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/teleport/cfg-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/teleport/cfg-k"
+        dto_patches_list: "{{ teleport_cfg_kustomize_patches }}"
         dto_target_namespace: "{{ teleport_namespace }}"
-      tags: [configure]
+      tags: [cfg]
 
-    - name: "[teleport-configure] Install via Helm (async)"
+    - name: "[teleport-cfg] Install via Helm (async)"
       include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
       vars:
-        dto_label_name: "teleport-configure"
+        dto_label_name: "teleport-cfg"
         dto_helm_command: >
-          helm upgrade --install teleport-configure {{ remote_charts_dir }}/teleport/configure-k
+          helm upgrade --install teleport-cfg {{ remote_charts_dir }}/teleport/cfg-k
           --namespace {{ teleport_namespace }}
           --create-namespace
           --cleanup-on-fail
           --atomic
           --wait
-          --timeout {{ teleport_configure_helm_timeout }}
-      tags: [configure]
+          --wait-for-jobs
+          --timeout {{ teleport_cfg_helm_timeout }}
+      tags: [cfg]
+
+    # helm --wait не ждёт оператора, статус CR без observedGeneration — истина только в Teleport.
+    # unowned (объект создан вне IaC) оператор не применит никогда — ожидание прерывается сразу.
+    - name: "[teleport-cfg] Wait for operator: roles in Teleport match teleport_cfg_roles"
+      command: kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -- tctl get roles --format=json
+      register: _local_teleport_cfg_live_roles
+      until: >-
+        _local_teleport_cfg_live_roles.rc == 0 and
+        ((_local_teleport_cfg_live_roles.stdout | from_json | teleport_cfg_reconcile_diff(teleport_cfg_helm_values.roles, teleport_cfg_unmanaged_ignore_roles)).pending | length == 0 or
+         (_local_teleport_cfg_live_roles.stdout | from_json | teleport_cfg_reconcile_diff(teleport_cfg_helm_values.roles, teleport_cfg_unmanaged_ignore_roles)).unowned | length > 0)
+      retries: "{{ teleport_cfg_reconcile_wait.retries }}"
+      delay: "{{ teleport_cfg_reconcile_wait.delay }}"
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Compute roles diff"
+      set_fact:
+        "{{ _local_teleport_cfg_roles_diff_key }}": "{{ (_local_teleport_cfg_live_roles.stdout | from_json | teleport_cfg_reconcile_diff(teleport_cfg_helm_values.roles, teleport_cfg_unmanaged_ignore_roles)) if _local_teleport_cfg_live_roles.rc == 0 else {} }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Assert roles converged"
+      assert:
+        that:
+          - _local_teleport_cfg_live_roles.rc == 0
+          - lookup('vars', _local_teleport_cfg_roles_diff_key).pending | length == 0
+        fail_msg: |
+          [teleport-cfg] roles in Teleport do not match teleport_cfg_roles:
+          {% if _local_teleport_cfg_live_roles.rc != 0 %}
+            tctl failed: {{ _local_teleport_cfg_live_roles.stderr }}
+          {% else %}
+            missing (оператор не применил): {{ lookup('vars', _local_teleport_cfg_roles_diff_key).missing }}
+            stale (удалены из vars, ещё не удалены оператором): {{ lookup('vars', _local_teleport_cfg_roles_diff_key).stale }}
+            unowned (созданы вне IaC — оператор их не трогает, удалить вручную через tctl): {{ lookup('vars', _local_teleport_cfg_roles_diff_key).unowned }}
+          {% endif %}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Wait for operator: users in Teleport match teleport_cfg_users"
+      command: kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -- tctl get users --format=json
+      register: _local_teleport_cfg_live_users
+      until: >-
+        _local_teleport_cfg_live_users.rc == 0 and
+        ((_local_teleport_cfg_live_users.stdout | from_json | teleport_cfg_reconcile_diff(teleport_cfg_helm_values.users, teleport_cfg_unmanaged_ignore_users)).pending | length == 0 or
+         (_local_teleport_cfg_live_users.stdout | from_json | teleport_cfg_reconcile_diff(teleport_cfg_helm_values.users, teleport_cfg_unmanaged_ignore_users)).unowned | length > 0)
+      retries: "{{ teleport_cfg_reconcile_wait.retries }}"
+      delay: "{{ teleport_cfg_reconcile_wait.delay }}"
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Compute users diff"
+      set_fact:
+        "{{ _local_teleport_cfg_users_diff_key }}": "{{ (_local_teleport_cfg_live_users.stdout | from_json | teleport_cfg_reconcile_diff(teleport_cfg_helm_values.users, teleport_cfg_unmanaged_ignore_users)) if _local_teleport_cfg_live_users.rc == 0 else {} }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Assert users converged"
+      assert:
+        that:
+          - _local_teleport_cfg_live_users.rc == 0
+          - lookup('vars', _local_teleport_cfg_users_diff_key).pending | length == 0
+        fail_msg: |
+          [teleport-cfg] users in Teleport do not match teleport_cfg_users:
+          {% if _local_teleport_cfg_live_users.rc != 0 %}
+            tctl failed: {{ _local_teleport_cfg_live_users.stderr }}
+          {% else %}
+            missing (оператор не применил): {{ lookup('vars', _local_teleport_cfg_users_diff_key).missing }}
+            stale (удалены из vars, ещё не удалены оператором): {{ lookup('vars', _local_teleport_cfg_users_diff_key).stale }}
+            unowned (созданы вне IaC — оператор их не трогает, удалить вручную через tctl): {{ lookup('vars', _local_teleport_cfg_users_diff_key).unowned }}
+          {% endif %}
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
+
+    - name: "[teleport-cfg] Show objects not managed by IaC"
+      debug:
+        msg:
+          - "Roles not from IaC (UI/tctl): {{ lookup('vars', _local_teleport_cfg_roles_diff_key).unmanaged }}"
+          - "Users not from IaC (UI/tctl): {{ lookup('vars', _local_teleport_cfg_users_diff_key).unmanaged }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [cfg]
 
     # =========================================================================
     # VERIFICATION
@@ -311,7 +452,7 @@
           - "                 tsh kube login {{ teleport_kube_cluster_name }}"
           - ""
           - "To get invite link for superadmin (run once after first install):"
-          - "  kubectl exec -n {{ teleport_namespace }} deploy/teleport-auth -- tctl users reset superadmin"
+          - "  kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -- tctl users reset superadmin"
           - ""
           - "IMPORTANT: teleport_cluster_name is immutable."
           - "  Do NOT change it after first install."
@@ -322,7 +463,7 @@
 
     - name: "[teleport-verify] Installation complete"
       debug:
-        msg: "teleport-pre + teleport + teleport-post + teleport-configure: OK"
+        msg: "teleport-pre + teleport + teleport-post + teleport-cfg: OK"
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
       tags: [always]
