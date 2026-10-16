@@ -120,6 +120,8 @@ The `post/` chart drives each domain through two parallel objects — an `<c>_<u
 
 The toggles are independent: e.g. `enabled: true` + `tlsEnabled: false` + `<c>_<unit>_certificate_enabled: false` yields a plain HTTP ingress with no `Certificate` — useful when TLS is terminated upstream.
 
+Exception — `teleport`: no HTTP ingress at all. Traefik `IngressRouteTCP` passes TLS through (`teleport_ingress_route_tcp_config`), Teleport terminates it with the `teleport_tls_secret_name` secret issued by `teleport_proxy_certificate`, so that `Certificate` lives in `pre/` and install waits for the secret. HTTP-01 still goes through Traefik `web` :80. See [`components.md`](components.md) §14.
+
 ### 4.4 Global ClusterIssuers
 
 `cert_manager_cluster_issuers` (`hosts-vars/cert-manager.yaml`) still defines cluster-wide raw `ClusterIssuer` resources — they remain available as operator infrastructure, but the standard ingress components no longer consume them.

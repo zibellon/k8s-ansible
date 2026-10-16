@@ -53,10 +53,11 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/my-cluster/ playbook-app/
 CDN, edge-балансировщик, сервис-меш, — и до сервера доходит уже HTTP. Тогда
 сертификат на origin не нужен, а ACME HTTP-01 через проксирующий слой всё равно
 не дойдёт. Внешний слой ОБЯЗАН проставлять `X-Forwarded-Proto: https`: без этого
-приложения, строящие абсолютные ссылки (ZITADEL, GitLab, Teleport), уйдут в
+приложения, строящие абсолютные ссылки (ZITADEL, GitLab), уйдут в
 петлю редиректов. Компоненты с UI: `argocd`, `cilium`, `filestash`, `gitlab`,
 `kargo`, `linstor`, `longhorn`, `mon-system`, `outline`, `portainer`,
-`seaweedfs`, `teleport`, `traefik`, `vault`, `zitadel`.
+`seaweedfs`, `traefik`, `vault`, `zitadel`. Исключение — `teleport`: оси TLS
+у него нет, TLS терминирует сам Teleport (Traefik пропускает его насквозь).
 
 Остальные оси:
 

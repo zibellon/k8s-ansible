@@ -37,7 +37,7 @@ Each Helm release follows the `mon-system-<phase>` naming pattern. The CRDs phas
 
 **Cluster-wide.** The Prometheus Operator's `ServiceMonitor` selector has no namespace restriction (empty `serviceMonitorNamespaceSelector: {}`) — it discovers any `ServiceMonitor` CR in any namespace. This lets external components own their own SM resources without touching mon-system config.
 
-The same applies to `PodMonitor`: `podMonitorSelector: {}` + `podMonitorNamespaceSelector: {}` in `mon_system_prometheus_spec`. Components that upstream ships without a metrics `Service` scrape their pods directly — `stakater-reloader` (chart built-in), `linstor` (satellite + affinity-controller) and `argo-events` (controller + the pods it spawns from CRs).
+The same applies to `PodMonitor`: `podMonitorSelector: {}` + `podMonitorNamespaceSelector: {}` in `mon_system_prometheus_spec`. Components that upstream ships without a metrics `Service` scrape their pods directly — `stakater-reloader` (chart built-in), `linstor` (satellite + affinity-controller), `argo-events` (controller + the pods it spawns from CRs) and `teleport` (auth + proxy, port `diag`).
 
 ---
 

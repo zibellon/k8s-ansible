@@ -81,6 +81,9 @@ for c in cilium cert-manager external-secrets vault traefik metrics-server staka
   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/$c-install.yaml
 done
 
+# Агенты SSH Teleport — после teleport-install (версия агента = версия кластера)
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-ssh-agent-install.yaml
+
 # У трёх компонентов стадия cfg в первую волну НЕ входит — только контроллер.
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-install.yaml      --tags crds,pre,install,post
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-install.yaml       --tags pre,install,post
@@ -140,7 +143,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags alertmanager` — for `mon-system` (Alertmanager CR)
 - `--tags node-exporter`, `--tags ksm`, `--tags loki`, `--tags vector`, `--tags grafana` — for `mon-system` (per-workload phases)
 - `--tags operator`, `--tags vault-cr`, `--tags unseal-keys` — for `vault` (bank-vaults operator OCI chart / Vault CR + StatefulSet rollout / wait for unsealer Secret and distribute creds to all managers). Тега `cr` у компонента нет
-- `--tags configure` — for `teleport` (declarative resources)
+- `--tags cfg` — for `teleport` (роли и пользователи Teleport — CR оператора — + RBAC Kubernetes для их групп, `teleport-managed-*`; перед apply рестарт оператора, после — сверка с Teleport через `tctl`)
 - `--tags cfg` — for `argocd` (five `argocd-managed-*` ClusterRoles + the per-namespace RoleBinding pairs + default-project lockdown + AppProjects + Applications) and for `kargo` (`Project`'ы вместе с их namespace + ServiceAccount'ы людей + ClusterRoles и bindings). Одним релизом, независимо от Ingress и Certificate. ⚠️ Порядок `kargo` → `argocd`: RoleBinding едет в namespace Kargo-проектов, а их создаёт `kargo/cfg`
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
