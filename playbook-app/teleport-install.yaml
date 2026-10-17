@@ -16,7 +16,8 @@
 #   ansible-playbook ... --tags cfg
 #
 # Prerequisites:
-#   - LINSTOR (storage class для PVC auth), cert-manager, Traefik
+#   - Cilium, LINSTOR (storage class для PVC auth), cert-manager, Traefik,
+#     mon-system --tags crds (CRD PodMonitor для post)
 #   - DNS teleport_domain (DNS-only) -> bastion-proxy (prod) / IP ноды (без бастиона)
 #
 # NOTE: teleport_cluster_name is immutable after first deploy.
@@ -451,8 +452,8 @@
           - "tsh / kubectl:   tsh login --proxy={{ teleport_web_public_addr }} --user=<user>"
           - "                 tsh kube login {{ teleport_kube_cluster_name }}"
           - ""
-          - "To get invite link for superadmin (run once after first install):"
-          - "  kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -- tctl users reset superadmin"
+          - "Invite link (once per user: {{ teleport_cfg_helm_values.users | map(attribute='name') | join(', ') }}):"
+          - "  kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -- tctl users reset <user>"
           - ""
           - "IMPORTANT: teleport_cluster_name is immutable."
           - "  Do NOT change it after first install."

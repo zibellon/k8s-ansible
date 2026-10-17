@@ -12,7 +12,10 @@
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-ssh-agent-install.yaml
 #   ansible-playbook ... --limit <node>
-#   ansible-playbook ... --limit <node> -e teleport_ssh_agent_reset_identity=true   # стереть идентичность ноды и подключить заново
+#
+# Сброс идентичности ноды (стереть data_dir, удалить старую запись, подключить заново):
+#   teleport_ssh_agent_reset_identity: true у хоста в hosts-vars-override/<cluster>/hosts.yaml,
+#   прогон, затем вернуть false — пока true, каждый прогон сбрасывает ноду заново.
 #
 # Prerequisites:
 #   - teleport-install.yaml (кластер Teleport запущен), DNS teleport_domain
@@ -28,7 +31,7 @@
 
   vars:
     # Имена локальных фактов — единая точка объявления (вынос из хардкода)
-    _local_teleport_ssh_agent_to_join_key: "_local_teleport_ssh_agent_to_join"
+    _local_teleport_ssh_agent_join_key: "_local_teleport_ssh_agent_join"
     _local_teleport_ssh_agent_records_key: "_local_teleport_ssh_agent_records"
 
   tasks:
@@ -37,14 +40,6 @@
         that:
           - teleport_enabled | default(false) | bool
         fail_msg: "teleport is disabled (teleport_enabled=false). Set teleport_enabled: true in hosts-vars-override/ to install it."
-      run_once: true
-
-    - name: "[teleport-ssh-agent-install] Assert --limit for identity reset"
-      assert:
-        that:
-          - ansible_limit is defined
-        fail_msg: "teleport_ssh_agent_reset_identity=true wipes node identity: run it with --limit <node>."
-      when: teleport_ssh_agent_reset_identity | bool
       run_once: true
 
     - name: "[teleport-ssh-agent-pre-check] Validate target"
@@ -169,31 +164,28 @@
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
-    # Нода без heartbeat (новая, остановленная, сброшенная) получает токен. Токен
+    # Нода без heartbeat (новая, остановленная) или сброшенная получает токен. Токен
     # читается только при подключении: у подключённой ноды идентичность в data_dir.
-    - name: "[teleport-ssh-agent-join] Compute nodes to join"
+    - name: "[teleport-ssh-agent-join] Decide whether the node needs to join"
       set_fact:
-        "{{ _local_teleport_ssh_agent_to_join_key }}": >-
-          {{ ansible_play_hosts
-             if teleport_ssh_agent_reset_identity | bool
-             else ansible_play_hosts | difference(_local_teleport_ssh_agent_nodes.stdout | from_json | map(attribute='spec.hostname') | list) }}
-      run_once: true
+        "{{ _local_teleport_ssh_agent_join_key }}": >-
+          {{ teleport_ssh_agent_reset_identity | bool
+             or inventory_hostname not in (_local_teleport_ssh_agent_nodes.stdout | from_json | map(attribute='spec.hostname') | list) }}
 
     # Старая запись ноды висит в Teleport до TTL heartbeat (~15 мин) — дубль имени ломает tsh ssh.
     - name: "[teleport-ssh-agent-reset] Remove old node records"
       command: kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -- tctl rm node/{{ item.metadata.name }}
-      loop: "{{ _local_teleport_ssh_agent_nodes.stdout | from_json | selectattr('spec.hostname', 'in', ansible_play_hosts) | list }}"
+      loop: "{{ _local_teleport_ssh_agent_nodes.stdout | from_json | selectattr('spec.hostname', 'equalto', inventory_hostname) | list }}"
       loop_control:
         label: "{{ item.spec.hostname }}"
       when: teleport_ssh_agent_reset_identity | bool
       delegate_to: "{{ master_manager_fact }}"
-      run_once: true
 
     - name: "[teleport-ssh-agent-join] Generate node join token"
       command: kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -- tctl tokens add --type=node --ttl={{ teleport_ssh_agent_join_token_ttl }} --format=json
       register: _local_teleport_ssh_agent_token
       no_log: true
-      when: lookup('vars', _local_teleport_ssh_agent_to_join_key) | length > 0
+      when: ansible_play_hosts | map('extract', hostvars, _local_teleport_ssh_agent_join_key) | select | list | length > 0
       delegate_to: "{{ master_manager_fact }}"
       run_once: true
 
@@ -205,7 +197,7 @@
         owner: root
         group: root
       no_log: true
-      when: inventory_hostname in lookup('vars', _local_teleport_ssh_agent_to_join_key)
+      when: lookup('vars', _local_teleport_ssh_agent_join_key)
       notify: Restart teleport
 
     - name: "[teleport-ssh-agent-join] Apply config and token changes"
@@ -259,12 +251,17 @@
           Not on {{ teleport_ssh_agent_version }}: {{ lookup('vars', _local_teleport_ssh_agent_records_key)
           | rejectattr('spec.version', 'equalto', teleport_ssh_agent_version) | map(attribute='spec.hostname') | list }}.
           Missing or duplicate node (identity from another Teleport cluster, broken data_dir):
-          rerun with --limit <node> -e teleport_ssh_agent_reset_identity=true.
+          set teleport_ssh_agent_reset_identity: true for it in hosts-vars-override/<cluster>/hosts.yaml and rerun.
       run_once: true
 
     - name: "[teleport-ssh-agent-verify] Installation complete"
       debug:
-        msg: "Teleport SSH agents joined: {{ ansible_play_hosts | join(', ') }} (newly joined: {{ lookup('vars', _local_teleport_ssh_agent_to_join_key) | join(', ') or 'none' }})"
+        msg: >-
+          {% set reset = ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'teleport_ssh_agent_reset_identity') | map('bool'))
+          | selectattr(1) | map(attribute=0) | list %}Teleport SSH agents joined: {{ ansible_play_hosts | join(', ') }}
+          (newly joined: {{ ansible_play_hosts | map('extract', hostvars) | selectattr(_local_teleport_ssh_agent_join_key)
+          | map(attribute='inventory_hostname') | join(', ') or 'none' }}).{% if reset %} Identity reset on {{ reset | join(', ') }}:
+          set teleport_ssh_agent_reset_identity back to false.{% endif %}
       run_once: true
 
   handlers:

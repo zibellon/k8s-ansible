@@ -301,7 +301,7 @@ Declarative Teleport access applied by the `teleport/cfg/` chart (release `telep
 
 | Variable | Purpose |
 |---|---|
-| `teleport_cfg_roles` / `_extra` | `TeleportRoleV8` CRs. Base: `superadmin` (Teleport admin + kubectl + SSH), `admin` (kubectl + SSH). Names must not match Teleport preset roles |
+| `teleport_cfg_roles` / `_extra` | `TeleportRoleV8` CRs. Base: `superadmin` (Teleport admin + kubectl + SSH), `admin` (kubectl + SSH; its `cluster-admin` allows exec into the auth pod, so it is effectively a Teleport admin too). Names must not match Teleport preset roles |
 | `teleport_cfg_users` / `_extra` | `TeleportUser` CRs (`roles`, `traits.logins` = OS user on nodes). Base: `superadmin`. Only roles from `teleport_cfg_roles` + `_extra` may be assigned (preset roles rejected) |
 | `teleport_cfg_rbac_cluster_roles` / `_extra` | ClusterRoles for Teleport groups (`teleport-managed-*`) |
 | `teleport_cfg_rbac_cluster_role_bindings` / `_extra` | Base: `teleport-managed-cluster-admin` (group `teleport_cfg_kube_admin_group` → `cluster-admin`) |
@@ -324,6 +324,7 @@ Declarative Teleport access applied by the `teleport/cfg/` chart (release `telep
 | `api_server_bind_port` | manager host | kubeadm apiserver bind port (default `6443`) |
 | `node_labels` | host | List of labels applied at `cluster-init` / join via `tasks-apply-node-labels.yaml` |
 | `teleport_ssh_agent_node_labels` | host | Teleport SSH node labels (dict, base `{}` in `hosts-vars/teleport.yaml`) — matched by roles' `node_labels`; written to `/etc/teleport.yaml` by `teleport-ssh-agent-install.yaml` |
+| `teleport_ssh_agent_reset_identity` | host | Destructive (base `false` in `hosts-vars/teleport.yaml`): `teleport-ssh-agent-install.yaml` wipes the node's Teleport identity, removes its old record and rejoins it. Resets on every run while `true` — set back to `false` afterwards |
 | Groups: `managers`, `workers`, `bastion_proxy` | inventory | Defined in `hosts-vars/hosts.yaml`. `bastion_proxy` = внешние edge-прокси, исключены из cluster-wide плейбуков — см. §2.15 |
 
 ### 2.11 Output facts (runtime-only, produced by tasks)
