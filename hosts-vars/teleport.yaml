@@ -176,7 +176,11 @@ all:
     # Т.е. обновление версии Teleport = bump teleport_helm_chart_version.
     # Аудит — файлы на PVC auth (поиск в Web UI работает). Teleport их НИКОГДА не удаляет:
     # sidecar раз в час удаляет суточные файлы старше teleport_audit_retention_days суток.
-    teleport_audit_events_dir: "/var/lib/teleport/audit/events"
+    # Каталог = <точка монтирования PVC в чарте (фиксирована upstream)>/<subpath>; sidecar монтирует
+    # только subpath — к SQLite-базе и ключам auth у него доступа нет.
+    teleport_auth_data_dir: "/var/lib/teleport"
+    teleport_audit_events_subpath: "audit/events"
+    teleport_audit_events_dir: "{{ teleport_auth_data_dir }}/{{ teleport_audit_events_subpath }}"
     teleport_audit_retention_days: 14
     teleport_audit_retention_image: "docker.io/busybox:1.36"
     teleport_audit_retention_container:
@@ -194,7 +198,8 @@ all:
           done
       volumeMounts:
         - name: "data"
-          mountPath: "/var/lib/teleport"
+          mountPath: "{{ teleport_audit_events_dir }}"
+          subPath: "{{ teleport_audit_events_subpath }}"
     # --- Operator-overridable blocks (extracted from teleport_helm_values) ---
     teleport_helm_values_chart_mode: standalone
     # multiplex: всё на одном 443 (TLS routing по ALPN/SNI).
