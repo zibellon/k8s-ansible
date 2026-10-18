@@ -1,39 +1,26 @@
 all:
   vars:
-    # Component enable flag (default false, opt-in): guards install/configure start + gates cross-ns NetworkPolicies to this component.
+    # Флаг компонента (default false, opt-in): guard в teleport-install.yaml, teleport-restart.yaml и teleport-ssh-agent-install.yaml.
     teleport_enabled: false
 
     # ------
 
     teleport_namespace: "teleport"
-    # Cluster identity (clusterName = FQDN, immutable після першого деплоя!)
-    teleport_cluster_name: "{{ teleport_domain }}"
-    teleport_kube_cluster_name: "drawapp-k8s-v2" # Название кластера внутри Teleport. Любое произвольное название
-    # Networking / Ingress
+    # Идентичность кластера. teleport_domain = clusterName = webauthn rp_id —
+    # НЕИЗМЕНЯЕМ после первого деплоя (смена = переустановка с потерей состояния).
     teleport_domain: "teleport-k8s-v2.drawapp.ru"
-    teleport_external_url: "https://teleport-k8s-v2.drawapp.ru"
+    teleport_cluster_name: "{{ teleport_domain }}"
+    # Имя Kubernetes-кластера внутри Teleport (tsh kube ls, контексты kubeconfig) и его метки
+    # (по ним роли матчат кластер через kubernetes_labels).
+    teleport_kube_cluster_name: "drawapp-k8s-v2"
+    teleport_kube_cluster_labels: {}
+    # Один публичный адрес на всё (multiplex): Web UI, tsh, kubectl, агенты нод.
+    teleport_web_public_addr: "{{ teleport_cluster_name }}:443"
+    # Порты (фиксированы чартом): web 3080 — proxy (Service 443 -> 3080); diag 3000 — auth + proxy (/metrics).
+    teleport_web_port: 3080
+    teleport_diag_port: 3000
     teleport_tls_secret_name: "cert-teleport"
     teleport_ingress_class_name: "traefik-lb"
-    teleport_vpn_only_enabled: false
-    teleport_web_port: 3080
-    teleport_web_listen_addr: "0.0.0.0:{{ teleport_web_port }}"
-    # Used in teleport-ssh-agent-install.yaml
-    teleport_web_public_addr: "{{ teleport_cluster_name }}:443"
-    # SSH / tunnel / kube ports (HAProxy TCP NodePort) — в bastion-proxy L4-диапазоне 20000-22000.
-    # accept PROXY protocol v2 per HAProxy TCP bind (true = за bastion-proxy). Default false = прямой доступ.
-    teleport_ssh_port: 20010
-    teleport_ssh_listen_addr: "0.0.0.0:{{ teleport_ssh_port }}"
-    teleport_ssh_accept_proxy: false
-    # ---
-    teleport_reverse_tunnel_port: 20011 # Другой телепорт или агент подключается к ЭТОМУ teleport. Другой - под NAT, и этот не может до него достучаться
-    teleport_reverse_tunnel_listen_addr: "0.0.0.0:{{ teleport_reverse_tunnel_port }}"
-    teleport_reverse_tunnel_accept_proxy: false
-    # ---
-    teleport_internal_connect_port: 3025 # Auth-server общается с Proxy-server
-    teleport_kube_listen_port: 20012
-    teleport_kube_listen_addr: "0.0.0.0:{{ teleport_kube_listen_port }}"
-    teleport_kube_public_addr: "{{ teleport_cluster_name }}:{{ teleport_kube_listen_port }}"
-    teleport_kube_accept_proxy: false
 
     # ------
     # ------
@@ -76,21 +63,12 @@ all:
     # ------
     # ------
 
-    teleport_ui_ingress_enabled: true
-    teleport_ui_ingress_tls_enabled: true
-    teleport_ui_certificate_enabled: true
-    teleport_ui_ingress_config:
-      enabled: "{{ teleport_ui_ingress_enabled }}"
-      domain: "{{ teleport_domain }}"
-      ingressClass: "{{ teleport_ingress_class_name }}"
-      tlsEnabled: "{{ teleport_ui_ingress_tls_enabled }}"
-      tlsSecretName: "{{ teleport_tls_secret_name }}"
-      vpnOnlyEnabled: "{{ teleport_vpn_only_enabled }}"
-      vpnIngressRouteMiddlewares: "{{ vpn_ingress_route_middlewares }}"
-    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
-    # Полный raw spec → issuer указывается через spec.issuerRef (любой Issuer/ClusterIssuer).
-    teleport_ui_certificate:
-      enabled: "{{ teleport_ui_certificate_enabled }}"
+    # Сертификат прокси — плоский объект {enabled, name, spec}. TLS терминирует сам Teleport
+    # (passthrough), под прокси монтирует секрет как обязательный том — поэтому Certificate
+    # живёт в pre, а install ждёт секрет. enabled=false: секрет кладётся заранее вручную.
+    teleport_proxy_certificate_enabled: true
+    teleport_proxy_certificate:
+      enabled: "{{ teleport_proxy_certificate_enabled }}"
       name: "{{ teleport_tls_secret_name }}"
       spec:
         secretName: "{{ teleport_tls_secret_name }}"
@@ -99,6 +77,26 @@ all:
         issuerRef:
           name: "{{ teleport_acme_issuer_name }}"
           kind: "Issuer"
+
+    # Traefik IngressRouteTCP на websecure, tls.passthrough: Traefik не расшифровывает TLS,
+    # Teleport терминирует его сам (mTLS + ALPN для tsh, kubectl и агентов).
+    # Только точные SNI и regexp — НЕ HostSNI(`*`). HTTP IngressRoute с Host() этого же домена
+    # на websecure перехватит SNI у TCP-роутера (приоритет Traefik) — такого быть не должно.
+    teleport_ingress_route_tcp_enabled: true
+    teleport_ingress_route_tcp_config:
+      enabled: "{{ teleport_ingress_route_tcp_enabled }}"
+      ingressClass: "{{ teleport_ingress_class_name }}"
+      entryPoint: "{{ traefik_websecure_entrypoint }}"
+      # Web UI, tsh login, агенты — домен; нативный kubectl — kube-teleport-proxy-alpn.<домен>.
+      hostSNIs:
+        - "{{ teleport_domain }}"
+        - "kube-teleport-proxy-alpn.{{ teleport_domain }}"
+      # tsh ssh/ls (gRPC) — <hex(clusterName)>.teleport.cluster.local; клиенты по identity-файлу — teleport.cluster.local.
+      hostSNIRegexps:
+        - '^(.+\.)?teleport\.cluster\.local$'
+      # Traefik -> Teleport: PROXY v2 с реальным IP клиента (у Teleport proxyProtocol "on").
+      proxyProtocolVersion: 2
+
     # ---
     # --- PHASE: pre ---
     # Timeouts
@@ -107,36 +105,30 @@ all:
     teleport_pre_extra_objects: []
     # Pre-phase kustomize patches (operator-side customization, default empty)
     teleport_pre_kustomize_patches: []
-    # Pre-phase values (NetworkPolicies chart)
+    # Pre-phase values (NetworkPolicies + Issuer + Certificate)
     teleport_pre_helm_values:
       namespace: "{{ teleport_namespace }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         instanceName: "traefik-{{ traefik_namespace }}"
-      haproxy:
-        namespace: "{{ haproxy_namespace }}"
       teleport:
         webPort: "{{ teleport_web_port }}"
-        sshPort: "{{ teleport_ssh_port }}"
-        reverseTunnelPort: "{{ teleport_reverse_tunnel_port }}"
-        internalConnectPort: "{{ teleport_internal_connect_port }}"
-        kubeApiPort: "{{ teleport_kube_listen_port }}"
-        vpnOnlyEnabled: "{{ teleport_vpn_only_enabled }}"
-        vpnIps: "{{ vpn_ips }}"
+        diagPort: "{{ teleport_diag_port }}"
       issuer: "{{ teleport_cert_manager_issuer }}"
+      certificateConfig: "{{ teleport_proxy_certificate }}"
       extraObjects: "{{ teleport_pre_extra_objects }}"
     # ---
     # --- PHASE: install ---
     teleport_install_helm_timeout: "10m"
-    teleport_rollout_timeout: "300s"
+    teleport_install_rollout_timeout: "300s"
     # Restart-phase rollout wait timeout (teleport-restart.yaml) — independent from install
-    teleport_restart_rollout_timeout: "300s"
+    teleport_install_restart_rollout_timeout: "300s"
     # Deployments waited on after install and restarted by teleport-restart.yaml
-    teleport_rollout_resources:
+    teleport_install_rollout_resources:
       - deployment.apps/teleport-auth
       - deployment.apps/teleport-proxy
       - deployment.apps/teleport-operator
-    # CRDs waited on after the operator subchart install (chart-version-coupled)
+    # CRDs waited on after install — рендерит сабчарт оператора релиза teleport (chart-version-coupled)
     teleport_crds_list:
       - crd/teleportaccesslists.resources.teleport.dev
       - crd/teleportaccessmonitoringrulesv1.resources.teleport.dev
@@ -149,17 +141,23 @@ all:
       - crd/teleportinferencemodels.resources.teleport.dev
       - crd/teleportinferencepolicies.resources.teleport.dev
       - crd/teleportinferencesecrets.resources.teleport.dev
+      - crd/teleportlocksv2.resources.teleport.dev
       - crd/teleportloginrules.resources.teleport.dev
       - crd/teleportoidcconnectors.resources.teleport.dev
       - crd/teleportoktaimportrules.resources.teleport.dev
       - crd/teleportopenssheiceserversv2.resources.teleport.dev
       - crd/teleportopensshserversv2.resources.teleport.dev
       - crd/teleportprovisiontokens.resources.teleport.dev
+      - crd/teleportretrievalmodelsv1.resources.teleport.dev
       - crd/teleportroles.resources.teleport.dev
       - crd/teleportrolesv6.resources.teleport.dev
       - crd/teleportrolesv7.resources.teleport.dev
       - crd/teleportrolesv8.resources.teleport.dev
       - crd/teleportsamlconnectors.resources.teleport.dev
+      - crd/teleportsamlidpserviceprovidersv1.resources.teleport.dev
+      - crd/teleportscopedroleassignmentsv1.resources.teleport.dev
+      - crd/teleportscopedrolesv1.resources.teleport.dev
+      - crd/teleportscopedtokensv1.resources.teleport.dev
       - crd/teleporttrustedclustersv2.resources.teleport.dev
       - crd/teleportusers.resources.teleport.dev
       - crd/teleportworkloadidentitiesv1.resources.teleport.dev
@@ -168,33 +166,74 @@ all:
     teleport_helm_url: "https://charts.releases.teleport.dev"
     teleport_helm_repo_name: "teleport"
     teleport_helm_chart_name: "teleport-cluster"
-    teleport_helm_chart_version: "18.9.0"
-    # SQLite data directory (Longhorn PVC)
+    teleport_helm_chart_version: "18.11.4"
+    # SQLite + файлы аудита на одном RWO PVC auth (LINSTOR) — поэтому auth ровно 1 реплика.
     teleport_data_storage_class: "lnstr-major-local"
     teleport_data_storage_size: "10Gi"
     # ВАЖНО: tag для teleport-distroless / teleport-operator НЕ задаётся —
     # teleport-cluster chart автоматически подставляет appVersion (= teleport_helm_chart_version)
     # через helper {{ include "teleport-cluster.version" . }}.
     # Т.е. обновление версии Teleport = bump teleport_helm_chart_version.
+    # Аудит — файлы на PVC auth (поиск в Web UI работает). Teleport их НИКОГДА не удаляет:
+    # sidecar раз в час удаляет суточные файлы старше teleport_audit_retention_days суток.
+    # Каталог = <точка монтирования PVC в чарте (фиксирована upstream)>/<subpath>; sidecar монтирует
+    # только subpath — к SQLite-базе и ключам auth у него доступа нет.
+    teleport_auth_data_dir: "/var/lib/teleport"
+    teleport_audit_events_subpath: "audit/events"
+    teleport_audit_events_dir: "{{ teleport_auth_data_dir }}/{{ teleport_audit_events_subpath }}"
+    teleport_audit_retention_days: 14
+    teleport_audit_retention_image: "docker.io/busybox:1.36"
+    teleport_audit_retention_container:
+      name: "audit-retention"
+      image: "{{ teleport_audit_retention_image }}"
+      command: ["/bin/sh", "-c"]
+      # find -mtime +N = возраст >= N+1 суток, отсюда N-1. trap + wait: sh как PID 1 не держит
+      # SIGTERM весь terminationGracePeriod (auth — Recreate, это прямой простой).
+      args:
+        - >-
+          trap 'exit 0' TERM INT;
+          while true; do
+          find {{ teleport_audit_events_dir }} -type f -name '*.log' -mtime +{{ teleport_audit_retention_days | int - 1 }} -delete;
+          sleep 3600 & wait $!;
+          done
+      volumeMounts:
+        - name: "data"
+          mountPath: "{{ teleport_audit_events_dir }}"
+          subPath: "{{ teleport_audit_events_subpath }}"
     # --- Operator-overridable blocks (extracted from teleport_helm_values) ---
     teleport_helm_values_chart_mode: standalone
-    teleport_helm_values_proxy_listener_mode: separate
+    # multiplex: всё на одном 443 (TLS routing по ALPN/SNI).
+    teleport_helm_values_proxy_listener_mode: multiplex
+    # "on": Teleport требует PROXY-заголовок (его ставит Traefik ServersTransportTCP). Только строкой в кавычках.
+    teleport_helm_values_proxy_protocol: "on"
+    # Запись сессий выключена (SSH и kube). Только строкой в кавычках: голое off станет false.
+    teleport_helm_values_session_recording: "off"
+    # Локальные пользователи; второй фактор обязателен (в v18 отключить нельзя): OTP или passkey.
+    teleport_helm_values_authentication:
+      type: local
+      localAuth: true
+      secondFactors: ["otp", "webauthn"]
     teleport_helm_values_auth:
+      # Ровно 1 реплика: SQLite и файлы аудита на одном RWO PVC (HA auth требует Postgres).
+      highAvailability:
+        replicaCount: 1
       teleportConfig:
         teleport:
           storage:
             type: sqlite
             sync: NORMAL
             journal: WAL
+            audit_events_uri:
+              - "file://{{ teleport_audit_events_dir }}"
+      extraContainers:
+        - "{{ teleport_audit_retention_container }}"
+    # Прокси без состояния — 2 реплики (чарт разрешает >1 при tls.existingSecretName).
     teleport_helm_values_proxy:
-      teleportConfig:
-        proxy_service:
-          public_addr: "{{ teleport_web_public_addr }}"
-          web_listen_addr: "{{ teleport_web_listen_addr }}"
-          listen_addr: "{{ teleport_ssh_listen_addr }}"
-          tunnel_listen_addr: "{{ teleport_reverse_tunnel_listen_addr }}"
-          kube_listen_addr: "{{ teleport_kube_listen_addr }}"
-          kube_public_addr: "{{ teleport_kube_public_addr }}"
+      highAvailability:
+        replicaCount: 2
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
     teleport_helm_values_operator:
       enabled: true
       tolerations: []
@@ -210,8 +249,16 @@ all:
     teleport_helm_values:
       clusterName: "{{ teleport_cluster_name }}"
       kubeClusterName: "{{ teleport_kube_cluster_name }}"
+      labels: "{{ teleport_kube_cluster_labels }}"
       chartMode: "{{ teleport_helm_values_chart_mode }}"
       proxyListenerMode: "{{ teleport_helm_values_proxy_listener_mode }}"
+      publicAddr:
+        - "{{ teleport_web_public_addr }}"
+      proxyProtocol: "{{ teleport_helm_values_proxy_protocol }}"
+      sessionRecording: "{{ teleport_helm_values_session_recording }}"
+      authentication: "{{ teleport_helm_values_authentication }}"
+      tls:
+        existingSecretName: "{{ teleport_tls_secret_name }}"
       persistence: "{{ teleport_helm_values_persistence }}"
       auth: "{{ teleport_helm_values_auth }}"
       proxy: "{{ teleport_helm_values_proxy }}"
@@ -220,10 +267,9 @@ all:
         format: json
       service:
         type: ClusterIP
+      # PodMonitor — в стадии post (паттерн репо), не в upstream-чарте.
       podMonitor:
-        enabled: true
-        interval: "30s"
-        additionalLabels: {}
+        enabled: false
       tolerations: []
       nodeSelector: {}
       affinity: {}
@@ -233,73 +279,195 @@ all:
     # ---
     # --- PHASE: post ---
     teleport_post_helm_timeout: "5m"
+    # Service прокси (имя = релиз teleport, порт 443 -> 3080)
+    teleport_web_service_name: "teleport"
     teleport_web_service_port: 443
+    # PodMonitor auth + proxy (порт diag)
+    teleport_pod_monitor_enabled: true
+    teleport_pod_monitor_interval: "30s"
+    teleport_pod_monitor_scrape_timeout: "15s"
+    teleport_pod_monitor_labels: {}
+    teleport_pod_monitor_selector:
+      app.kubernetes.io/name: teleport-cluster
+      app.kubernetes.io/instance: teleport
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     teleport_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
     teleport_post_kustomize_patches: []
-    # Post-phase values (Ingress + HAProxy TCP chart)
+    # Post-phase values (IngressRouteTCP + ServersTransportTCP + PodMonitor)
     teleport_post_helm_values:
       namespace: "{{ teleport_namespace }}"
-      ingressConfig: "{{ teleport_ui_ingress_config }}"
-      certificateConfig: "{{ teleport_ui_certificate }}"
-      webServicePort: "{{ teleport_web_service_port }}"
-      sshPort: "{{ teleport_ssh_port }}"
-      sshAcceptProxy: "{{ teleport_ssh_accept_proxy }}"
-      reverseTunnelPort: "{{ teleport_reverse_tunnel_port }}"
-      reverseTunnelAcceptProxy: "{{ teleport_reverse_tunnel_accept_proxy }}"
-      kubeApiPort: "{{ teleport_kube_listen_port }}"
-      kubeApiAcceptProxy: "{{ teleport_kube_accept_proxy }}"
-      traefik:
-        namespace: "{{ traefik_namespace }}"
-        entryPoints:
-          web: "{{ traefik_web_entrypoint }}"
-          websecure: "{{ traefik_websecure_entrypoint }}"
-      haproxy:
-        namespace: "{{ haproxy_namespace }}"
-        ingressClass: "{{ haproxy_ingress_class }}"
+      ingressRouteTcpConfig: "{{ teleport_ingress_route_tcp_config }}"
+      service:
+        name: "{{ teleport_web_service_name }}"
+        port: "{{ teleport_web_service_port }}"
+      podMonitor:
+        enabled: "{{ teleport_pod_monitor_enabled }}"
+        interval: "{{ teleport_pod_monitor_interval }}"
+        scrapeTimeout: "{{ teleport_pod_monitor_scrape_timeout }}"
+        labels: "{{ teleport_pod_monitor_labels }}"
+        selector: "{{ teleport_pod_monitor_selector }}"
       extraObjects: "{{ teleport_post_extra_objects }}"
     # ---
-    # --- PHASE: configure ---
-    teleport_configure_helm_timeout: "5m"
+    # --- PHASE: cfg (роли и пользователи Teleport + RBAC Kubernetes для их групп) ---
+    # Роли и пользователи — CR оператора Teleport (TeleportRoleV8 / TeleportUser) в namespace teleport.
+    # Полная синхронизация: элемент убран из списков -> helm удаляет CR -> оператор удаляет объект
+    # в Teleport (у пользователя — вместе с паролем и MFA). Пароль не декларативен: первый вход —
+    # по ссылке из teleport-user-reset.yaml. Права в Kubernetes даёт не Teleport, а RBAC на группу из
+    # kubernetes_groups роли (Teleport ходит в apiserver через impersonation).
+    teleport_cfg_helm_timeout: "5m"
+    # Группа Kubernetes полного доступа (ClusterRoleBinding -> ClusterRole cluster-admin).
+    teleport_cfg_kube_admin_group: "teleport:cluster-admin"
+    # Роли (TeleportRoleV8). Имя не должно совпадать с preset-ролью Teleport (access, editor, ...).
+    # logins = traits.logins пользователя: агент создаёт OS-пользователя при входе и удаляет его
+    # после завершения сессии (insecure-drop), sudo без пароля. У такого пользователя нет домашнего
+    # каталога (HOME=/); группа с тем же именем, уже существующая на ноде, блокирует вход.
+    teleport_cfg_roles:
+      # Полный доступ, включая управление Teleport (роли, пользователи, токены).
+      - name: superadmin
+        labels: {}
+        annotations: {}
+        spec:
+          allow:
+            rules:
+              - resources: ["*"]
+                verbs: ["*"]
+            logins: ["{% raw %}{{internal.logins}}{% endraw %}"]
+            node_labels:
+              "*": "*"
+            host_sudoers: ["ALL=(ALL) NOPASSWD: ALL"]
+            kubernetes_labels:
+              "*": "*"
+            kubernetes_groups: ["{{ teleport_cfg_kube_admin_group }}"]
+            kubernetes_resources:
+              - kind: "*"
+                api_group: "*"
+                namespace: "*"
+                name: "*"
+                verbs: ["*"]
+          options:
+            max_session_ttl: 12h0m0s
+            create_host_user_mode: insecure-drop
+            create_host_user_default_shell: /bin/bash
+      # kubectl cluster-admin + SSH с sudo, без прав на ресурсы Teleport через tsh/UI. Фактически тоже
+      # админ Teleport: cluster-admin даёт exec в под teleport-auth, а tctl там — встроенный Admin.
+      - name: admin
+        labels: {}
+        annotations: {}
+        spec:
+          allow:
+            logins: ["{% raw %}{{internal.logins}}{% endraw %}"]
+            node_labels:
+              "*": "*"
+            host_sudoers: ["ALL=(ALL) NOPASSWD: ALL"]
+            kubernetes_labels:
+              "*": "*"
+            kubernetes_groups: ["{{ teleport_cfg_kube_admin_group }}"]
+            kubernetes_resources:
+              - kind: "*"
+                api_group: "*"
+                namespace: "*"
+                name: "*"
+                verbs: ["*"]
+          options:
+            max_session_ttl: 12h0m0s
+            create_host_user_mode: insecure-drop
+            create_host_user_default_shell: /bin/bash
+    teleport_cfg_roles_extra: []
+    # Пользователи (TeleportUser). traits.logins — имя OS-пользователя на нодах.
+    teleport_cfg_users:
+      - name: superadmin
+        labels: {}
+        annotations: {}
+        spec:
+          roles: [superadmin]
+          traits:
+            logins: [superadmin]
+    teleport_cfg_users_extra: []
+    # RBAC Kubernetes для групп из kubernetes_groups. Объекты в cluster scope / чужих namespace —
+    # имя только с префиксом teleport-managed-* (playbook-conventions.md §17.12).
+    #   ClusterRole:         {name, labels?, annotations?, rules}
+    #   ClusterRoleBinding:  {name, labels?, annotations?, roleRef, subjects}
+    #   RoleBinding:         {name, namespace, labels?, annotations?, roleRef, subjects}
+    teleport_cfg_rbac_cluster_roles: []
+    teleport_cfg_rbac_cluster_roles_extra: []
+    teleport_cfg_rbac_cluster_role_bindings:
+      - name: teleport-managed-cluster-admin
+        labels: {}
+        annotations: {}
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-admin
+        subjects:
+          - apiGroup: rbac.authorization.k8s.io
+            kind: Group
+            name: "{{ teleport_cfg_kube_admin_group }}"
+    teleport_cfg_rbac_cluster_role_bindings_extra: []
+    teleport_cfg_rbac_role_bindings: []
+    teleport_cfg_rbac_role_bindings_extra: []
+    # Перед apply оператор перезапускается: на старте он применяет ВСЕ CR (исправляет дрейф,
+    # сделанный в UI/tctl) и получает свежий сертификат. Результат проверяется в самом Teleport.
+    teleport_cfg_operator_rollout_resources:
+      - deployment.apps/teleport-operator
+    teleport_cfg_operator_rollout_timeout: "300s"
+    # tctl внутри пода auth (встроенная Admin-идентичность, без RBAC и MFA)
+    teleport_tctl_exec_target: "deployment/teleport-auth"
+    teleport_cfg_reconcile_wait:
+      retries: 30
+      delay: 5
+    # Объекты не из IaC, которые не надо показывать в отчёте (bootstrap upstream-чарта).
+    teleport_cfg_unmanaged_ignore_roles: ["operator"]
+    teleport_cfg_unmanaged_ignore_users: []
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
-    teleport_configure_extra_objects: []
-    # Configure-phase kustomize patches (operator-side customization, default empty)
-    teleport_configure_kustomize_patches: []
-    # Configure-phase values (Teleport Operator CRDs chart)
-    # Все teleport_configure_* переменные определены в hosts-vars/teleport-configure.yaml
-    teleport_configure_helm_values:
+    teleport_cfg_extra_objects: []
+    # Cfg-phase kustomize patches (operator-side customization, default empty)
+    teleport_cfg_kustomize_patches: []
+    # Cfg-phase values (Teleport Operator CRs + RBAC Kubernetes)
+    teleport_cfg_helm_values:
       namespace: "{{ teleport_namespace }}"
-      roles: "{{ teleport_configure_roles + teleport_configure_roles_extra }}"
-      users: "{{ teleport_configure_users + teleport_configure_users_extra }}"
-      bots: "{{ teleport_configure_bots + teleport_configure_bots_extra }}"
-      provisionTokens: "{{ teleport_configure_provision_tokens + teleport_configure_provision_tokens_extra }}"
-      apps: "{{ teleport_configure_apps + teleport_configure_apps_extra }}"
-      databases: "{{ teleport_configure_databases + teleport_configure_databases_extra }}"
-      githubConnectors: "{{ teleport_configure_github_connectors + teleport_configure_github_connectors_extra }}"
-      oidcConnectors: "{{ teleport_configure_oidc_connectors + teleport_configure_oidc_connectors_extra }}"
-      samlConnectors: "{{ teleport_configure_saml_connectors + teleport_configure_saml_connectors_extra }}"
-      accessLists: "{{ teleport_configure_access_lists + teleport_configure_access_lists_extra }}"
-      trustedClusters: "{{ teleport_configure_trusted_clusters + teleport_configure_trusted_clusters_extra }}"
-      loginRules: "{{ teleport_configure_login_rules + teleport_configure_login_rules_extra }}"
-      accessMonitoringRules: "{{ teleport_configure_access_monitoring_rules + teleport_configure_access_monitoring_rules_extra }}"
-      oktaImportRules: "{{ teleport_configure_okta_import_rules + teleport_configure_okta_import_rules_extra }}"
-      opensshServers: "{{ teleport_configure_openssh_servers + teleport_configure_openssh_servers_extra }}"
-      opensshEiceServers: "{{ teleport_configure_openssh_eice_servers + teleport_configure_openssh_eice_servers_extra }}"
-      workloadIdentities: "{{ teleport_configure_workload_identities + teleport_configure_workload_identities_extra }}"
-      inferenceModels: "{{ teleport_configure_inference_models + teleport_configure_inference_models_extra }}"
-      inferencePolicies: "{{ teleport_configure_inference_policies + teleport_configure_inference_policies_extra }}"
-      inferenceSecrets: "{{ teleport_configure_inference_secrets + teleport_configure_inference_secrets_extra }}"
-      autoupdateConfigs: "{{ teleport_configure_autoupdate_configs + teleport_configure_autoupdate_configs_extra }}"
-      autoupdateVersions: "{{ teleport_configure_autoupdate_versions + teleport_configure_autoupdate_versions_extra }}"
-      extraObjects: "{{ teleport_configure_extra_objects }}"
+      roles: "{{ teleport_cfg_roles + teleport_cfg_roles_extra }}"
+      users: "{{ teleport_cfg_users + teleport_cfg_users_extra }}"
+      rbacClusterRoles: "{{ teleport_cfg_rbac_cluster_roles + teleport_cfg_rbac_cluster_roles_extra }}"
+      rbacClusterRoleBindings: "{{ teleport_cfg_rbac_cluster_role_bindings + teleport_cfg_rbac_cluster_role_bindings_extra }}"
+      rbacRoleBindings: "{{ teleport_cfg_rbac_role_bindings + teleport_cfg_rbac_role_bindings_extra }}"
+      extraObjects: "{{ teleport_cfg_extra_objects }}"
 
     # ---------
-    # SSH-AGENT
+    # USER-RESET (ссылка-приглашение — teleport-user-reset.yaml)
     # ---------
 
-    # Data directory on the node (config is always at /etc/teleport.yaml)
+    # Пользователь задаётся только через -e teleport_user_reset_name=<user> (обязателен).
+    teleport_user_reset_name: ""
+    # Срок жизни ссылки: Go duration, максимум Teleport — 24h.
+    teleport_user_reset_ttl: "24h"
+
+    # ---------
+    # SSH-AGENT (systemd на managers:workers — teleport-ssh-agent-install.yaml)
+    # ---------
+
+    # Версия агента = версия работающего кластера (сверяется с подом auth; агент новее auth
+    # кластер не примет). Обновление: сначала teleport-install.yaml, потом агенты.
+    teleport_ssh_agent_version: "18.11.4"
+    # apt-репозиторий Teleport (Community-пакет teleport). Канал = stable/v<мажор teleport_ssh_agent_version>,
+    # меняется вместе с версией.
+    teleport_ssh_agent_apt_key_url: "https://apt.releases.teleport.dev/gpg"
+    teleport_ssh_agent_apt_keyring: "/etc/apt/keyrings/teleport-archive-keyring.asc"
+    teleport_ssh_agent_apt_repo_url: "https://apt.releases.teleport.dev/ubuntu"
+    teleport_ssh_agent_apt_channel: "stable/v18"
+    # Идентичность ноды (сертификаты, host_uuid). Повторный прогон её НЕ стирает.
     teleport_ssh_agent_data_dir: "/var/lib/teleport"
-
-    # Log level
+    # Файл с токеном подключения: пишется только для нод, которых Teleport не видит;
+    # Teleport читает его лишь в момент подключения.
+    teleport_ssh_agent_join_token_path: "/etc/teleport-join-token"
+    teleport_ssh_agent_join_token_ttl: "15m"
     teleport_ssh_agent_log_level: "INFO"
+    # Статические метки ноды (матчинг node_labels в ролях); per-host значения — в hosts.yaml.
+    teleport_ssh_agent_node_labels: {}
+    # Ожидание, пока каждая нода появится в Teleport
+    teleport_ssh_agent_join_wait:
+      retries: 30
+      delay: 10
+    # Деструктивно: стереть идентичность ноды и подключить заново. Ставится per-host в hosts.yaml;
+    # пока true, каждый прогон сбрасывает ноду заново — после сброса вернуть false.
+    teleport_ssh_agent_reset_identity: false

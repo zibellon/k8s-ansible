@@ -39,6 +39,8 @@ L7 (домены, grey-cloud → bastion-proxy):
     → send-proxy-v2 → worker:NodePort (Traefik web/websecure, уже trust proxyProtocol)
     → Traefik терминирует TLS, видит реальный client IP, роутит по SNI/Host,
       per-domain ipAllowList (vpn-only) → app
+    teleport — исключение: Traefik IngressRouteTCP tls.passthrough (PROXY v2 к Teleport),
+      TLS терминирует сам Teleport (components.md §14)
     cert: bastion:80 → Traefik web → ACME HTTP-01 как сейчас (cert-manager не трогаем)
 
 L4 (Postgres/Redis/ssh, A-запись → bastion-proxy):
@@ -61,7 +63,7 @@ CCNP host-firewall (`host-firewall-base`) распространяется **т�
 
 ## 6. L4-приёмник (`accept_proxy`) + граница scope
 
-- **gitlab / teleport L4 — `accept_proxy` флаг (В k8s-ansible):** их haproxy `kind: TCP` ingress несёт настраиваемый per-TCP boolean-флаг `accept_proxy` (default `false` = прямой доступ, как на `test-1`; `true` = за bastion-proxy → снимает PROXY-заголовок, чистый TCP в backend). Флаги: `gitlab_ssh_accept_proxy`; teleport `teleport_ssh_accept_proxy` / `_reverse_tunnel_accept_proxy` / `_kube_accept_proxy` — выставить `true` в `hosts-vars-override/<cluster>/`. `accept_proxy` СТРОГИЙ (в отличие от Traefik `proxyProtocol.insecure`): при `true` прямое подключение без PROXY-заголовка отвергается — нужен анти-байпас (ниже) либо гарантия, что весь трафик идёт через bastion.
+- **gitlab L4 — `accept_proxy` флаг (В k8s-ansible):** haproxy `kind: TCP` ingress gitlab-ssh несёт настраиваемый boolean-флаг `accept_proxy` (default `false` = прямой доступ, как на `test-1`; `true` = за bastion-proxy → снимает PROXY-заголовок, чистый TCP в backend). Флаг `gitlab_ssh_accept_proxy` — выставить `true` в `hosts-vars-override/<cluster>/`. Teleport L4-портов не использует: весь его трафик идёт через L7-вход :443 (Traefik `IngressRouteTCP` passthrough, [`components.md`](components.md) §14). `accept_proxy` СТРОГИЙ (в отличие от Traefik `proxyProtocol.insecure`): при `true` прямое подключение без PROXY-заголовка отвергается — нужен анти-байпас (ниже) либо гарантия, что весь трафик идёт через bastion.
 - **Прочие L4-сервисы БД (git-ops репо `1520-tech-infra`, per-service ~500, ArgoCD):** haproxytech `kind: TCP` с `accept_proxy` (снимает PROXY-заголовок — БД его не понимают) → Service NodePort `externalTrafficPolicy: Local` (`nodePort` = порт сервиса в 10000-30000) → чистый TCP в Service БД.
 - **Анти-байпас:** pod-level NetworkPolicy `ipBlock` (список **всех** bastion IP) на ingress-поде — правильная точка enforcement'а (pod-policy применяется к ingress-поду, в отличие от host CCNP). Тоже git-ops. **Обязателен** в паре с `accept_proxy` — иначе спуфинг client IP поддельным PROXY-заголовком.
 - **Cloudflare DNS (вручную):** A-запись на IP bastion + grey-cloud (DNS-only) для тяжёлых L7-доменов; A-запись для L4.

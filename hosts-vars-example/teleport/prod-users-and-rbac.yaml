@@ -1,0 +1,65 @@
+# =============================================================================
+# Teleport на проде: свои пользователи и роль с доступом в один namespace.
+# Полный IaC: пользователь, убранный из списка, удаляется из Teleport вместе с
+# паролем и MFA. Пароль не декларативен — первый вход по ссылке из
+# `tctl users reset <user>`. Права в Kubernetes даёт RBAC на группу из
+# kubernetes_groups роли: группа без биндинга не пройдёт проверку стадии cfg.
+# Пользователю выдаются только роли из teleport_cfg_roles(+_extra), preset-роли
+# Teleport запрещены. Namespace для RoleBinding заводит cluster-base.
+# =============================================================================
+all:
+  vars:
+    teleport_enabled: true
+
+    teleport_domain: "teleport.example.com"
+    teleport_kube_cluster_name: "prod-cluster"
+
+    teleport_data_storage_class: "lnstr-major-multi-sync"
+    teleport_data_storage_size: "6Gi"
+
+    # kubectl только в namespace my-app, без SSH и без управления Teleport.
+    teleport_cfg_roles_extra:
+      - name: dev-my-app
+        labels: {}
+        annotations: {}
+        spec:
+          allow:
+            kubernetes_labels:
+              "*": "*"
+            kubernetes_groups: ["teleport:dev-my-app"]
+            kubernetes_resources:
+              - kind: "*"
+                api_group: "*"
+                namespace: "my-app"
+                name: "*"
+                verbs: ["*"]
+          options:
+            max_session_ttl: 8h0m0s
+
+    teleport_cfg_users_extra:
+      - name: alice
+        labels: {}
+        annotations: {}
+        spec:
+          roles: [admin]
+          traits:
+            logins: [alice]
+      - name: bob
+        labels: {}
+        annotations: {}
+        spec:
+          roles: [dev-my-app]
+
+    teleport_cfg_rbac_role_bindings_extra:
+      - name: teleport-managed-dev-my-app
+        namespace: my-app
+        labels: {}
+        annotations: {}
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: edit
+        subjects:
+          - apiGroup: rbac.authorization.k8s.io
+            kind: Group
+            name: "teleport:dev-my-app"

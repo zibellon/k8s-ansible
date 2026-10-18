@@ -1,0 +1,78 @@
+# =============================================================================
+# TELEPORT USER RESET
+# Ссылка-приглашение для пользователя: tctl users reset в поде auth.
+# Сбрасывает пароль и ВСЕ MFA-устройства пользователя, прежние ссылки перестают работать;
+# уже выданные сертификаты и web-сессии живут до истечения (мгновенно — tctl lock).
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-user-reset.yaml \
+#     -e teleport_user_reset_name=<user>
+#
+# Только пользователи из teleport_cfg_users(+_extra): bot-пользователь (bot-operator) сбрасывается
+# сервером без возражений, а ссылка на него даёт права оператора Teleport.
+# =============================================================================
+
+- name: Reset Teleport user (invite link)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  vars:
+    # Имена локальных фактов — единая точка объявления (вынос из хардкода)
+    _local_teleport_user_reset_token_key: "_local_teleport_user_reset_token"
+
+  tasks:
+    - name: "[teleport-user-reset] Assert component enabled"
+      assert:
+        that:
+          - teleport_enabled | default(false) | bool
+        fail_msg: "teleport is disabled (teleport_enabled=false). Set teleport_enabled: true in hosts-vars-override/ to install/configure it."
+      run_once: true
+
+    - name: "[teleport-user-reset] Assert user is set and declared in IaC"
+      assert:
+        that:
+          - teleport_user_reset_name | length > 0
+          - teleport_user_reset_name in (teleport_cfg_helm_values.users | map(attribute='name') | list)
+        fail_msg: >-
+          Set an IaC user: -e teleport_user_reset_name=<user>. Declared users:
+          {{ teleport_cfg_helm_values.users | map(attribute='name') | join(', ') }}.
+      run_once: true
+
+    - name: "[teleport-user-reset-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "teleport-user-reset-pre-check"
+
+    - name: "[teleport-user-reset] Reset user"
+      command: >-
+        kubectl exec -n {{ teleport_namespace }} {{ teleport_tctl_exec_target }} -c teleport --
+        tctl users reset {{ teleport_user_reset_name }} --ttl={{ teleport_user_reset_ttl }} --format=json
+      register: _local_teleport_user_reset
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[teleport-user-reset] Parse reset token"
+      set_fact:
+        "{{ _local_teleport_user_reset_token_key }}": "{{ _local_teleport_user_reset.stdout | from_json }}"
+      run_once: true
+
+    # Хост ссылки = public_addr прокси (teleport_web_public_addr); иначе '<proxyhost>:3080' или hostname:3080.
+    - name: "[teleport-user-reset] Assert invite link is valid"
+      assert:
+        that:
+          - lookup('vars', _local_teleport_user_reset_token_key).spec.user == teleport_user_reset_name
+          - lookup('vars', _local_teleport_user_reset_token_key).spec.url is match('^https://' ~ (teleport_web_public_addr | regex_escape) ~ '/web/reset/[0-9a-f]+$')
+        fail_msg: >-
+          Unexpected reset token: user={{ lookup('vars', _local_teleport_user_reset_token_key).spec.user }},
+          url={{ lookup('vars', _local_teleport_user_reset_token_key).spec.url }}
+      run_once: true
+
+    - name: "[teleport-user-reset] Invite link"
+      debug:
+        msg:
+          - "User:    {{ teleport_user_reset_name }}"
+          - "Link:    {{ lookup('vars', _local_teleport_user_reset_token_key).spec.url }}"
+          - "Expires: {{ lookup('vars', _local_teleport_user_reset_token_key).metadata.expires }}"
+          - "Send the link privately: it works like a password."
+      run_once: true

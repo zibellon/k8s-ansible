@@ -219,7 +219,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Validates (assert).** All 3 params defined + non-empty. Tag `[always]`.
 - **Reads global var.** `secret_wait` (dict from `hosts-vars/k8s-base.yaml`: `secret_wait.retries`, `secret_wait.delay`) — controls the `until` loop. Not a caller-passed param.
 - **Output.** None — fails play if secret does not appear within the retry window.
-- **Callers.** `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `mon-system-install.yaml` (grafana phase), `argocd-install.yaml`.
+- **Callers.** `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `mon-system-install.yaml` (grafana phase), `argocd-install.yaml`, `teleport-install.yaml` (TLS-секрет прокси от cert-manager перед install).
 - **Idempotent.** Read-only wait (`changed_when: false`).
 
 ### 1.16 `tasks-helm-upgrade-async.yaml`

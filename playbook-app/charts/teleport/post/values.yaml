@@ -2,46 +2,28 @@
 # Namespace
 namespace: "teleport"
 
-# Ingress config (per-domain)
-ingressConfig:
+# Traefik IngressRouteTCP (tls.passthrough) — Teleport терминирует TLS сам.
+# Правило = HostSNI(точные имена) || HostSNIRegexp(regexp); catch-all HostSNI(`*`) не используется.
+ingressRouteTcpConfig:
   enabled: false
-  domain: ""
   ingressClass: ""
-  tlsEnabled: false
-  tlsSecretName: ""
-  vpnOnlyEnabled: false
-  vpnIngressRouteMiddlewares: []
+  entryPoint: ""
+  hostSNIs: []
+  hostSNIRegexps: []
+  proxyProtocolVersion: 2
 
-# cert-manager Certificate — плоский объект {enabled, name, spec}
-certificateConfig:
-  enabled: false
+# Service прокси Teleport (рендерит upstream-чарт релиза teleport)
+service:
   name: ""
-  spec: {}
+  port: 443
 
-webServicePort: 443
-
-# SSH / tunnel / kube proxy ports for HAProxy TCP
-# accept PROXY protocol v2 per TCP bind (true = behind bastion-proxy). Default off (direct access).
-sshPort: 3023
-sshAcceptProxy: false
-
-reverseTunnelPort: 3024
-reverseTunnelAcceptProxy: false
-
-kubeApiPort: 3026
-kubeApiAcceptProxy: false
-
-# Traefik settings
-traefik:
-  namespace: ""
-  entryPoints:
-    web: ""
-    websecure: ""
-
-# HAProxy settings for SSH TCP ingress
-haproxy:
-  namespace: ""
-  ingressClass: ""
+# PodMonitor auth + proxy (порт diag)
+podMonitor:
+  enabled: false
+  interval: "30s"
+  scrapeTimeout: "15s"
+  labels: {}
+  selector: {}
 
 # Custom K8s objects to render (operator-side, default empty)
 extraObjects: []

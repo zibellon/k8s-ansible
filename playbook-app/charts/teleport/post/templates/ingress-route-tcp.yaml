@@ -1,0 +1,43 @@
+# =============================================================================
+# TRAEFIK INGRESSROUTETCP FOR TELEPORT (tls.passthrough)
+#   Traefik не расшифровывает TLS: Teleport терминирует его сам и раздаёт
+#   протоколы по ALPN/SNI (web, tsh, kubectl, агенты) — всё на одном 443.
+#   ServersTransportTCP добавляет PROXY v2 с реальным IP клиента.
+# =============================================================================
+{{- if .Values.ingressRouteTcpConfig.enabled }}
+{{- $rules := list }}
+{{- range .Values.ingressRouteTcpConfig.hostSNIs }}
+{{- $rules = append $rules (printf "HostSNI(`%s`)" .) }}
+{{- end }}
+{{- range .Values.ingressRouteTcpConfig.hostSNIRegexps }}
+{{- $rules = append $rules (printf "HostSNIRegexp(`%s`)" .) }}
+{{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransportTCP
+metadata:
+  name: teleport-proxy-protocol
+  namespace: {{ .Values.namespace }}
+spec:
+  proxyProtocol:
+    version: {{ .Values.ingressRouteTcpConfig.proxyProtocolVersion }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: teleport-proxy
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingressRouteTcpConfig.ingressClass }}"
+spec:
+  entryPoints:
+    - {{ .Values.ingressRouteTcpConfig.entryPoint }}
+  routes:
+    - match: {{ join " || " $rules | quote }}
+      services:
+        - name: {{ .Values.service.name }}
+          port: {{ .Values.service.port }}
+          serversTransport: teleport-proxy-protocol
+  tls:
+    passthrough: true
+{{- end }}

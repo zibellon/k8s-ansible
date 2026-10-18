@@ -48,7 +48,8 @@ Every component `<c>` defines a subset of the following. Not all suffixes are pr
 | `_https_secret_name` | `tls.secretName` on the Ingress / IngressRoute |
 | `_cert_manager_issuer` | Per-component namespaced cert-manager `Issuer` — flat object `{enabled, name, spec}`. `enabled` toggles the `Issuer` + solver-NetworkPolicies (`pre`); `name` is the `Issuer` `metadata.name` (extracted to `<c>_acme_issuer_name`); `spec` is the verbatim `Issuer` spec. Passed to `pre/` only as `issuer` |
 | `_ingress_config` | Per-domain ingress object — flat `{enabled, domain, ingressClass, tlsEnabled, tlsSecretName, vpnOnlyEnabled, vpn*Middlewares}` with independent `enabled` / `tlsEnabled` toggles. Naming: `<c>_<unit>_ingress_config` (e.g. `cilium_hubble_ui_ingress_config`, `argocd_ui_ingress_config`) |
-| `_certificate` | Per-domain cert-manager `Certificate` — flat object `{enabled, name, spec}` (mirrors `_cert_manager_issuer`). `enabled` gates the `Certificate`; `name` is `metadata.name`; `spec` is the verbatim `Certificate` spec incl. `issuerRef` (`name` + `kind`, default `Issuer`). Passed to `post/` as `certificateConfig` / `<unit>CertificateConfig`. Naming: `<c>_<unit>_certificate` |
+| `_certificate` | Per-domain cert-manager `Certificate` — flat object `{enabled, name, spec}` (mirrors `_cert_manager_issuer`). `enabled` gates the `Certificate`; `name` is `metadata.name`; `spec` is the verbatim `Certificate` spec incl. `issuerRef` (`name` + `kind`, default `Issuer`). Passed to `post/` as `certificateConfig` / `<unit>CertificateConfig`. Naming: `<c>_<unit>_certificate`. Exception: `teleport_proxy_certificate` goes to `pre/` — the Teleport proxy terminates TLS itself and mounts the secret, so install waits for it |
+| `_ingress_route_tcp_config` | Traefik `IngressRouteTCP` with `tls.passthrough` — flat `{enabled, ingressClass, entryPoint, hostSNIs, hostSNIRegexps, proxyProtocolVersion}`; rule = exact `HostSNI` OR `HostSNIRegexp` (no `HostSNI(*)`). Only `teleport_ingress_route_tcp_config` |
 | `_ingress_class_name` | Traefik ingress class (usually `traefik-lb`) |
 | `_vpn_only_enabled` | If true, attach Traefik `vpn-only` middleware |
 
@@ -106,7 +107,7 @@ Known `_extra` names:
 vault_policies_extra
 vault_auth_kubernetes_roles_extra
 eso_vault_integration_<c>_secrets_extra    # for each of the 13 ESO-integrated components
-teleport_configure_<resource>_extra        # roles, users, bots, apps, databases, oidc, saml, access-lists, trusted-clusters, ...
+teleport_cfg_<list>_extra                  # roles, users, rbac_cluster_roles, rbac_cluster_role_bindings, rbac_role_bindings
 ```
 
 See `hosts-extra.example.yaml` in the repo root for the full up-to-date template.
@@ -294,21 +295,23 @@ Per-file source of truth in parentheses.
 
 Standard ingress components do not consume `cert_manager_cluster_issuers` — each defines its own namespaced `Issuer` via `<c>_cert_manager_issuer` (see [`networking.md`](networking.md) §4).
 
-### 2.9 Teleport configure (`hosts-vars/teleport-configure.yaml`)
+### 2.9 Teleport cfg (`hosts-vars/teleport.yaml`, stage `cfg`)
 
-Pure declarative list of Teleport resources applied by `teleport/configure/` chart. Base empty; users populate via `_extra`.
+Declarative Teleport access applied by the `teleport/cfg/` chart (release `teleport-cfg`). The five resource lists `teleport_cfg_{roles,users,rbac_cluster_roles,rbac_cluster_role_bindings,rbac_role_bindings}` each have an `_extra` companion. See [`components.md`](components.md) §14.
 
-| Variable family | Purpose |
+| Variable | Purpose |
 |---|---|
-| `teleport_configure_roles` / `_extra` | Teleport Role CRs |
-| `teleport_configure_users` / `_extra` | Local users |
-| `teleport_configure_bots` / `_extra` | Machine-ID bots |
-| `teleport_configure_apps` / `_extra` | App service definitions |
-| `teleport_configure_databases` / `_extra` | DB service definitions |
-| `teleport_configure_oidc` / `_extra` | OIDC auth connectors |
-| `teleport_configure_saml` / `_extra` | SAML auth connectors |
-| `teleport_configure_access_lists` / `_extra` | Access lists |
-| `teleport_configure_trusted_clusters` / `_extra` | Trusted cluster leaves |
+| `teleport_cfg_roles` / `_extra` | `TeleportRoleV8` CRs. Base: `superadmin` (Teleport admin + kubectl + SSH), `admin` (kubectl + SSH; its `cluster-admin` allows exec into the auth pod, so it is effectively a Teleport admin too). Names must not match Teleport preset roles |
+| `teleport_cfg_users` / `_extra` | `TeleportUser` CRs (`roles`, `traits.logins` = OS user on nodes). Base: `superadmin`. Only roles from `teleport_cfg_roles` + `_extra` may be assigned (preset roles rejected) |
+| `teleport_cfg_rbac_cluster_roles` / `_extra` | ClusterRoles for Teleport groups (`teleport-managed-*`) |
+| `teleport_cfg_rbac_cluster_role_bindings` / `_extra` | Base: `teleport-managed-cluster-admin` (group `teleport_cfg_kube_admin_group` → `cluster-admin`) |
+| `teleport_cfg_rbac_role_bindings` / `_extra` | Namespaced grants; `namespace` required, never the Teleport namespace |
+| `teleport_cfg_kube_admin_group` | Kubernetes group of full access (`teleport:cluster-admin`) |
+| `teleport_cfg_operator_rollout_resources` / `_rollout_timeout` | Operator restarted before apply (re-reconciles all CRs) |
+| `teleport_tctl_exec_target` | `kubectl exec` target for `tctl` (`deployment/teleport-auth`); also used by `teleport-ssh-agent-install.yaml` and `teleport-user-reset.yaml` |
+| `teleport_user_reset_name` / `_ttl` | `teleport-user-reset.yaml`: user (mandatory `-e`, must be in `teleport_cfg_users(+_extra)`) and invite-link TTL (`24h` = Teleport maximum) |
+| `teleport_cfg_reconcile_wait` | `{retries, delay}` for the post-apply check against Teleport |
+| `teleport_cfg_unmanaged_ignore_roles` / `_users` | Non-IaC objects hidden from the report (chart bootstrap role `operator`) |
 
 ### 2.10 Inventory host variables (`hosts-vars/hosts.yaml` + `hosts-vars-override/hosts.yaml`)
 
@@ -321,6 +324,8 @@ Pure declarative list of Teleport resources applied by `teleport/configure/` cha
 | `api_server_advertise_address` | manager host | kubeadm `--apiserver-advertise-address` |
 | `api_server_bind_port` | manager host | kubeadm apiserver bind port (default `6443`) |
 | `node_labels` | host | List of labels applied at `cluster-init` / join via `tasks-apply-node-labels.yaml` |
+| `teleport_ssh_agent_node_labels` | host | Teleport SSH node labels (dict, base `{}` in `hosts-vars/teleport.yaml`) — matched by roles' `node_labels`; written to `/etc/teleport.yaml` by `teleport-ssh-agent-install.yaml` |
+| `teleport_ssh_agent_reset_identity` | host | Destructive (base `false` in `hosts-vars/teleport.yaml`): `teleport-ssh-agent-install.yaml` wipes the node's Teleport identity, removes its old record and rejoins it. Resets on every run while `true` — set back to `false` afterwards |
 | Groups: `managers`, `workers`, `bastion_proxy` | inventory | Defined in `hosts-vars/hosts.yaml`. `bastion_proxy` = внешние edge-прокси, исключены из cluster-wide плейбуков — см. §2.15 |
 
 ### 2.11 Output facts (runtime-only, produced by tasks)
