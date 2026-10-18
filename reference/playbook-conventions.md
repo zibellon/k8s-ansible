@@ -5,7 +5,7 @@ Imperative rules for writing or modifying playbooks. For the *why* behind the ru
 ## 1. File Location & Naming
 
 1.1 Node-scoped plays live in `playbook-system/`. Cluster-scoped plays live in `playbook-app/`.
-1.2 File name pattern: `<component>-<action>.yaml`. Allowed actions: `install`, `configure`, `restart`, `rotate`, `sync`, `force-sync`, `tags-sync`, `create`, `delete`.
+1.2 File name pattern: `<component>-<action>.yaml`. Allowed actions: `install`, `configure`, `restart`, `rotate`, `sync`, `force-sync`, `tags-sync`, `create`, `delete`, `reset` (`teleport-user-reset.yaml`).
 1.3 For system playbooks, file name is either a cluster-lifecycle verb (`cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `full-node-install.yaml`, `node-remove.yaml`, `node-drain-on.yaml`, `node-drain-off.yaml`, `node-clean.yaml`, `set-hostname.yaml`, `setup-ssh-keys.yaml`, `node-info.yaml`) or `<subsystem>-<action>.yaml` (e.g. `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`).
 1.4 Task include file name pattern: `tasks-<verb>-<object>.yaml`. Exception: `task-apiserver-restart.yaml` (singular `task-` — keep as-is for historical reasons).
 1.5 Within `playbook-system/`, playbooks are grouped into subdirectories:

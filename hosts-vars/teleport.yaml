@@ -313,7 +313,7 @@ all:
     # Роли и пользователи — CR оператора Teleport (TeleportRoleV8 / TeleportUser) в namespace teleport.
     # Полная синхронизация: элемент убран из списков -> helm удаляет CR -> оператор удаляет объект
     # в Teleport (у пользователя — вместе с паролем и MFA). Пароль не декларативен: первый вход —
-    # по ссылке `tctl users reset <user>`. Права в Kubernetes даёт не Teleport, а RBAC на группу из
+    # по ссылке из teleport-user-reset.yaml. Права в Kubernetes даёт не Teleport, а RBAC на группу из
     # kubernetes_groups роли (Teleport ходит в apiserver через impersonation).
     teleport_cfg_helm_timeout: "5m"
     # Группа Kubernetes полного доступа (ClusterRoleBinding -> ClusterRole cluster-admin).
@@ -432,6 +432,15 @@ all:
       rbacClusterRoleBindings: "{{ teleport_cfg_rbac_cluster_role_bindings + teleport_cfg_rbac_cluster_role_bindings_extra }}"
       rbacRoleBindings: "{{ teleport_cfg_rbac_role_bindings + teleport_cfg_rbac_role_bindings_extra }}"
       extraObjects: "{{ teleport_cfg_extra_objects }}"
+
+    # ---------
+    # USER-RESET (ссылка-приглашение — teleport-user-reset.yaml)
+    # ---------
+
+    # Пользователь задаётся только через -e teleport_user_reset_name=<user> (обязателен).
+    teleport_user_reset_name: ""
+    # Срок жизни ссылки: Go duration, максимум Teleport — 24h.
+    teleport_user_reset_ttl: "24h"
 
     # ---------
     # SSH-AGENT (systemd на managers:workers — teleport-ssh-agent-install.yaml)

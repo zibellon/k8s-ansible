@@ -84,6 +84,9 @@ done
 # Агенты SSH Teleport — после teleport-install (версия агента = версия кластера)
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-ssh-agent-install.yaml
 
+# Ссылка-приглашение пользователю Teleport (после --tags cfg; сбрасывает пароль и MFA)
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-user-reset.yaml -e teleport_user_reset_name=<user>
+
 # У трёх компонентов стадия cfg в первую волну НЕ входит — только контроллер.
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-install.yaml      --tags crds,pre,install,post
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-install.yaml       --tags pre,install,post

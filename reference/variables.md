@@ -308,7 +308,8 @@ Declarative Teleport access applied by the `teleport/cfg/` chart (release `telep
 | `teleport_cfg_rbac_role_bindings` / `_extra` | Namespaced grants; `namespace` required, never the Teleport namespace |
 | `teleport_cfg_kube_admin_group` | Kubernetes group of full access (`teleport:cluster-admin`) |
 | `teleport_cfg_operator_rollout_resources` / `_rollout_timeout` | Operator restarted before apply (re-reconciles all CRs) |
-| `teleport_tctl_exec_target` | `kubectl exec` target for `tctl` (`deployment/teleport-auth`); also used by `teleport-ssh-agent-install.yaml` |
+| `teleport_tctl_exec_target` | `kubectl exec` target for `tctl` (`deployment/teleport-auth`); also used by `teleport-ssh-agent-install.yaml` and `teleport-user-reset.yaml` |
+| `teleport_user_reset_name` / `_ttl` | `teleport-user-reset.yaml`: user (mandatory `-e`, must be in `teleport_cfg_users(+_extra)`) and invite-link TTL (`24h` = Teleport maximum) |
 | `teleport_cfg_reconcile_wait` | `{retries, delay}` for the post-apply check against Teleport |
 | `teleport_cfg_unmanaged_ignore_roles` / `_users` | Non-IaC objects hidden from the report (chart bootstrap role `operator`) |
 
