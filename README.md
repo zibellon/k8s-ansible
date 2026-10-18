@@ -26,11 +26,10 @@
 | `operator`, `vault-cr`, `unseal-keys` | vault | оператор bank-vaults, затем сам CR Vault, затем раздача unseal-ключей |
 | `install-operator`, `install-cluster` | linstor | два разных чарта: Piraeus-оператор и кластер LINSTOR |
 | `pre-cfg` | argo-events | cr-namespace и права контроллера в нём — обязаны появиться **до** `install` |
-| `cfg` | argocd, kargo, argo-events | конфигурация после старта контроллера: права, `Project`, `AppProject`, `Application`, CR |
+| `cfg` | argocd, kargo, argo-events, teleport | конфигурация после старта контроллера: права, `Project`, `AppProject`, `Application`, CR, роли и пользователи Teleport |
 | `policy-sync`, `user-sync`, `identity-distribute`, `bucket-sync` | seaweedfs | декларативная синхронизация IAM и бакетов в живой filer |
 | `accounts-sync`, `accounts-distribute` | argocd | локальные аккаунты и раздача их кред по путям Vault |
 | `config-root` | gitlab | реконсиляция root-пароля через Vault |
-| `configure` | teleport | роли и пользователи Teleport через CRD |
 | по стадии на каждый workload | mon-system | `prometheus-operator`, `prometheus`, `alertmanager`, `node-exporter`, `ksm`, `loki`, `vector`, `grafana`, `grafana-postgresql` |
 | `namespaces`, `rbac` — **вместо** трёх фаз | cluster-base | у компонента нет workload, ESO и ingress: три стандартные фазы были бы пустыми |
 
@@ -741,18 +740,24 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/filestash-i
 **Важно 1. Все ресурсы Teleport управляются через CRD.** Чтобы добавить новую роль или пользователя, добавляем значения в `hosts-vars-override/` и вызываем:
 
 ```bash
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-install.yaml --tags configure
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-install.yaml --tags cfg
 ```
 
 Оператор работает только в одном направлении: **CRD → Teleport**. Если что-то добавить в Teleport UI, в CRD оно не появится. Если через UI обновить то, что есть в CRD, — через минуту оно вернётся к состоянию CRD. То есть через UI мы только смотрим и ничего не создаём.
 
-**Важно 2. После установки** надо получить ссылку на сброс и установку пароля для пользователя `superadmin`:
+**Важно 2. Ссылка-приглашение** (первый вход нового пользователя или сброс пароля/MFA) — отдельный playbook, на manager ходить не нужно:
 
 ```bash
-kubectl exec -n teleport deploy/teleport-auth -- tctl users reset superadmin
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-user-reset.yaml -e teleport_user_reset_name=<user>
 ```
 
-Перейти по ссылке и установить пароль через UI.
+Как работает:
+
+- `teleport_user_reset_name` — обязательный параметр (`-e`). Принимаются только пользователи из `teleport_cfg_users` + `_extra`: опечатка, чужой или служебный пользователь (`bot-operator` — ссылка на него дала бы права оператора Teleport) отклоняются.
+- Через master-ноду выполняет в поде `teleport-auth` команду `tctl users reset <user> --ttl=24h` и печатает ссылку и срок её действия (`teleport_user_reset_ttl`, максимум Teleport — 24h).
+- Пользователь по ссылке задаёт пароль (от 12 символов) и подключает MFA: TOTP-приложение или passkey.
+- **Для существующего пользователя** сбрасываются пароль и ВСЕ MFA-устройства, старые ссылки перестают работать. Уже выданные сертификаты живут до истечения; отозвать сразу — `tctl lock --user=<user>`.
+- Ссылку передавать лично — она работает как пароль.
 
 **Важно 3. Как проверить, что оператор всё синхронизировал:**
 
@@ -779,7 +784,7 @@ tls: expired certificate
 kubectl rollout restart deployment/teleport-operator -n teleport
 ```
 
-**Теги:** `pre` · `install` · `post` · `configure`
+**Теги:** `pre` · `install` · `post` · `cfg`
 
 ```bash
 # установка: auth, proxy, operator
@@ -790,6 +795,9 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-ss
 
 # отдельный playbook для перезапуска
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/teleport-restart.yaml
+
+# ссылка-приглашение пользователю (см. «Важно 2»)
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-user-reset.yaml -e teleport_user_reset_name=<user>
 ```
 
 ---
