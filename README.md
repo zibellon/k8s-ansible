@@ -759,6 +759,28 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/t
 - **Для существующего пользователя** сбрасываются пароль и ВСЕ MFA-устройства, старые ссылки перестают работать. Уже выданные сертификаты живут до истечения; отозвать сразу — `tctl lock --user=<user>`.
 - Ссылку передавать лично — она работает как пароль.
 
+**Подключение с локальной машины** (нужен `tsh` той же версии, что кластер):
+
+```bash
+# вход (пароль + MFA; passkey из браузера — флаг --mfa-mode=browser)
+tsh login --proxy=<teleport_domain>:443 --user=<user> --mfa-mode=browser
+tsh status                       # кто вошёл, роли, Logins (имя для SSH), срок сертификата
+
+# kubectl
+tsh kube ls                      # список доступных kube-кластеров (имя = teleport_kube_cluster_name)
+tsh kube login <kube-cluster>    # пишет контекст в kubeconfig, дальше обычный kubectl
+kubectl get nodes
+
+# SSH на ноды (логин — из «Logins» в tsh status)
+tsh ls                           # список нод
+tsh ssh <login>@<node>           # интерактивная сессия; или команда: tsh ssh <login>@<node> sudo -n true
+
+# выход конкретного пользователя (голый `tsh logout` удаляет ВСЕ профили)
+tsh logout --proxy=<teleport_domain>:443 --user=<user>
+```
+
+Пример для prod: `--proxy=teleport-ui.1520.tech:443`, kube-кластер `1520-tech-prod-1`.
+
 **Важно 3. Как проверить, что оператор всё синхронизировал:**
 
 ```bash
