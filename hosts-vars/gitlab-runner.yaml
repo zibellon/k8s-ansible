@@ -124,22 +124,25 @@ all:
     gitlab_runner_helm_url: "https://charts.gitlab.io"
     gitlab_runner_helm_repo_name: "gitlab"
     gitlab_runner_helm_chart_name: "gitlab-runner"
-    gitlab_runner_helm_chart_version: "0.78.0" # gitlab-runner 17.11
+    gitlab_runner_helm_chart_version: "0.88.4" # gitlab-runner 18.11.4
     # Internal GitLab URL (webservice via cluster DNS, bypasses external ingress)
     gitlab_runner_gitlab_url: "http://gitlab-webservice-default.{{ gitlab_namespace }}.svc.{{ cluster_dns_domain }}:8181"
-    # GitLab Runner internal images (helper + DinD executor + DinD service).
-    # Используются в gitlab_runner_config TOML (runners.kubernetes.image,
-    # runners.kubernetes.services, helper_image).
+    # GitLab Runner DinD images (executor + service).
+    # Используются в gitlab_runner_config TOML (runners.kubernetes.image, runners.kubernetes.services).
     # Для AirGap оператор переопределяет в hosts-vars-override/gitlab-runner.yaml.
-    gitlab_runner_helper_image: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-alpine-v17.11.4"
+    # Helper-образ не задаётся: runner сам берёт helper своей версии. Для AirGap —
+    # helper_image под [runners.kubernetes] (на уровне [[runners]] ключ игнорируется).
     gitlab_runner_dind_image: "docker.io/docker:29.3.0"
     gitlab_runner_dind_dind_image: "docker.io/docker:29.3.0-dind"
     gitlab_runner_s3_cache_bucket: "gitlab-runner-cache"
+    # [[runners]] request_concurrency — параллельные long-polling запросы за джобами к GitLab.
+    # 1 (дефолт runner) = узкое место: runner 18.x предупреждает "Long polling issues detected", рекомендуя 2-4.
+    gitlab_runner_request_concurrency: 3
     gitlab_runner_config: |
       [[runners]]
         executor = "kubernetes"
         shell = "bash"
-        helper_image = "{{ gitlab_runner_helper_image }}"
+        request_concurrency = {{ gitlab_runner_request_concurrency }}
         environment = ["DOCKER_TLS_CERTDIR=", "DOCKER_HOST=tcp://docker-my-dind:2375"]
 
         [runners.cache]

@@ -509,7 +509,7 @@ all:
     gitlab_helm_url: "https://charts.gitlab.io"
     gitlab_helm_repo_name: "gitlab"
     gitlab_helm_chart_name: "gitlab"
-    gitlab_helm_chart_version: "8.11.8" # GitLab 17.11
+    gitlab_helm_chart_version: "9.11.14" # GitLab 18.11
     gitlab_gitaly_storage_size: "4Gi"
     gitlab_gitaly_storage_class: "lnstr-major-local"
     # Helm chart values
@@ -627,8 +627,6 @@ all:
     # --- round-3 blocks (extracted from gitlab_helm_values) ---
     gitlab_helm_values_global:
       edition: ce
-      # Версия образов GitLab — должна соответствовать gitlab_helm_chart_version (8.11.8 = GitLab 17.11)
-      gitlabVersion: "17.11.7"
       hosts:
         domain: "{{ gitlab_base_domain }}"
         https: "{{ gitlab_external_https }}"
@@ -707,8 +705,12 @@ all:
         enabled: true
     gitlab_helm_values_nginx_ingress:
       enabled: false
+    # certmanager.install — гейт cert-manager в chart < 9.5; с 9.5 саб-чарт гейтится ТОЛЬКО
+    # installCertmanager (default true), а certmanager.install отвергается его схемой.
+    # Оба ключа нужны, пока возможен chart < 9.2 (на 8.11.8 без certmanager.install ставится cert-manager).
     gitlab_helm_values_certmanager:
       install: false
+    gitlab_helm_values_install_certmanager: false
     gitlab_helm_values_prometheus:
       install: false
     gitlab_helm_values_postgresql:
@@ -866,6 +868,7 @@ all:
       global: "{{ gitlab_helm_values_global }}"
       nginx-ingress: "{{ gitlab_helm_values_nginx_ingress }}"
       certmanager: "{{ gitlab_helm_values_certmanager }}"
+      installCertmanager: "{{ gitlab_helm_values_install_certmanager }}"
       prometheus: "{{ gitlab_helm_values_prometheus }}"
       postgresql: "{{ gitlab_helm_values_postgresql }}"
       redis: "{{ gitlab_helm_values_redis }}"
