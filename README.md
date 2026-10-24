@@ -781,6 +781,28 @@ tsh logout --proxy=<teleport_domain>:443 --user=<user>
 
 Пример для prod: `--proxy=teleport-ui.1520.tech:443`, kube-кластер `1520-tech-prod-1`.
 
+Сертификат живёт `max_session_ttl` роли (12h). Истёк — снова `tsh login`: kubectl из exec-плагина пароль не спросит, отсюда ошибка `Having problems with relogin`. После `tsh logout` (в том числе при смене пользователя) контекст удаляется из kubeconfig — нужен ещё `tsh kube login <kube-cluster>`, иначе kubectl идёт на `localhost:8080`.
+
+**Вход без пароля (passkey / Touch ID).**
+
+- Web UI: кнопка «Sign in with a Passkey» под формой входа — работает с passkey из браузера (iCloud, менеджер паролей), без логина и пароля.
+- `tsh` passkey из браузера не видит: ему нужен свой Touch ID (только подписанный `tsh` из официального macOS-пакета) или аппаратный FIDO2-ключ. Touch ID регистрируется один раз на пользователя и Mac:
+
+```bash
+# 1. войти по-старому (пароль + passkey в браузере)
+tsh login --proxy=<teleport_domain>:443 --user=<user> --mfa-mode=browser
+# 2. проверить поддержку Touch ID: все строки true (крышка ноутбука открыта)
+tsh touchid diag
+# 3. зарегистрировать Touch ID (подтвердить passkey в браузере, затем коснуться датчика)
+tsh mfa add --type=TOUCHID --name=<user>-touchid --mfa-mode=browser
+tsh mfa ls
+# 4. дальше вход только по Touch ID, без пароля
+tsh login --proxy=<teleport_domain>:443 --user=<user>
+tsh kube login <kube-cluster>
+```
+
+Touch ID привязан к пользователю и конкретному Mac: на другой машине регистрация заново. Если на Mac несколько пользователей с Touch ID — всегда указывать `--user`. Passkey в браузере оставить: он нужен для Web UI и как запасной вход.
+
 **Важно 3. Как проверить, что оператор всё синхронизировал:**
 
 ```bash
