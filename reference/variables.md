@@ -106,7 +106,7 @@ Known `_extra` names:
 ```
 vault_policies_extra
 vault_auth_kubernetes_roles_extra
-eso_vault_integration_<c>_secrets_extra    # for each of the 13 ESO-integrated components
+eso_vault_integration_<c>_secrets_extra    # for each of the 16 ESO-integrated components
 teleport_cfg_<list>_extra                  # roles, users, rbac_cluster_roles, rbac_cluster_role_bindings, rbac_role_bindings
 ```
 
@@ -115,7 +115,7 @@ See `hosts-extra.example.yaml` in the repo root for the full up-to-date template
 ### 1.6 Inventory precedence
 
 1. `hosts-vars/` (committed defaults) — lowest.
-2. `hosts-vars-override/` (gitignored, real values) — overrides defaults.
+2. `hosts-vars-override/` (committed to this private repo deliberately; real values + secrets — never print them) — overrides defaults.
 3. Inline `vars:` in a play — highest.
 
 Always invoke with both dirs: `ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ ...`. See `CLAUDE.md` §1.3.
@@ -282,7 +282,7 @@ Per-file source of truth in parentheses.
 
 | Variable | Purpose |
 |---|---|
-| `vpn_ips` | List of CIDRs allowed to reach VPN-gated ingresses |
+| `vpn_ips` | List of CIDRs allowed to reach VPN-gated ingresses; also the node SSH allowlist when `cilium_post_ssh_vpn_only_enabled: true` ([`networking.md`](networking.md) §2) — one list for UI and SSH on purpose |
 | `vpn_traefik_middlewares` | Traefik `Middleware` resources (usually `vpn-only` IP allow-list) |
 | `vpn_ingress_middlewares` | String reference used by standard K8s `Ingress` annotation |
 | `vpn_ingress_route_middlewares` | List of middleware refs used by Traefik `IngressRoute` CRD |
@@ -350,8 +350,8 @@ Declarative Teleport access applied by the `teleport/cfg/` chart (release `telep
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `fail2ban_jail_d_files` | list-of-`{filename, content}` (defaults: `ansible-defaults.conf` с `[DEFAULT]` блоком + `ansible-sshd.conf` с `[sshd]` блоком) | Drop-in файлы в `/etc/fail2ban/jail.d/`. Filename ОБЯЗАН начинаться с `ansible-` (для auto-cleanup orphans). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/prepare-linux-pkgs.yaml` (FAIL2BAN phase) через `tasks-sync-managed-files.yaml` |
-| `sshd_config_d_files` | list-of-`{filename, content}` (default: `ansible-hardening.conf` отключает password auth + KbdInteractive + EmptyPasswords) | Drop-in файлы в `/etc/ssh/sshd_config.d/`. Filename ОБЯЗАН начинаться с `ansible-` (для auto-cleanup orphans). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/prepare-linux-pkgs.yaml` (SSHD phase) через `tasks-sync-managed-files.yaml`. Validation: `sshd -t` после write; reload (не restart) сохраняет существующую ansible-сессию. |
+| `fail2ban_jail_d_files` | list-of-`{filename, content}` (defaults: `ansible-defaults.conf` с `[DEFAULT]` блоком + `ansible-sshd.conf` с `[sshd]` блоком) | Drop-in файлы в `/etc/fail2ban/jail.d/`. Filename ОБЯЗАН начинаться с `ansible-` (для auto-cleanup orphans). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/prepare-linux-pkgs.yaml` (FAIL2BAN phase) через `tasks-sync-managed-files.yaml`. В `ansible-defaults.conf` всегда `ignoreip = 127.0.0.1/8 ::1` + `vpn_ips` (пустой `vpn_ips` → только localhost): при SSH «только VPN» весь вход идёт с адресов VPN, бан закрыл бы хост для всей команды; то же на bastion. Смена файлов = restart fail2ban, без reboot |
+| `sshd_config_d_files` | list-of-`{filename, content}` (default: `00-ansible-hardening.conf` — `PasswordAuthentication no` + `PermitEmptyPasswords no` + `KbdInteractiveAuthentication no` + `PerSourcePenaltyExemptList` = `127.0.0.0/8,::1` + `vpn_ips` (сети — адресом сети, иначе `sshd -t` падает): вся команда входит с одного адреса VPN, штрафы OpenSSH 9.8+ (`PerSourcePenalties`) за чужие неудачные попытки иначе блокировали бы вход всем) | Drop-in файлы в `/etc/ssh/sshd_config.d/`. Filename ОБЯЗАН начинаться с `00-ansible-` (для auto-cleanup orphans). Префикс `00-`: sshd читает `sshd_config.d/*.conf` по алфавиту и берёт **первое** значение параметра — `00-ansible-*` читается раньше `50-cloud-init.conf` (cloud-init пишет туда `PasswordAuthentication yes` по `ssh_pwauth: true` из user-data провайдера; на prod так и было до 2026-11-09). Файлы прежнего префикса `ansible-*` плейбук удаляет (после записи `00-ansible-*`). Оператор для смены full-replace'ит массив. Рендерится `playbook-system/prepare-linux-pkgs.yaml` (SSHD phase) через `tasks-sync-managed-files.yaml`: перед sync — assert непустого `~ansible_user/.ssh/authorized_keys`; после — `sshd -t`, reload (не restart, без reboot); итог проверяется `sshd -T` (`passwordauthentication no`, `kbdinteractiveauthentication no`) независимо от содержимого массива |
 
 ### 2.13a Stress / benchmark test settings (`hosts-vars/stress-tests.yaml`)
 
@@ -439,9 +439,12 @@ Notes:
 | `bastion_proxy_haproxy_l7_https_nodeport` | `443` | Backend-порт Traefik HTTPS NodePort |
 | `bastion_proxy_haproxy_l4_range_start` / `_l4_range_end` | `10000` / `30000` | L4 range bind (1-1 dst-порт) |
 | `bastion_proxy_haproxy_l4_target_ip` | `""` | **REQUIRED override.** Worker/VIP IP для L4 backend |
-| `bastion_proxy_haproxy_base_packages` | `[ca-certificates, curl, fail2ban]` | apt-пакеты (node-install) |
-| `bastion_proxy_haproxy_fail2ban_jail` | multiline | `/etc/fail2ban/jail.d/sshd.local` — тело в источнике |
-| `bastion_proxy_haproxy_sshd_hardening` | multiline | `/etc/ssh/sshd_config.d/10-bastion-proxy-hardening.conf` (key-only) |
+| `bastion_proxy_haproxy_base_packages` | `[ca-certificates, curl, fail2ban, nftables]` | apt-пакеты (node-install) |
+| `bastion_proxy_haproxy_fail2ban_jail` | multiline | `/etc/fail2ban/jail.d/sshd.local` — тело в источнике; всегда `ignoreip = 127.0.0.1/8 ::1` + `vpn_ips`, как на узлах |
+| `bastion_proxy_haproxy_sshd_hardening` | multiline | `/etc/ssh/sshd_config.d/10-bastion-proxy-hardening.conf` (key-only: `PasswordAuthentication no`, `PermitEmptyPasswords no`, `KbdInteractiveAuthentication no`, `PerSourcePenaltyExemptList` (localhost + `vpn_ips`) — как у узлов — плюс `PermitRootLogin prohibit-password`, `PubkeyAuthentication yes`). `10-` читается раньше `50-cloud-init.conf` (sshd берёт первое значение). Итог проверяется `sshd -T` в `node-install` независимо от содержимого |
+| `bastion_proxy_haproxy_ssh_vpn_only_enabled` | `false` | SSH (22/tcp) на bastion: `false` — из любой сети (файл правил только удаляет таблицу); `true` — только с `vpn_ips` (IPv4 CIDR, IPv6 SSH закрыт); пустой `vpn_ips` при `true` — assert, ничего не применяется; прогон при `true` — только из VPN. Запасной вход при `true` — консоль провайдера (Teleport на bastion нет) |
+| `bastion_proxy_haproxy_ssh_firewall_nft` | multiline | `/etc/bastion-proxy/ssh-firewall.nft`: только своя таблица `inet bastion_ssh` (без `flush ruleset`, таблица fail2ban не трогается), `table` + `delete table` = атомарная замена; set с `auto-merge`; без conntrack (иначе отслеживание всех соединений HAProxy) |
+| `bastion_proxy_haproxy_ssh_firewall_unit` | multiline | `/etc/systemd/system/bastion-ssh-firewall.service`: oneshot, загрузка до сети (как `nftables.service`), `ExecStop` удаляет таблицу |
 | `bastion_proxy_haproxy_sysctl_conf` | multiline | `/etc/sysctl.d/99-bastion-proxy-haproxy.conf` (fd limits) |
 | `bastion_proxy_haproxy_systemd_override` | multiline | `haproxy.service.d/override.conf` (`LimitNOFILE`); nested `{{ ..._limit_nofile }}` |
 | `bastion_proxy_haproxy_config` | multiline | Полный `/etc/haproxy/haproxy.cfg`; nested `{{ }}` refs на maxconn/target_ip/nodeports/range |

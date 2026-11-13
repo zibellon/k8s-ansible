@@ -28,7 +28,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/my-cluster/ playbook-app/
 |---|---|---|
 | `hosts-vars/` | база: полная структура каждой переменной, дефолты | да |
 | `hosts-vars-example/` | примеры состояний (эта директория) | да |
-| `hosts-vars-override/<cluster>/` | реальные домены, IP, секреты | **нет**, gitignore |
+| `hosts-vars-override/<cluster>/` | реальные домены, IP, секреты | да (приватный репозиторий; значения не печатать) |
 
 Массивы с суффиксом `_extra` **складываются** с базовыми. Списки без суффикса
 (`linstor_cluster_helm_values_properties`, `*_storage_classes`, `vault_groups_extra`
@@ -54,24 +54,33 @@ CDN, edge-балансировщик, сервис-меш, — и до серв�
 сертификат на origin не нужен, а ACME HTTP-01 через проксирующий слой всё равно
 не дойдёт. Внешний слой ОБЯЗАН проставлять `X-Forwarded-Proto: https`: без этого
 приложения, строящие абсолютные ссылки (ZITADEL, GitLab), уйдут в
-петлю редиректов. Компоненты с UI: `argocd`, `cilium`, `filestash`, `gitlab`,
-`kargo`, `linstor`, `longhorn`, `mon-system`, `outline`, `portainer`,
-`seaweedfs`, `traefik`, `vault`, `zitadel`. Исключение — `teleport`: оси TLS
-у него нет, TLS терминирует сам Teleport (Traefik пропускает его насквозь).
+петлю редиректов. Компоненты с UI: `argo-workflows`, `argocd`, `cilium`,
+`filestash`, `gitlab`, `kargo`, `linstor`, `longhorn`, `mon-system`, `outline`,
+`portainer`, `seaweedfs`, `traefik`, `vault`, `zitadel`. Исключение — `teleport`:
+оси TLS у него нет, TLS терминирует сам Teleport (Traefik пропускает его насквозь).
 
 Остальные оси:
 
 - **`simple` / `small-*`** — минимум для одного узла или тестового кластера.
 - **`prod-*` / `ha-*`** — реплики, `nodeSelector`, requests/limits, репликация хранилища.
-- **`oidc`** — вход через ZITADEL; client secret всегда в Vault, в inventory только `client_id`.
+- **`oidc`** — вход через ZITADEL; client secret всегда в Vault; `client_id` — в inventory
+  (`argocd`, `kargo`, `vault`) или тоже в Vault (`argo-workflows`, `outline`, `gitlab`, `mon-system`).
 
 ## Порядок установки argo-тройки
 
-`argocd`, `kargo` и `argo-events` ставятся В ДВЕ ВОЛНЫ: сначала все три без стадии
-`cfg`, затем `cfg` в порядке `kargo` → `argo-events` → `argocd` → `argocd-restart`.
-Подробности и требуемые права — в корневом `README.md`, раздел «ARGO-ТРОЙКА».
+`argocd`, `kargo`, `argo-events` и `argo-workflows` ставятся В ДВЕ ВОЛНЫ: сначала
+все четыре без стадии `cfg`, затем `cfg` в порядке `kargo` → `argo-events` →
+`argo-workflows` → `argocd` → `argocd-restart`.
+Подробности и требуемые права — в корневом `README.md`, раздел «ARGO-ТРОЙКА»;
+для `argo-workflows` — порядок в `reference/commands-reference.md` §2.5, права и
+preflight в `reference/components.md` §17.14.
 
 У `argo-events` два принципиально разных состояния, им соответствуют два файла:
 `single-namespace.yaml` (контроллер видит CR у себя) и
 `two-namespaces-cr-namespace.yaml` (контроллер смотрит в чужой namespace —
 это ПЕРЕНОС реконсиляции, а не расширение).
+
+У `argo-workflows` выбора нет — namespace'ов всегда ДВА (`argo-workflows` и
+`argo-workflows-cfg`), поэтому файлы различаются только осями TLS и OIDC:
+`direct-acme.yaml` (TLS на origin, вход по bearer-токену Kubernetes, UI за VPN)
+и `oidc-behind-cloudflare.yaml` (вход через ZITADEL, TLS у Cloudflare).

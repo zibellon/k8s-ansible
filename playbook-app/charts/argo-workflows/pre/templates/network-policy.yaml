@@ -1,0 +1,274 @@
+# =============================================================================
+# ARGO WORKFLOWS NETWORK POLICIES
+# =============================================================================
+
+# =============================================================================
+# BASE POLICIES
+# =============================================================================
+
+---
+# Default deny all traffic in argo-workflows namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: {{ .Values.dns.port }}
+        - protocol: TCP
+          port: {{ .Values.dns.port }}
+
+---
+# Allow all traffic between pods inside the namespace — базовая политика,
+# как у остальных компонентов. Здесь живут только workflow-controller и
+# argo-server: поды Workflow'ов всегда работают в cr namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-traffic
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+
+# =============================================================================
+# WORKFLOW CONTROLLER
+# =============================================================================
+
+---
+# Controller: реконсайлит Workflow / CronWorkflow и создаёт поды шагов.
+# Входящих соединений не принимает, кроме скрейпа метрик (см. allow-for-monitoring).
+#
+# Наружу 443/80 — поиск ENTRYPOINT образа: когда в шаблоне шага не задан
+# command, контроллер сам тянет конфиг образа из реестра (quay.io, docker.io,
+# GitLab registry и т.п.). Без этого правила такой шаг падает с ошибкой
+# "failed to look-up entrypoint/cmd for image", под не создаётся.
+# ⚠️ Запрос идёт из процесса контроллера НАПРЯМУЮ в реестр — мимо зеркала
+# containerd (mirror.gcr.io), с авторизацией только из imagePullSecrets
+# Workflow'а или его SA. Кэш — в памяти, сбрасывается каждым рестартом:
+# образы с docker.io упираются в лимит Docker Hub, приватный образ без
+# imagePullSecrets даёт 401. Поэтому в шаблонах command задавать всегда.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-workflow-controller
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: workflow-controller
+  policyTypes:
+    - Egress
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+    # External HTTPS/HTTP (реестры образов — поиск ENTRYPOINT)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+
+# =============================================================================
+# ARGO SERVER (UI / API)
+# =============================================================================
+
+---
+# argo-server: ingress от Traefik (plain HTTP — TLS терминирует Traefik или
+# внешний слой). Egress к apiserver — informer'ы сервера и все запросы
+# пользователей. Наружу 443/80 — OIDC discovery, JWKS и обмен кода на токен у
+# ZITADEL по публичному домену; без to:, как allow-argocd-server.
+#
+# ⚠️ Discovery выполняется при СТАРТЕ процесса: с включённым SSO без этого
+# правила argo-server не стартует вовсе. Поэтому политика живёт в pre и
+# появляется раньше, чем install выкатывает под.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-argo-server
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: argo-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From Traefik
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.argoWorkflows.serverPort }}
+  egress:
+    # To kube-apiserver
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.apiserver.port }}
+    # External HTTPS/HTTP (OIDC discovery + JWKS + token)
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.external.httpsPort }}
+        - protocol: TCP
+          port: {{ .Values.external.httpPort }}
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+
+---
+# Allow Prometheus (mon-system) to scrape workflow-controller metrics.
+# Port-only ingress (matches stakater-reloader allow-for-monitoring convention).
+# Только контроллер: метрики argo-server живут на порту UI, закрыты
+# аутентификацией и не снимаются.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-for-monitoring
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: workflow-controller
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.argoWorkflows.metricsPort }}
+
+# =============================================================================
+# ACME SOLVER (cert-manager HTTP-01 challenge) — одна пара политик на каждый http01 solver
+# =============================================================================
+{{- if .Values.issuer.enabled }}
+{{- $spec := .Values.issuer.spec | default dict }}
+{{- if hasKey $spec "acme" }}
+{{- range $i, $solver := ($spec.acme.solvers | default list) }}
+{{- if hasKey $solver "http01" }}
+{{- $ing := $solver.http01.ingress | default dict }}
+{{- $solverLabels := dig "podTemplate" "metadata" "labels" (dict "acme.cert-manager.io/http01-solver" "true") $ing }}
+---
+# http01 solver #{{ $i }} — ingress к solver-pod от traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $solverLabels | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.traefik.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+---
+# http01 solver #{{ $i }} — egress traefik → solver-pod (в namespace traefik)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "{{ $.Values.namespace }}-allow-acme-solver-{{ $i }}"
+  namespace: {{ $.Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $solverLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.acmeSolver.port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+# =============================================================================
+# TRAEFIK NAMESPACE POLICY (allow egress from Traefik to ARGO SERVER)
+# =============================================================================
+
+---
+# Allow Traefik to reach argo-server (UI/API port)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.namespace }}-allow-traefik
+  namespace: {{ .Values.traefik.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Values.traefik.instanceName }}
+  policyTypes:
+    - Egress
+  egress:
+    # To argo-server
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app: argo-server
+      ports:
+        - protocol: TCP
+          port: {{ .Values.argoWorkflows.serverPort }}

@@ -549,6 +549,21 @@ all:
             - extract:
                 key: "{{ eso_vault_integration_vault.kv_engine_path }}/data/vault/custom/creds"
 
+    # Дополнительные ExternalSecrets для argo-workflows. Ложатся в namespace
+    # argo-server (argo_workflows_namespace), а не в cr namespace; путь Vault —
+    # под eso-secret/argo-workflows/ (его покрывает политика argo-workflows.eso-main).
+    # Пример:
+    eso_vault_integration_argo_workflows_secrets_extra:
+      - external_secret_name: "eso-argo-workflows-custom"
+        vault_path: "/argo-workflows/custom/creds"
+        refresh_interval: "1m"
+        body:
+          target:
+            name: "eso-argo-workflows-custom"
+          dataFrom:
+            - extract:
+                key: "{{ eso_vault_integration_argo_workflows.kv_engine_path }}/data/argo-workflows/custom/creds"
+
     # ArgoCD: kustomize patches install phase — расширение upstream install.yaml.
     # Базовая часть в hosts-vars/argocd.yaml (argocd_kustomize_patches);
     # extra применяется ПОСЛЕ базовой (last-wins при конфликте data-ключей).
@@ -576,6 +591,31 @@ all:
     #       - op: replace
     #         path: /spec/replicas
     #         value: 3
+
+    # Argo Workflows: kustomize patches install phase — расширение вендоренного
+    # namespace-install.yaml. Базовая часть — argo_workflows_kustomize_patches_base
+    # в hosts-vars/argo-workflows.yaml; extra применяется ПОСЛЕ неё. Флаги
+    # контроллера и сервера задавать через env ARGO_<FLAG>, а НЕ через args:
+    # патч args заменяет список целиком (и выкидывает --namespaced).
+    argo_workflows_install_kustomize_patches_extra: []
+    # Пример: requests/limits контроллера (strategic merge)
+    # argo_workflows_install_kustomize_patches_extra:
+    #   - target:
+    #       kind: Deployment
+    #       name: workflow-controller
+    #     patch: |-
+    #       apiVersion: apps/v1
+    #       kind: Deployment
+    #       metadata:
+    #         name: workflow-controller
+    #       spec:
+    #         template:
+    #           spec:
+    #             containers:
+    #               - name: workflow-controller
+    #                 resources:
+    #                   requests: {cpu: "100m", memory: "128Mi"}
+    #                   limits: {memory: "512Mi"}
 
     # Operator-side extension of mon_system_prometheus_operator_kustomize_patches.
     # Concat-merge at runtime (last-wins on conflicting kustomize targets).

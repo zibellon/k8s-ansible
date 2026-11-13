@@ -1,0 +1,110 @@
+# =============================================================================
+# ВАРИАНТ 2: вход через ZITADEL, за Cloudflare (origin HTTP, issuer, TLS и
+# Certificate выключены). Namespace'ов, как всегда у argo-workflows, ДВА:
+# контроллер и argo-server живут в argo-workflows, а смотрят в
+# argo-workflows-cfg (дефолт argo_workflows_cr_namespace): namespace и их
+# права в нём рендерит стадия pre-cfg, поэтому она идёт ПЕРЕД install.
+# SSO-ServiceAccount'ы стадия cfg кладёт в argo-workflows-cfg — argo-server
+# ищет их в managed namespace; права — Role из argo_workflows_rbac_roles и
+# ClusterRole из argo_workflows_rbac_cluster_roles, на которые учётка
+# ссылается в roles; без совпавшего элемента вход проходит, но
+# любой запрос получает 403. clientId и clientSecret — только в Vault
+# eso-secret/argo-workflows/oidc. ZITADEL-приложение: Web, CODE + Basic,
+# redirect https://<домен>/oauth2/callback, «User Info inside ID Token» = TRUE
+# — claims argo-server берёт только из id_token. Cookie сессии без флага
+# Secure (argo-server работает по HTTP), поэтому Cloudflare обязан
+# принудительно отдавать HTTPS (Always Use HTTPS + HSTS). Остальное содержимое
+# argo-workflows-cfg (NetworkPolicy и пр.) — забота оператора или git-ops,
+# иначе namespace остаётся default-allow. Если шаблоны едут из git-ops, ArgoCD
+# нужна пара RoleBinding (deployer + ui) в argo-workflows-cfg и этот namespace
+# в поле namespaces секрета eso-secret/argocd/clusters/in-cluster.
+# ⚠️ В САМ argo-workflows ни ArgoCD, ни операторский RoleBinding прав на
+# запись и создание подов не получают: там Secret sso, из которого выводится
+# ключ сессий, — под с ним подделает сессию SSO-админа.
+# =============================================================================
+all:
+  vars:
+    argo_workflows_enabled: true
+
+    argo_workflows_ingress_class_name: "traefik-lb"
+    argo_workflows_cert_manager_issuer_enabled: false
+
+    argo_workflows_ui_domain: "argo-workflows.example.com"
+    argo_workflows_ui_ingress_enabled: true
+    argo_workflows_ui_ingress_tls_enabled: false
+    argo_workflows_ui_certificate_enabled: false
+    argo_workflows_ui_vpn_only_enabled: false
+
+    argo_workflows_oidc_enabled: true
+    argo_workflows_oidc_scopes: ["profile", "email", "urn:zitadel:iam:org:id:000000000000000000"]
+
+    argo_workflows_rbac_roles:
+      - name: "argo-workflows-admin-rw"
+        rules:
+          - apiGroups: ["argoproj.io"]
+            resources:
+              - workflows
+              - workflows/finalizers
+              - workflowtemplates
+              - workflowtemplates/finalizers
+              - cronworkflows
+              - cronworkflows/finalizers
+              - workfloweventbindings
+              - workfloweventbindings/finalizers
+              - workflowtaskresults
+              - workflowtaskresults/finalizers
+            verbs: ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+          - apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch", "delete"]
+          - apiGroups: [""]
+            resources: ["pods/log", "events"]
+            verbs: ["get", "list", "watch"]
+      - name: "argo-workflows-view-ro"
+        rules:
+          - apiGroups: ["argoproj.io"]
+            resources:
+              - workflows
+              - workflowtemplates
+              - cronworkflows
+              - workfloweventbindings
+              - workflowtaskresults
+            verbs: ["get", "list", "watch"]
+          - apiGroups: [""]
+            resources: ["pods", "pods/log", "events"]
+            verbs: ["get", "list", "watch"]
+
+    # Чтение ClusterWorkflowTemplate для страницы UI «Cluster Workflow
+    # Templates» (без него там 403). Привязывается к учёткам через
+    # bindingType: ClusterRoleBinding — обычный RoleBinding на cluster-scoped
+    # объекты не действует.
+    argo_workflows_rbac_cluster_roles:
+      - name: "argo-workflows-cwft-reader"
+        rules:
+          - apiGroups: ["argoproj.io"]
+            resources: ["clusterworkflowtemplates"]
+            verbs: ["get", "list", "watch"]
+
+    argo_workflows_sso_service_accounts:
+      - name: "argo-workflows-sso-admin-rw"
+        precedence: 10
+        preferredUsernames: ["cluster-admin-rw@my-org.auth.example.com"]
+        roles:
+          - roleType: "Role"
+            roleName: "argo-workflows-admin-rw"
+            bindingType: "RoleBinding"
+          - roleType: "ClusterRole"
+            roleName: "argo-workflows-cwft-reader"
+            bindingType: "ClusterRoleBinding"
+      - name: "argo-workflows-sso-view-ro"
+        precedence: 0
+        preferredUsernames:
+          - "alice.smith@my-org.auth.example.com"
+          - "bob.jones@my-org.auth.example.com"
+        roles:
+          - roleType: "Role"
+            roleName: "argo-workflows-view-ro"
+            bindingType: "RoleBinding"
+          - roleType: "ClusterRole"
+            roleName: "argo-workflows-cwft-reader"
+            bindingType: "ClusterRoleBinding"

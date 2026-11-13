@@ -267,10 +267,13 @@ all:
     # Upstream-дефолт = true: watch-события копятся в НЕбуферизованном канале и
     # применяются к кэшу пачкой раз в controller.cluster.cache.events.processing.interval
     # (100 мс) — экономия на захватах write-lock кэша. У нас пачка = 1-2 события,
-    # экономии нет; при этом отправка в канал идёт без select по ctx, и при пересборке
-    # cluster cache горутина watch может залипнуть, игнорируя отменённый контекст.
-    # Выключено осознанно — см. reference/components.md §9.
+    # экономии нет. На утечку watch'ей не влияет (см. resync ниже).
     argocd_cluster_cache_batch_events_processing: false
+    # Период полной пересборки cluster cache (env ARGOCD_CLUSTER_CACHE_RESYNC_DURATION,
+    # upstream-дефолт 12h, "0" — пересборка выключена). Каждая пересборка в
+    # namespace-scoped установке оставляет живым предыдущий набор watch'ей
+    # (403 в namespace с урезанными правами) — см. reference/components.md §9, Cluster cache.
+    argocd_cluster_cache_resync_duration: "0"
     # ApplicationSet scm-провайдеры (env ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_SCM_PROVIDERS /
     # _ALLOWED_SCM_PROVIDERS / _TOKENREF_STRICT_MODE).
     # Генераторы scmProvider и pullRequest читают секрет по tokenRef из namespace
@@ -287,12 +290,38 @@ all:
     argocd_applicationset_enable_scm_providers: true
     argocd_applicationset_allowed_scm_providers: ""
     argocd_applicationset_tokenref_strict_mode: true
+    # Backoff ретраев ApplicationSet-контроллера (applicationsetcontroller.wq.*, читается с v3.6).
+    # Дефолт v3.6 выключает его: ошибка reconcile → повтор каждые 1 мс. Значения = поведение v3.5:
+    # 5ms·2^n до 1000s на элемент; общий bucket выключен (дефолт, как в v3.5). cooldown — максимум
+    # (24h): счётчик ошибок не сбрасывается сам, только после успешного reconcile.
+    argocd_applicationset_wq_basedelay_ns: "5000000"
+    argocd_applicationset_wq_backoff_factor: "2"
+    argocd_applicationset_wq_maxdelay_ns: "1000000000000"
+    argocd_applicationset_wq_cooldown_ns: "86400000000000"
+    # Swagger UI argocd-server (/swagger-ui, /swagger.json — без аутентификации). Ключ читается с v3.6.
+    argocd_server_disable_swagger_ui: true
     # Install-phase kustomize patches: base = operator patches + generated accounts/RBAC patches.
-    # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure + cluster-cache batch events + appset scm-providers) + generated argocd-cm
+    # argocd-cm (url/timeouts) + argocd-cmd-params-cm (server.insecure + swagger-ui + cluster-cache batch events + appset scm-providers + appset backoff) + generated argocd-cm
     # (accounts.<name>: <capabilities> + accounts.<name>.enabled из argocd_local_accounts + admin.enabled) + argocd-rbac-cm
-    # (policy.csv из argocd_policy_csv_list).
+    # (policy.csv из argocd_policy_csv_list) + env контроллера (cluster-cache resync) + NetworkPolicy appset (без webhook :7000).
     # kustomize мержит несколько патчей на один target.
     argocd_kustomize_patches_base:
+      - target:
+          kind: StatefulSet
+          name: argocd-application-controller
+        patch: |-
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: argocd-application-controller
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: argocd-application-controller
+                    env:
+                      - name: ARGOCD_CLUSTER_CACHE_RESYNC_DURATION
+                        value: "{{ argocd_cluster_cache_resync_duration }}"
       - target:
           kind: ConfigMap
           name: argocd-cm
@@ -327,10 +356,32 @@ all:
             name: argocd-cmd-params-cm
           data:
             server.insecure: "true"
+            server.disable.swagger.ui: "{{ argocd_server_disable_swagger_ui | string | lower }}"
             controller.cluster.cache.batch.events.processing: "{{ argocd_cluster_cache_batch_events_processing | string | lower }}"
             applicationsetcontroller.enable.scm.providers: "{{ argocd_applicationset_enable_scm_providers | string | lower }}"
             applicationsetcontroller.allowed.scm.providers: "{{ argocd_applicationset_allowed_scm_providers }}"
             applicationsetcontroller.enable.tokenref.strict.mode: "{{ argocd_applicationset_tokenref_strict_mode | string | lower }}"
+            applicationsetcontroller.wq.basedelay.ns: "{{ argocd_applicationset_wq_basedelay_ns }}"
+            applicationsetcontroller.wq.backoff.factor: "{{ argocd_applicationset_wq_backoff_factor }}"
+            applicationsetcontroller.wq.maxdelay.ns: "{{ argocd_applicationset_wq_maxdelay_ns }}"
+            applicationsetcontroller.wq.cooldown.ns: "{{ argocd_applicationset_wq_cooldown_ns }}"
+      # Webhook ApplicationSet (:7000) не используем (git-генераторы опрашивают сами), а upstream-NP
+      # пускает на него из всех namespace — оставляем только метрики. ingress заменяется целиком.
+      - target:
+          kind: NetworkPolicy
+          name: argocd-applicationset-controller-network-policy
+        patch: |-
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: argocd-applicationset-controller-network-policy
+          spec:
+            ingress:
+              - from:
+                  - namespaceSelector: {}
+                ports:
+                  - port: {{ argocd_applicationset_controller_metrics_port }}
+                    protocol: TCP
       - target:
           kind: ConfigMap
           name: argocd-cm
@@ -429,8 +480,10 @@ all:
     # ------
     # ArgoCD git-ops setup — full-spec модель.
     # AppProjects + Applications задаются ПОЛНЫМ spec'ом; chart оборачивает
-    # apiVersion/kind/metadata (+ optional annotations для обоих + finalizers для Application — пусто/нет = не добавляется).
-    # Пример и переопределение — в hosts-vars-override/argocd.yaml
+    # apiVersion/kind/metadata (+ optional annotations и finalizers для обоих — пусто/нет = не добавляется).
+    # Пример — hosts-vars-example/argocd/oidc-gitops-behind-cloudflare.yaml; значения — hosts-vars-override/<cluster>/argocd.yaml.
+    # 1520-tech-prod-1: ОДИН root Application app-of-apps-root → infra argocd-system/root.
+    # Удаление ВСЕГДА каскадное: у root и у проекта root resources-finalizer.
     # ------
     argocd_git_ops_app_projects: []
     argocd_git_ops_applications: []

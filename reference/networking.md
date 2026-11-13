@@ -35,11 +35,15 @@ Defined in `playbook-app/charts/cilium/post/`. The policy's `nodeIpsList` array 
 - ETCD peer + client (2379, 2380) between managers
 - Hubble observability (4244)
 - All `nodeIpsList` → all `nodeIpsList` for inter-node cluster traffic
+- **SSH (22/TCP) from outside the cluster** — `cilium_post_ssh_vpn_only_enabled` (default `false`), chart values `sshVpnOnlyEnabled` / `sshVpnCidrs` (= `vpn_ips`):
+  - `false` → SSH from `world` (previous behaviour);
+  - `true` → SSH only from `vpn_ips` (`fromCIDR`); `true` + empty `vpn_ips` fails the helm render (nothing is applied, no silent lockout); a non-boolean value fails too.
+  - Applied by `cilium-install.yaml --tags post` (with `true` — run it from the VPN). Prod: `true` since 2026-11-11.
+- ICMP echo from `world`
 
 **What it blocks:**
 
-- Traffic from IPs outside `nodeIpsList` at the host interface level
-- Includes: random external IPs, even the public internet
+- Everything else from IPs outside `nodeIpsList` at the host interface level (random external IPs, the public internet), except the SSH and ICMP rules above
 
 **Scope — what it does NOT gate.** The policy binds the **host endpoint** — host processes + hostNetwork pods only. NodePort → non-hostNetwork pod traffic (Traefik DaemonSet+NodePort, haproxy-ingress) is **not** gated (empirically: external HTTPS reaches Traefik even though ingress allows `world` only on SSH+ICMP). So **bastion-proxy needs ZERO CCNP changes** — see [`bastion-proxy.md`](bastion-proxy.md) §5. The L4 anti-bypass is a pod-level NetworkPolicy `ipBlock` on the ingress pod (git-ops repo), not the host firewall.
 
@@ -52,7 +56,8 @@ Defined in `playbook-app/charts/cilium/post/`. The policy's `nodeIpsList` array 
    (ansible_host + internal_ip).
 2. ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
      playbook-app/cilium-install.yaml --tags post
-   (Re-renders CiliumClusterwideNetworkPolicy with the new IPs.)
+   (Re-renders CiliumClusterwideNetworkPolicy with the new IPs — and re-applies the
+   SSH rule (cilium_post_ssh_vpn_only_enabled); with VPN-only SSH run it from the VPN.)
 3. ansible-playbook ... playbook-system/full-node-install.yaml --limit <new-host>
 4. manager-join.yaml or worker-join.yaml for the new host.
 ```
@@ -69,7 +74,7 @@ Internal-only ingresses (admin UIs, internal services) are gated by a VPN allowl
 
 | Variable | Purpose |
 |---|---|
-| `vpn_ips` | L3 CIDR list (used in `NetworkPolicy` and Traefik middleware) |
+| `vpn_ips` | L3 CIDR list — a shared allowlist on purpose: `NetworkPolicy`, Traefik vpn-only middlewares (UI) **and** node SSH when `cilium_post_ssh_vpn_only_enabled: true` (§2); fail2ban never bans it (`ignoreip` on nodes and bastion). Changing it changes UI and SSH access at once; with VPN-only SSH a wrong value closes node SSH for everyone (fallback: Teleport / provider console). Base value in `hosts-vars/` is a placeholder; the real one is in the cluster override |
 | `vpn_traefik_middlewares` | L7 Traefik `Middleware` resources (`ipAllowList.sourceRange: {{ vpn_ips }}`) |
 | `vpn_ingress_middlewares` | String reference for standard K8s Ingress (`"<traefik-ns>-vpn-only@kubernetescrd"`) |
 | `vpn_ingress_route_middlewares` | List of middleware refs used by Traefik `IngressRoute` CRD |

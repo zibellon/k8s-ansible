@@ -1,0 +1,832 @@
+all:
+  vars:
+    # =========================================================================
+    # Argo Workflows — движок workflow'ов кластера: workflow-controller
+    # исполняет Workflow / CronWorkflow / WorkflowTemplate, argo-server отдаёт
+    # UI и API. Ставится по тому же принципу, что argo-events: вендоренный
+    # релизный namespace-install.yaml, KUSTOMIZE_WRAPPER на фазе install.
+    #
+    # ⚠️ ТОЛЬКО ДВА NAMESPACE — режима «всё в одном» у компонента нет:
+    #   - argo_workflows_namespace (argo-workflows) — контроллер, argo-server,
+    #     их ConfigMap, Secret sso и OIDC-креды: вся механика;
+    #   - argo_workflows_cr_namespace (argo-workflows-cfg) — откуда контроллер
+    #     и сервер берут WorkflowTemplate / CronWorkflow / Workflow и где
+    #     работают поды Workflow'ов. Из объектов Argo git-ops везёт ТОЛЬКО
+    #     WorkflowTemplate и CronWorkflow; Workflow создаются запуском, а не
+    #     синком (kind: Workflow в git-ops TTL удалит, selfHeal ArgoCD
+    #     вернёт — и он запустится снова, раз в неделю).
+    # Install падает на assert'е, если cr namespace пуст или совпадает с
+    # namespace компонента. Это намеренное отличие от argo-events, где
+    # cr namespace пока опционален: в одном namespace любой автор Workflow
+    # запустил бы под с SA argo-server или примонтировал Secret sso (из его
+    # ключа argo-server выводит ключ шифрования сессий) и подделал бы сессию
+    # любого пользователя.
+    # =========================================================================
+
+    # Component enable flag (default false, opt-in): guards install start.
+    argo_workflows_enabled: false
+
+    # Namespace КОНТРОЛЛЕРА и СЕРВЕРА. В upstream-манифесте namespace не задан
+    # нигде, его проставляет kustomize namespace-трансформер фазы install.
+    argo_workflows_namespace: "argo-workflows"
+
+    # ------
+    # CR NAMESPACE — куда смотрят контроллер и сервер. ОБЯЗАТЕЛЕН.
+    # Базовые патчи install ставят обоим Deployment'ам env
+    # ARGO_MANAGED_NAMESPACE, и они смотрят ТУДА ВМЕСТО своего namespace:
+    # флаг принимает ровно одно значение. Туда же стадия cfg кладёт executor,
+    # SSO-ServiceAccount'ы (argo-server ищет их в managed namespace, а не в
+    # своём) и прикладные CR.
+    #
+    # ⚠️ Namespace и обязательные права контроллера и сервера в нём заводит
+    # стадия pre-cfg самого компонента — потому она и идёт ПЕРЕД install. В
+    # cluster-base этот namespace объявлять НЕЛЬЗЯ: получится второй
+    # владелец объекта. Он же не должен совпадать с argo_events_cr_namespace.
+    # ------
+    argo_workflows_cr_namespace: "argo-workflows-cfg"
+    # Метки и аннотации объекта Namespace. Пустые не рендерятся.
+    # ⚠️ Метка workflows.argoproj.io/parallelism-limit здесь НЕ работает:
+    # контроллеру нужны кластерные права на namespaces, их нет. Тот же
+    # эффект — namespaceParallelism/parallelism в
+    # argo_workflows_controller_config (managed namespace один).
+    argo_workflows_cr_namespace_labels: {}
+    argo_workflows_cr_namespace_annotations: {}
+
+    # ------
+    # Порты (из upstream-манифеста, менять нельзя без смены версии).
+    # ------
+    argo_workflows_server_port: 2746
+    argo_workflows_metrics_port: 9090
+
+    # ------
+    # Образы патчами НЕ пинятся (в отличие от argo-events): релизный манифест
+    # уже несёт теги quay.io/argoproj/{workflow-controller,argocli} своей
+    # версии, imagePullPolicy у тегированного образа по умолчанию
+    # IfNotPresent, а образ executor'а (argoexec) контроллер берёт из своей
+    # собственной версии. Версия меняется только перевендорингом манифестов в
+    # charts/argo-workflows/{crds,install}/.
+    # ------
+    # Формат логов контроллера и сервера; executor наследует формат контроллера.
+    # Апстримный дефолт — text. JSON не на 100%: три стартовые строки
+    # контроллера (пишутся до применения флага) и редкие строки net/http
+    # argo-server идут текстом — Vector разбирает JSON с проверкой ошибки и
+    # пропускает их как обычный текст.
+    argo_workflows_log_format: "json"
+
+    # ------
+    # ПРАВА КОНТРОЛЛЕРА И СЕРВЕРА В CR NAMESPACE.
+    # Апстримный namespace-install.yaml кладёт Role только рядом с подами — он
+    # предполагает, что поды и CR в одном namespace. У нас CR всегда в другом,
+    # и там нужен свой комплект; его рендерит стадия pre-cfg, и именно поэтому
+    # она идёт ПЕРЕД install:
+    #   - без прав контроллер падает в CrashLoopBackOff сразу после захвата
+    #     lease (initManagers получает 403 на LIST workflows);
+    #   - с НЕПОЛНЫМИ правами хуже — WaitForCacheSync висит без таймаута,
+    #     readinessProbe у контроллера нет, а /healthz, пока нет поданных
+    #     Workflow, отвечает 200, и helm --wait считает установку успешной,
+    #     хотя ни один Workflow не обрабатывается. Как только поданный
+    #     Workflow ждёт без прогресса дольше 5 минут, /healthz отдаёт 500, и
+    #     liveness перезапускает контроллер по кругу (растёт RESTARTS);
+    #   - argo-server без прав на workflowtemplates принимает соединения, но
+    #     не обслуживает их (WaitForCacheSync до Serve), без прав на
+    #     serviceaccounts при SSO не открывает порт вовсе — в обоих случаях
+    #     навсегда NotReady.
+    # Локальные Role апстрима в своём namespace остаются апстримными: там
+    # lease, ConfigMap, Secret sso и OIDC-креды. Единственная правка —
+    # configmaps create/update в argo-role под кэш memoization (патч install).
+    # ------
+    # Имена SA заданы апстримом, менять нельзя без смены версии манифеста.
+    argo_workflows_controller_sa_name: "argo"
+    argo_workflows_controller_cr_ns_role_name: "argo-workflows-controller"
+    argo_workflows_controller_cr_ns_role_binding_name: "argo-workflows-controller"
+    # Апстримный argo-role без leases плюс configmaps create. В своём
+    # namespace контроллер держит lease и кэш memoization (права на кэш —
+    # патч argo-role в argo_workflows_kustomize_patches_base). Всё остальное
+    # — informer'ы, поды, PVC, PDB, события — в managed namespace.
+    # configmaps create — сверх апстрима: если ARGO_TEMPLATE или args
+    # контейнера длиннее 128 КБ, контроллер выносит их в ConfigMap с именем
+    # пода в namespace Workflow'а. Удаляется он вместе с Workflow
+    # (ownerReference). Без create под такого шага не создаётся.
+    argo_workflows_controller_cr_ns_role_rules:
+      - apiGroups: [""]
+        resources: ["pods", "pods/exec"]
+        verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+      - apiGroups: [""]
+        resources: ["configmaps"]
+        verbs: ["get", "watch", "list", "create"]
+      - apiGroups: [""]
+        resources: ["persistentvolumeclaims", "persistentvolumeclaims/finalizers"]
+        verbs: ["create", "update", "delete", "get"]
+      - apiGroups: ["argoproj.io"]
+        resources:
+          - workflows
+          - workflows/finalizers
+          - workflowtasksets
+          - workflowtasksets/finalizers
+          - workflowartifactgctasks
+        verbs: ["get", "list", "watch", "update", "patch", "delete", "create"]
+      - apiGroups: ["argoproj.io"]
+        resources: ["workflowtemplates", "workflowtemplates/finalizers"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["argoproj.io"]
+        resources: ["workflowtaskresults"]
+        verbs: ["list", "watch", "deletecollection"]
+      - apiGroups: [""]
+        resources: ["serviceaccounts"]
+        verbs: ["get", "list"]
+      - apiGroups: [""]
+        resources: ["secrets"]
+        verbs: ["get"]
+      - apiGroups: ["argoproj.io"]
+        resources: ["cronworkflows", "cronworkflows/finalizers"]
+        verbs: ["get", "list", "watch", "update", "patch", "delete"]
+      - apiGroups: [""]
+        resources: ["events"]
+        verbs: ["create", "patch"]
+      - apiGroups: ["policy"]
+        resources: ["poddisruptionbudgets"]
+        verbs: ["create", "get", "delete"]
+    argo_workflows_server_sa_name: "argo-server"
+    argo_workflows_server_cr_ns_role_name: "argo-workflows-server"
+    argo_workflows_server_cr_ns_role_binding_name: "argo-workflows-server"
+    # Только то, что argo-server делает СВОИМ SA: informer WorkflowTemplate
+    # (блокирует старт), reflector Workflow, кэш SSO-ServiceAccount'ов и GET их
+    # token-Secret'ов, ConfigMap artifact-repositories, события. Всё
+    # остальное API делает токеном пользователя (SSO-SA), поэтому полный
+    # argo-server-role сюда не копируется. Права на serviceaccounts и secrets
+    # нужны и без OIDC: включение OIDC не должно требовать повторного pre-cfg.
+    # secrets get — без resourceNames намеренно: имена token-Secret'ов
+    # привязали бы pre-cfg к списку SSO-SA. Цена — argo-server читает любой
+    # Secret managed namespace.
+    argo_workflows_server_cr_ns_role_rules:
+      - apiGroups: ["argoproj.io"]
+        resources: ["workflows"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["argoproj.io"]
+        resources: ["workflowtemplates"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: [""]
+        resources: ["serviceaccounts"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: [""]
+        resources: ["secrets", "configmaps"]
+        verbs: ["get"]
+      - apiGroups: [""]
+        resources: ["events"]
+        verbs: ["create", "patch"]
+
+    # ------
+    # PHASE: crds (kubectl apply --server-side — full CRD v4, ~12 МБ YAML,
+    # крупнейшие по ~2.8 МБ; клиентский apply упирается в лимит аннотации
+    # last-applied)
+    # ------
+    argo_workflows_crds_list:
+      - crd/clusterworkflowtemplates.argoproj.io
+      - crd/cronworkflows.argoproj.io
+      - crd/workflowartifactgctasks.argoproj.io
+      - crd/workfloweventbindings.argoproj.io
+      - crd/workflows.argoproj.io
+      - crd/workflowtaskresults.argoproj.io
+      - crd/workflowtasksets.argoproj.io
+      - crd/workflowtemplates.argoproj.io
+
+    # ------
+    # UI (argo-server за Traefik). Домен — placeholder, реальный задаётся в
+    # hosts-vars-override/<cluster>/. TLS терминирует Traefik или внешний
+    # слой: argo-server работает по HTTP (ARGO_SECURE=false в патче install).
+    # ------
+    argo_workflows_ui_domain: "argo-workflows-ui-k8s-v2.drawapp.ru"
+    argo_workflows_ui_tls_secret_name: "cert-argo-workflows"
+    argo_workflows_ingress_class_name: "traefik-lb"
+    # VPN задаётся явно, как у остальных компонентов, и от OIDC не зависит.
+    # ⚠️ В режиме client (OIDC выключен) UI на публичном Ingress — вход в API
+    # для любого утёкшего bearer-токена SA: там VPN включать в override.
+    argo_workflows_ui_vpn_only_enabled: false
+
+    # ------
+    # cert-manager Issuer (per-component, namespaced). Solver-политики
+    # рендерятся по этому же объекту.
+    # ------
+    argo_workflows_cert_manager_issuer_enabled: true
+    argo_workflows_acme_issuer_name: "argo-workflows-acme"
+    argo_workflows_acme_private_key_name: "argo-workflows-acme-account-key"
+    argo_workflows_acme_server: "https://acme-v02.api.letsencrypt.org/directory"
+    argo_workflows_acme_email: "some-email-123@gmail.com"
+    argo_workflows_acme_solvers:
+      - http01:
+          ingress:
+            ingressClassName: "traefik-lb"
+            ingressTemplate:
+              metadata:
+                annotations:
+                  "kubernetes.io/ingress.class": "traefik-lb"
+                  "traefik.ingress.kubernetes.io/router.entrypoints": "web"
+            podTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: acme-solver
+                  app.kubernetes.io/instance: traefik-lb
+                  app.kubernetes.io/component: acme-http01-solver
+                  app.kubernetes.io/managed-by: cert-manager
+    argo_workflows_cert_manager_issuer:
+      enabled: "{{ argo_workflows_cert_manager_issuer_enabled }}"
+      name: "{{ argo_workflows_acme_issuer_name }}"
+      spec:
+        acme:
+          server: "{{ argo_workflows_acme_server }}"
+          email: "{{ argo_workflows_acme_email }}"
+          privateKeySecretRef:
+            name: "{{ argo_workflows_acme_private_key_name }}"
+          solvers: "{{ argo_workflows_acme_solvers }}"
+
+    argo_workflows_ui_ingress_enabled: true
+    argo_workflows_ui_ingress_tls_enabled: true
+    argo_workflows_ui_certificate_enabled: true
+    argo_workflows_ui_ingress_config:
+      enabled: "{{ argo_workflows_ui_ingress_enabled }}"
+      domain: "{{ argo_workflows_ui_domain }}"
+      ingressClass: "{{ argo_workflows_ingress_class_name }}"
+      tlsEnabled: "{{ argo_workflows_ui_ingress_tls_enabled }}"
+      tlsSecretName: "{{ argo_workflows_ui_tls_secret_name }}"
+      vpnOnlyEnabled: "{{ argo_workflows_ui_vpn_only_enabled }}"
+      vpnIngressMiddlewares: "{{ vpn_ingress_middlewares }}"
+    # cert-manager Certificate (per-domain) — плоский объект {enabled, name, spec}.
+    argo_workflows_ui_certificate:
+      enabled: "{{ argo_workflows_ui_certificate_enabled }}"
+      name: "{{ argo_workflows_ui_tls_secret_name }}"
+      spec:
+        secretName: "{{ argo_workflows_ui_tls_secret_name }}"
+        dnsNames:
+          - "{{ argo_workflows_ui_domain }}"
+        issuerRef:
+          name: "{{ argo_workflows_acme_issuer_name }}"
+          kind: "Issuer"
+
+    # ------
+    # OIDC / SSO (ZITADEL). argo-server — только КОНФИДЕНЦИАЛЬНЫЙ клиент:
+    # authorization code + client secret, без PKCE, без refresh token.
+    # ZITADEL-приложение: Web, CODE + Basic, redirect
+    # https://<argo_workflows_ui_domain>/oauth2/callback, "User Info inside ID
+    # Token" = TRUE — argo-server берёт preferred_username/email только из
+    # id_token.
+    #
+    # clientId argo-server читает ТОЛЬКО из Secret (inline-значения у продукта
+    # нет), поэтому в inventory его нет вовсе: Vault eso-secret/argo-workflows/oidc
+    # с ключами ровно clientId / clientSecret.
+    #
+    # Включение: argo_workflows_oidc_enabled: true + org-pin в
+    # argo_workflows_oidc_scopes в override + элементы
+    # argo_workflows_sso_service_accounts (кому что можно).
+    # Без хотя бы одного SSO-ServiceAccount'а вход проходит, но любой запрос
+    # получает 403.
+    # ------
+    argo_workflows_oidc_enabled: false
+    argo_workflows_oidc_issuer: "https://{{ zitadel_domain }}"
+    # openid argo-server добавляет сам. offline_access не нужен — refresh
+    # token продукт не использует. Для org-pin в override дописать
+    # "urn:zitadel:iam:org:id:<orgId>".
+    argo_workflows_oidc_scopes: ["profile", "email"]
+    # Время жизни СЕССИИ argo-server (Go duration, без "d"). От времени жизни
+    # токенов ZITADEL не зависит: выключенный в ZITADEL пользователь работает
+    # до её истечения. Сессия stateless (зашифрованная cookie), списка сессий
+    # у argo-server нет: адресно отозвать её нельзя. Как отзывать доступ —
+    # см. ⚠️ ОТЗЫВ у argo_workflows_sso_service_accounts.
+    argo_workflows_oidc_session_expiry: "8h"
+    # Задаётся явно: при ARGO_SECURE=false argo-server сам собрал бы http://.
+    argo_workflows_oidc_redirect_url: "https://{{ argo_workflows_ui_domain }}/oauth2/callback"
+
+    # ------
+    # ESO integration. Каркас (SecretStore + SA) поднимается всегда, OIDC
+    # client-secret — только при argo_workflows_oidc_enabled: true. Секрет
+    # обязан лежать в namespace argo-server (argo_workflows_namespace), не в
+    # cr namespace. Политика и роль argo-workflows.eso-main обязаны
+    # существовать даже при пустом списке — их проверяет tasks-eso-verify.yaml.
+    # ------
+    eso_vault_integration_argo_workflows:
+      sa_name: "eso-main"
+      role_name: "argo-workflows.eso-main"
+      secret_store_name: "eso-main.vault"
+      kv_engine_path: "eso-secret"
+
+    argo_workflows_secret_oidc_creds:
+      external_secret_name: "eso-argo-workflows-oidc-creds"
+      vault_path: "/argo-workflows/oidc"
+      body:
+        target:
+          name: "eso-argo-workflows-oidc-creds"
+        dataFrom:
+          - extract:
+              key: "{{ eso_vault_integration_argo_workflows.kv_engine_path }}/data/argo-workflows/oidc"
+
+    eso_vault_integration_argo_workflows_secrets: >-
+      {{ [argo_workflows_secret_oidc_creds] if argo_workflows_oidc_enabled | bool else [] }}
+
+    eso_vault_integration_argo_workflows_secrets_extra: []
+
+    # ------
+    # SSO RBAC. Каждый элемент — одна учётка доступа: ServiceAccount с
+    # аннотацией workflows.argoproj.io/rbac-rule, его long-lived token-Secret
+    # <name>.service-account-token и по привязке <name>-<roleName> на каждый
+    # элемент roles — {roleType, roleName, bindingType}, как accounts у
+    # Kargo. Сами роли элемент НЕ создаёт: их объявляют
+    # argo_workflows_rbac_roles или argo_workflows_rbac_cluster_roles (стадия
+    # cfg). roleType: Role — Role в managed namespace; roleType: ClusterRole —
+    # ClusterRole. bindingType (обязателен, как и два других) — тип привязки:
+    # RoleBinding даёт права только внутри managed namespace,
+    # ClusterRoleBinding — на весь кластер и допустим только с ClusterRole
+    # (Role + ClusterRoleBinding — ошибка рендера). Права пользователя =
+    # объединение прав этих ролей (обычный Kubernetes RBAC).
+    # ⚠️ ClusterRoleBinding отдаёт права роли на ВЕСЬ кластер не только
+    # пользователю: SA лежит в managed namespace, и его права получает каждый,
+    # кто может создать там Workflow (под от этого SA) или прочитать его
+    # token-Secret. Так привязывать только безопасные роли на чтение —
+    # например, чтение clusterworkflowtemplates для страницы UI «Cluster
+    # Workflow Templates» (без него там 403).
+    # Role обязана быть объявлена в argo_workflows_rbac_roles managed
+    # namespace — иначе ошибка рендера; ClusterRole не проверяется. Пустой или
+    # пропущенный roles — учётка без прав: правило совпадает, любой запрос 403.
+    # ⚠️ Встроенные ClusterRole view/edit/admin НЕ дают ни одного права на
+    # объекты Argo Workflows: агрегирующие роли argo-aggregate-to-* апстрим
+    # кладёт только в cluster-install, в namespace-install их нет. Учётка на
+    # view войдёт и получит 403 на всё. Нужна своя Role из
+    # argo_workflows_rbac_roles или своя ClusterRole из
+    # argo_workflows_rbac_cluster_roles.
+    # Всё рендерит стадия cfg в managed namespace — именно там argo-server
+    # ищет SSO-ServiceAccount'ы. Имя — уникальное (префикс argo-workflows-sso-).
+    #
+    # token-Secret нужен потому, что, выбрав SA, argo-server ходит в
+    # Kubernetes API токеном этого SA, а берёт его из Secret'а (TokenRequest
+    # не использует); token в него дописывает сам Kubernetes. Имя Secret'а
+    # argo-server ищет по порядку: sa.secrets[0], затем аннотация SA
+    # workflows.argoproj.io/service-account-token.name, и только потом
+    # <sa>.service-account-token. У SA, которые рендерит шаблон, первых двух
+    # нет, поэтому срабатывает имя по соглашению. Кто может править SA или
+    # Secret в managed namespace, тот этими полями перенаправит учётку на
+    # чужой токен, не трогая rbac-rule.
+    #
+    # Правило строит шаблон, а не оператор: get($env, 'preferred_username') in
+    # [...]. Из claims ZITADEL до правила доходят только sub, email, name и
+    # preferred_username; группы ZITADEL не отдаёт. Голое имя отсутствующего
+    # claim'а в правиле — ошибка компиляции expr, которая обрывает перебор:
+    # 403 получают все, кому не подошло правило выше по precedence. Поэтому
+    # сырых правил здесь нет, а preferredUsernames обязан быть списком, roles —
+    # списком {roleType: Role|ClusterRole, roleName, bindingType:
+    # RoleBinding|ClusterRoleBinding} — все три поля обязательны; иначе ошибка
+    # рендера.
+    #
+    # precedence — больше выигрывает; при равенстве порядок не определён.
+    # Элемент:
+    #   - name: "argo-workflows-sso-admin-rw"
+    #     precedence: 10
+    #     preferredUsernames: ["cluster-admin-rw@cluster-tools.<zitadel_domain>"]
+    #     roles:
+    #       - roleType: "Role"
+    #         roleName: "argo-workflows-admin-rw"   # из argo_workflows_rbac_roles
+    #         bindingType: "RoleBinding"            # обязателен
+    #       - roleType: "ClusterRole"               # из argo_workflows_rbac_cluster_roles
+    #         roleName: "argo-workflows-cwft-reader"
+    #         bindingType: "ClusterRoleBinding"     # на весь кластер
+    #
+    # ⚠️ Роли для SSO-пользователей не должны давать secrets и RBAC-вербы:
+    # с правом на Secret'ы managed namespace пользователь прочитал бы
+    # token-Secret более сильного SSO-ServiceAccount'а. Встроенные
+    # ClusterRole admin и edit такой доступ дают.
+    # ⚠️ Право создавать Workflow в managed namespace = права администратора
+    # этого namespace: под Workflow'а может работать от любого его SA и
+    # примонтировать любой его Secret, включая token-Secret SSO-админа.
+    # Strict (workflowRestrictions в базе контроллера) этого не меняет —
+    # обходится через status, см. там.
+    #
+    # ⚠️ ОТЗЫВ ДОСТУПА. Убрать пользователя из preferredUsernames (или роль из
+    # roles) и прогнать --tags cfg: правило проверяется на КАЖДЫЙ запрос, и
+    # новые запросы получают 403 сразу, без рестарта. Сразу НЕ отзывается:
+    #   - открытые потоки UI (список и детали Workflow, события, follow
+    #     логов): argo-server держит открытый watch токеном выбранного SSO-SA,
+    #     и apiserver его не переавторизует — живёт до таймаута watch
+    #     (30–60 мин), follow логов — до конца пода. Рвёт их только
+    #     argo-workflows-restart.yaml;
+    #   - сама сессия: она живёт до sessionExpiry, выключение пользователя в
+    #     ZITADEL её не прекращает (просто каждый запрос получает 403).
+    #     Аннулировать ВСЕ сессии (например, украденную cookie) — удалить
+    #     Secret sso в argo_workflows_namespace и прогнать
+    #     argo-workflows-restart.yaml: argo-server создаст новый ключ сессий,
+    #     все войдут заново;
+    #   - скопированные токены: ARGO_TOKEN из UI действует до конца сессии,
+    #     token SSO-SA — пока жив его token-Secret.
+    # Пользователь, который мог создавать Workflow (= админ managed
+    # namespace), отзывается полностью: убрать из элемента; удалить
+    # token-Secret'ы SSO-SA в managed namespace и сразу --tags cfg (до него
+    # SSO-вход даёт 403 всем; новый token-Secret argo-server подхватит в
+    # течение минуты — столько он его кэширует); удалить Secret sso +
+    # argo-workflows-restart.yaml; удалить его Workflow вместе с подами (под
+    # держит токен своего SA, пока существует); проверить оставленные им
+    # CronWorkflow, WorkflowTemplate и WorkflowEventBinding.
+    # Компрометация git-ops (ArgoCD пишет в managed namespace с правами */*):
+    # всё то же — плюс проверить в managed namespace посторонние
+    # ServiceAccount'ы (особенно с аннотацией workflows.argoproj.io/rbac-rule),
+    # Secret'ы, Role/RoleBinding и CronWorkflow. Откат коммита НЕ отзывает
+    # унесённый token-Secret: legacy-токен живёт, пока жив Secret.
+    # ------
+    argo_workflows_sso_service_accounts: []
+
+    # ------
+    # EXECUTOR. ServiceAccount, от которого по умолчанию работают поды
+    # Workflow'ов, и Role с единственным, что нужно executor'у с v3.4, —
+    # create/patch на workflowtaskresults. Без них ЛЮБОЙ Workflow падает на
+    # wait-контейнере: дефолтный SA namespace таких прав не имеет. Рендерится
+    # стадией cfg в managed namespace и всегда; привязан к Workflow'ам через
+    # workflowDefaults в argo_workflows_controller_config_base.
+    # ⚠️ HTTP-шаблонам (их исполняет agent-под) нужны ещё token-Secret SA
+    # (имя ищется так же, как у SSO-учёток: sa.secrets[0], аннотация,
+    # <sa>.service-account-token) и Role с workflowtasksets list/watch +
+    # workflowtasksets/status patch — здесь их нет. Plugin-шаблоны в этой
+    # установке не работают вовсе: контроллер запущен без
+    # ARGO_EXECUTOR_PLUGINS=true (плагины из ConfigMap) и без
+    # ARGO_WORKFLOW_LEVEL_EXECUTOR_PLUGINS=true (плагины из spec Workflow) —
+    # каждый флаг включает только свой вид.
+    # ------
+    argo_workflows_executor_sa_name: "argo-workflows-executor"
+    argo_workflows_executor_rules:
+      - apiGroups: ["argoproj.io"]
+        resources: ["workflowtaskresults"]
+        verbs: ["create", "patch"]
+
+    # ------
+    # Конфигурация контроллера — содержимое workflow-controller-configmap.
+    # Ключ словаря = ключ ConfigMap (artifactRepository, workflowDefaults,
+    # links, ...), значение рендерится в YAML-строку под этим ключом. Значение
+    # — СТРУКТУРА (словарь, список, скаляр), а не готовая YAML-строка: блок
+    # "key: |" из апстримной документации задвоится в строку и не распарсится.
+    # Ключ sso собирается из argo_workflows_oidc_* выше, задавать его здесь не
+    # нужно.
+    #
+    # Две части, итог = база, поверх которой РЕКУРСИВНО наложен override:
+    #   - argo_workflows_controller_config_base — обязательная часть, в
+    #     override её не переопределять. Workflow'ы работают от SA
+    #     executor'а (без него ЛЮБОЙ Workflow падает на wait-контейнере) и
+    #     удаляются через 7 суток после завершения вместе со своими подами
+    #     (архива нет, argo-server держит все живые Workflow в памяти — без
+    #     TTL их число растёт без предела); запускаются только Workflow со
+    #     ссылкой на WorkflowTemplate (workflowRestrictions, Strict);
+    #   - argo_workflows_controller_config — операторская часть, по умолчанию
+    #     пуста. Словари сливаются с базой по ключам, скаляры и списки
+    #     заменяют базовые. Поэтому override, например, с одним
+    #     workflowDefaults.spec.ttlStrategy.secondsAfterCompletion меняет
+    #     срок, а SA executor'а остаётся на месте.
+    # TTL действует на все Workflow, но у порождённых CronWorkflow раньше
+    # срабатывают лимиты истории: по умолчанию 3 успешных и 1 упавший
+    # (successfulJobsHistoryLimit / failedJobsHistoryLimit в spec
+    # CronWorkflow) — упавший прогон крона исчезает при следующем падении;
+    # для разборов лимиты стоит поднимать.
+    # Логи без artifactRepository видны в UI, пока жив под; при этом логи
+    # подов cr namespace остаются в Loki (Vector собирает все namespace).
+    # ⚠️ artifactRepository на кластерном SeaweedFS (S3 :8333) из коробки НЕ
+    # заработает. В S3 ходят поды Workflow (выгрузка артефактов и логов, из
+    # argo-workflows-cfg) и argo-server (показ в UI); egress argo-server
+    # открыт только на 6443/443/80, а в namespace seaweedfs deny-all с
+    # парами под конкретных потребителей. Нужны consumer-owned пары
+    # NetworkPolicy: argo-workflows → seaweedfs :8333 — в pre этого
+    # компонента; argo-workflows-cfg → seaweedfs :8333 — у владельца
+    # содержимого cr namespace (git-ops, там deny-all). Заводить, когда
+    # понадобятся артефакты (см. reference/networking.md §8).
+    #
+    # ⚠️ Парсинг СТРОГИЙ (UnmarshalStrict): неизвестный ключ или неверный тип
+    # роняет контроллер — в том числе при правке на живую, — а argo-server при
+    # следующем старте.
+    # Примеры из апстримного docs/workflow-controller-configmap.yaml содержат
+    # ключи, которых v4 не знает, копировать их нельзя.
+    # ⚠️ Легаси-формат «всё под ключом config: |» из той же документации
+    # запрещён: апстрим принимает config только как ЕДИНСТВЕННЫЙ ключ
+    # ConfigMap, а база всегда добавляет workflowDefaults (при OIDC — ещё и
+    # sso). Install падает на assert'е до helm.
+    # ⚠️ Выражения Argo ({{workflow.name}} и т.п.) — только внутри
+    # {% raw %}...{% endraw %}, иначе их съест Jinja.
+    # ------
+    argo_workflows_controller_config_base:
+      workflowDefaults:
+        spec:
+          serviceAccountName: "{{ argo_workflows_executor_sa_name }}"
+          ttlStrategy:
+            secondsAfterCompletion: 604800
+      # Запуск только по шаблону: контроллер исполняет лишь Workflow со
+      # spec.workflowTemplateRef, а поверх шаблона разрешены только безопасные
+      # поля (arguments, entrypoint, ttlStrategy, podGC, activeDeadlineSeconds,
+      # ...). Inline-templates, serviceAccountName, podSpecPatch, volumes и
+      # прочее — Workflow сразу в Error, подов нет (так же падает
+      # argo submit --serviceaccount). Submit при этом проходит — результат
+      # смотреть в argo get. Обязательно: install падает на assert'е, если
+      # итог не Strict/Secure — любое другое значение контроллер молча
+      # считает «без ограничений». Перечитывается без рестарта.
+      # ⚠️ Strict проверяет только spec: у CRD workflows нет status-подресурса,
+      # и заданный автором status.storedWorkflowTemplateSpec контроллер
+      # исполняет вместо шаблона. Право create на workflows остаётся правом
+      # админа namespace — закрывает это только ValidatingAdmissionPolicy.
+      workflowRestrictions:
+        templateReferencing: "Strict"
+    argo_workflows_controller_config: {}
+    argo_workflows_sso_config:
+      issuer: "{{ argo_workflows_oidc_issuer }}"
+      clientId:
+        name: "{{ argo_workflows_secret_oidc_creds.body.target.name }}"
+        key: "clientId"
+      clientSecret:
+        name: "{{ argo_workflows_secret_oidc_creds.body.target.name }}"
+        key: "clientSecret"
+      redirectUrl: "{{ argo_workflows_oidc_redirect_url }}"
+      scopes: "{{ argo_workflows_oidc_scopes }}"
+      sessionExpiry: "{{ argo_workflows_oidc_session_expiry }}"
+      # Без rbac.enabled каждый вошедший через ZITADEL получил бы права SA
+      # argo-server. Не переменная намеренно.
+      rbac:
+        enabled: true
+    # Итоговая конфигурация: база + override (рекурсивно) + sso при OIDC.
+    # Данные ConfigMap: значения — YAML-строки по ключам.
+    argo_workflows_controller_config_effective: >-
+      {{ argo_workflows_controller_config_base
+         | combine(argo_workflows_controller_config | default({}, true), recursive=true)
+         | combine({'sso': argo_workflows_sso_config} if argo_workflows_oidc_enabled | bool else {}) }}
+    argo_workflows_controller_configmap_data: >-
+      {{ dict(argo_workflows_controller_config_effective.keys()
+              | zip(argo_workflows_controller_config_effective.values() | map('to_nice_yaml', indent=2))) }}
+    # ⚠️ helm upgrade обновляет ConfigMap, но поды не перекатывает: argo-server
+    # читает его только при старте, контроллер часть ключей (metricsConfig,
+    # images, retentionPolicy, synchronization, instanceID) — тоже. После любой
+    # смены конфигурации — argo-workflows-restart.yaml (scheme PodMonitor'а
+    # обязан совпадать с metricsConfig.secure).
+    # Режим аутентификации argo-server — одно значение. client — апстримный
+    # дефолт: UI принимает только bearer-токен Kubernetes и выполняет запрос
+    # с его правами — поэтому без OIDC UI стоит держать за VPN
+    # (argo_workflows_ui_vpn_only_enabled, задаётся явно).
+    # ⚠️ ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ режима sso: argo-server принимает только токен
+    # своей SSO-сессии (Bearer v2:...). Bearer-токен ServiceAccount'а
+    # Kubernetes (CI, скрипты) и вебхуки /api/v1/events (WorkflowEventBinding)
+    # получают 401. Запуск с локальной машины — argo CLI через локальный
+    # kubeconfig (kube-режим, мимо argo-server) — см. reference/components.md
+    # §17.14, «OIDC (SSO)».
+    argo_workflows_server_auth_mode: "{{ 'sso' if argo_workflows_oidc_enabled | bool else 'client' }}"
+
+    # ------
+    # PHASE: pre (NetworkPolicies + Issuer + ESO resources)
+    # ------
+    argo_workflows_pre_helm_timeout: "5m"
+    argo_workflows_pre_extra_objects: []
+    argo_workflows_pre_kustomize_patches: []
+    argo_workflows_pre_helm_values:
+      namespace: "{{ argo_workflows_namespace }}"
+      externalSecrets:
+        namespace: "{{ external_secrets_namespace }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        instanceName: "traefik-{{ traefik_namespace }}"
+      argoWorkflows:
+        serverPort: "{{ argo_workflows_server_port }}"
+        metricsPort: "{{ argo_workflows_metrics_port }}"
+      eso:
+        vaultServerUrl: "{{ vault_internal_url }}"
+        saName: "{{ eso_vault_integration_argo_workflows.sa_name }}"
+        roleName: "{{ eso_vault_integration_argo_workflows.role_name }}"
+        secretStoreName: "{{ eso_vault_integration_argo_workflows.secret_store_name }}"
+        kvEnginePath: "{{ eso_vault_integration_argo_workflows.kv_engine_path }}"
+        secrets: "{{ eso_vault_integration_argo_workflows_secrets + (eso_vault_integration_argo_workflows_secrets_extra | default([])) }}"
+      esoResourcesConfig:
+        secretStoreRefreshInterval: "{{ eso_resources_config.secret_store_refresh_interval }}"
+        externalSecretRefreshInterval: "{{ eso_resources_config.external_secret_refresh_interval }}"
+        externalSecretRefreshPolicy: "{{ eso_resources_config.external_secret_refresh_policy }}"
+      issuer: "{{ argo_workflows_cert_manager_issuer }}"
+      extraObjects: "{{ argo_workflows_pre_extra_objects }}"
+
+    # ------
+    # PHASE: pre-cfg (cr namespace + обязательные права контроллера и сервера)
+    # Стадия идёт ПЕРЕД install и без kustomize namespace-трансформера: он
+    # переименовал бы объект Namespace и переписал чужой metadata.namespace.
+    # ------
+    argo_workflows_pre_cfg_helm_timeout: "5m"
+    argo_workflows_pre_cfg_extra_objects: []
+    argo_workflows_pre_cfg_kustomize_patches: []
+    argo_workflows_pre_cfg_helm_values:
+      namespace: "{{ argo_workflows_namespace }}"
+      crNamespace:
+        name: "{{ argo_workflows_cr_namespace }}"
+        labels: "{{ argo_workflows_cr_namespace_labels }}"
+        annotations: "{{ argo_workflows_cr_namespace_annotations }}"
+      controllerRbac:
+        saName: "{{ argo_workflows_controller_sa_name }}"
+        roleName: "{{ argo_workflows_controller_cr_ns_role_name }}"
+        roleBindingName: "{{ argo_workflows_controller_cr_ns_role_binding_name }}"
+        rules: "{{ argo_workflows_controller_cr_ns_role_rules }}"
+      serverRbac:
+        saName: "{{ argo_workflows_server_sa_name }}"
+        roleName: "{{ argo_workflows_server_cr_ns_role_name }}"
+        roleBindingName: "{{ argo_workflows_server_cr_ns_role_binding_name }}"
+        rules: "{{ argo_workflows_server_cr_ns_role_rules }}"
+      extraObjects: "{{ argo_workflows_pre_cfg_extra_objects }}"
+
+    # ------
+    # PHASE: install (вендоренный upstream-манифест + kustomize)
+    # ------
+    argo_workflows_install_helm_timeout: "5m"
+    argo_workflows_install_rollout_timeout: "300s"
+    # Restart-phase rollout wait timeout (argo-workflows-restart.yaml)
+    argo_workflows_install_restart_rollout_timeout: "300s"
+    argo_workflows_install_rollout_resources:
+      - deployment.apps/workflow-controller
+      - deployment.apps/argo-server
+    argo_workflows_install_extra_objects: []
+    # Базовые патчи: оба Deployment'а, ConfigMap и Role argo-role. Флаги
+    # передаются через env ARGO_<FLAG> (апстрим читает их вместо флагов), а не
+    # через args: args — []string без patchMergeKey, strategic merge заменяет
+    # список ЦЕЛИКОМ, и второй патч с args молча стёр бы первый. env мержится
+    # по name.
+    #   - контроллер: namespaced-режим, формат логов, managed namespace;
+    #   - сервер: namespaced-режим, HTTP вместо self-signed HTTPS (TLS у
+    #     Traefik или внешнего слоя), режим аутентификации, формат логов,
+    #     managed namespace, readiness на HTTP (апстрим захардкодил HTTPS);
+    #   - ConfigMap: argo_workflows_controller_configmap_data;
+    #   - argo-role: configmaps create/update для кэша memoization (см. ниже).
+    # Контроллер и сервер обязаны смотреть в ОДИН namespace: сервер показывает
+    # только его, а SSO-ServiceAccount'ы ищет там же.
+    #
+    # ARGO_NAMESPACED=true дублирует --namespaced из args апстрима. Установка
+    # СТРОГО namespaced, а без --namespaced оба процесса молча игнорируют
+    # managed namespace (один warn в логе) и уходят на все namespace
+    # кластера. env держит режим, даже если чей-то патч args заменит список
+    # целиком и выкинет --namespaced.
+    #
+    # Memoization: кэш-ConfigMap'ы контроллер пишет в СВОЙ namespace
+    # (argo-workflows), а не в managed, — у апстримного argo-role там только
+    # get/watch/list, и шаг с memoize падал бы в Error на сохранении кэша.
+    # Список rules без patchMergeKey, поэтому патч — JSON Patch с add в конец
+    # списка, а не strategic merge (тот заменил бы rules целиком).
+    # ⚠️ Сборщик мусора кэша смотрит только в managed namespace, поэтому в
+    # нашей схеме из двух namespace кэш-ConfigMap'ы в argo-workflows сами НЕ
+    # удаляются (maxAge лишь игнорирует старые записи). ConfigMap ограничен
+    # 1 МБ: переполненный кэш снова даёт Error узла. Чистка руками:
+    #   kubectl -n argo-workflows delete cm -l workflows.argoproj.io/configmap-type=Cache
+    # Имя кэш-ConfigMap'а задаёт автор Workflow. В существующий ConfigMap без
+    # метки workflows.argoproj.io/configmap-type=Cache апстрим писать
+    # отказывается, поэтому workflow-controller-configmap так не испортить.
+    argo_workflows_kustomize_patches_base:
+      - target:
+          kind: Deployment
+          name: workflow-controller
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: workflow-controller
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: workflow-controller
+                    env:
+                      - name: ARGO_NAMESPACED
+                        value: "true"
+                      - name: ARGO_LOG_FORMAT
+                        value: "{{ argo_workflows_log_format }}"
+                      - name: ARGO_MANAGED_NAMESPACE
+                        value: "{{ argo_workflows_cr_namespace }}"
+      - target:
+          kind: Deployment
+          name: argo-server
+        patch: |-
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: argo-server
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: argo-server
+                    env:
+                      - name: ARGO_NAMESPACED
+                        value: "true"
+                      - name: ARGO_SECURE
+                        value: "false"
+                      - name: ARGO_AUTH_MODE
+                        value: "{{ argo_workflows_server_auth_mode }}"
+                      - name: ARGO_LOG_FORMAT
+                        value: "{{ argo_workflows_log_format }}"
+                      - name: ARGO_MANAGED_NAMESPACE
+                        value: "{{ argo_workflows_cr_namespace }}"
+                    readinessProbe:
+                      httpGet:
+                        scheme: HTTP
+      - target:
+          kind: ConfigMap
+          name: workflow-controller-configmap
+        patch: |-
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: workflow-controller-configmap
+          data: {{ argo_workflows_controller_configmap_data | to_json }}
+      - target:
+          kind: Role
+          name: argo-role
+        patch: |-
+          - op: add
+            path: /rules/-
+            value:
+              apiGroups: [""]
+              resources: ["configmaps"]
+              verbs: ["create", "update"]
+    # Операторское расширение (hosts-vars-override/): ресурсы, nodeSelector,
+    # tolerations и прочее прикладываются сюда отдельными патчами.
+    argo_workflows_install_kustomize_patches_extra: []
+    argo_workflows_install_kustomize_patches: >-
+      {{ argo_workflows_kustomize_patches_base
+         + argo_workflows_install_kustomize_patches_extra }}
+    # Helm values для KUSTOMIZE_WRAPPER install phase — только extraObjects wiring
+    argo_workflows_install_helm_values:
+      extraObjects: "{{ argo_workflows_install_extra_objects }}"
+
+    # ------
+    # PHASE: post (PodMonitor + Ingress UI + Certificate)
+    # Service для метрик апстрим не создаёт, поэтому метрики контроллера
+    # снимаются PodMonitor'ом. /metrics на :9090 по умолчанию HTTPS с
+    # self-signed сертификатом — отсюда scheme https + insecureSkipVerify.
+    # Реальные метрики отдаёт только лидер. Метрики argo-server живут на том
+    # же порту, что UI, и закрыты аутентификацией — их не снимаем.
+    # ------
+    argo_workflows_post_helm_timeout: "5m"
+    argo_workflows_pod_monitor_enabled: true
+    argo_workflows_pod_monitor_interval: "30s"
+    argo_workflows_pod_monitor_scrape_timeout: "15s"
+    argo_workflows_pod_monitor_labels: {}
+    argo_workflows_post_extra_objects: []
+    argo_workflows_post_kustomize_patches: []
+    argo_workflows_post_helm_values:
+      namespace: "{{ argo_workflows_namespace }}"
+      ingressConfig: "{{ argo_workflows_ui_ingress_config }}"
+      certificateConfig: "{{ argo_workflows_ui_certificate }}"
+      traefik:
+        namespace: "{{ traefik_namespace }}"
+        entryPoints:
+          web: "{{ traefik_web_entrypoint }}"
+          websecure: "{{ traefik_websecure_entrypoint }}"
+      server:
+        port: "{{ argo_workflows_server_port }}"
+      podMonitor:
+        enabled: "{{ argo_workflows_pod_monitor_enabled }}"
+        interval: "{{ argo_workflows_pod_monitor_interval }}"
+        scrapeTimeout: "{{ argo_workflows_pod_monitor_scrape_timeout }}"
+        labels: "{{ argo_workflows_pod_monitor_labels }}"
+      extraObjects: "{{ argo_workflows_post_extra_objects }}"
+
+    # ------
+    # PHASE: cfg (executor + SSO RBAC + операторский RBAC + прикладные CR)
+    # Всё, кроме executor'а и SSO, — сырые списки, как у argo-events.
+    # ServiceAccount, Role, RoleBinding и прикладные CR без своего namespace
+    # ложатся в managed namespace — не в namespace релиза, где лежат Secret sso
+    # и OIDC-креды argo-server.
+    # ------
+    # Списки прикладных объектов: элемент — {name, labels?, annotations?, spec},
+    # spec рендерится как есть, в managed namespace.
+    #
+    # ⚠️ По умолчанию ПУСТЫ, и если поток описан в git-ops, здесь его быть не
+    # должно: один объект не может иметь двух владельцев, helm-релиз
+    # argo-workflows-cfg и ArgoCD начнут переписывать его друг за другом.
+    # ⚠️ Выражения Argo в spec — только внутри {% raw %}...{% endraw %}.
+    argo_workflows_workflow_templates: []
+    argo_workflows_cron_workflows: []
+    # Пять независимых сырых списков операторских RBAC-объектов; связей между
+    # ними нет. Здесь же объявляются Role и ClusterRole, на которые ссылаются
+    # roles у argo_workflows_sso_service_accounts. Другой типовой случай —
+    # отдельный SA для Workflow'ов с правами на объекты, которые они создают
+    # (resource-шаблоны). Права Sensor'а argo-events на запуск Workflow
+    # заводятся НЕ здесь, а в списках стадии cfg argo-events: это его
+    # авторизация. Минимум для argoWorkflow-триггера: workflows create + list
+    # (submit; Workflow со ссылкой на шаблон — ещё get на workflowtemplates),
+    # для submitFrom — workflows create + get на
+    # workflowtemplates/cronworkflows (list не нужен);
+    # k8s-триггеру, создающему Workflow с workflowTemplateRef, хватает
+    # create. ⚠️ submitFrom в argo-events v1.9.11 отчитывается ошибкой даже
+    # при успешном запуске — см. reference/components.md §17.14 «RBAC».
+    # SA:                  {name, namespace?, annotations?, labels?}
+    # Role / ClusterRole:  {name, namespace? (только Role), rules}
+    # RoleBinding:         {name, namespace?, roleRef, subjects}
+    # ClusterRoleBinding:  {name, roleRef, subjects}
+    argo_workflows_rbac_service_accounts: []
+    argo_workflows_rbac_roles: []
+    argo_workflows_rbac_cluster_roles: []
+    argo_workflows_rbac_role_bindings: []
+    argo_workflows_rbac_cluster_role_bindings: []
+    argo_workflows_cfg_helm_timeout: "5m"
+    argo_workflows_cfg_extra_objects: []
+    argo_workflows_cfg_kustomize_patches: []
+    argo_workflows_cfg_helm_values:
+      managedNamespace: "{{ argo_workflows_cr_namespace }}"
+      executor:
+        saName: "{{ argo_workflows_executor_sa_name }}"
+        rules: "{{ argo_workflows_executor_rules }}"
+      ssoServiceAccounts: "{{ argo_workflows_sso_service_accounts }}"
+      rbacServiceAccounts: "{{ argo_workflows_rbac_service_accounts }}"
+      rbacRoles: "{{ argo_workflows_rbac_roles }}"
+      rbacClusterRoles: "{{ argo_workflows_rbac_cluster_roles }}"
+      rbacRoleBindings: "{{ argo_workflows_rbac_role_bindings }}"
+      rbacClusterRoleBindings: "{{ argo_workflows_rbac_cluster_role_bindings }}"
+      workflowTemplates: "{{ argo_workflows_workflow_templates }}"
+      cronWorkflows: "{{ argo_workflows_cron_workflows }}"
+      extraObjects: "{{ argo_workflows_cfg_extra_objects }}"

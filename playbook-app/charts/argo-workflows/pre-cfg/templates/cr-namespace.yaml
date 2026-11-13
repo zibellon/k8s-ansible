@@ -1,0 +1,38 @@
+# =============================================================================
+# CR NAMESPACE
+#   Namespace, в который направлены контроллер и argo-server через
+#   --managed-namespace (env ARGO_MANAGED_NAMESPACE). Заводится здесь, а не в
+#   cluster-base: владельцем namespace должен быть тот же helm-релиз, которому
+#   namespace нужен, иначе они расходятся.
+#
+#   Рендерится ВСЕГДА: у компонента только два namespace — свой и этот, режима
+#   «всё в одном» нет. Пустое имя или совпадение с namespace компонента —
+#   ошибка рендера (и раньше неё — assert в install-плейбуке).
+#
+#   ⚠️ Стадия pre-cfg обязана идти БЕЗ kustomize namespace-трансформера: он
+#   переименовывает объект Namespace и переписывает чужие metadata.namespace.
+#
+#   Почему это отдельная стадия:
+#     - не часть install — install собирается С namespace-трансформером
+#       (вендоренный манифест без namespace), и он переименовал бы этот
+#       Namespace и перенёс бы Role/RoleBinding из cr namespace в свой;
+#     - не часть cfg — cfg идёт последней, а namespace и права контроллера и
+#       argo-server в нём нужны уже на старте install (без них контроллер
+#       уходит в CrashLoopBackOff, а argo-server навсегда NotReady).
+# =============================================================================
+{{- if or (not .Values.crNamespace.name) (eq .Values.crNamespace.name .Values.namespace) }}
+{{- fail "crNamespace.name must be set and differ from namespace: argo-workflows is installed only into two namespaces" }}
+{{- end }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.crNamespace.name }}
+  {{- with .Values.crNamespace.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.crNamespace.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

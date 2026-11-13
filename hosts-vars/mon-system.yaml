@@ -59,6 +59,9 @@ all:
     mon_system_loki_service_monitor_enabled: true
     mon_system_ksm_service_monitor_enabled: true
     mon_system_node_exporter_service_monitor_enabled: true
+    # Самомониторинг Prometheus и Alertmanager (алерты о сбоях доставки уведомлений)
+    mon_system_prometheus_service_monitor_enabled: true
+    mon_system_alertmanager_service_monitor_enabled: true
 
     # Common ingress (unified for grafana / prometheus / alertmanager UIs).
     mon_system_ingress_class_name: "traefik-lb"
@@ -738,7 +741,7 @@ all:
         retention_delete_worker_count: 100
 
       limits_config:
-        retention_period: 744h
+        retention_period: 600h
         max_line_size: 512KB
         ingestion_rate_mb: 30
         ingestion_burst_size_mb: 60
@@ -1221,9 +1224,19 @@ all:
       prometheus:
         enabled: "{{ mon_system_prometheus_enabled }}"
         port: "{{ mon_system_prometheus_port }}"
+        serviceMonitor:
+          enabled: "{{ mon_system_prometheus_service_monitor_enabled }}"
+          interval: "30s"
+          scrapeTimeout: "15s"
+          labels: {}
       alertmanager:
         enabled: "{{ mon_system_alertmanager_enabled }}"
         port: "{{ mon_system_alertmanager_port }}"
+        serviceMonitor:
+          enabled: "{{ mon_system_alertmanager_service_monitor_enabled }}"
+          interval: "30s"
+          scrapeTimeout: "15s"
+          labels: {}
       loki:
         enabled: "{{ mon_system_loki_enabled }}"
         serviceMonitor:

@@ -70,7 +70,8 @@ ansible-playbook ... --limit w1,w2,w3
 ```bash
 # Продуктовые namespace — до всего, что в них раскатывается.
 # Системные namespace здесь НЕ заводятся: cr-namespace argo-events создаёт
-# стадия argo-events/pre-cfg, namespace проектов Kargo — стадия kargo/cfg.
+# стадия argo-events/pre-cfg, cr-namespace argo-workflows — стадия
+# argo-workflows/pre-cfg, namespace проектов Kargo — стадия kargo/cfg.
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cluster-base-install.yaml --tags namespaces
 
 # ВОЛНА 1 — контроллеры. Порядок внутри волны произволен.
@@ -87,16 +88,19 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/t
 # Ссылка-приглашение пользователю Teleport (после --tags cfg; сбрасывает пароль и MFA)
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/teleport-user-reset.yaml -e teleport_user_reset_name=<user>
 
-# У трёх компонентов стадия cfg в первую волну НЕ входит — только контроллер.
+# У четырёх компонентов стадия cfg в первую волну НЕ входит — только контроллер.
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-install.yaml      --tags crds,pre,install,post
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-install.yaml       --tags pre,install,post
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-install.yaml --tags crds,pre,pre-cfg,install,post
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-workflows-install.yaml --tags crds,pre,pre-cfg,install,post
 
 # ВОЛНА 2 — cfg. Порядок kargo → argocd ОБЯЗАТЕЛЕН: ArgoCD получает RoleBinding
-# в namespace проектов Kargo, а их создаёт kargo/cfg. Позиция argo-events между
-# ними — соглашение: его namespace уже создан в волне 1 стадией pre-cfg.
+# в namespace проектов Kargo, а их создаёт kargo/cfg. Позиции argo-events и
+# argo-workflows между ними — соглашение: их namespace уже созданы в волне 1
+# стадией pre-cfg.
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/kargo-install.yaml       --tags cfg
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-install.yaml --tags cfg
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-workflows-install.yaml --tags cfg
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-install.yaml      --tags cfg
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-restart.yaml
 
@@ -106,7 +110,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/c
 
 **Dependency highlights** (see [`components.md`](components.md) §19 for full tier diagram):
 
-- `cluster-base` разнесён надвое: `--tags namespaces` идёт первым (namespace'ы должны существовать до раскатки в них), `--tags rbac` — последним. С переходом на стадии `cfg` в `cluster-base` остаются **только продуктовые** namespace: свои системные компоненты заводят сами (`argo-events/pre-cfg`, `kargo/cfg`). Namespaced-элементов в stage `rbac` сейчас нет, но `RoleBinding` в его списках появиться может снова, а создать его в несуществующем namespace нельзя. Требует `cluster_base_enabled: true`. См. [`components.md`](components.md) §17.13
+- `cluster-base` разнесён надвое: `--tags namespaces` идёт первым (namespace'ы должны существовать до раскатки в них), `--tags rbac` — последним. С переходом на стадии `cfg` в `cluster-base` остаются **только продуктовые** namespace: свои системные компоненты заводят сами (`argo-events/pre-cfg`, `argo-workflows/pre-cfg`, `kargo/cfg`). Namespaced-элементов в stage `rbac` сейчас нет, но `RoleBinding` в его списках появиться может снова, а создать его в несуществующем namespace нельзя. Требует `cluster_base_enabled: true`. См. [`components.md`](components.md) §17.13
 - `argocd` ставится namespace-scoped — сразу после `argocd-install.yaml` прогнать `argocd-restart.yaml`, иначе контроллер продолжит видеть кластер по старым правам (§4.4). Namespace для приложений заводятся отдельно, до Application — §4.11
 - `cilium` first (CNI — nothing networks until it's up)
 - `cert-manager` before anything with TLS
@@ -119,6 +123,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/c
 - `outline`: OIDC-only (локального логина нет) — bootstrap OIDC-first (первый ZITADEL-логин = админ), сразу привязать passkey (break-glass). SECRET_KEY/UTILS_SECRET/PG/Redis-пароли авто-генерятся seed-if-missing; SECRET_KEY НЕ ротируется. Preflight: seaweedfs bucket+identity (S3-креды → `eso-secret/outline/s3-storage`) + ZITADEL app + `vault kv put eso-secret/outline/oidc clientId=… clientSecret=…`. Браузер грузит вложения НАПРЯМУЮ в публичный S3-хост (server-side proxy у Outline нет). См. [`components.md`](components.md) §17.8.
 - `kargo`: admin-пароль + bcrypt-хеш + token signing key **авто-генерятся** при install (seed-if-missing, ротации нет — смена signing key инвалидирует выданные токены). Открытый пароль читать `vault kv get eso-secret/kargo/admin/creds` (поле `password`); в K8s Secret уезжают только хеш и signing key. Control node требует `passlib` + `bcrypt<4.1` (тот же фильтр, что у filestash). Два домена: UI (`kargo_ui_domain`) и приёмник событий от GitLab/registry (`kargo_webhooks_domain`) — DNS нужен на оба. Preflight при OIDC: ZITADEL-приложение типа User Agent/SPA с auth method NONE + PKCE, redirect `https://<kargo_ui_domain>/login`, включённый «User Info inside ID Token», и `kargo_oidc_client_id` в override — client secret Kargo не использует. Доступы людей: сотрудник описывается в `kargo_custom_users` (`{saName, namespaces[], annotations}` — SA создаётся в каждом перечисленном namespace; релизный `kargo` обязателен, иначе список проектов пуст), роли раздаются в `kargo_projects` (`{name, accounts: [{saName, roleType, roleName}]}`), а «вижу список проектов» генерируется автоматически из `kargo_custom_users` по правилам `kargo_rbac_ui_discovery_rbac_setup`; чартовые `kargo_oidc_*_claims` зарезервированы, заполняется только `admins` и только администраторами кластера. Нестандартные права — пятью raw-списками (`kargo_rbac_service_accounts` / `_roles` / `_cluster_roles` / `_cluster_role_bindings` / `_role_bindings`). Всё это рендерит стадия `--tags cfg`; смена состава людей не требует ни `--tags install`, ни рестарта подов и действует со следующего запроса. Дефолтной роли нет, без совпадения по claim пользователь получает 403. Кастомный RBAC для Kargo объявляется здесь, а не в `cluster-base`, имена своих объектов — с префиксом `kargo-custom-*`. Онбординг проекта — одна операция: элемент в `kargo_projects` + `--tags cfg` (namespace и `Project` приезжают одним релизом). См. [`components.md`](components.md) §17.9.
 - `argo-events`: opt-in (`argo_events_enabled: true`). Preflight: политика и роль `argo-events.eso-main` (через `vault-install.yaml --tags vault-cr`). ⚠️ Шина по умолчанию **не поднимается**: список `argo_events_event_buses` пуст, элемент со спекой заводится в `hosts-vars-override/` — профиль с пояснениями лежит закомментированным примером в `hosts-vars/argo-events.yaml`. Storage class из спеки шины должен существовать в кластере, а число реплик JetStream и `streamConfig.replicas` обязаны быть согласованы: при одной реплике кворум потока тоже 1 — глобальный дефолт в апстримном ConfigMap равен 3, и поток с ним не создастся. Если задан `argo_events_cr_namespace`, тот namespace и обязательные права контроллера в нём создаёт стадия `--tags pre-cfg`, которая идёт перед `install` — без них контроллер уходит в CrashLoopBackOff. Собственного UI у компонента нет, ingress не разворачивается. См. [`components.md`](components.md) §17.11.
+- `argo-workflows`: opt-in (`argo_workflows_enabled: true`). Preflight: политика и роль `argo-workflows.eso-main` (через `vault-install.yaml --tags vault-cr`) — нужны и без OIDC; DNS `argo_workflows_ui_domain` → ingress кластера. При OIDC: ZITADEL-приложение типа Web (CODE + Basic, redirect `https://<argo_workflows_ui_domain>/oauth2/callback`, включённый «User Info inside ID Token») и `vault kv put eso-secret/argo-workflows/oidc clientId=… clientSecret=…`. Компонент ставится **только в два namespace**: `argo_workflows_cr_namespace` (default `argo-workflows-cfg`) обязателен и отличен от `argo_workflows_namespace` — иначе install падает на assert'е; тот namespace и обязательные права контроллера и argo-server в нём создаёт стадия `--tags pre-cfg`, которая идёт перед `install`. См. [`components.md`](components.md) §17.14.
 - `portainer`: opt-in (`portainer_enabled: true`). Админ-пароль **авто-генерится** при install (seed-if-missing) и лежит в Vault **открытым текстом** — читать `vault kv get eso-secret/portainer/admin-creds` (поле `password`), логин `admin`. Bcrypt на control-node не нужен: Portainer хэширует сам. Ротации нет — `--admin-password-file` применяется только пока админов ещё нет, дальше пароль меняется в UI. `portainer_trusted_origins` (по умолчанию `= portainer_ui_domain`) обязан быть голым хостом без схемы и порта: невалидное значение роняет под на старте, а без самого флага UI за Traefik получает 403 на любых мутациях. Preflight: политика и роль `portainer.eso-main` (через `vault-install.yaml --tags vault-cr`) плюс DNS `portainer_ui_domain` → ingress кластера. Компонент несёт `ClusterRoleBinding` на `cluster-admin`, поэтому на проде UI закрывается `portainer_ui_vpn_only_enabled: true`. См. [`components.md`](components.md) §17.12.
 - **Альтернатива** `longhorn` → `linstor` (Piraeus Operator + LINSTOR; ставится через `ansible-playbook ... playbook-app/linstor-install.yaml`). Только один из двух storage stack'ов в кластере, не оба параллельно. См. [`components.md`](components.md) §16.5.
 
@@ -140,7 +145,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 
 **Extra phase tags (where applicable):**
 
-- `--tags crds` — for `argocd`, `mon-system`, `argo-events` (applies CRDs before main chart)
+- `--tags crds` — for `argocd`, `mon-system`, `argo-events`, `argo-workflows` (applies CRDs before main chart)
 - `--tags prometheus-operator` — for `mon-system` (operator Deployment + RBAC + Service)
 - `--tags prometheus` — for `mon-system` (Prometheus CR)
 - `--tags alertmanager` — for `mon-system` (Alertmanager CR)
@@ -151,6 +156,7 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/<
 - `--tags accounts-sync` — for `argocd` (local-accounts reconcile: identity already applied via install kustomize patches; this generates/rotates passwords into `argocd-secret` + Vault mirror)
 - `--tags pre`, `--tags install-operator`, `--tags install-cluster`, `--tags post` — for `linstor` (LINSTOR / Piraeus install: pre/NetworkPolicy → Piraeus operator OCI chart → linstor-cluster OCI chart with CR'ы → post/ServiceMonitor + PodMonitor)
 - `--tags pre-cfg`, `--tags cfg` — for `argo-events` (cr namespace + обязательные права контроллера в нём / операторские ServiceAccounts, Roles и bindings + EventBuses, EventSources, Sensors). ⚠️ `pre-cfg` идёт **перед** `install`, а не после: без namespace и прав в нём контроллер уходит в CrashLoopBackOff, причём отказ отложенный — `helm --wait` успевает счесть install успешным. См. [`components.md`](components.md) §17.11
+- `--tags pre-cfg`, `--tags cfg` — for `argo-workflows` (cr namespace + обязательные права контроллера и argo-server в нём / executor + SSO-ServiceAccount'ы с token-Secret'ами + операторские ServiceAccounts, Roles и bindings + WorkflowTemplates, CronWorkflows). ⚠️ `pre-cfg` идёт **перед** `install`: без прав контроллер уходит в CrashLoopBackOff, а с неполными — висит в `WaitForCacheSync`, и `helm --wait` считает install успешным; когда поданный Workflow ждёт без прогресса дольше 5 минут (`HEALTHZ_AGE`), liveness начинает перезапускать контроллер по кругу. См. [`components.md`](components.md) §17.14
 - `--tags namespaces`, `--tags rbac` — for `cluster-base` (Namespace objects / ServiceAccounts + Roles + ClusterRoles + bindings). Стандартных `pre`/`install`/`post` у компонента нет, см. [`playbook-conventions.md`](playbook-conventions.md) §6.5
 
 `tags: [always]` tasks (`tasks-pre-check`, `tasks-vault-config-verify`, `tasks-eso-verify`) run regardless of `--tags`.
@@ -202,6 +208,7 @@ All three use `serial: 1` internally to preserve quorum. Safe to run on a health
 # Rollout-restart wrappers for specific components:
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-events-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-rollouts-restart.yaml
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-workflows-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argocd-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cert-manager-restart.yaml
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/cilium-restart.yaml
@@ -382,7 +389,7 @@ kubectl auth can-i create deployment --as=system:serviceaccount:argocd:argocd-ap
 kubectl auth can-i create namespace  --as=system:serviceaccount:argocd:argocd-application-controller               # no
 ```
 
-**Снятие namespace с ArgoCD.** Убрать пару `RoleBinding` из `argocd_cfg_rbac_role_bindings`, убрать namespace из поля `namespaces` в Vault, прогнать `argocd-install.yaml --tags cfg`. Сам namespace при этом остаётся; удаление записи из `cluster_base_namespaces_list` снесёт его вместе с содержимым (см. [`components.md`](components.md) §17.13).
+**Снятие namespace с ArgoCD.** Сначала убрать из git-ops всё, что ArgoCD раскатывает в этот namespace, и дождаться каскадного удаления этих `Application` — без `RoleBinding` каскад встанет на 403. Затем убрать пару `RoleBinding` из `argocd_cfg_rbac_role_bindings`, убрать namespace из поля `namespaces` в Vault, прогнать `argocd-install.yaml --tags cfg`. Сам namespace при этом остаётся; удаление записи из `cluster_base_namespaces_list` снесёт его вместе с содержимым, включая PVC (данные остаются на PV `Retain`; см. [`components.md`](components.md) §17.13).
 
 ---
 

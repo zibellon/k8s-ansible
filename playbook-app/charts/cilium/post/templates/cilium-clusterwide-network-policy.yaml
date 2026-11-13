@@ -27,13 +27,31 @@ spec:
 
     # =========================================================================
     # SSH from external
+    #   sshVpnOnlyEnabled: false - from world (default)
+    #   sshVpnOnlyEnabled: true  - only from sshVpnCidrs (vpn_ips); an empty list
+    #                              fails the render (nothing is applied)
     # =========================================================================
+    {{- if not (kindIs "bool" .Values.sshVpnOnlyEnabled) }}
+    {{- fail "sshVpnOnlyEnabled must be a boolean (true/false), not a string" }}
+    {{- end }}
+    {{- if and .Values.sshVpnOnlyEnabled (not .Values.sshVpnCidrs) }}
+    {{- fail "sshVpnOnlyEnabled=true requires non-empty sshVpnCidrs (vpn_ips): SSH would be closed for everyone outside the cluster" }}
+    {{- end }}
+    {{- if .Values.sshVpnOnlyEnabled }}
+    - fromCIDR:
+      {{- toYaml .Values.sshVpnCidrs | nindent 6 }}
+      toPorts:
+        - ports:
+            - port: "{{ .Values.external.sshPort }}"
+              protocol: TCP
+    {{- else }}
     - fromEntities:
         - world
       toPorts:
         - ports:
             - port: "{{ .Values.external.sshPort }}"
               protocol: TCP
+    {{- end }}
 
     # =========================================================================
     # ICMP for debugging

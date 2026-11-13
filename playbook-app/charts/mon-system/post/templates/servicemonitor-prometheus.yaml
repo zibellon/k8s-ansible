@@ -1,0 +1,30 @@
+{{- if and .Values.prometheus_operator.enabled .Values.prometheus.enabled .Values.prometheus.serviceMonitor.enabled }}
+---
+# Самомониторинг: метрики prometheus (ошибки правил, отправки уведомлений, TSDB).
+# Без них не работают алерты о сбоях доставки (Prometheus -> Alertmanager -> Telegram).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: prometheus
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: monitoring
+    {{- with .Values.prometheus.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    - port: http-web
+      path: /metrics
+      interval: {{ .Values.prometheus.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.prometheus.serviceMonitor.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: prometheus-instance
+{{- end }}

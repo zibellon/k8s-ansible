@@ -23,10 +23,12 @@ rbacClusterRoleBindings: []
 namespace: "argocd"
 
 # AppProjects — каждый принимает ПОЛНЫЙ spec (operator-provided); template оборачивает
-# metadata (name, namespace, + опционально annotations — пустой/отсутствует → не добавляется).
-# - name: "prj-root"
+# metadata (name, namespace, + опционально annotations и finalizers — пустой/отсутствует → не добавляется).
+# - name: "root"
 #   annotations:                                     # optional; пустой/отсутствует → не добавляется
 #     argocd.argoproj.io/sync-options: Delete=false
+#   finalizers:                                      # optional; финализатор проекта: ArgoCD снимает его,
+#     - resources-finalizer.argocd.argoproj.io       # когда на проект не ссылается ни одно Application
 #   spec:
 #     sourceRepos: ["*"]
 #     destinations:
@@ -40,21 +42,28 @@ appProjects: []
 
 # Applications — каждый принимает ПОЛНЫЙ spec; template добавляет namespace + опционально
 # annotations + finalizers (пустой/отсутствует → не добавляется).
+# resources-finalizer = каскадное удаление: снос Application (helm upgrade без него,
+# UI, CLI) удаляет всё, что он создал. Модель кластера — удаление ВСЕГДА каскадное;
+# тогда и у проекта, на который ссылается root, должен быть финализатор (выше),
+# иначе каскад зависнет: Application не доудаляется без своего проекта.
 # - name: "app-of-apps-root"
 #   annotations:                                     # optional; пустой/отсутствует → не добавляется
-#     argocd.argoproj.io/sync-options: Delete=false
-#   finalizers:                                      # optional; пустой/отсутствует → не добавляется
+#     argocd.argoproj.io/compare-options: ServerSideDiff=true   # только в паре с ServerSideApply=true
+#   finalizers:                                      # optional; каскадное удаление (background)
 #     - resources-finalizer.argocd.argoproj.io/background
 #   spec:
-#     project: "prj-root"
+#     project: "root"
 #     source:
 #       repoURL: ""
 #       targetRevision: "master"
-#       path: "argocd-system"
+#       path: "argocd-system/root"                   # Helm-чарт: тип источника ArgoCD берёт из Chart.yaml
 #     destination:
 #       server: "https://kubernetes.default.svc"
+#       namespace: "argocd"
 #     syncPolicy:
-#       automated: {prune: true, selfHeal: true, allowEmpty: true}
+#       # allowEmpty: false — пустой рендер не превратится в удаление всего, что создал root
+#       automated: {prune: true, selfHeal: true, allowEmpty: false}
+#       syncOptions: ["ApplyOutOfSyncOnly=true", "ServerSideApply=true"]
 #       retry: {limit: 5, backoff: {duration: "20s", factor: 1, maxDuration: "30s"}}
 applications: []
 

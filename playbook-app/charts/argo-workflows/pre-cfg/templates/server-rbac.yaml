@@ -1,0 +1,40 @@
+# =============================================================================
+# ПРАВА ARGO-SERVER В ЧУЖОМ NAMESPACE
+#   Рендерится всегда, как права контроллера (см. controller-rbac.yaml):
+#   argo-server направлен в тот же cr namespace через --managed-namespace
+#   (env ARGO_MANAGED_NAMESPACE). Вендоренный Role argo-server-role покрывает
+#   только его собственный namespace (ConfigMap, Secret sso, OIDC-креды).
+#
+#   Объект ОБЯЗАТЕЛЬНЫЙ: без прав на workflowtemplates argo-server открывает
+#   порт, но блокируется в WaitForCacheSync до Serve и не отвечает; без прав
+#   на serviceaccounts при SSO он блокируется ещё до открытия порта. В обоих
+#   случаях под навсегда остаётся NotReady (livenessProbe у него нет).
+#
+#   Права на serviceaccounts и secrets выдаются БЕЗУСЛОВНО, а не только при
+#   OIDC: включение OIDC не должно требовать повторного прогона pre-cfg.
+#
+#   ⚠️ Объект ложится в ЧУЖОЙ namespace (crNamespace.name), а субъект живёт в
+#   СВОЁМ (namespace) — путать их нельзя, как и у контроллера.
+# =============================================================================
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.serverRbac.roleName }}
+  namespace: {{ .Values.crNamespace.name }}
+rules:
+{{ toYaml .Values.serverRbac.rules | indent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.serverRbac.roleBindingName }}
+  namespace: {{ .Values.crNamespace.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.serverRbac.roleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serverRbac.saName }}
+    namespace: {{ .Values.namespace }}

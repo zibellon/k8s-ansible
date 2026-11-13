@@ -1,0 +1,88 @@
+# =============================================================================
+# ARGO-WORKFLOWS RESTART
+# Restarts argo-workflows to apply configuration changes
+# =============================================================================
+# Usage:
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-workflows-restart.yaml
+#
+# This playbook performs graceful rolling restart of all components:
+#   - Deployments from argo_workflows_install_rollout_resources (hosts-vars/argo-workflows.yaml)
+#
+# NOTE: argo-server читает ConfigMap и OIDC-Secret только при старте,
+#       контроллер часть ключей ConfigMap — тоже, а helm upgrade поды не
+#       перекатывает. Поэтому плейбук запускается после ЛЮБОЙ смены
+#       конфигурации (argo-workflows-install.yaml --tags install) и после
+#       ротации client secret в Vault (Secret обновляет ESO). Поды Workflow'ов
+#       здесь НЕ трогаются: их создаёт контроллер по CR, а не helm.
+# =============================================================================
+
+- name: Restart argo-workflows components
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "[argo-workflows-restart-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "argo-workflows-restart-pre-check"
+
+    # -------------------------------------------------------------------------
+    # PRE-CHECK: Verify argo-workflows is installed
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-workflows-restart] Check if argo-workflows namespace exists"
+      command: kubectl get namespace {{ argo_workflows_namespace }}
+      register: _local_namespace_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argo-workflows-restart] Fail if argo-workflows namespace not found"
+      fail:
+        msg: "argo-workflows namespace '{{ argo_workflows_namespace }}' not found. Install argo-workflows first."
+      when: _local_namespace_check.rc != 0
+      run_once: true
+
+    - name: "[argo-workflows-restart] Show pods in {{ argo_workflows_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "argo-workflows-restart"
+        dto_pods_namespace: "{{ argo_workflows_namespace }}"
+
+    # -------------------------------------------------------------------------
+    # RESTART DEPLOYMENTS
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-workflows-restart] Restart argo-workflows Deployments"
+      command: kubectl rollout restart {{ item }} -n {{ argo_workflows_namespace }}
+      loop: "{{ argo_workflows_install_rollout_resources }}"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+
+    - name: "[argo-workflows-restart] Wait for Deployment rollouts"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "argo-workflows-restart"
+        dto_rollout_namespace: "{{ argo_workflows_namespace }}"
+        dto_rollout_timeout: "{{ argo_workflows_install_restart_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ argo_workflows_install_rollout_resources }}"
+
+    # -------------------------------------------------------------------------
+    # VERIFY RESTART
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-workflows-verify] Show pods in {{ argo_workflows_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "argo-workflows-verify"
+        dto_pods_namespace: "{{ argo_workflows_namespace }}"
+
+    - name: "[argo-workflows-verify] Restart completed"
+      debug:
+        msg:
+          - "=== argo-workflows Restart Complete ==="
+          - "All components have been restarted and are ready."
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true

@@ -1,0 +1,32 @@
+# =============================================================================
+# WORKFLOWTEMPLATES
+#   Каждый элемент принимает полный spec из inventory. Рендерятся в managed
+#   namespace — туда смотрит контроллер, и только оттуда на шаблон может
+#   сослаться Workflow (workflowTemplateRef ищет в СВОЁМ namespace).
+#
+#   ⚠️ Выражения Argo в двойных фигурных скобках (workflow.name,
+#   inputs.parameters.* и т.п.) в inventory — только внутри
+#   {% raw %}...{% endraw %}: иначе их съест Jinja ещё до helm. Сам helm их не
+#   трогает — spec выводится через toYaml, без tpl.
+#   ⚠️ Через extraObjects такие объекты НЕ передавать: там tpl, и helm
+#   template упадёт на первом же таком выражении.
+# =============================================================================
+
+{{- range .Values.workflowTemplates }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: {{ .name }}
+  namespace: "{{ $.Values.managedNamespace }}"
+  {{- if .labels }}
+  labels:
+    {{- toYaml .labels | nindent 4 }}
+  {{- end }}
+  {{- if .annotations }}
+  annotations:
+    {{- toYaml .annotations | nindent 4 }}
+  {{- end }}
+spec:
+  {{- toYaml .spec | nindent 2 }}
+{{- end }}

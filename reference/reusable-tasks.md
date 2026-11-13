@@ -12,7 +12,7 @@ General rules for callers:
 
 ---
 
-## 1. `playbook-app/tasks/` (40 tasks)
+## 1. `playbook-app/tasks/` (42 tasks)
 
 Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-app/tasks/` (verify: `find playbook-app/tasks -name 'tasks-*.yaml' | wc -l`), not the count of catalogued entries below — not every file has a dedicated entry.
 
@@ -62,7 +62,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Validates (assert).** All 8 dto-params defined + non-empty (`dto_patches_list` — sequence; `[]` valid). Tag `[always]`.
 - **Output.** `dto_kustomize_final_dir/Chart.yaml` + `dto_kustomize_final_dir/templates/all.yaml`. No facts exported. Both staging and output dirs not cleaned between runs — overwritten on re-run.
 - **Internals.** 1) `file: state=directory dto_kustomize_tmp_dir`. 2) `shell: helm template <release> <source> --values <values_file> --namespace <namespace> > <tmp>/template-output.yaml`. 3) `copy: dest=<tmp>/kustomization.yaml` (renders `resources: [template-output.yaml]`, `patches: <list>`; **conditional** `namespace: <dto_target_namespace>` field — добавляется только если `dto_kustomize_apply_namespace_transform=true`, по default отключено). 4) `file: state=directory <final>/templates`. 5) `copy: src=<source>/Chart.yaml dest=<final>/Chart.yaml remote_src=yes`. 6) `shell: kubectl kustomize <tmp> > <final>/templates/all.yaml`.
-- **Callers.** All 15 install playbooks for each LOCAL-managed phase: `cilium-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `vault-install.yaml`, `haproxy-install.yaml`, `traefik-install.yaml`, `longhorn-install.yaml`, `argocd-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `zitadel-install.yaml`, `teleport-install.yaml`, `metrics-server-install.yaml`, `linstor-install.yaml`, `mon-system-install.yaml`.
+- **Callers.** All 25 install playbooks for each LOCAL-managed phase — every `<c>-install.yaml` except `teleport-ssh-agent-install.yaml` (76 includes, по одному на phase). `dto_kustomize_apply_namespace_transform: true` передают только 5 KUSTOMIZE_WRAPPER phase'ов: `argocd/install`, `mon-system/prometheus-operator`, `argo-rollouts/install`, `argo-events/install`, `argo-workflows/install`.
 - **Idempotent.** Yes — всe 6 шагов overwrite-safe; детерминированный output при одинаковых inputs.
 
 ### 1.5 `tasks-add-helm-repo.yaml`
@@ -76,9 +76,9 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
   - OCI (`is_oci=true`): `<dto_helm_url>` (например `oci://ghcr.io/bank-vaults/helm-charts/vault-operator`).
   Fact propagated to all hosts (см. шаг "Propagate chart-source fact to all hosts").
 - **Side effect (HTTP only).** `helm repo add <repo_name> <url> --force-update` + `helm repo update` on master manager. Skipped for OCI.
-- **Callers (12 install playbooks).** `cilium-install.yaml`, `cert-manager-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `metrics-server-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml` (vault-operator phase, is_oci=true), `zitadel-install.yaml`.
+- **Callers (17 install playbooks + `tests/helm-validate.yaml`).** `cert-manager-install.yaml`, `cilium-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `kargo-install.yaml`, `linstor-install.yaml` (два вызова: piraeus-operator + linstor-cluster), `longhorn-install.yaml`, `metrics-server-install.yaml`, `portainer-install.yaml`, `seaweedfs-install.yaml`, `stakater-reloader-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml` (vault-operator phase, is_oci=true), `zitadel-install.yaml`.
 - **Idempotent.** `helm repo add` with same URL is no-op (HTTP); `helm repo update` always safe; OCI path is pure set_fact (always safe).
-- **Pattern в caller'е.** Перед каждым external chart install вызвать task с 7 dto-параметрами (HTTP) или 5 dto-параметрами (OCI, без `dto_helm_repo_name`/`dto_helm_chart_name`); затем в helm install command подставить output fact: `helm upgrade --install <release> {{ <c>_helm_chart_source }} --version {{ <c>_helm_chart_version }} ...`. Один и тот же синтаксис для всех 12 callers, никаких Jinja-веток в playbook'ах.
+- **Pattern в caller'е.** Перед каждым external chart install вызвать task с 7 dto-параметрами (HTTP) или 5 dto-параметрами (OCI, без `dto_helm_repo_name`/`dto_helm_chart_name`); затем в helm install command подставить output fact: `helm upgrade --install <release> {{ <c>_helm_chart_source }} --version {{ <c>_helm_chart_version }} ...`. Один и тот же синтаксис для всех callers, никаких Jinja-веток в playbook'ах.
 
 ### 1.6 `tasks-wait-crds.yaml`
 
@@ -87,7 +87,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Validates (assert).** `dto_label_name` defined + non-empty; `dto_crds_list` defined, is sequence, not string, not mapping (empty list allowed). The `kubectl wait` task is guarded with `when: dto_crds_list | length > 0`, so an empty list skips cleanly instead of building an argument-less command.
 - **Reads global var.** `crds_wait` (dict from `hosts-vars/k8s-base.yaml`: `timeout`/`retries`/`delay`) — controls `command --timeout`, `until.retries`, `until.delay`. Not a caller-passed param.
 - **Output.** None. Fails on timeout.
-- **Callers.** Install playbooks with `crds/` phases (`argocd`, `mon-system`), Vault operator, cert-manager.
+- **Callers.** 14 install playbooks: with `crds/` phase — `argo-events`, `argo-rollouts`, `argo-workflows`, `argocd`, `mon-system`; after an upstream chart install that ships CRDs — `cert-manager`, `cilium`, `external-secrets`, `haproxy`, `linstor` (piraeus-operator), `longhorn`, `teleport`, `traefik`, `vault` (vault-operator).
 - **Idempotent.** Read-only wait.
 
 ### 1.7 `tasks-wait-rollout.yaml`
@@ -108,7 +108,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
   - Unique `name` в merged `vault_auth_kubernetes_roles + (vault_auth_kubernetes_roles_extra | default([]))`.
   - Referential integrity: каждая role в merged_roles → каждая policy в `role.policies` существует в merged_policies (fail с указанием missing policy + role name).
 - **Output.** `_local_error_item_list` (local throwaway fact — `list[str]` нарушений; `[]` = OK).
-- **Callers.** `vault-install.yaml` + 10 ESO-install playbook'ов + `tests/helm-validate.yaml` (12 callers total) — вызывают **первым**, перед `tasks-eso-verify.yaml`.
+- **Callers.** `vault-install.yaml` + 15 ESO-install playbook'ов + `tests/helm-validate.yaml` (17 callers total) — вызывают **первым**, перед `tasks-eso-verify.yaml`.
 - **Idempotent.** Read-only.
 
 ### 1.8b `tasks-eso-verify.yaml`
@@ -126,7 +126,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
   - **C. ESO uniqueness:** `external_secret_name` + `body.target.name` unique в `dto_eso_secrets_list`.
   - **D. Policy path coverage (scoped к role's policies):** каждый item Vault path (`body.dataFrom[].extract.key` + `body.data[].remoteRef.key`) должен быть substring хотя бы одного path-prefix из policies этой role (после stripping `/*`).
 - **Output.** `_local_error_item_list` (local throwaway fact — `list[str]` нарушений; `[]` = OK).
-- **Callers.** 10 ESO-integrated install playbook'ов. NOT called from `tests/helm-validate.yaml` (test driver рендерит upstream charts — нет component scope).
+- **Callers.** 16 ESO-integrated install playbook'ов (15 ESO-consumer + `vault-install.yaml`). NOT called from `tests/helm-validate.yaml` (test driver рендерит upstream charts — нет component scope).
 - **Idempotent.** Read-only.
 
 ### 1.8c `tasks-kargo-rbac-verify.yaml`
@@ -147,7 +147,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Input.** `dto_label_name` (required string, log prefix). `dto_helm_namespace` (required string, K8s namespace).
 - **Validates (assert).** `dto_label_name`, `dto_helm_namespace` — both defined + non-empty.
 - **Output.** No facts exported. Stdout (`stdout_lines` of `helm list`, tabs replaced by spaces) printed via debug (`var:` form). Register fact `k8s_list_helm_result` and intermediate set_fact `k8s_list_helm_pretty` are local to the include scope.
-- **Callers.** 15 playbooks in `playbook-app/` — `argocd-install.yaml`, `cert-manager-install.yaml`, `cilium-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `longhorn-s3-restore-create.yaml`, `metrics-server-install.yaml`, `mon-system-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml`, `zitadel-install.yaml` (all in verify block, tag `[always]`). Also called by `tasks-cluster-info-namespace.yaml` (aggregator, from `cluster-info.yaml`).
+- **Callers.** 26 playbooks in `playbook-app/` — every `<c>-install.yaml` except `teleport-ssh-agent-install.yaml` (25, all in verify block, tag `[always]`) + `longhorn-s3-restore-create.yaml` (without tags). Also called by `tasks-cluster-info-namespace.yaml` (aggregator, from `cluster-info.yaml`).
 - **Idempotent.** Read-only (`changed_when: false`).
 
 ### 1.11 `tasks-eso-force-sync.yaml`
@@ -248,7 +248,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Input.** `dto_label_name` (required string, log prefix). `dto_pods_namespace` (required string, K8s namespace).
 - **Validates (assert).** `dto_label_name`, `dto_pods_namespace` — both defined + non-empty.
 - **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get pods`) printed via debug (`var:` form). Register fact `k8s_list_pods_result` is local to the include scope.
-- **Callers.** 23 playbooks in `playbook-app/` — all `<c>-install.yaml` playbooks with a verify block (tag `[always]`), plus all `<c>-restart.yaml` playbooks (before/after the rollout; without tags). Also called by `tasks-cluster-info-namespace.yaml` (aggregator, from `cluster-info.yaml`).
+- **Callers.** 47 playbooks in `playbook-app/` — 24 `<c>-install.yaml` playbooks with a verify block (tag `[always]`; every `<c>-install.yaml` except `cluster-base-install.yaml` and `teleport-ssh-agent-install.yaml`), plus all 23 `<c>-restart.yaml` playbooks (before/after the rollout; without tags in 16, tag `[always]` in 7 — gitlab, linstor, mon-system, outline, seaweedfs, vault, zitadel). Also called by `tasks-cluster-info-namespace.yaml` (aggregator, from `cluster-info.yaml`).
 - **Idempotent.** Read-only (`changed_when: false`).
 
 ### 1.19 `tasks-k8s-list-network-policy.yaml`
@@ -257,7 +257,7 @@ The six vault task includes — `tasks-vault-put.yaml`, `tasks-vault-get.yaml`, 
 - **Input.** `dto_label_name` (required string, log prefix). `dto_np_namespace` (required string, K8s namespace).
 - **Validates (assert).** `dto_label_name`, `dto_np_namespace` — both defined + non-empty.
 - **Output.** No facts exported. Stdout (`stdout_lines` of `kubectl get networkpolicies`) printed via debug (`var:` form). Register fact `k8s_list_network_policy_result` is local to the include scope.
-- **Callers.** 14 playbooks in `playbook-app/` — `argocd-install.yaml`, `cert-manager-install.yaml`, `cilium-install.yaml`, `external-secrets-install.yaml`, `gitlab-install.yaml`, `gitlab-runner-install.yaml`, `haproxy-install.yaml`, `longhorn-install.yaml`, `metrics-server-install.yaml`, `mon-system-install.yaml`, `teleport-install.yaml`, `traefik-install.yaml`, `vault-install.yaml`, `zitadel-install.yaml` (all in verify block, tag `[always]`). Also called by `tasks-cluster-info-namespace.yaml` (aggregator, from `cluster-info.yaml`).
+- **Callers.** 24 playbooks in `playbook-app/` — every `<c>-install.yaml` except `cluster-base-install.yaml` and `teleport-ssh-agent-install.yaml` (all in verify block, tag `[always]`). Also called by `tasks-cluster-info-namespace.yaml` (aggregator, from `cluster-info.yaml`).
 - **Idempotent.** Read-only (`changed_when: false`).
 
 ### 1.20 `tasks-k8s-list-service.yaml`
@@ -436,7 +436,7 @@ Counter `(N tasks)` = number of `tasks-*.yaml` files under `playbook-system/task
 
 #### `tasks-set-master-manager.yaml`
 
-- **Purpose.** Internal helper called by `tasks-pre-check.yaml`, каждым из 9 system playbook'ов которым нужны cluster state facts, и каждым из 5 playbook'ов с reboot (для resolve `bastion_host_fact` до вызова `tasks-reboot-cluster.yaml`). Iterates inventory `managers` group, picks the host with `is_master: true`. Additionally iterates `all` group and picks the host with `is_bastion: true` (optional on-node bastion — see [`variables.md`](variables.md) §2.14.1). Bastion finding co-located here as conscious tech-debt — to be split into separate task in a future refactor.
+- **Purpose.** Internal helper called by `tasks-pre-check.yaml`, каждым из 9 system playbook'ов которым нужны cluster state facts, и каждым из 4 playbook'ов с reboot (для resolve `bastion_host_fact` до вызова `tasks-reboot-cluster.yaml`). Iterates inventory `managers` group, picks the host with `is_master: true`. Additionally iterates `all` group and picks the host with `is_bastion: true` (optional on-node bastion — see [`variables.md`](variables.md) §2.14.1). Bastion finding co-located here as conscious tech-debt — to be split into separate task in a future refactor.
 - **Input.** None.
 - **Output.** `master_manager_fact` (string), `is_master_manager_exist` (bool), `bastion_host_fact` (string, undefined if no `is_bastion: true` host), `is_bastion_host_exist` (bool).
 - **Callers.** `tasks-pre-check.yaml`; в начале `tasks:` каждого system playbook'а которому нужны cluster state facts — `cluster-init.yaml`, `manager-join.yaml`, `worker-join.yaml`, `apiserver-sans-update.yaml`, `etcd-key-rotate.yaml`, `haproxy-apiserver-lb-update.yaml`, `node-drain-on.yaml`, `node-drain-off.yaml`, `node-remove.yaml`; в начале `tasks:` каждого playbook'а который использует `tasks-reboot-cluster.yaml` — `set-hostname.yaml`, `prepare-cilium.yaml`, `prepare-longhorn.yaml`, `prepare-linux-pkgs.yaml`.

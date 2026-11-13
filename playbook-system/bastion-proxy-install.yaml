@@ -11,6 +11,9 @@
 # По требованию — без общих tasks-* / include-директив (всё в одном файле).
 #
 # Серверов может быть несколько (группа bastion_proxy). Всегда белый IP (прямой SSH).
+# SSH (22/tcp): из любой сети или только с vpn_ips (bastion_proxy_haproxy_ssh_vpn_only_enabled,
+# своя таблица nftables; node-install). При true запускать из VPN. Teleport на bastion
+# нет: запасной вход — консоль провайдера.
 #
 # Теги (линейно): node-install -> haproxy-install -> haproxy-config -> verify
 # verify — тег `verify` (НЕ always).
@@ -36,6 +39,7 @@
       command: hostname
       register: bastion_proxy_current_hostname
       changed_when: false
+      check_mode: false
       tags: [node-install]
 
     - name: "[bastion-proxy-node] Set hostname"
@@ -80,6 +84,36 @@
       when: bastion_proxy_fail2ban_jail_result.changed
       tags: [node-install]
 
+    # Вход только по ключу: блок проверок тот же, что у узлов
+    # (prepare-linux-pkgs.yaml, фаза SSHD). Ключ у ansible_user должен быть ДО
+    # того, как hardening начнёт действовать, иначе на bastion не зайти.
+    - name: "[bastion-proxy-node] Resolve home of {{ ansible_user }}"
+      getent:
+        database: passwd
+        key: "{{ ansible_user }}"
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Read authorized_keys of {{ ansible_user }}"
+      slurp:
+        src: "{{ ansible_facts.getent_passwd[ansible_user][4] }}/.ssh/authorized_keys"
+      register: bastion_proxy_authorized_keys
+      failed_when: false
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Assert key-based login is possible"
+      assert:
+        that:
+          - bastion_proxy_authorized_keys.content is defined
+          - >-
+            (bastion_proxy_authorized_keys.content | b64decode).splitlines()
+            | reject('match', '^[ \t]*(#|$)')
+            | select('search', '(^|[ \t])(ssh-|ecdsa-|sk-)') | list | length > 0
+        fail_msg: >-
+          ~{{ ansible_user }}/.ssh/authorized_keys пуст или отсутствует -
+          с отключённым паролем вход на {{ inventory_hostname }} невозможен.
+          Проверить ssh_public_key_paths (задача Install SSH public keys выше).
+      tags: [node-install]
+
     - name: "[bastion-proxy-node] Harden sshd (key-only auth)"
       copy:
         dest: /etc/ssh/sshd_config.d/10-bastion-proxy-hardening.conf
@@ -88,10 +122,20 @@
       register: bastion_proxy_sshd_result
       tags: [node-install]
 
+    # След ручной правки 2026-11-09 (как на узлах): /etc/cloud/cloud.cfg.d/
+    # 99-ansible-ssh-pwauth.cfg ничего не защищает — ssh_pwauth из user-data
+    # провайдера главнее cloud.cfg.d, а 10- и так читается раньше
+    # 50-cloud-init.conf. Одноразовая очистка: задачу можно убрать, когда файла нет.
+    - name: "[bastion-proxy-node] Remove manual leftover 99-ansible-ssh-pwauth.cfg"
+      file:
+        path: /etc/cloud/cloud.cfg.d/99-ansible-ssh-pwauth.cfg
+        state: absent
+      tags: [node-install]
+
     - name: "[bastion-proxy-node] Validate sshd config"
       command: sshd -t
       changed_when: false
-      when: bastion_proxy_sshd_result.changed
+      check_mode: false
       tags: [node-install]
 
     - name: "[bastion-proxy-node] Reload ssh if config changed"
@@ -99,6 +143,39 @@
         name: ssh
         state: reloaded
       when: bastion_proxy_sshd_result.changed
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Check ssh service is active"
+      command: systemctl is-active ssh
+      register: bastion_proxy_ssh_active_check
+      changed_when: false
+      check_mode: false
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Assert ssh is active"
+      assert:
+        that:
+          - bastion_proxy_ssh_active_check.stdout | trim == 'active'
+        fail_msg: "ssh service is NOT active"
+        success_msg: "ssh: active"
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Effective sshd config (sshd -T)"
+      command: sshd -T
+      changed_when: false
+      check_mode: false
+      register: bastion_proxy_sshd_effective_install
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Assert password auth disabled"
+      assert:
+        that:
+          - "'passwordauthentication no' in bastion_proxy_sshd_effective_install.stdout_lines"
+          - "'kbdinteractiveauthentication no' in bastion_proxy_sshd_effective_install.stdout_lines"
+        fail_msg: "sshd на {{ inventory_hostname }} всё ещё разрешает вход по паролю"
+        success_msg: "sshd {{ inventory_hostname }}: passwordauthentication no"
+      # в --check файлы не пишутся и reload не выполняется — итог ещё старый
+      when: not ansible_check_mode
       tags: [node-install]
 
     - name: "[bastion-proxy-node] Sysctl for HAProxy range bind (fd limits)"
@@ -113,6 +190,70 @@
       command: sysctl --system
       changed_when: false
       when: bastion_proxy_sysctl_result.changed
+      tags: [node-install]
+
+    # SSH (22/tcp) только с vpn_ips: bastion не k8s-узел, host firewall Cilium
+    # его не покрывает — своя таблица nftables inet bastion_ssh
+    # (bastion_proxy_haproxy_ssh_vpn_only_enabled). При false файл правил только
+    # удаляет таблицу. Проверка vpn_ips стоит здесь, а не в начале node-install,
+    # чтобы срабатывать и при запуске с --start-at-task.
+    - name: "[bastion-proxy-node] Assert vpn_ips for SSH VPN-only"
+      assert:
+        that:
+          - vpn_ips is sequence
+          - vpn_ips is not string
+          - vpn_ips | length > 0
+          - >-
+            vpn_ips
+            | reject('match', '^[0-9]{1,3}([.][0-9]{1,3}){3}/[0-9]{1,2}$') | list | length == 0
+        fail_msg: >-
+          bastion_proxy_haproxy_ssh_vpn_only_enabled: true требует непустой vpn_ips
+          из IPv4 CIDR (a.b.c.d/nn), иначе SSH на bastion закрылся бы для всех.
+      when: bastion_proxy_haproxy_ssh_vpn_only_enabled | bool
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] Ensure /etc/bastion-proxy"
+      file:
+        path: /etc/bastion-proxy
+        state: directory
+        mode: '0755'
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] SSH firewall rules (nftables)"
+      copy:
+        dest: /etc/bastion-proxy/ssh-firewall.nft
+        content: "{{ bastion_proxy_haproxy_ssh_firewall_nft }}"
+        mode: '0644'
+        validate: nft -c -f %s
+      register: bastion_proxy_ssh_fw_rules_result
+      tags: [node-install]
+
+    - name: "[bastion-proxy-node] SSH firewall systemd unit"
+      copy:
+        dest: /etc/systemd/system/bastion-ssh-firewall.service
+        content: "{{ bastion_proxy_haproxy_ssh_firewall_unit }}"
+        mode: '0644'
+      tags: [node-install]
+
+    # В --check файлы не пишутся: юнита может ещё не быть, systemd упал бы.
+    - name: "[bastion-proxy-node] Enable and start SSH firewall (+ daemon-reload)"
+      systemd:
+        name: bastion-ssh-firewall
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+      tags: [node-install]
+
+    # Загрузка правил на каждом прогоне (атомарно, идемпотентно): ядро не
+    # расходится с файлом, даже если прошлый прогон оборвался до reload или
+    # таблицу удалили руками. changed — только при смене файла.
+    - name: "[bastion-proxy-node] Load SSH firewall rules (reload)"
+      systemd:
+        name: bastion-ssh-firewall
+        state: reloaded
+      changed_when: bastion_proxy_ssh_fw_rules_result.changed
+      when: not ansible_check_mode
       tags: [node-install]
 
     # =========================================================================
@@ -230,8 +371,28 @@
     - name: "[bastion-proxy-verify] Assert sshd password auth disabled"
       assert:
         that:
-          - "'passwordauthentication no' in bastion_proxy_sshd_effective.stdout"
+          - "'passwordauthentication no' in bastion_proxy_sshd_effective.stdout_lines"
+          - "'kbdinteractiveauthentication no' in bastion_proxy_sshd_effective.stdout_lines"
         fail_msg: "sshd still allows password authentication"
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] SSH firewall table (nftables)"
+      command: nft list table inet bastion_ssh
+      changed_when: false
+      failed_when: false
+      register: bastion_proxy_ssh_fw_table
+      tags: [verify]
+
+    - name: "[bastion-proxy-verify] Assert SSH firewall matches bastion_proxy_haproxy_ssh_vpn_only_enabled"
+      assert:
+        that: >-
+          (bastion_proxy_ssh_fw_table.rc == 0
+           and 'tcp dport 22 drop' in bastion_proxy_ssh_fw_table.stdout)
+          if (bastion_proxy_haproxy_ssh_vpn_only_enabled | bool)
+          else (bastion_proxy_ssh_fw_table.rc != 0)
+        fail_msg: >-
+          nftables inet bastion_ssh не соответствует
+          bastion_proxy_haproxy_ssh_vpn_only_enabled={{ bastion_proxy_haproxy_ssh_vpn_only_enabled }}
       tags: [verify]
 
     - name: "[bastion-proxy-verify] Listening sockets"

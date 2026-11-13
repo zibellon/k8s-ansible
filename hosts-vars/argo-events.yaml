@@ -384,8 +384,16 @@ all:
     argo_events_sensors: []
     # Пять независимых сырых списков операторских RBAC-объектов; связей между
     # ними нет. EventSource типа resource требует SA с list/watch на
-    # наблюдаемый ресурс, Sensor с k8s- или argoWorkflow-триггером — SA с
-    # create/update на целевой ресурс.
+    # наблюдаемый ресурс, Sensor с k8s-триггером — SA с вербом его operation
+    # на целевой ресурс; update/patch/delete сначала делают get, а
+    # update/patch на отсутствующий объект делают create — эти вербы тоже
+    # нужны. Sensor с argoWorkflow-триггером запускает внутри себя argo CLI
+    # и ищет созданный Workflow через API:
+    # workflows create + list (operation submit; Workflow со ссылкой на шаблон
+    # — ещё get на workflowtemplates); для submitFrom — workflows create +
+    # get на workflowtemplates/cronworkflows (list не нужен); update не
+    # нужен. Подробности и
+    # апстримный дефект submitFrom — reference/components.md §17.14 «RBAC».
     # SA:                  {name, annotations?, labels?}
     # Role / ClusterRole:  {name, rules}
     # RoleBinding:         {name, namespace, roleRef, subjects}

@@ -242,6 +242,13 @@ all:
             | map('regex_replace', '$', '/32')
             | list) }}
 
+    # SSH на узлы извне кластера (host firewall, правило 22/TCP).
+    # cilium_post_ssh_vpn_only_enabled: false - SSH из world (как было);
+    # cilium_post_ssh_vpn_only_enabled: true  - SSH только с адресов vpn_ips
+    #   (hosts-vars/vpn-rules.yaml / override); пустой vpn_ips при true - ошибка
+    #   рендера, политика не применяется.
+    cilium_post_ssh_vpn_only_enabled: false
+
     # extraObjects (operator-side, default empty) — добавление произвольных K8s resources
     cilium_post_extra_objects: []
     # Post-phase kustomize patches (operator-side customization, default empty)
@@ -252,6 +259,8 @@ all:
       ingressConfig: "{{ cilium_hubble_ui_ingress_config }}"
       certificateConfig: "{{ cilium_hubble_ui_certificate }}"
       nodeIpsList: "{{ cilium_post_node_ips_list }}"
+      sshVpnOnlyEnabled: "{{ cilium_post_ssh_vpn_only_enabled | bool }}"
+      sshVpnCidrs: "{{ vpn_ips }}"
       traefik:
         namespace: "{{ traefik_namespace }}"
         entryPoints:

@@ -1,0 +1,30 @@
+{{- if and .Values.prometheus_operator.enabled .Values.alertmanager.enabled .Values.alertmanager.serviceMonitor.enabled }}
+---
+# Самомониторинг: метрики alertmanager (отправка уведомлений по интеграциям, перезагрузка конфига, кластер).
+# Без них не работают алерты о сбоях доставки (Prometheus -> Alertmanager -> Telegram).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: alertmanager
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/component: alertmanager
+    app.kubernetes.io/part-of: monitoring
+    {{- with .Values.alertmanager.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    - port: http-web
+      path: /metrics
+      interval: {{ .Values.alertmanager.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.alertmanager.serviceMonitor.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+      app.kubernetes.io/instance: alertmanager-instance
+{{- end }}

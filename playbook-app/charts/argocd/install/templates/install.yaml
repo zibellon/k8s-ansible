@@ -437,7 +437,9 @@ data:
     jqPathExpressions:
       - '.metadata.annotations."notified.notifications.argoproj.io"'
       - '.metadata.annotations."argocd.argoproj.io/refresh"'
+      - '.metadata.annotations."argocd.argoproj.io/refresh-timestamp"'
       - '.metadata.annotations."argocd.argoproj.io/hydrate"'
+      - '.metadata.annotations."argocd.argoproj.io/hydrate-timestamp"'
       - '.operation'
   resource.customizations.ignoreResourceUpdates.argoproj.io_Rollout: |
     jqPathExpressions:
@@ -599,6 +601,19 @@ metadata:
     app.kubernetes.io/part-of: argocd
   name: argocd-secret
 type: Opaque
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/component: application-controller
+    app.kubernetes.io/name: argocd-application-controller
+    app.kubernetes.io/part-of: argocd
+  name: argocd-application-controller
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: argocd-application-controller
 ---
 apiVersion: v1
 kind: Service
@@ -1009,7 +1024,43 @@ spec:
               key: applicationsetcontroller.status.max.resources.count
               name: argocd-cmd-params-cm
               optional: true
-        image: quay.io/argoproj/argocd:v3.5.4
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_WORKQUEUE_BUCKET_SIZE
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.wq.bucket.size
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_WORKQUEUE_BUCKET_QPS
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.wq.bucket.qps
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_WORKQUEUE_BASE_DELAY_NS
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.wq.basedelay.ns
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_WORKQUEUE_MAX_DELAY_NS
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.wq.maxdelay.ns
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_WORKQUEUE_BACKOFF_FACTOR
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.wq.backoff.factor
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATIONSET_CONTROLLER_WORKQUEUE_FAILURE_COOLDOWN_NS
+          valueFrom:
+            configMapKeyRef:
+              key: applicationsetcontroller.wq.cooldown.ns
+              name: argocd-cmd-params-cm
+              optional: true
+        image: quay.io/argoproj/argocd:v3.6.1
         imagePullPolicy: Always
         name: argocd-applicationset-controller
         ports:
@@ -1151,7 +1202,7 @@ spec:
               key: dexserver.connector.failure.continue
               name: argocd-cmd-params-cm
               optional: true
-        image: ghcr.io/dexidp/dex:v2.45.1
+        image: ghcr.io/dexidp/dex:v2.46.0
         imagePullPolicy: Always
         name: dex
         ports:
@@ -1181,7 +1232,7 @@ spec:
         - -n
         - /usr/local/bin/argocd
         - /shared/argocd-dex
-        image: quay.io/argoproj/argocd:v3.5.4
+        image: quay.io/argoproj/argocd:v3.6.1
         imagePullPolicy: Always
         name: copyutil
         securityContext:
@@ -1301,7 +1352,7 @@ spec:
               key: notificationscontroller.repo.server.client.cert.key.path
               name: argocd-cmd-params-cm
               optional: true
-        image: quay.io/argoproj/argocd:v3.5.4
+        image: quay.io/argoproj/argocd:v3.6.1
         imagePullPolicy: Always
         livenessProbe:
           tcpSocket:
@@ -1400,7 +1451,7 @@ spec:
             secretKeyRef:
               key: auth
               name: argocd-redis
-        image: public.ecr.aws/docker/library/redis:8.2.3-alpine
+        image: public.ecr.aws/docker/library/redis:8.10.1-alpine
         imagePullPolicy: Always
         name: redis
         ports:
@@ -1416,7 +1467,7 @@ spec:
         - argocd
         - admin
         - redis-initial-password
-        image: quay.io/argoproj/argocd:v3.5.4
+        image: quay.io/argoproj/argocd:v3.6.1
         imagePullPolicy: IfNotPresent
         name: secret-init
         securityContext:
@@ -1551,6 +1602,12 @@ spec:
               key: reposerver.tls.ciphers
               name: argocd-cmd-params-cm
               optional: true
+        - name: ARGOCD_TLS_CURVE_PREFERENCES
+          valueFrom:
+            configMapKeyRef:
+              key: reposerver.tls.curvepreferences
+              name: argocd-cmd-params-cm
+              optional: true
         - name: ARGOCD_REPO_SERVER_CLIENT_CA_PATH
           valueFrom:
             configMapKeyRef:
@@ -1569,6 +1626,18 @@ spec:
               key: redis.server
               name: argocd-cmd-params-cm
               optional: true
+        - name: REDIS_SENTINEL_HOSTS
+          valueFrom:
+            configMapKeyRef:
+              key: redis.sentinel.hosts
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: REDIS_SENTINEL_MASTER
+          valueFrom:
+            configMapKeyRef:
+              key: redis.sentinel.master
+              name: argocd-cmd-params-cm
+              optional: true
         - name: REDIS_COMPRESSION
           valueFrom:
             configMapKeyRef:
@@ -1579,6 +1648,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: redis.db
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_REDIS_KEY_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              key: redis.key.prefix
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_DEFAULT_CACHE_EXPIRATION
@@ -1609,6 +1684,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: otlp.attrs
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_REPO_SERVER_OTLP_SAMPLE_RATIO
+          valueFrom:
+            configMapKeyRef:
+              key: otlp.sample.ratio
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_REPO_SERVER_MAX_COMBINED_DIRECTORY_MANIFESTS_SIZE
@@ -1731,7 +1812,7 @@ spec:
           value: /helm-working-dir
         - name: HELM_DATA_HOME
           value: /helm-working-dir
-        image: quay.io/argoproj/argocd:v3.5.4
+        image: quay.io/argoproj/argocd:v3.6.1
         imagePullPolicy: Always
         livenessProbe:
           failureThreshold: 3
@@ -1788,7 +1869,7 @@ spec:
         command:
         - sh
         - -c
-        image: quay.io/argoproj/argocd:v3.5.4
+        image: quay.io/argoproj/argocd:v3.6.1
         name: copyutil
         securityContext:
           allowPrivilegeEscalation: false
@@ -1988,6 +2069,12 @@ spec:
               key: server.disable.auth
               name: argocd-cmd-params-cm
               optional: true
+        - name: ARGOCD_SERVER_DISABLE_SWAGGER_UI
+          valueFrom:
+            configMapKeyRef:
+              key: server.disable.swagger.ui
+              name: argocd-cmd-params-cm
+              optional: true
         - name: ARGOCD_SERVER_ENABLE_GZIP
           valueFrom:
             configMapKeyRef:
@@ -2072,6 +2159,12 @@ spec:
               key: server.tls.ciphers
               name: argocd-cmd-params-cm
               optional: true
+        - name: ARGOCD_TLS_CURVE_PREFERENCES
+          valueFrom:
+            configMapKeyRef:
+              key: server.tls.curvepreferences
+              name: argocd-cmd-params-cm
+              optional: true
         - name: ARGOCD_SERVER_CONNECTION_STATUS_CACHE_EXPIRATION
           valueFrom:
             configMapKeyRef:
@@ -2102,6 +2195,18 @@ spec:
               key: redis.server
               name: argocd-cmd-params-cm
               optional: true
+        - name: REDIS_SENTINEL_HOSTS
+          valueFrom:
+            configMapKeyRef:
+              key: redis.sentinel.hosts
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: REDIS_SENTINEL_MASTER
+          valueFrom:
+            configMapKeyRef:
+              key: redis.sentinel.master
+              name: argocd-cmd-params-cm
+              optional: true
         - name: REDIS_COMPRESSION
           valueFrom:
             configMapKeyRef:
@@ -2112,6 +2217,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: redis.db
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_REDIS_KEY_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              key: redis.key.prefix
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_DEFAULT_CACHE_EXPIRATION
@@ -2160,6 +2271,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: otlp.attrs
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_SERVER_OTLP_SAMPLE_RATIO
+          valueFrom:
+            configMapKeyRef:
+              key: otlp.sample.ratio
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_APPLICATION_NAMESPACES
@@ -2252,7 +2369,7 @@ spec:
               key: server.sync.replace.allowed
               name: argocd-cmd-params-cm
               optional: true
-        image: quay.io/argoproj/argocd:v3.5.4
+        image: quay.io/argoproj/argocd:v3.6.1
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
@@ -2521,6 +2638,24 @@ spec:
               key: controller.metrics.cache.expiration
               name: argocd-cmd-params-cm
               optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_METRICS_APPLICATION_LABELS
+          valueFrom:
+            configMapKeyRef:
+              key: controller.metrics.application.labels
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_METRICS_APPLICATION_CONDITIONS
+          valueFrom:
+            configMapKeyRef:
+              key: controller.metrics.application.conditions
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_METRICS_CLUSTER_LABELS
+          valueFrom:
+            configMapKeyRef:
+              key: controller.metrics.cluster.labels
+              name: argocd-cmd-params-cm
+              optional: true
         - name: ARGOCD_APPLICATION_CONTROLLER_SELF_HEAL_TIMEOUT_SECONDS
           valueFrom:
             configMapKeyRef:
@@ -2611,6 +2746,18 @@ spec:
               key: redis.server
               name: argocd-cmd-params-cm
               optional: true
+        - name: REDIS_SENTINEL_HOSTS
+          valueFrom:
+            configMapKeyRef:
+              key: redis.sentinel.hosts
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: REDIS_SENTINEL_MASTER
+          valueFrom:
+            configMapKeyRef:
+              key: redis.sentinel.master
+              name: argocd-cmd-params-cm
+              optional: true
         - name: REDIS_COMPRESSION
           valueFrom:
             configMapKeyRef:
@@ -2621,6 +2768,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: redis.db
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_REDIS_KEY_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              key: redis.key.prefix
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_DEFAULT_CACHE_EXPIRATION
@@ -2651,6 +2804,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: otlp.attrs
+              name: argocd-cmd-params-cm
+              optional: true
+        - name: ARGOCD_APPLICATION_CONTROLLER_OTLP_SAMPLE_RATIO
+          valueFrom:
+            configMapKeyRef:
+              key: otlp.sample.ratio
               name: argocd-cmd-params-cm
               optional: true
         - name: ARGOCD_APPLICATION_NAMESPACES
@@ -2721,7 +2880,7 @@ spec:
               optional: true
         - name: KUBECACHEDIR
           value: /tmp/kubecache
-        image: quay.io/argoproj/argocd:v3.5.4
+        image: quay.io/argoproj/argocd:v3.6.1
         imagePullPolicy: Always
         name: argocd-application-controller
         ports:
@@ -2750,6 +2909,8 @@ spec:
           name: argocd-home
         - mountPath: /home/argocd/params
           name: argocd-cmd-params-cm
+        - mountPath: /app/config/tls
+          name: tls-certs
         - mountPath: /tmp
           name: argocd-application-controller-tmp
         workingDir: /home/argocd
@@ -2759,6 +2920,9 @@ spec:
       volumes:
       - emptyDir: {}
         name: argocd-home
+      - configMap:
+          name: argocd-tls-certs-cm
+        name: tls-certs
       - emptyDir: {}
         name: argocd-application-controller-tmp
       - name: argocd-repo-server-tls

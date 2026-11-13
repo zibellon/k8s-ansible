@@ -20,10 +20,10 @@
 
 | Тег | Что делает |
 |---|---|
-| `node-install` | base packages + fail2ban jail + sshd hardening (key-only, `sshd -t`, reload) + sysctl fd-limits (`fs.file-max`/`fs.nr_open`) |
+| `node-install` | base packages + fail2ban jail + sshd: assert непустого `authorized_keys` у `ansible_user` → hardening `10-bastion-proxy-hardening.conf` (key-only; `10-` читается раньше `50-cloud-init.conf` образа) → `sshd -t` → reload (без reboot) → `systemctl is-active ssh` → `sshd -T`: `passwordauthentication no` + `kbdinteractiveauthentication no` (в `--check` пропускается) — тот же блок, что у узлов (`prepare-linux-pkgs.yaml`) + sysctl fd-limits (`fs.file-max`/`fs.nr_open`). Тег `haproxy-install` сейчас падает на held-пакете haproxy (новая 3.3.x в PPA) — для sshd запускать только `--tags node-install` + SSH firewall: таблица nftables `inet bastion_ssh` из `/etc/bastion-proxy/ssh-firewall.nft` (validate `nft -c`), юнит `bastion-ssh-firewall.service` (enable+start, reload правил на каждом прогоне; в `--check` задачи юнита пропускаются); при `bastion_proxy_haproxy_ssh_vpn_only_enabled: true` до применения — assert `vpn_ips` (непустой, IPv4 CIDR); запускать из VPN |
 | `haproxy-install` | HAProxy из PPA vbernat → `apt-mark hold` → systemd `LimitNOFILE` override → **restart** (systemd-лимит применяется только при restart, не reload) |
 | `haproxy-config` | рендер `/etc/haproxy/haproxy.cfg` из vars → **отдельный шаг** `haproxy -c -f` (validate) → **hitless reload** (`systemctl reload`, НЕ restart) при изменении — не рвёт долгие TCP/DB-сессии |
-| `verify` (не `always`) | ассерты: `haproxy -v`, is-active, `LimitNOFILE` применён (`/proc`), sshd `PasswordAuthentication no`, слушает 80/443 + границы L4-диапазона |
+| `verify` (не `always`) | ассерты: `haproxy -v`, is-active, `LimitNOFILE` применён (`/proc`), sshd `PasswordAuthentication no` + `KbdInteractiveAuthentication no` (`sshd -T`), слушает 80/443 + границы L4-диапазона, таблица `inet bastion_ssh` соответствует `bastion_proxy_haproxy_ssh_vpn_only_enabled` (есть с `tcp dport 22 drop` при true / нет при false) |
 
 ## 3. Vars-модель (`hosts-vars/bastion-proxy-haproxy.yaml`)
 
@@ -70,8 +70,8 @@ CCNP host-firewall (`host-firewall-base`) распространяется **т�
 
 ## 7. Безопасность
 
-- bastion — DDoS/скан-сборник перед кластером; **firewall на нём отсутствует** (ufw/iptables), фильтрация = HAProxy-уровень. Bastion **принимает все источники** (без src ACL) — per-domain L7-фильтр = Traefik `ipAllowList`; L4 client-allowlist — опционально, downstream.
-- sshd — только по ключам (`PasswordAuthentication no`), fail2ban.
+- bastion — DDoS/скан-сборник перед кластером; **firewall только для SSH**: таблица nftables `inet bastion_ssh` (`bastion_proxy_haproxy_ssh_vpn_only_enabled`: false — SSH из любой сети, true — только с `vpn_ips`, IPv6 SSH закрыт); 80/443 и L4-диапазон не фильтруются. Bastion **принимает все источники** (без src ACL) — per-domain L7-фильтр = Traefik `ipAllowList`; L4 client-allowlist — опционально, downstream.
+- sshd — только по ключам (`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitEmptyPasswords no`), проверяется по итогу `sshd -T`; fail2ban.
 - FD: sysctl `fs.file-max`/`fs.nr_open` + systemd `LimitNOFILE` + haproxy `maxconn` — критично для range bind (20001 listen-сокетов; кратковременно ×2 при reload).
 - Скрыть IP нод: DNS указывает только на bastion.
 

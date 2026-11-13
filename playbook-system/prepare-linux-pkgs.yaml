@@ -6,19 +6,23 @@
 # Объединяет два прежних playbook'а: linux-service-configure.yaml
 # (apt-configure + fail2ban-install + sshd-configure) и node-prepare.yaml
 # (swap / sysctl / kernel modules / softdog). Идут последовательно в одном
-# bootstrap-pass; drop-in файлы синкаются по префиксу "ansible-" через
-# tasks-sync-managed-files.yaml.
+# bootstrap-pass; drop-in файлы синкаются по префиксу через
+# tasks-sync-managed-files.yaml: "ansible-" (apt, fail2ban), "00-ansible-" (sshd).
 #
 # Phases:
 #   1. APT — sync /etc/apt/{sources.list.d, apt.conf.d, preferences.d}/ files
 #            from apt_additional_configs + apt_preferences. Refresh apt cache.
 #   2. FAIL2BAN — install package, sync /etc/fail2ban/jail.d/ from
 #                 fail2ban_jail_d_files, restart on change.
-#   3. SSHD — sync /etc/ssh/sshd_config.d/ from sshd_config_d_files, validate via
-#             sshd -t, reload (not restart) on change.
-#   4. REBOOT (services) — conditional reboot if any of the 5 service-sync facts:
-#               apt_sources_changed / apt_conf_d_changed / apt_prefs_changed /
-#               fail2ban_files_changed / sshd_files_changed.
+#   3. SSHD — assert a key in ~ansible_user/.ssh/authorized_keys; sync
+#             /etc/ssh/sshd_config.d/ from sshd_config_d_files (prefix
+#             "00-ansible-": sshd takes the first value of a parameter, 00- is
+#             read before 50-cloud-init.conf); remove legacy "ansible-*" drop-ins;
+#             validate via sshd -t, reload (not restart) on change; assert
+#             sshd -T: passwordauthentication no, kbdinteractiveauthentication no.
+#   4. REBOOT (services) — conditional reboot if any of the 3 apt-sync facts:
+#               apt_sources_changed / apt_conf_d_changed / apt_prefs_changed.
+#               fail2ban / sshd files: restart / reload in their phases, no reboot.
 #   5. SWAP — swapoff, comment swap in /etc/fstab, mask swap.target.
 #   6. SYSCTL — write /etc/sysctl.d/k8s.conf from k8s_sysctl_list (флаги = 1)
 #               and /etc/sysctl.d/k8s-tuning.conf from k8s_sysctl_values
@@ -33,6 +37,15 @@
 # Usage:
 #   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ \
 #     playbook-system/prepare-linux-pkgs.yaml [--limit <host>]
+#   Предпросмотр (ничего не меняет): добавить --check --diff — покажет diff
+#   управляемых файлов и будет ли reboot. Read-only команды (systemctl
+#   is-active, sysctl -n, lsmod, swapon --show, sshd -t, fail2ban-client
+#   status) идут с check_mode: false, иначе в --check их stdout пуст и
+#   проверки после них падают.
+#   Признак reboot в --check: задачи "...-reboot-cluster] Reboot non-bastion
+#   hosts first (parallel)" = changed (будет reboot, все затронутые узлы
+#   параллельно) / skipping (не будет). В --check sshd -t проверяет ТЕКУЩИЙ
+#   конфиг, финальные assert'ы — текущее состояние узла.
 # =============================================================================
 
 - name: Configure linux services (apt / fail2ban / sshd) + conditional reboot
@@ -218,6 +231,7 @@
       command: systemctl is-active fail2ban
       register: fail2ban_active_check
       changed_when: false
+      check_mode: false
 
     - name: "[fail2ban-install] Assert fail2ban is active"
       assert:
@@ -230,6 +244,7 @@
       command: fail2ban-client status
       register: fail2ban_status
       changed_when: false
+      check_mode: false
 
     - name: "[fail2ban-install] Print fail2ban status"
       debug:
@@ -251,29 +266,90 @@
         fail_msg: "sshd_config_d_files must be defined in inventory (hosts-vars/linux-pkgs.yaml or override)"
       tags: [always]
 
+    # Вход только по ключу: ключ у ansible_user должен быть ДО того, как
+    # hardening (PasswordAuthentication no) начнёт действовать, иначе на узел
+    # не зайти.
+    - name: "[sshd-configure] Resolve home of {{ ansible_user }}"
+      getent:
+        database: passwd
+        key: "{{ ansible_user }}"
+
+    - name: "[sshd-configure] Read authorized_keys of {{ ansible_user }}"
+      slurp:
+        src: "{{ ansible_facts.getent_passwd[ansible_user][4] }}/.ssh/authorized_keys"
+      register: sshd_authorized_keys
+      failed_when: false
+
+    - name: "[sshd-configure] Assert key-based login is possible"
+      assert:
+        that:
+          - sshd_authorized_keys.content is defined
+          - >-
+            (sshd_authorized_keys.content | b64decode).splitlines()
+            | reject('match', '^[ \t]*(#|$)')
+            | select('search', '(^|[ \t])(ssh-|ecdsa-|sk-)') | list | length > 0
+        fail_msg: >-
+          ~{{ ansible_user }}/.ssh/authorized_keys пуст или отсутствует -
+          с отключённым паролем вход на {{ inventory_hostname }} невозможен.
+          Сначала положить ключ (руками или playbook-system/setup-ssh-keys.yaml).
+
+    # Префикс 00-: sshd читает sshd_config.d/*.conf по алфавиту и берёт ПЕРВОЕ
+    # значение параметра; 00-ansible-* читается раньше 50-cloud-init.conf
+    # (cloud-init пишет туда PasswordAuthentication yes по ssh_pwauth из
+    # user-data провайдера).
     - name: "[sshd-configure] Sync /etc/ssh/sshd_config.d/"
       include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-sync-managed-files.yaml"
       vars:
         dto_label_name: "sshd-configure"
         dto_target_dir: "/etc/ssh/sshd_config.d"
         dto_files_list: "{{ sshd_config_d_files }}"
-        dto_filename_prefix: "ansible-"
+        dto_filename_prefix: "00-ansible-"
         dto_res_fact_changed: "sshd_files_changed"
+
+    # Файлы прежнего префикса "ansible-" (ansible-hardening.conf) новый sync не
+    # видит; удаляем их уже после записи 00-ansible-* — момента без hardening нет.
+    - name: "[sshd-configure] Find legacy ansible-* drop-ins (old prefix)"
+      find:
+        paths: /etc/ssh/sshd_config.d
+        patterns: "ansible-*"
+        file_type: file
+      register: sshd_legacy_dropins
+
+    - name: "[sshd-configure] Remove legacy ansible-* drop-ins"
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ sshd_legacy_dropins.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: sshd_legacy_dropins_removed
+
+    # След ручной правки 2026-11-09: /etc/cloud/cloud.cfg.d/99-ansible-ssh-pwauth.cfg
+    # (ssh_pwauth: false) ничего не защищает — ssh_pwauth из user-data провайдера
+    # главнее cloud.cfg.d, а 00-ansible-* и так читается раньше 50-cloud-init.conf.
+    # Ansible им не управлял, хотя имя похоже на управляемое. Одноразовая
+    # очистка: задачу можно убрать, когда файла нет ни на одном узле.
+    - name: "[sshd-configure] Remove manual leftover 99-ansible-ssh-pwauth.cfg"
+      file:
+        path: /etc/cloud/cloud.cfg.d/99-ansible-ssh-pwauth.cfg
+        state: absent
 
     - name: "[sshd-configure] Validate full sshd config (sshd -t)"
       command: sshd -t
       changed_when: false
+      check_mode: false
 
     - name: "[sshd-configure] Reload sshd"
       systemd:
         name: ssh
         state: reloaded
-      when: sshd_files_changed
+      when: sshd_files_changed or (sshd_legacy_dropins_removed is changed)
 
     - name: "[sshd-configure] Check ssh service is active"
       command: systemctl is-active ssh
       register: ssh_active_check
       changed_when: false
+      check_mode: false
 
     - name: "[sshd-configure] Assert ssh is active"
       assert:
@@ -282,22 +358,43 @@
         fail_msg: "ssh service is NOT active"
         success_msg: "ssh: active"
 
+    - name: "[sshd-configure] Effective sshd config (sshd -T)"
+      command: sshd -T
+      changed_when: false
+      check_mode: false
+      register: sshd_effective
+
+    - name: "[sshd-configure] Assert password auth disabled"
+      assert:
+        that:
+          - "'passwordauthentication no' in sshd_effective.stdout_lines"
+          - "'kbdinteractiveauthentication no' in sshd_effective.stdout_lines"
+        fail_msg: "sshd на {{ inventory_hostname }} всё ещё разрешает вход по паролю"
+        success_msg: "sshd {{ inventory_hostname }}: passwordauthentication no"
+      # в --check файлы не пишутся и reload не выполняется — итог ещё старый
+      when: not ansible_check_mode
+
     - name: "[sshd-configure] Print final status"
       debug:
         msg: "=== sshd-configure complete (sshd_files_changed={{ sshd_files_changed }}) ==="
 
     # =========================================================================
-    # PHASE: REBOOT — conditional reboot if any sync fact is true
+    # PHASE: REBOOT — conditional reboot if any apt sync fact is true
     # =========================================================================
+    # fail2ban и sshd сюда не входят: смена их файлов применяется без reboot —
+    # fail2ban перезапускается в фазе FAIL2BAN (fail2ban_files_changed), sshd
+    # перечитывает конфиг (reload) в фазе SSHD (sshd_files_changed); битый
+    # конфиг ловят sshd -t и assert "fail2ban active".
+    # Исключение: Port/ListenAddress в sshd_config.d при socket activation
+    # (ssh.socket, Ubuntu 24.04+) требуют daemon-reload + restart ssh.socket —
+    # таких директив в sshd_config_d_files сейчас нет.
 
     - name: "[reboot-services] Compute reboot condition"
       set_fact:
         linux_service_configure_needs_reboot: >-
           {{ apt_sources_changed
              or apt_conf_d_changed
-             or apt_prefs_changed
-             or fail2ban_files_changed
-             or sshd_files_changed }}
+             or apt_prefs_changed }}
 
     - name: "[reboot-services] Reboot servers if any linux service config changed"
       include_tasks: "{{ project_root }}/playbook-system/tasks/tasks-reboot-cluster.yaml"
@@ -313,6 +410,7 @@
       command: swapon --show
       register: swap_pre_check
       changed_when: false
+      check_mode: false
 
     - name: Disable swap
       command: swapoff -a
@@ -442,6 +540,7 @@
       command: swapon --show
       register: swap_check
       changed_when: false
+      check_mode: false
 
     - name: Assert swap is disabled
       assert:
@@ -457,6 +556,7 @@
       command: sysctl -n {{ item }}
       register: sysctl_check
       changed_when: false
+      check_mode: false
       loop: "{{ k8s_sysctl_list }}"
 
     - name: Assert all sysctl parameters are 1
@@ -473,6 +573,7 @@
       command: sysctl -n {{ item.key }}
       register: sysctl_tuning_check
       changed_when: false
+      check_mode: false
       loop: "{{ k8s_sysctl_values | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
@@ -494,6 +595,7 @@
       command: lsmod
       register: lsmod_check
       changed_when: false
+      check_mode: false
 
     - name: Assert k8s modules are loaded
       assert:

@@ -1,0 +1,570 @@
+# =============================================================================
+# Install Argo Workflows (workflow engine: Workflow / CronWorkflow / WorkflowTemplate + UI)
+# Steps:
+#   1. argo-workflows/crds:    CustomResourceDefinitions (kubectl apply --server-side)
+#   2. argo-workflows/pre:     NetworkPolicies + cert-manager Issuer + ESO resources
+#   3. argo-workflows/pre-cfg: cr namespace + обязательные права контроллера и
+#                              argo-server в нём
+#   4. argo-workflows/install: vendored upstream namespace-install.yaml v4.1.6 —
+#                              workflow-controller, argo-server, RBAC,
+#                              controller ConfigMap and PriorityClass
+#   5. argo-workflows/post:    PodMonitor + UI Ingress + cert-manager Certificate
+#   6. argo-workflows/cfg:     executor (SA + Role) + SSO RBAC + операторский RBAC
+#                              (SA + Roles + bindings) + WorkflowTemplates +
+#                              CronWorkflows
+#
+# ⚠️ ТОЛЬКО ДВА NAMESPACE: argo_workflows_namespace (контроллер, argo-server,
+#    их ConfigMap и секреты) и argo_workflows_cr_namespace (WorkflowTemplate и
+#    CronWorkflow — из git-ops, Workflow и их поды — при запуске). Режима «всё в одном»
+#    нет: при пустом cr namespace или его совпадении с namespace компонента
+#    плейбук падает на первом же assert'е.
+#
+# ⚠️ ПОРЯДОК pre-cfg ПЕРЕД install ОБЯЗАТЕЛЕН. Контроллер и argo-server
+#    стартуют уже нацеленными на cr namespace. Без namespace и прав в нём
+#    контроллер уходит в CrashLoopBackOff сразу после захвата lease
+#    (initManagers получает 403 на LIST workflows). С НЕПОЛНЫМИ правами хуже:
+#    WaitForCacheSync висит без таймаута, readinessProbe у контроллера нет, а
+#    /healthz, пока нет поданных Workflow, отвечает 200 — helm --wait считает
+#    install успешным, хотя ни один Workflow не обрабатывается. Как только
+#    поданный Workflow ждёт без прогресса дольше 5 минут, /healthz отдаёт 500,
+#    и liveness перезапускает контроллер по кругу (растёт RESTARTS).
+#    argo-server без прав на workflowtemplates принимает соединения, но не
+#    обслуживает их, а без прав на serviceaccounts при SSO не открывает порт
+#    вовсе — в обоих случаях навсегда остаётся NotReady. Почему pre-cfg —
+#    отдельная стадия, а не часть install или cfg — в шапке
+#    charts/argo-workflows/pre-cfg/templates/cr-namespace.yaml.
+#
+# Usage (tags):
+#   ansible-playbook -i hosts-vars/ -i hosts-vars-override/<cluster>/ playbook-app/argo-workflows-install.yaml
+#   ansible-playbook ... --tags crds
+#   ansible-playbook ... --tags pre
+#   ansible-playbook ... --tags pre-cfg
+#   ansible-playbook ... --tags install
+#   ansible-playbook ... --tags post
+#   ansible-playbook ... --tags cfg
+#
+# Prerequisites:
+#   - Cilium installed (NetworkPolicy enforcement)
+#   - Vault installed/unsealed; Vault policies+roles synced (argo-workflows.eso-main,
+#     ... playbook-app/vault-install.yaml --tags vault-cr) — required even without OIDC
+#   - External Secrets Operator installed
+#   - cert-manager + traefik installed, DNS record for argo_workflows_ui_domain (UI)
+#   - mon-system installed if the PodMonitor is enabled
+#   - If OIDC enabled: ZITADEL application created (Web, CODE + Basic, redirect
+#     https://<argo_workflows_ui_domain>/oauth2/callback, User Info inside ID Token),
+#     creds seeded: vault kv put eso-secret/argo-workflows/oidc clientId=<id> clientSecret=<secret>
+#
+# NOTE: контроллер и argo-server ставятся СТРОГО NAMESPACED; базовые патчи
+#       install ставят обоим ARGO_NAMESPACED=true (дубль --namespaced из args
+#       апстрима) и ARGO_MANAGED_NAMESPACE = argo_workflows_cr_namespace, и
+#       они смотрят ТУДА ВМЕСТО своего namespace: флаг принимает ровно одно
+#       значение, списка namespace у продукта нет. Тот namespace создаёт стадия
+#       pre-cfg, а его содержимое — забота оператора (у нас git-ops).
+#       ClusterWorkflowTemplate выключены: для них нужны кластерные
+#       get/list/watch, а кластерных прав компонент не выдаёт — контроллер и
+#       сервер это проверяют сами и просто отключают их.
+#       Единственный cluster-scoped объект фазы install — PriorityClass
+#       workflow-controller из апстрима; им владеет релиз argo-workflows.
+# =============================================================================
+
+---
+- name: Install Argo Workflows (workflow engine)
+  hosts: managers
+  become: true
+  gather_facts: false
+
+  vars:
+    # Local fact names — OIDC fail-fast check (оба ключа Secret обязательны)
+    _local_argo_workflows_oidc_secret_check_key: "_local_argo_workflows_oidc_secret_check"
+    _local_argo_workflows_oidc_secret_exists_key: "_local_argo_workflows_oidc_secret_exists"
+    _local_argo_workflows_oidc_id_check_key: "_local_argo_workflows_oidc_id_check"
+    _local_argo_workflows_oidc_id_exists_key: "_local_argo_workflows_oidc_id_exists"
+
+  tasks:
+    - name: "[argo-workflows-install] Assert component enabled"
+      assert:
+        that:
+          - argo_workflows_enabled | default(false) | bool
+        fail_msg: "argo-workflows is disabled (argo_workflows_enabled=false). Set argo_workflows_enabled: true in hosts-vars-override/ to install it."
+      run_once: true
+      tags: [always]
+
+    - name: "[argo-workflows-install] Assert two namespaces"
+      assert:
+        that:
+          - argo_workflows_cr_namespace | default('', true) | length > 0
+          - argo_workflows_cr_namespace != argo_workflows_namespace
+        fail_msg: >-
+          argo-workflows is installed only into two namespaces: argo_workflows_cr_namespace
+          must be non-empty and differ from argo_workflows_namespace. In a single namespace
+          any Workflow author could run a pod as the argo-server SA or mount Secret sso and forge sessions.
+      run_once: true
+      tags: [always]
+
+    - name: "[argo-workflows-pre-check] Validate target"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-pre-check.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre-check"
+      tags: [always]
+
+    - name: "[argo-workflows-pre-check] Forbid kube-system namespace"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-forbid-kube-system.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre-check"
+        dto_target_namespace: "{{ argo_workflows_namespace }}"
+      tags: [always]
+
+    - name: "[argo-workflows-install-init] Verify Vault config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-config-verify.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install-init"
+      tags: [always]
+
+    - name: "[argo-workflows-install-init] Verify ESO config"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-eso-verify.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install-init"
+        dto_eso_secrets_list: "{{ eso_vault_integration_argo_workflows_secrets + (eso_vault_integration_argo_workflows_secrets_extra | default([])) }}"
+        dto_eso_integration_object: "{{ eso_vault_integration_argo_workflows }}"
+        dto_namespace: "{{ argo_workflows_namespace }}"
+      tags: [always]
+
+    # =========================================================================
+    # STEP 1: CRDS (kubectl apply --server-side — идемпотентно и обновляет CRD
+    # при смене версии; SSA не пишет last-applied-configuration, поэтому лимит
+    # аннотации в 262144 байта неприменим — единый механизм для всех компонентов)
+    # =========================================================================
+
+    - name: "[argo-workflows-crds] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-workflows-crds"
+        dto_chart_name: "crds"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-workflows/crds/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/crds"
+      tags: [crds]
+
+    - name: "[argo-workflows-crds] Install CRDs via kubectl"
+      command: >-
+        kubectl apply --server-side --force-conflicts
+        -f {{ remote_charts_dir }}/argo-workflows/crds/crds.yaml
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [crds]
+
+    - name: "[argo-workflows-crds] Wait for CRDs"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-crds.yaml"
+      vars:
+        dto_label_name: "argo-workflows-crds"
+        dto_crds_list: "{{ argo_workflows_crds_list }}"
+      tags: [crds]
+
+    # =========================================================================
+    # STEP 2: PRE (NetworkPolicies + Issuer + ESO resources)
+    # =========================================================================
+
+    - name: "[argo-workflows-pre] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre"
+        dto_chart_name: "pre"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-workflows/pre/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/pre"
+      tags: [pre]
+
+    - name: "[argo-workflows-pre] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre"
+        dto_dir: "{{ remote_charts_dir }}/argo-workflows/pre"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argo_workflows_pre_helm_values | to_nice_yaml }}"
+      tags: [pre]
+
+    - name: "[argo-workflows-pre] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre"
+        dto_release_name: "argo-workflows-pre"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/pre"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-workflows/pre/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-workflows/pre-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-workflows/pre-k"
+        dto_patches_list: "{{ argo_workflows_pre_kustomize_patches }}"
+        dto_target_namespace: "{{ argo_workflows_namespace }}"
+      tags: [pre]
+
+    - name: "[argo-workflows-pre] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre"
+        dto_helm_command: >
+          helm upgrade --install argo-workflows-pre {{ remote_charts_dir }}/argo-workflows/pre-k
+          --namespace {{ argo_workflows_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argo_workflows_pre_helm_timeout }}
+      tags: [pre]
+
+    # =========================================================================
+    # STEP 3: PRE-CFG (cr namespace + обязательные права контроллера и argo-server)
+    # Идёт ПЕРЕД install и БЕЗ kustomize namespace-трансформера: трансформер
+    # переименовал бы объект Namespace и переписал чужой metadata.namespace у
+    # Role/RoleBinding. Положить это в install или в cfg нельзя — см. шапку
+    # charts/argo-workflows/pre-cfg/templates/cr-namespace.yaml.
+    # =========================================================================
+
+    - name: "[argo-workflows-pre-cfg] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre-cfg"
+        dto_chart_name: "pre-cfg"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-workflows/pre-cfg/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/pre-cfg"
+      tags: [pre-cfg]
+
+    - name: "[argo-workflows-pre-cfg] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre-cfg"
+        dto_dir: "{{ remote_charts_dir }}/argo-workflows/pre-cfg"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argo_workflows_pre_cfg_helm_values | to_nice_yaml }}"
+      tags: [pre-cfg]
+
+    - name: "[argo-workflows-pre-cfg] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre-cfg"
+        dto_release_name: "argo-workflows-pre-cfg"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/pre-cfg"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-workflows/pre-cfg/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-workflows/pre-cfg-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-workflows/pre-cfg-k"
+        dto_patches_list: "{{ argo_workflows_pre_cfg_kustomize_patches }}"
+        dto_target_namespace: "{{ argo_workflows_namespace }}"
+      tags: [pre-cfg]
+
+    - name: "[argo-workflows-pre-cfg] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argo-workflows-pre-cfg"
+        dto_helm_command: >
+          helm upgrade --install argo-workflows-pre-cfg {{ remote_charts_dir }}/argo-workflows/pre-cfg-k
+          --namespace {{ argo_workflows_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argo_workflows_pre_cfg_helm_timeout }}
+      tags: [pre-cfg]
+
+    # =========================================================================
+    # STEP 4: INSTALL (vendored upstream manifest)
+    # =========================================================================
+
+    # Ключ config апстрим принимает только как ЕДИНСТВЕННЫЙ ключ ConfigMap
+    # (легаси-формат «всё под config: |»), а база конфигурации всегда кладёт
+    # workflowDefaults, при OIDC — ещё и sso. С config рядом контроллер
+    # завершается Fatal сразу после helm upgrade, а --atomic этого не ловит.
+    - name: "[argo-workflows-install] Assert controller config has no 'config' key"
+      assert:
+        that:
+          - "'config' not in argo_workflows_controller_config_effective"
+        fail_msg: >-
+          argo_workflows_controller_config must not contain the key 'config': upstream accepts it
+          only as the sole key of workflow-controller-configmap, and this component always renders
+          workflowDefaults (and sso with OIDC) next to it, so the controller would exit Fatal.
+          Move the contents of 'config' to top-level keys of argo_workflows_controller_config.
+      run_once: true
+      tags: [install]
+
+    # Запуск только по ссылке на WorkflowTemplate — обязательное свойство
+    # установки (база конфигурации): override не может его снять или
+    # опечататься — неизвестное значение контроллер молча считает «без
+    # ограничений».
+    - name: "[argo-workflows-install] Assert controller restricts workflows to template references"
+      assert:
+        that:
+          - argo_workflows_controller_config_effective.workflowRestrictions is defined
+          - argo_workflows_controller_config_effective.workflowRestrictions is mapping
+          - argo_workflows_controller_config_effective.workflowRestrictions.templateReferencing | default('') in ['Strict', 'Secure']
+        fail_msg: >-
+          workflowRestrictions.templateReferencing must be Strict or Secure (it is
+          '{{ argo_workflows_controller_config_effective.workflowRestrictions.templateReferencing | default('') }}'):
+          only Workflows referencing a WorkflowTemplate may run. Do not override
+          workflowRestrictions in argo_workflows_controller_config.
+      run_once: true
+      tags: [install]
+
+    # -------------------------------------------------------------------------
+    # OIDC fail-fast (только при argo_workflows_oidc_enabled): argo-server с SSO
+    # читает OIDC-Secret при старте и без него уходит в CrashLoopBackOff, а
+    # --atomic откатил бы релиз только по таймауту. Поэтому до helm проверяется
+    # и Vault, и материализованный ESO Secret. В Vault проверяются ОБА ключа:
+    # clientId argo-server тоже читает только из Secret, и без него падает так
+    # же, как без clientSecret.
+    # -------------------------------------------------------------------------
+
+    - name: "[argo-workflows-install] Check OIDC clientSecret present in Vault (when enabled)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_vault_get_path: "{{ eso_vault_integration_argo_workflows.kv_engine_path }}{{ argo_workflows_secret_oidc_creds.vault_path }}"
+        dto_vault_get_field: "clientSecret"
+        dto_vault_get_res_fact_name: "{{ _local_argo_workflows_oidc_secret_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_argo_workflows_oidc_secret_exists_key }}"
+      when: argo_workflows_oidc_enabled | bool
+      tags: [install]
+
+    - name: "[argo-workflows-install] Check OIDC clientId present in Vault (when enabled)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/vault/tasks-vault-get.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_vault_get_path: "{{ eso_vault_integration_argo_workflows.kv_engine_path }}{{ argo_workflows_secret_oidc_creds.vault_path }}"
+        dto_vault_get_field: "clientId"
+        dto_vault_get_res_fact_name: "{{ _local_argo_workflows_oidc_id_check_key }}"
+        dto_vault_get_res_exists_fact_name: "{{ _local_argo_workflows_oidc_id_exists_key }}"
+      when: argo_workflows_oidc_enabled | bool
+      tags: [install]
+
+    - name: "[argo-workflows-install] Fail if OIDC enabled but creds missing"
+      assert:
+        that:
+          - lookup('vars', _local_argo_workflows_oidc_secret_exists_key)
+          - lookup('vars', _local_argo_workflows_oidc_id_exists_key)
+        fail_msg: >-
+          argo_workflows_oidc_enabled=true but no OIDC creds at
+          {{ eso_vault_integration_argo_workflows.kv_engine_path }}{{ argo_workflows_secret_oidc_creds.vault_path }}.
+          Seed them: vault kv put {{ eso_vault_integration_argo_workflows.kv_engine_path }}{{ argo_workflows_secret_oidc_creds.vault_path }} clientId=<id> clientSecret=<secret>
+      when: argo_workflows_oidc_enabled | bool
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [install]
+
+    - name: "[argo-workflows-install] Wait for OIDC secret (when enabled)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-secret.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_wait_secret_name: "{{ argo_workflows_secret_oidc_creds.body.target.name }}"
+        dto_wait_secret_namespace: "{{ argo_workflows_namespace }}"
+      when: argo_workflows_oidc_enabled | bool
+      tags: [install]
+
+    - name: "[argo-workflows-install] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_chart_name: "install"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-workflows/install/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/install"
+      tags: [install]
+
+    - name: "[argo-workflows-install] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_dir: "{{ remote_charts_dir }}/argo-workflows/install"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argo_workflows_install_helm_values | to_nice_yaml }}"
+      tags: [install]
+
+    # namespace_transform — по конвенции KUSTOMIZE_WRAPPER (как у argo-events):
+    # в вендоренном манифесте нет ни одного namespace, и трансформер явно
+    # проставляет его в metadata и в subjects RoleBinding'ов. Патчи
+    # переводят флаги на env ARGO_<FLAG> и пишут данные
+    # workflow-controller-configmap.
+    - name: "[argo-workflows-install] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_release_name: "argo-workflows"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/install"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-workflows/install/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-workflows/install-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-workflows/install-k"
+        dto_patches_list: "{{ argo_workflows_install_kustomize_patches }}"
+        dto_target_namespace: "{{ argo_workflows_namespace }}"
+        dto_kustomize_apply_namespace_transform: true
+      tags: [install]
+
+    - name: "[argo-workflows-install] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_helm_command: >
+          helm upgrade --install argo-workflows {{ remote_charts_dir }}/argo-workflows/install-k
+          --namespace {{ argo_workflows_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argo_workflows_install_helm_timeout }}
+      tags: [install]
+
+    - name: "[argo-workflows-install] Wait for rollout"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-wait-rollout.yaml"
+      vars:
+        dto_label_name: "argo-workflows-install"
+        dto_rollout_namespace: "{{ argo_workflows_namespace }}"
+        dto_rollout_timeout: "{{ argo_workflows_install_rollout_timeout }}"
+        dto_rollout_resources_list: "{{ argo_workflows_install_rollout_resources }}"
+      tags: [install]
+
+    # =========================================================================
+    # STEP 5: POST (PodMonitor + UI Ingress + Certificate)
+    # =========================================================================
+
+    - name: "[argo-workflows-post] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-workflows-post"
+        dto_chart_name: "post"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-workflows/post/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/post"
+      tags: [post]
+
+    - name: "[argo-workflows-post] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argo-workflows-post"
+        dto_dir: "{{ remote_charts_dir }}/argo-workflows/post"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argo_workflows_post_helm_values | to_nice_yaml }}"
+      tags: [post]
+
+    - name: "[argo-workflows-post] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argo-workflows-post"
+        dto_release_name: "argo-workflows-post"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/post"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-workflows/post/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-workflows/post-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-workflows/post-k"
+        dto_patches_list: "{{ argo_workflows_post_kustomize_patches }}"
+        dto_target_namespace: "{{ argo_workflows_namespace }}"
+      tags: [post]
+
+    - name: "[argo-workflows-post] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argo-workflows-post"
+        dto_helm_command: >
+          helm upgrade --install argo-workflows-post {{ remote_charts_dir }}/argo-workflows/post-k
+          --namespace {{ argo_workflows_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argo_workflows_post_helm_timeout }}
+      tags: [post]
+
+    # =========================================================================
+    # STEP 6: CFG (executor + SSO RBAC + операторский RBAC + прикладные CR)
+    # Всё, что не контроллер и не сервер. Идёт последней: SSO-ServiceAccount'ы
+    # нужны только для входа в UI, а WorkflowTemplate и CronWorkflow ссылаются
+    # на SA executor'а. Wait for rollout нет: рабочих нагрузок стадия не
+    # порождает.
+    # =========================================================================
+
+    - name: "[argo-workflows-cfg] Copy chart to remote"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-chart.yaml"
+      vars:
+        dto_label_name: "argo-workflows-cfg"
+        dto_chart_name: "cfg"
+        dto_chart_local_src: "{{ project_root }}/playbook-app/charts/argo-workflows/cfg/"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/cfg"
+      tags: [cfg]
+
+    - name: "[argo-workflows-cfg] Create values file"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-copy-helm-values.yaml"
+      vars:
+        dto_label_name: "argo-workflows-cfg"
+        dto_dir: "{{ remote_charts_dir }}/argo-workflows/cfg"
+        dto_filename: "values-override.yaml"
+        dto_content: "{{ argo_workflows_cfg_helm_values | to_nice_yaml }}"
+      tags: [cfg]
+
+    - name: "[argo-workflows-cfg] Build kustomize artifact"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-template-kustomize-build.yaml"
+      vars:
+        dto_label_name: "argo-workflows-cfg"
+        dto_release_name: "argo-workflows-cfg"
+        dto_chart_remote_dest: "{{ remote_charts_dir }}/argo-workflows/cfg"
+        dto_values_file_path: "{{ remote_charts_dir }}/argo-workflows/cfg/values-override.yaml"
+        dto_kustomize_tmp_dir: "{{ remote_charts_dir }}/argo-workflows/cfg-k-tmp"
+        dto_kustomize_final_dir: "{{ remote_charts_dir }}/argo-workflows/cfg-k"
+        dto_patches_list: "{{ argo_workflows_cfg_kustomize_patches }}"
+        dto_target_namespace: "{{ argo_workflows_namespace }}"
+      tags: [cfg]
+
+    - name: "[argo-workflows-cfg] Install via Helm (async)"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-helm-upgrade-async.yaml"
+      vars:
+        dto_label_name: "argo-workflows-cfg"
+        dto_helm_command: >
+          helm upgrade --install argo-workflows-cfg {{ remote_charts_dir }}/argo-workflows/cfg-k
+          --namespace {{ argo_workflows_namespace }}
+          --create-namespace
+          --cleanup-on-fail
+          --atomic
+          --wait
+          --wait-for-jobs
+          --timeout {{ argo_workflows_cfg_helm_timeout }}
+      tags: [cfg]
+
+    # =========================================================================
+    # VERIFICATION
+    # =========================================================================
+
+    - name: "[argo-workflows-verify] Verify Helm releases"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-helm.yaml"
+      vars:
+        dto_label_name: "argo-workflows-verify"
+        dto_helm_namespace: "{{ argo_workflows_namespace }}"
+      tags: [always]
+
+    - name: "[argo-workflows-verify] Show pods in {{ argo_workflows_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-pods.yaml"
+      vars:
+        dto_label_name: "argo-workflows-verify"
+        dto_pods_namespace: "{{ argo_workflows_namespace }}"
+      tags: [always]
+
+    - name: "[argo-workflows-verify] Show NetworkPolicies in {{ argo_workflows_namespace }}"
+      include_tasks: "{{ project_root }}/playbook-app/tasks/tasks-k8s-list-network-policy.yaml"
+      vars:
+        dto_label_name: "argo-workflows-verify"
+        dto_np_namespace: "{{ argo_workflows_namespace }}"
+      tags: [always]
+
+    - name: "[argo-workflows-verify] Show info"
+      debug:
+        msg:
+          - "=============================================="
+          - "ARGO WORKFLOWS INSTALLATION COMPLETE"
+          - "=============================================="
+          - "UI: https://{{ argo_workflows_ui_domain }}"
+          - "Auth mode: {{ argo_workflows_server_auth_mode }}"
+          - "CR namespace: {{ argo_workflows_cr_namespace }}"
+          - ""
+          - "Состояние объектов:"
+          - "  kubectl -n {{ argo_workflows_cr_namespace }} get workflows,workflowtemplates,cronworkflows"
+          - "=============================================="
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]
+
+    - name: "[argo-workflows-verify] Installation complete"
+      debug:
+        msg: "argo-workflows-pre + argo-workflows-pre-cfg + argo-workflows + argo-workflows-post + argo-workflows-cfg: OK"
+      delegate_to: "{{ master_manager_fact }}"
+      run_once: true
+      tags: [always]

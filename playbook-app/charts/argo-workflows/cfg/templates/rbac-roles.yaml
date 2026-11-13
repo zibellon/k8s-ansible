@@ -1,0 +1,18 @@
+# =============================================================================
+# ARGO WORKFLOWS ROLES (namespaced)
+#   Ограничивают права одним namespace. Типовой случай — resource-шаблон
+#   Workflow'а, который создаёт или меняет объекты в namespace приложения.
+#   Namespace берётся из элемента: он может отличаться от managed namespace.
+#   Без него объект ложится в managed namespace, а не в namespace релиза —
+#   там лежат Secret sso и OIDC-креды argo-server.
+# =============================================================================
+{{- range $role := .Values.rbacRoles }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $role.name }}
+  namespace: {{ $role.namespace | default $.Values.managedNamespace }}
+rules:
+{{ toYaml $role.rules | indent 2 }}
+{{- end }}

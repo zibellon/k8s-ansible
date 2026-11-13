@@ -1,0 +1,80 @@
+---
+# Managed namespace — cr namespace, куда смотрят контроллер и сервер (он
+# всегда отличается от namespace компонента). Executor, SSO-ServiceAccount'ы,
+# WorkflowTemplate'ы и CronWorkflow'ы ложатся сюда.
+managedNamespace: "argo-workflows-cfg"
+
+# Executor — ServiceAccount, от которого по умолчанию работают поды
+# Workflow'ов, и Role/RoleBinding с тем же именем. Рендерится всегда.
+executor:
+  saName: "argo-workflows-executor"
+  rules: []
+
+# SSO-ServiceAccount'ы — по одному на учётку доступа. На элемент шаблон
+# рендерит SA с rbac-rule, его token-Secret и привязку на каждый элемент
+# roles — {roleType: Role|ClusterRole, roleName, bindingType}, все три поля
+# обязательны, как accounts у Kargo. Роли здесь не создаются — только ссылки
+# на Role из rbacRoles или ClusterRole из rbacClusterRoles ниже.
+# bindingType: RoleBinding — права только в managedNamespace,
+# ClusterRoleBinding — на весь кластер, только с ClusterRole. Правило
+# собирает шаблон из preferredUsernames, сырых правил нет. precedence —
+# больше выигрывает; не задан = 0.
+ssoServiceAccounts: []
+# - name: "argo-workflows-sso-admin-rw"
+#   precedence: 10
+#   preferredUsernames:
+#     - "cluster-admin-rw@cluster-tools.auth.example.com"
+#   roles:
+#     - roleType: "Role"
+#       roleName: "argo-workflows-admin-rw"
+#       bindingType: "RoleBinding"
+#     - roleType: "ClusterRole"
+#       roleName: "argo-workflows-cwft-reader"
+#       bindingType: "ClusterRoleBinding"
+
+# Пользовательские RBAC-объекты — пять независимых списков, элементы
+# рендерятся как есть (raw). Связей между списками нет: SA может быть без
+# биндинга, роль без SA, биндинг ссылаться на любую существующую роль.
+# ServiceAccount, Role и RoleBinding без namespace ложатся в managedNamespace.
+# ServiceAccount:      {name, namespace?, labels?, annotations?}
+# Role:                {name, namespace?, rules}
+# ClusterRole:         {name, rules}
+# RoleBinding:         {name, namespace?, roleRef, subjects}
+# ClusterRoleBinding:  {name, roleRef, subjects}
+rbacServiceAccounts: []
+rbacRoles: []
+rbacClusterRoles: []
+rbacRoleBindings: []
+rbacClusterRoleBindings: []
+
+# WorkflowTemplates — каждый элемент принимает ПОЛНЫЙ spec (operator-provided);
+# template оборачивает metadata (name, namespace = managedNamespace, +
+# опционально labels и annotations — пустые/отсутствующие не добавляются).
+# ⚠️ Выражения Argo ({{workflow.name}} и т.п.) в inventory — только внутри
+# {% raw %}...{% endraw %}, иначе их съест Jinja.
+workflowTemplates: []
+# - name: "hello"
+#   labels:                                          # optional
+#     app.kubernetes.io/part-of: argo-workflows
+#   spec:
+#     entrypoint: main
+#     templates:
+#       - name: main
+#         container:
+#           image: busybox:1.36
+#           command: [echo]
+#           args: ["{{workflow.name}}"]
+
+# CronWorkflows — каждый принимает ПОЛНЫЙ spec; правила те же, что у
+# WorkflowTemplates.
+cronWorkflows: []
+# - name: "hello-hourly"
+#   spec:
+#     schedules:
+#       - "0 * * * *"
+#     workflowSpec:
+#       workflowTemplateRef:
+#         name: hello
+
+# Custom K8s objects to render (operator-side, default empty)
+extraObjects: []

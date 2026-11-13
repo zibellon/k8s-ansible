@@ -1,0 +1,46 @@
+# =============================================================================
+# EXECUTOR — SERVICE ACCOUNT ПОДОВ WORKFLOW'ОВ
+#   ServiceAccount, от которого по умолчанию работают поды Workflow'ов
+#   (workflowDefaults.spec.serviceAccountName в ConfigMap контроллера), и
+#   Role + RoleBinding с тем же именем. Рендерится в managed namespace — там
+#   же, где запускаются поды.
+#
+#   Объект ОБЯЗАТЕЛЬНЫЙ, поэтому рендерится всегда и отдельным шаблоном, а не
+#   элементом операторских списков: с v3.4 wait-контейнер каждого пода пишет
+#   результат шага в WorkflowTaskResult (create/patch), и без этих прав ЛЮБОЙ
+#   Workflow падает на нём. У дефолтного SA namespace таких прав нет.
+#
+#   ⚠️ HTTP-шаблонам (agent-под) нужны ещё token-Secret SA и Role с
+#   workflowtasksets list/watch + workflowtasksets/status patch — здесь их
+#   нет. Plugin-шаблоны в этой установке не работают вовсе: контроллер
+#   запущен без ARGO_EXECUTOR_PLUGINS=true и без
+#   ARGO_WORKFLOW_LEVEL_EXECUTOR_PLUGINS=true.
+# =============================================================================
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.executor.saName }}
+  namespace: {{ .Values.managedNamespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.executor.saName }}
+  namespace: {{ .Values.managedNamespace }}
+rules:
+{{ toYaml .Values.executor.rules | indent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.executor.saName }}
+  namespace: {{ .Values.managedNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.executor.saName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.executor.saName }}
+    namespace: {{ .Values.managedNamespace }}

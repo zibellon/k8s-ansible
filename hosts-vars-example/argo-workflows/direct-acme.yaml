@@ -1,0 +1,27 @@
+# =============================================================================
+# ВАРИАНТ 1: без OIDC, TLS на origin через cert-manager. Namespace'ов, как
+# всегда у argo-workflows, ДВА: контроллер и argo-server — в argo-workflows,
+# Workflow'ы, их шаблоны и поды — в argo-workflows-cfg (дефолт
+# argo_workflows_cr_namespace); namespace и права в нём заводит стадия pre-cfg.
+# Режим аутентификации — client: UI принимает только bearer-токен Kubernetes,
+# и всё API выполняется с правами этого токена, поэтому UI за VPN (включён
+# явно, базовый дефолт — false): на публичном Ingress это вход в API для
+# любого утёкшего токена SA. Если шаблоны едут из git-ops, ArgoCD нужна пара RoleBinding
+# (deployer + ui) в argo-workflows-cfg и этот namespace в поле namespaces
+# секрета eso-secret/argocd/clusters/in-cluster.
+# =============================================================================
+all:
+  vars:
+    argo_workflows_enabled: true
+
+    argo_workflows_ingress_class_name: "traefik-lb"
+    argo_workflows_cert_manager_issuer_enabled: true
+
+    argo_workflows_ui_domain: "argo-workflows.example.com"
+    argo_workflows_ui_tls_secret_name: "cert-argo-workflows"
+    argo_workflows_ui_ingress_enabled: true
+    argo_workflows_ui_ingress_tls_enabled: true
+    argo_workflows_ui_certificate_enabled: true
+    argo_workflows_ui_vpn_only_enabled: true
+
+    argo_workflows_oidc_enabled: false

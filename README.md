@@ -5,7 +5,7 @@
 - **`playbook-system/`** — императивные операции уровня узла: `kubeadm`, ETCD с шифрованием, HAProxy-балансировщик apiserver'а как systemd-юнит, join / drain / remove ноды.
 - **`playbook-app/`** — декларативная установка приложений уровня кластера через Helm. Чарт бывает двух видов:
   - **upstream** — официальный чарт продукта (cilium, cert-manager, traefik, haproxy, vault, gitlab, zitadel, seaweedfs, linstor, kargo, portainer, teleport и другие — таких большинство);
-  - **локальный** — вендоренный апстрим-манифест или собственный чарт из `playbook-app/charts/` (argocd, argo-events, argo-rollouts, mon-system, filestash, outline, cluster-base).
+  - **локальный** — вендоренный апстрим-манифест или собственный чарт из `playbook-app/charts/` (argocd, argo-events, argo-workflows, argo-rollouts, mon-system, filestash, outline, cluster-base).
 
 Основной принцип установки компонента — **три фазы**, каждая отдельным helm-релизом и перезапускаемая своим `--tags`:
 
@@ -19,14 +19,14 @@
 
 | Стадии | У кого | Зачем |
 |---|---|---|
-| `crds` | argocd, mon-system, argo-events, argo-rollouts | CRD ставятся отдельно от релиза: внутри него `helm uninstall` снёс бы каскадом все CR |
+| `crds` | argocd, mon-system, argo-events, argo-workflows, argo-rollouts | CRD ставятся отдельно от релиза: внутри него `helm uninstall` снёс бы каскадом все CR |
 | `postgresql` | gitlab, zitadel, seaweedfs, outline | своя БД компонента, отдельным `StatefulSet` |
 | `redis` | gitlab, outline | свой кэш, отдельным `StatefulSet` |
 | `cronjob` | outline | планировщик не входит в дефолтный набор `SERVICES` — задачи дёргаются снаружи |
 | `operator`, `vault-cr`, `unseal-keys` | vault | оператор bank-vaults, затем сам CR Vault, затем раздача unseal-ключей |
 | `install-operator`, `install-cluster` | linstor | два разных чарта: Piraeus-оператор и кластер LINSTOR |
-| `pre-cfg` | argo-events | cr-namespace и права контроллера в нём — обязаны появиться **до** `install` |
-| `cfg` | argocd, kargo, argo-events, teleport | конфигурация после старта контроллера: права, `Project`, `AppProject`, `Application`, CR, роли и пользователи Teleport |
+| `pre-cfg` | argo-events, argo-workflows | cr-namespace и права контроллера в нём (у argo-workflows — ещё и argo-server) — обязаны появиться **до** `install` |
+| `cfg` | argocd, kargo, argo-events, argo-workflows, teleport | конфигурация после старта контроллера: права, `Project`, `AppProject`, `Application`, CR, SSO-учётки argo-workflows, роли и пользователи Teleport |
 | `policy-sync`, `user-sync`, `identity-distribute`, `bucket-sync` | seaweedfs | декларативная синхронизация IAM и бакетов в живой filer |
 | `accounts-sync`, `accounts-distribute` | argocd | локальные аккаунты и раздача их кред по путям Vault |
 | `config-root` | gitlab | реконсиляция root-пароля через Vault |
@@ -73,13 +73,15 @@
     - [Outline](#outline)
     - [Portainer](#portainer)
     - [Argo-тройка — порядок установки и права](#argo-тройка--порядок-установки-и-права)
-      - [Права: общее для всех трёх](#права-общее-для-всех-трёх)
+      - [Права: общее для всех четырёх](#права-общее-для-всех-четырёх)
       - [Права: kargo](#права-kargo)
       - [Права: argo-events — два варианта](#права-argo-events--два-варианта)
+      - [Права: argo-workflows — только два namespace](#права-argo-workflows--только-два-namespace)
     - [ArgoCD](#argocd)
     - [ArgoCD — стадия `cfg`](#argocd--стадия-cfg)
     - [Argo Rollouts](#argo-rollouts)
     - [Argo Events](#argo-events)
+    - [Argo Workflows](#argo-workflows)
     - [Kargo](#kargo)
     - [mon-system](#mon-system)
     - [cluster-base](#cluster-base)
@@ -1042,41 +1044,45 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/portainer-r
 
 ### Argo-тройка — порядок установки и права
 
-Речь про `argocd`, `kargo` и `argo-events`.
+Речь про `argocd`, `kargo`, `argo-events` и `argo-workflows`. Название раздела историческое: компонентов теперь четыре.
 
-> **Правило.** Сначала ВСЕ ТРИ ставятся **без** стадии `cfg` (только контроллеры), и лишь потом `cfg` — в особом порядке.
+> **Правило.** Сначала ВСЕ ЧЕТЫРЕ ставятся **без** стадии `cfg` (только контроллеры), и лишь потом `cfg` — в особом порядке.
 >
 > ⚠️ Гонять эти плейбуки **без** `--tags` на голом кластере НЕЛЬЗЯ: без тегов отработает и `cfg`, а он опирается на объекты, которых на этом шаге ещё нет. На живом кластере (всё уже стоит) можно и без тегов.
 
 **Волна 1 — контроллеры.** Порядок внутри волны произвольный.
 
 ```bash
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml      --tags crds,pre,install,post
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-install.yaml       --tags pre,install,post
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-events-install.yaml --tags crds,pre,pre-cfg,install,post
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml         --tags crds,pre,install,post
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-install.yaml          --tags pre,install,post
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-events-install.yaml    --tags crds,pre,pre-cfg,install,post
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-workflows-install.yaml --tags crds,pre,pre-cfg,install,post
 ```
 
 **Волна 2 — `cfg`.** Порядок **обязателен**.
 
 ```bash
 # 1. создаёт namespace Kargo-проектов вместе с самим Project
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-install.yaml       --tags cfg
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/kargo-install.yaml          --tags cfg
 
 # 2. позиция средняя = соглашение, его namespace создан в волне 1
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-events-install.yaml --tags cfg
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-events-install.yaml    --tags cfg
 
-# 3. RoleBinding едет в namespace из шага 1, раньше него нельзя
-ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml      --tags cfg
+# 3. то же соглашение: argo-workflows-cfg создан в волне 1 стадией pre-cfg
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-workflows-install.yaml --tags cfg
 
-# 4. ОБЯЗАТЕЛЕН: helm upgrade не пересоздаёт под контроллера, а уже открытые watch
+# 4. RoleBinding едет в namespace из шага 1, раньше него нельзя
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-install.yaml         --tags cfg
+
+# 5. ОБЯЗАТЕЛЕН: helm upgrade не пересоздаёт под контроллера, а уже открытые watch
 #    переживают отзыв RBAC — без рестарта ограничение применяется наполовину
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argocd-restart.yaml
 
-# 5. последним: RoleBinding нельзя создать в несуществующем namespace
+# 6. последним: RoleBinding нельзя создать в несуществующем namespace
 ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/cluster-base-install.yaml --tags rbac
 ```
 
-#### Права: общее для всех трёх
+#### Права: общее для всех четырёх
 
 ArgoCD ставится namespace-scoped. Cluster-wide грант у него **ровно один и только на чтение**: `argocd-managed-ns-reader` (`namespaces get/list/watch`) через `ClusterRoleBinding`.
 
@@ -1124,6 +1130,18 @@ ArgoCD ставится namespace-scoped. Cluster-wide грант у него **
 - Cluster-scoped watch потоков (`Promotion`, `Application`) — `argo_events_rbac_cluster_roles` и `argo_events_rbac_cluster_role_bindings`. Эти объекты ArgoCD создать не может: вербов на cluster-scoped у него нет.
 
 > ⚠️ Контроллер видит CR **ровно в одном** namespace. Включение чужого — это **перенос** реконсиляции, а не расширение: списки CR своего namespace (`argo_events_event_buses`, `_event_sources`, `_sensors`) обязаны остаться **пустыми**: объекты в них не будут обработаны контроллером.
+
+#### Права: argo-workflows — только два namespace
+
+Выбора, как у argo-events, нет: `argo-workflows` + `argo-workflows-cfg` всегда. Install падает на assert'е, если `argo_workflows_cr_namespace` пуст или совпадает с `argo_workflows_namespace`.
+
+- namespace `argo-workflows` заводит сам helm-релиз (`--create-namespace`).
+- namespace `argo-workflows-cfg` и права контроллера и argo-server в нём (`Role` + `RoleBinding`) заводит стадия `pre-cfg` **сама**. В `cluster-base` его объявлять **нельзя** — получится два владельца.
+- ArgoCD в `argo-workflows-cfg` — пара deployer + ui: `WorkflowTemplate` / `CronWorkflow` едут из git-ops. Плюс `argo-workflows-cfg` в поле `namespaces` секрета Vault `eso-secret/argocd/clusters/in-cluster`.
+- ArgoCD в `argo-workflows` — **никогда**: там Secret `sso` и OIDC-креды, а значит и возможность подделать сессию любого пользователя.
+- SA executor'а, SSO-учётки и их роли в `argo-workflows-cfg` кладёт стадия `cfg` самого компонента.
+
+> ⚠️ Право создавать Workflow в `argo-workflows-cfg` = права администратора этого namespace: под Workflow'а может работать от любого его SA и примонтировать любой его Secret.
 
 ---
 
@@ -1338,6 +1356,93 @@ CRD ставит отдельная стадия `crds`. Внутри helm-ре�
 
 ---
 
+### Argo Workflows
+
+**Чарт:** локальный — вендоренный апстрим-манифест (`namespace-install.yaml` v4.1.6).
+
+Движок workflow'ов: `workflow-controller` исполняет `Workflow` / `CronWorkflow` / `WorkflowTemplate`, `argo-server` отдаёт UI и API. Включается флагом `argo_workflows_enabled` (по умолчанию `false`).
+
+- Есть UI, доступный по URL (`argo_workflows_ui_domain`).
+- Нет автоматической обработки новых конфигов: после их смены нужен ручной restart.
+- Есть работа с ESO.
+
+**Namespace ровно два — и выбора нет**, в отличие от argo-events:
+
+| Namespace | Что там живёт |
+|---|---|
+| `argo_workflows_namespace` (`argo-workflows`) | контроллер, argo-server, их ConfigMap, Secret `sso`, OIDC-креды |
+| `argo_workflows_cr_namespace` (`argo-workflows-cfg`) | `WorkflowTemplate` / `CronWorkflow` — из git-ops через ArgoCD; `Workflow` и их поды — при запуске (не синком: `kind: Workflow` в git-ops перезапускался бы раз в неделю — TTL + selfHeal); SA executor'а и SSO-учётки — из стадии `cfg` |
+
+> ⚠️ Режима «всё в одном namespace» нет: install падает на assert'е. В одном namespace автор Workflow запустил бы под с SA `argo-server` или примонтировал Secret `sso` и подделал бы сессию любого пользователя.
+
+**Порядок стадий:** `crds` → `pre` → `pre-cfg` → `install` → `post` → `cfg`
+
+> ⚠️ `pre-cfg` идёт **перед** `install`: он заводит `argo-workflows-cfg` и права контроллера и argo-server в нём. Без прав контроллер уходит в `CrashLoopBackOff`, а с **неполными** — висит при зелёном `helm --wait` (readinessProbe у него нет, `/healthz` отвечает 200, пока нет поданных Workflow). Как только поданный Workflow ждёт без прогресса дольше 5 минут, liveness начинает перезапускать контроллер по кругу. argo-server без них навсегда остаётся NotReady.
+
+**Что берётся из `cluster-base` — НИЧЕГО.**
+
+- namespace `argo-workflows` компонент создаёт сам (`--create-namespace`).
+- `argo-workflows-cfg` создаёт стадия `pre-cfg`. Объявлять его в `cluster-base` **нельзя**: получится второй владелец объекта. Совпадать с `argo_events_cr_namespace` он тоже не должен.
+
+**Preflight — до первой установки.**
+
+1. `vault-install.yaml --tags vault-cr` — политика и роль `argo-workflows.eso-main`. Нужны **и без OIDC**: их проверяет install.
+2. DNS `argo_workflows_ui_domain` → ingress кластера.
+3. При OIDC (`argo_workflows_oidc_enabled: true`) — приложение в ZITADEL типа Web, CODE + Basic, redirect `https://<argo_workflows_ui_domain>/oauth2/callback`, «User Info inside ID Token» = TRUE. Затем креды в Vault:
+
+   ```bash
+   vault kv put eso-secret/argo-workflows/oidc clientId=<id> clientSecret=<secret>
+   ```
+
+   В override — org-pin в `argo_workflows_oidc_scopes` и элементы `argo_workflows_sso_service_accounts`: без хотя бы одного SSO-ServiceAccount'а вход проходит, но любой запрос получает 403.
+
+4. При OIDC принудительный HTTPS обязан обеспечить внешний слой (за Cloudflare — Always Use HTTPS + HSTS): cookie сессии ставится без флага `Secure`, а HSTS argo-server не шлёт.
+5. Если содержимое `argo-workflows-cfg` едет из git-ops — права ArgoCD, см. [Права: argo-workflows](#права-argo-workflows--только-два-namespace).
+
+> ⚠️ Установка **падает на fail-fast**, если OIDC включён, а `clientId` или `clientSecret` в Vault нет.
+
+**Теги:** `crds` · `pre` · `pre-cfg` · `install` · `post` · `cfg`
+
+```bash
+# установка + конфигурация (на голом кластере — двумя волнами, см. Argo-тройку)
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-workflows-install.yaml
+
+# отдельный playbook для перезапуска
+ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/argo-workflows-restart.yaml
+```
+
+Рестарт перекатывает контроллер и argo-server, поды Workflow'ов не трогает. Он **обязателен** после любой смены конфигурации (`--tags install`) и после ротации client secret в Vault: argo-server читает ConfigMap и OIDC-Secret только при старте, а `helm upgrade` поды не перекатывает. Смена SSO-учёток и ролей (`--tags cfg`) рестарта не требует — применяется к новым запросам сразу. При **отзыве** доступа уже открытые потоки UI (watch, follow логов) так не рвутся — только рестартом; сессия и скопированные токены живут дальше. Полная процедура — «Отзыв доступа» в [`reference/components.md`](reference/components.md) §17.14.
+
+> ⚠️ **Известное ограничение режима `sso`:** argo-server принимает только токен своей SSO-сессии (`Bearer v2:…`). Bearer-токен ServiceAccount'а Kubernetes (CI, скрипты) и вебхуки `/api/v1/events` получают 401.
+
+**Запуск Workflow с локальной машины** — двумя путями:
+
+1. **Через argo-server.** Войти в UI → User Info → «Copy to clipboard»: там `ARGO_SERVER`, `ARGO_TOKEN='Bearer v2:…'` и остальные переменные для CLI. Токен живёт столько же, сколько сессия (8h), и адресно не отзывается — не сохранять его в истории shell и файлах.
+
+   ```bash
+   export ARGO_NAMESPACE=argo-workflows-cfg
+   argo submit --from workflowtemplate/<имя> --watch
+   ```
+
+2. **Мимо argo-server, через Kubernetes API.** `ARGO_SERVER` не задан, kube-контекст с правом `create` на `workflows` в `argo-workflows-cfg` (для `--from` — ещё `get` на `workflowtemplates`); read-only Teleport-роли не хватит.
+
+   ```bash
+   argo submit -n argo-workflows-cfg --from workflowtemplate/<имя>
+   ```
+
+**Обновление версии.** Источник — release asset `namespace-install.yaml` нужного тега. `git show` по тегу, как у argo-events, не годится: в git-теге манифест лежит kustomize-каталогом.
+
+1. Разрезать asset байт-в-байт:
+   - `playbook-app/charts/argo-workflows/crds/crds.yaml` — только CRD (8 документов);
+   - `playbook-app/charts/argo-workflows/install/templates/install.yaml` — всё, кроме CRD.
+2. Поправить `appVersion` в `playbook-app/charts/argo-workflows/install/Chart.yaml`. Отдельной переменной версии нет, образы в asset уже несут тег.
+3. Сверить ручные копии с новым апстримом: `argo_workflows_controller_cr_ns_role_rules` / `argo_workflows_server_cr_ns_role_rules` — с новыми `argo-role` / `argo-server-role`, ключи `argo_workflows_controller_config` — с новой схемой конфигурации. Расхождение даёт тихое зависание контроллера или его падение на строгом парсинге.
+4. Прогнать установку и рестарт.
+
+Подробности — namespace-модель, SSO RBAC, executor, конфигурация контроллера — в [`reference/components.md`](reference/components.md) §17.14.
+
+---
+
 ### Kargo
 
 **Чарт:** официальный upstream.
@@ -1428,13 +1533,14 @@ ansible-playbook -i hosts-vars/ -i hosts-vars-override/ playbook-app/mon-system-
 | Namespace | Кто заводит |
 |---|---|
 | `argo-events-cfg` (cr-namespace) | стадия `argo-events --tags pre-cfg` |
+| `argo-workflows-cfg` (cr-namespace) | стадия `argo-workflows --tags pre-cfg` |
 | namespace каждого Kargo-проекта | стадия `kargo --tags cfg`, одним релизом с самим `Project` |
 | `kargo-shared-resources`, `kargo-system-resources` | сам апстримный чарт kargo |
-| namespace самих компонентов (`argocd`, `kargo`, `argo-events`, …) | их же helm-релиз (`--create-namespace`) |
+| namespace самих компонентов (`argocd`, `kargo`, `argo-events`, `argo-workflows`, …) | их же helm-релиз (`--create-namespace`) |
 
 > ⚠️ Объявить такой namespace ещё и здесь = **два владельца** одного объекта → stage падает на `invalid ownership metadata`.
 
-**Важно 1. Порядок stage.** `namespaces` — до продуктов, `rbac` — после установки компонентов, чьи namespace он трогает. `RoleBinding` нельзя создать в несуществующем namespace, поэтому `rbac` идёт последним (traefik-lb, seaweedfs, argocd, argo-events).
+**Важно 1. Порядок stage.** `namespaces` — до продуктов, `rbac` — после установки компонентов, чьи namespace он трогает. `RoleBinding` нельзя создать в несуществующем namespace, поэтому `rbac` идёт последним (traefik-lb, seaweedfs, argocd, argo-events, argo-workflows).
 
 **Важно 2.** Удаление элемента из `cluster_base_namespaces_list` = **снос namespace вместе со всем содержимым** на следующем прогоне. Защиты нет: аннотация `argocd.argoproj.io/sync-options` (`Delete=false` + `Prune=false`) защищает только от ArgoCD, но не от helm.
 

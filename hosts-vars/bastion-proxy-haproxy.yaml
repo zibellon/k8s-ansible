@@ -24,8 +24,10 @@ all:
       - ca-certificates
       - curl
       - fail2ban
+      - nftables
 
     # --- fail2ban sshd jail -> /etc/fail2ban/jail.d/sshd.local ---
+    # ignoreip: localhost + адреса VPN (vpn_ips) никогда не банятся — как на узлах.
     bastion_proxy_haproxy_fail2ban_jail: |
       [sshd]
       enabled = true
@@ -33,12 +35,76 @@ all:
       maxretry = 5
       bantime = 1h
       findtime = 10m
+      ignoreip = {{ (['127.0.0.1/8', '::1'] + vpn_ips) | join(' ') }}
 
     # --- sshd hardening -> /etc/ssh/sshd_config.d/10-bastion-proxy-hardening.conf ---
+    # 10- читается раньше 50-cloud-init.conf образа (sshd берёт первое значение
+    # параметра). Первые четыре строки — те же, что у узлов (hosts-vars/linux-pkgs.yaml,
+    # 00-ansible-hardening.conf), включая PerSourcePenaltyExemptList (localhost + vpn_ips).
     bastion_proxy_haproxy_sshd_hardening: |
       PasswordAuthentication no
+      PermitEmptyPasswords no
+      KbdInteractiveAuthentication no
+      PerSourcePenaltyExemptList {{ (['127.0.0.0/8', '::1'] + vpn_ips) | join(',') }}
       PermitRootLogin prohibit-password
       PubkeyAuthentication yes
+
+    # --- SSH (22/tcp) на bastion: только с адресов VPN или из любой сети ---
+    # bastion не k8s-узел, host firewall Cilium его не защищает — своя таблица
+    # nftables inet bastion_ssh (юнит bastion-ssh-firewall.service, node-install).
+    # false - SSH из любой сети (как было): файл правил только удаляет таблицу;
+    # true  - SSH только с vpn_ips (IPv4 CIDR), SSH по IPv6 закрыт; пустой vpn_ips
+    #   при true - ошибка, ничего не применяется. 80/443 и L4-диапазон не
+    #   затрагиваются. Открытые сессии с других адресов при включении обрываются.
+    bastion_proxy_haproxy_ssh_vpn_only_enabled: false
+
+    # --- nftables-правила -> /etc/bastion-proxy/ssh-firewall.nft ---
+    # Только своя таблица, без flush ruleset: таблица fail2ban не трогается.
+    # "table + delete table" в начале — атомарная замена таблицы при каждой загрузке.
+    # Без ct state: conntrack включил бы отслеживание ВСЕХ соединений bastion
+    # (80/443/L4 под maxconn 250000) и риск переполнить nf_conntrack.
+    # auto-merge: пересекающиеся CIDR в vpn_ips не ломают загрузку.
+    bastion_proxy_haproxy_ssh_firewall_nft: |
+      #!/usr/sbin/nft -f
+      # Managed by Ansible (playbook-system/bastion-proxy-install.yaml). Do NOT edit by hand.
+      table inet bastion_ssh
+      delete table inet bastion_ssh
+      {% if bastion_proxy_haproxy_ssh_vpn_only_enabled | bool %}
+      table inet bastion_ssh {
+          set ssh_allow_v4 {
+              type ipv4_addr
+              flags interval
+              auto-merge
+              elements = { {{ vpn_ips | join(', ') }} }
+          }
+          chain input {
+              type filter hook input priority filter; policy accept;
+              iif "lo" accept
+              tcp dport 22 ip saddr @ssh_allow_v4 accept
+              tcp dport 22 drop
+          }
+      }
+      {% endif %}
+
+    # --- systemd unit -> /etc/systemd/system/bastion-ssh-firewall.service ---
+    # Порядок загрузки как у nftables.service: правила до поднятия сети.
+    bastion_proxy_haproxy_ssh_firewall_unit: |
+      [Unit]
+      Description=bastion-proxy SSH allowlist (nftables table inet bastion_ssh)
+      Wants=network-pre.target
+      Before=network-pre.target shutdown.target
+      Conflicts=shutdown.target
+      DefaultDependencies=no
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/bastion-proxy/ssh-firewall.nft
+      ExecReload=/usr/sbin/nft -f /etc/bastion-proxy/ssh-firewall.nft
+      ExecStop=-/usr/sbin/nft delete table inet bastion_ssh
+
+      [Install]
+      WantedBy=sysinit.target
 
     # --- sysctl (fd limits для range bind) -> /etc/sysctl.d/99-bastion-proxy-haproxy.conf ---
     bastion_proxy_haproxy_sysctl_conf: |

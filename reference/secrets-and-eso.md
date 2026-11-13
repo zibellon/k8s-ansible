@@ -1,6 +1,6 @@
 # Secrets & ESO Deep Dive
 
-Depth reference for the Vault + External Secrets Operator subsystem. For the big picture, see `CLAUDE.md` §6. For the individual Vault/ESO task includes, see [`reusable-tasks.md`](reusable-tasks.md) §1.11–§1.15. For which components are ESO-integrated, see [`components.md`](components.md) §25.
+Depth reference for the Vault + External Secrets Operator subsystem. For the big picture, see `CLAUDE.md` §6. For the individual Vault/ESO task includes, see [`reusable-tasks.md`](reusable-tasks.md) §1.11–§1.15. For which components are ESO-integrated, see [`components.md`](components.md) §20.
 
 ---
 
@@ -82,7 +82,7 @@ Extension: `vault_auth_kubernetes_roles_extra`.
 
 ### 2.3 `eso_vault_integration_<c>` (object, per component)
 
-Lives **exclusively** in `hosts-vars/<c>.yaml` (per-component file). The former `hosts-vars/vault-eso.yaml` was removed in SUB-7 — all 8 ESO integration blocks now live alongside the rest of each component's configuration.
+Lives **exclusively** in `hosts-vars/<c>.yaml` (per-component file). The former `hosts-vars/vault-eso.yaml` was removed in SUB-7 — all 16 ESO integration blocks now live alongside the rest of each component's configuration.
 
 ```yaml
 eso_vault_integration_<c>:
@@ -201,7 +201,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - Unique `name` in merged roles.
 - Referential integrity: each role's `policies` references existing policy.
 
-**Callers:** `vault-install.yaml` + 13 ESO-install playbook'ов + `tests/helm-validate.yaml` (15 callers total).
+**Callers:** `vault-install.yaml` + 15 ESO-install playbook'ов + `tests/helm-validate.yaml` (17 callers total).
 
 ### 3.2 `tasks-eso-verify.yaml`
 
@@ -221,7 +221,7 @@ The former monolithic `tasks-eso-merge.yaml` was split in SUB-1; the resulting t
 - C. ESO uniqueness: `external_secret_name`, `body.target.name`.
 - D. Policy path coverage scoped к role's policies: каждый Vault path (из `body.dataFrom[].extract.key` и `body.data[].remoteRef.key`) должен быть substring какого-либо path-prefix из policies этой role (после stripping `/*`).
 
-**Callers:** 14 ESO-integrated install playbook'ов. НЕ вызывается из `tests/helm-validate.yaml`.
+**Callers:** 16 ESO-integrated install playbook'ов (15 ESO-consumer + `vault-install.yaml`). НЕ вызывается из `tests/helm-validate.yaml`.
 
 ---
 
@@ -278,9 +278,9 @@ spec:
             name: {{ .Values.eso.saName }}
 ```
 
-### 5.3 ExternalSecret — canonical chart template (identical across all 14 components)
+### 5.3 ExternalSecret — canonical chart template (identical across all 16 components, modulo banner)
 
-All 10 `charts/<c>/pre/templates/eso-external-secret.yaml` files are now identical (modulo the banner comment). The entire `spec` body of each `ExternalSecret` comes from inventory via `$secret.body`:
+All 16 `charts/<c>/pre/templates/eso-external-secret.yaml` files are identical except the banner comment line `# EXTERNAL SECRETS FOR <COMPONENT> (from Vault)`. The entire `spec` body of each `ExternalSecret` comes from inventory via `$secret.body`:
 
 ```yaml
 # =============================================================================
@@ -397,7 +397,7 @@ Checklist — keep strictly in order.
 
 7. **Add `eso_vault_integration_<c>` integration object + `<c>_pre_helm_values.eso` block** в `hosts-vars/<c>.yaml`. `<c>_pre_helm_values.eso.secrets` — inline merge: `"{{ eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([])) }}"`. Никаких runtime fact'ов / 8-component hard-coded lists больше нет.
 
-8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 14 components and requires no modification.
+8. **Render `ServiceAccount` and `SecretStore`** in the component's `charts/<c>/pre/templates/`. Copy the canonical `eso-external-secret.yaml` template from any existing component (§5.3) — it is identical across all 16 components except the banner comment line (`# EXTERNAL SECRETS FOR <COMPONENT> (from Vault)`); change only the banner.
 
 9. **В `<c>-install.yaml` (и configure если нужно)** добавь два последовательных pre-check блока: `tasks-vault-config-verify.yaml` (dto: `dto_label_name`) + `tasks-eso-verify.yaml` (dto: `dto_label_name`, `dto_eso_secrets_list` = inline base+extra, `dto_eso_integration_object`, `dto_namespace`). Шаблон в [`reusable-tasks.md`](reusable-tasks.md) §3.1.
 
@@ -464,6 +464,7 @@ All under `eso-secret/` KV engine.
 | `outline` | `eso-secret/outline/*` | `app` (`secretKey`/`utilsSecret` — seed-if-missing, SECRET_KEY never-rotate), `postgresql` (`username`/`password` — seed-if-missing), `redis` (`password` — seed-if-missing), `s3-storage` (`username`/`accessKey`/`secretKey` — SeaweedFS identity-distribute), `oidc` (`clientId`/`clientSecret` — ручной seed, только при `outline_oidc_enabled`) |
 | `kargo` | `eso-secret/kargo/*` | `admin/creds` — поля `username` / `password` (plaintext, для оператора), `passwordHash`, `tokenSigningKey`; seed-if-missing в `kargo-install.yaml`, ротации нет. ExternalSecret использует явный `data[]` с `remoteRef.property` (не `dataFrom.extract`), т.к. имена ключей в K8s Secret жёстко заданы Kargo (`ADMIN_ACCOUNT_PASSWORD_HASH` / `ADMIN_ACCOUNT_TOKEN_SIGNING_KEY`) — открытый password в K8s Secret не попадает |
 | `argo_events` | `eso-secret/argo-events/*` | `telegram` — поле `TG_TOKEN`, токен бота для уведомлений о выкате. **`ExternalSecret` объявлен НЕ здесь, а в git-ops**: продукт `argocd-client/products-no-envs/argo-events-cfg` (`1520-tech-infra`) — там же, где Sensor'ы, которые этот токен используют. Со стороны ansible остаётся каркас: `SecretStore` и SA `eso-main` рендерятся всегда, `eso_vault_integration_argo_events_secrets_extra` остаётся пустым. ⚠️ **Значение продублировано с `eso-secret/system-observer/app`** (тот же бот, его читает Alertmanager): свести в один путь нельзя, роль `<ns>.eso-main` читает только свой namespace — при ротации бота менять В ДВУХ МЕСТАХ. Политика и роль `argo-events.eso-main` обязаны существовать даже при пустом списке: их проверяет группа B в `tasks-eso-verify.yaml`, иначе install падает. ⚠️ Если контроллер направлен в другой namespace (`argo_events_cr_namespace`), ESO там — **не забота ansible**: свой стек и свою Vault-роль приносит тот, кто владеет содержимым namespace, а роль объявляется в override кластера, а не в базе |
+| `argo_workflows` | `eso-secret/argo-workflows/*` | `oidc` (`clientId`/`clientSecret` — ручной seed, только при `argo_workflows_oidc_enabled`) → ExternalSecret `eso-argo-workflows-oidc-creds` в namespace argo-server (`argo_workflows_namespace`), не в cr namespace. clientId в inventory нет — argo-server читает его только из Secret |
 | `portainer` | `eso-secret/portainer/*` | `admin-creds` — admin password: поле `password` (**plaintext**, оператор читает его для входа в UI под `admin`) → K8s Secret `eso-portainer-admin-creds`. Имя ключа задано upstream-чартом (`items[0].key` при монтировании), переименовать нельзя. Авто-генерится при install (seed-if-missing); Portainer хэширует сам, поэтому bcrypt на control-node не нужен. Ротации нет — `--admin-password-file` применяется только пока админов ещё нет |
 | `vault` | `eso-secret/vault/*` | `oidc` (`clientSecret` — ручной seed, только при `vault_oidc_enabled`). Vault читает собственный KV: ESO материализует K8s Secret `vault-oidc-creds`, откуда значение попадает в `spec.envsConfig` конфигурера |
 

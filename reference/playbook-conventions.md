@@ -122,7 +122,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 
 12.1 Add `eso_vault_integration_<c>` object in the component's vars file (see `secrets-and-eso.md` for schema).
 12.2 Include two sequential pre-check task blocks (tag `[always]`): `tasks-vault-config-verify.yaml` (only `dto_label_name`) and `tasks-eso-verify.yaml` (`dto_label_name`, `dto_eso_secrets_list` = inline merge `eso_vault_integration_<c>_secrets + (eso_vault_integration_<c>_secrets_extra | default([]))`, `dto_eso_integration_object`, `dto_namespace`). See [`reusable-tasks.md`](reusable-tasks.md) §3.1 for the canonical template.
-12.3 In the `pre/` chart, render `ServiceAccount` and `SecretStore`. Copy the canonical `eso-external-secret.yaml` template from any existing component — it is identical across all 8 and uses `toYaml $secret.body | indent 2` to emit whatever body is defined in inventory.
+12.3 In the `pre/` chart, render `ServiceAccount` and `SecretStore`. Copy the canonical `eso-external-secret.yaml` template from any existing component — it is identical across all 16 except the banner comment line and uses `toYaml $secret.body | indent 2` to emit whatever body is defined in inventory.
 12.4 For a credential that must live in Vault but must NOT be materialized as a K8s Secret via ESO (e.g. a root password managed out-of-band), omit it from `eso_vault_integration_<c>_secrets` entirely — the chart renders ExternalSecrets only for listed entries, so no chart-side gate is needed. Seed and reconcile it via `tasks-vault-put.yaml` from a dedicated tagged step in the install playbook (pattern: gitlab `--tags config-root`, see [`components.md`](components.md) §11).
 
 ## 13. ACME / cert-manager Integration
@@ -165,7 +165,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 17.10 Relative `include_tasks: tasks/X.yaml` or sibling-form `include_tasks: tasks-X.yaml` (no prefix) — always use `{{ project_root }}/<dir>/tasks/<name>.yaml` (rule §8.3). Relative forms silently depend on Ansible's `playbook_dir` resolution rule and break when a playbook is included from a different working directory (e.g. tests reusing a production task via `include_tasks` from `tests/` directory). Exception: `import_playbook` (see §8.4 — parse-time evaluation precludes variable use). The fully-inline `bastion-proxy-install.yaml` (no includes at all, §8.5) is likewise not a violation here.
 17.11 Cross-namespace NetworkPolicy к backend managed by **backend** chart — должно managed by **consumer** chart. Backend (seaweedfs, traefik, haproxy, gitlab — те что ставятся раньше в bootstrap sequence) не знает о future consumer'ах, поэтому coupling consumer→backend выражается в consumer chart'е через пару NPs: egress в consumer ns + ingress в backend ns. См. [`networking.md`](networking.md) §8 (precedents в репо + naming convention).
 
-17.12 Объект, рендеримый в **чужой** namespace, с именем, которое уже занято другим helm-релизом. Helm 3 отказывается перенимать существующий объект и роняет **весь релиз** на `invalid ownership metadata`, перечисляя в тексте ошибки недостающие ключи владения. Актуально для любой стадии, выдающей права за пределами своего namespace: `argocd`, `kargo`, `argo-events` и `teleport` stage `cfg` и оба stage `cluster-base`. Владельцы этих namespace — релизы `argocd`, `argo-events`, `kargo` и продукты из git-ops. Флаг `--take-ownership`, который подавил бы эту ошибку, там намеренно не используется — падение и есть защита. Имя обязано быть уникальным в пределах своего namespace относительно всех прочих helm-релизов и того, что раскатывает ArgoCD; приём — префикс-маркер владельца в имени (`argocd-managed-*`, `teleport-managed-*`). Проверка перед добавлением объекта: `kubectl get role,rolebinding -n <ns> -o custom-columns='KIND:.kind,NAME:.metadata.name,OWNER:.metadata.annotations.meta\.helm\.sh/release-name'`. См. [`components.md`](components.md) §17.13.
+17.12 Объект, рендеримый в **чужой** namespace, с именем, которое уже занято другим helm-релизом. Helm 3 отказывается перенимать существующий объект и роняет **весь релиз** на `invalid ownership metadata`, перечисляя в тексте ошибки недостающие ключи владения. Актуально для любой стадии, выдающей права за пределами своего namespace: `argocd`, `kargo`, `argo-events`, `argo-workflows` и `teleport` stage `cfg` и оба stage `cluster-base`. Владельцы этих namespace — релизы `argocd`, `argo-events`, `argo-workflows`, `kargo` и продукты из git-ops. Флаг `--take-ownership`, который подавил бы эту ошибку, там намеренно не используется — падение и есть защита. Имя обязано быть уникальным в пределах своего namespace относительно всех прочих helm-релизов и того, что раскатывает ArgoCD; приём — префикс-маркер владельца в имени (`argocd-managed-*`, `teleport-managed-*`). Проверка перед добавлением объекта: `kubectl get role,rolebinding -n <ns> -o custom-columns='KIND:.kind,NAME:.metadata.name,OWNER:.metadata.annotations.meta\.helm\.sh/release-name'`. См. [`components.md`](components.md) §17.13.
 
 ## 18. Checklist Before Commit
 
@@ -173,7 +173,7 @@ Use `# === STEP N: <phase> ===` separators between phase blocks inside the tasks
 - [ ] Each phase re-runs cleanly with `--tags`.
 - [ ] No new identifiers (vars, files, namespaces) that don't resolve against the repo.
 - [ ] All `include_tasks` paths use `{{ project_root }}/<dir>/tasks/<name>.yaml` (rule §8.3); no relative `tasks/X.yaml` forms.
-- [ ] `hosts-vars-override/` not committed.
+- [ ] `hosts-vars-override/<cluster>/` changes are committed (private repo, on purpose); no secret value quoted in commit messages, reports or chat.
 - [ ] No secret literal in any committed file.
 - [ ] If a new variable was added, it is documented (either in `variables.md` if global or in `components.md` if per-component).
 - [ ] If a new task include was added, it is documented in `reusable-tasks.md`.
@@ -213,7 +213,7 @@ is guaranteed to be set when the task is called. For tasks that themselves set
 
 ## 21. Unified Helm Template + Kustomize Pattern (все LOCAL-managed chart phase'ы)
 
-21.1 Применяется ко **всем** LOCAL-managed chart phase'ам — 68 LOCAL_CUSTOM phase'ов + 4 KUSTOMIZE_WRAPPER phase'а через 24 компонента. Единый flow, единый task.
+21.1 Применяется ко **всем** LOCAL-managed chart phase'ам — 71 LOCAL_CUSTOM phase + 5 KUSTOMIZE_WRAPPER phase'ов через 25 компонентов. Единый flow, единый task.
 
 21.2 Output structure для каждой phase на `master_manager_fact`:
 
@@ -272,7 +272,7 @@ is guaranteed to be set when the task is called. For tasks that themselves set
   tags: [<phase>]
 ```
 
-21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`, `argo-rollouts/install`, `argo-events/install`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` в `tasks-copy-helm-values.yaml` — тот же синтаксис что и LOCAL_CUSTOM. В hosts-vars `<c>_<phase>_helm_values` dict содержит как минимум `extraObjects` wiring (см. §22.4 про унификацию). `helm template --namespace` устанавливает `.Release.Namespace` (для resources без explicit `metadata.namespace`). Resources с hardcoded `metadata.namespace` или `subjects[].namespace` в pristine YAML требуют opt-in kustomize transformer (см. §21.7). Patches работают поверх rendered output.
+21.5 KUSTOMIZE_WRAPPER phase'ы (`argocd/install`, `mon-system/prometheus-operator`, `argo-rollouts/install`, `argo-events/install`, `argo-workflows/install`) — pristine upstream YAML без Jinja-вставок. Подают `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` в `tasks-copy-helm-values.yaml` — тот же синтаксис что и LOCAL_CUSTOM. В hosts-vars `<c>_<phase>_helm_values` dict содержит как минимум `extraObjects` wiring (см. §22.4 про унификацию). `helm template --namespace` устанавливает `.Release.Namespace` (для resources без explicit `metadata.namespace`). Resources с hardcoded `metadata.namespace` или `subjects[].namespace` в pristine YAML требуют opt-in kustomize transformer (см. §21.7). Patches работают поверх rendered output.
 
 21.6 Канонические примеры:
 - LOCAL_CUSTOM: `playbook-app/cilium-install.yaml` STEP 1+3 (pre/post) + `hosts-vars/cilium.yaml` `cilium_pre_kustomize_patches`.
@@ -304,11 +304,11 @@ Cluster-scoped ресурсы (ClusterRole, CRD, и т.п.) не трогает.
 
 ## 22. Extra Objects Extension Pattern
 
-22.1 Применяется ко **всем** LOCAL-managed chart phase subdirs — 72 phase subdirs через 24 components. Унифицированный operator-side extension point для добавления произвольных K8s объектов (Service, Ingress, ConfigMap, NetworkPolicy, и т.д.) без правки chart template'ов. Дополняет существующий `<c>_<phase>_kustomize_patches` (который только modifies/deletes existing resources; адд новых через kustomize невозможен).
+22.1 Применяется ко **всем** LOCAL-managed chart phase subdirs — 76 phase subdirs через 25 components. Унифицированный operator-side extension point для добавления произвольных K8s объектов (Service, Ingress, ConfigMap, NetworkPolicy, и т.д.) без правки chart template'ов. Дополняет существующий `<c>_<phase>_kustomize_patches` (который только modifies/deletes existing resources; адд новых через kustomize невозможен).
 
 22.2 На каждый phase subdir — 3 артефакта:
 
-(a) **Template** `playbook-app/charts/<c>/<phase>/templates/extra-objects.yaml` — canonical content, byte-identical во всех 72 файлах:
+(a) **Template** `playbook-app/charts/<c>/<phase>/templates/extra-objects.yaml` — canonical content, byte-identical во всех 76 файлах:
 
 ```yaml
 {{- if .Values.extraObjects }}
@@ -348,7 +348,7 @@ extraObjects: []
 - В `hosts-vars/<c>.yaml` создан стандартный `<c>_<phase>_helm_values` dict (содержит только `extraObjects` wiring).
 - В playbook'е `dto_content: "{}"` заменён на `dto_content: "{{ <c>_<phase>_helm_values | to_nice_yaml }}"` — тот же синтаксис что и во всех остальных phases.
 
-После унификации pattern в playbook'е **идентичен** для всех 72 phase subdirs — никаких различий между KUSTOMIZE_WRAPPER и обычными phases.
+После унификации pattern в playbook'е **идентичен** для всех 76 phase subdirs — никаких различий между KUSTOMIZE_WRAPPER и обычными phases.
 
 22.5 **Override через `hosts-vars-override/<c>.yaml`** — operator замена `<c>_<phase>_extra_objects` на список K8s manifests:
 

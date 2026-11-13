@@ -37,7 +37,7 @@ Each Helm release follows the `mon-system-<phase>` naming pattern. The CRDs phas
 
 **Cluster-wide.** The Prometheus Operator's `ServiceMonitor` selector has no namespace restriction (empty `serviceMonitorNamespaceSelector: {}`) — it discovers any `ServiceMonitor` CR in any namespace. This lets external components own their own SM resources without touching mon-system config.
 
-The same applies to `PodMonitor`: `podMonitorSelector: {}` + `podMonitorNamespaceSelector: {}` in `mon_system_prometheus_spec`. Components that upstream ships without a metrics `Service` scrape their pods directly — `stakater-reloader` (chart built-in), `linstor` (satellite + affinity-controller), `argo-events` (controller + the pods it spawns from CRs) and `teleport` (auth + proxy, port `diag`).
+The same applies to `PodMonitor`: `podMonitorSelector: {}` + `podMonitorNamespaceSelector: {}` in `mon_system_prometheus_spec`. Components that upstream ships without a metrics `Service` scrape their pods directly — `stakater-reloader` (chart built-in), `linstor` (satellite + affinity-controller), `argo-events` (controller + the pods it spawns from CRs), `argo-workflows` (controller, HTTPS self-signed) and `teleport` (auth + proxy, port `diag`).
 
 ---
 
@@ -52,6 +52,8 @@ The post chart contains:
 - `servicemonitor-loki.yaml` — gated by `loki.enabled`
 - `servicemonitor-ksm.yaml` — gated by `ksm.enabled`
 - `servicemonitor-node-exporter.yaml` — gated by `node_exporter.enabled`
+- `servicemonitor-prometheus.yaml` — gated by `prometheus_operator.enabled` + `prometheus.enabled` + `prometheus.serviceMonitor.enabled`
+- `servicemonitor-alertmanager.yaml` — gated by `prometheus_operator.enabled` + `alertmanager.enabled` + `alertmanager.serviceMonitor.enabled`
 - `system-service-monitors.yaml` — always rendered, iterates `mon_system_prometheus_system_service_monitors` list (kube-apiserver, kubelet, kube-controller-manager, kube-scheduler, etcd, coredns)
 - `system-services.yaml` — always rendered, headless Services in `kube-system` so the system SMs above can find static-pod endpoints
 

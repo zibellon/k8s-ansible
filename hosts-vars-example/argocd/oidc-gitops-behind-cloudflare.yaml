@@ -1,11 +1,17 @@
 # =============================================================================
 # ArgoCD за Cloudflare, вход через OIDC, git-ops по схеме app-of-apps.
 # clientId в кавычках ОБЯЗАТЕЛЬНО (без них YAML сделает integer); client secret
-# — только в Vault. Директория-источник у ArgoCD НЕ рекурсивна, поэтому на три
-# поддиректории заводятся три отдельных app-of-apps, а не один на корень.
-# resources-finalizer намеренно НЕ ставится: он означал бы каскадное удаление —
-# снос такого Application утащил бы за собой все созданные им AppProject,
-# Application и namespace продуктов вместе с PVC.
+# — только в Vault. Root-приложение ОДНО — app-of-apps-root — и смотрит на
+# Helm-чарт argocd-system/root git-ops репозитория: AppProject'ы, ApplicationSet'ы
+# и Application лежат массивами appProjects/applicationSets/applications в его
+# values.yaml. Второй root поверх тех же объектов не заводить.
+# Удаление ВСЕГДА каскадное: у root resources-finalizer — его снос удаляет все
+# созданные им AppProject и ApplicationSet, через ownerReferences — их
+# Application, а те (у них тоже финализатор) — все продуктовые ресурсы. PVC
+# не удаляются: в чартах на них Delete=false,Prune=false. Порядок держат
+# финализаторы проектов (root ниже и все AppProject в чарте): проект уходит
+# последним, иначе Application без проекта не доудаляется. Не делать helm
+# uninstall argocd-cfg, пока root жив — RBAC контроллера уйдёт раньше.
 # Доступ к git: ssh_known_hosts подставляется kustomize-патчем (strategic-merge
 # перезаписывает ключ ЦЕЛИКОМ — upstream github/gitlab.com теряются), а сам
 # ssh-ключ приезжает из Vault ExternalSecret'ом с меткой repo-creds. На один
@@ -78,6 +84,8 @@ all:
       - name: root
         annotations:
           argocd.argoproj.io/sync-options: Delete=false
+        finalizers:
+          - resources-finalizer.argocd.argoproj.io
         spec:
           sourceRepos: ["*"]
           sourceNamespaces: ["*"]
@@ -92,78 +100,36 @@ all:
             - group: "*"
               kind: "*"
 
+    # ServerSideDiff=true — только в паре с ServerSideApply=true;
+    # RespectIgnoreDifferences не включать. allowEmpty: false несущий: пустой
+    # рендер не превратится в prune всех AppProject и ApplicationSet.
     argocd_git_ops_applications:
-      - name: app-of-apps-projects
+      - name: app-of-apps-root
+        annotations:
+          argocd.argoproj.io/compare-options: ServerSideDiff=true
+        finalizers:
+          - resources-finalizer.argocd.argoproj.io/background
         spec:
           project: root
           revisionHistoryLimit: 3
           source:
             repoURL: "ssh://git@git.example.com:22/my-org/infra.git"
             targetRevision: master
-            path: argocd-system/projects
+            path: argocd-system/root
           destination:
             server: https://kubernetes.default.svc
+            namespace: "{{ argocd_namespace }}"
           syncPolicy:
             automated:
+              enabled: true
               prune: true
               selfHeal: true
-              allowEmpty: true
+              allowEmpty: false
             syncOptions:
               - SkipDryRunOnMissingResource=true
               - ApplyOutOfSyncOnly=true
               - PrunePropagationPolicy=background
-            retry:
-              limit: 5
-              backoff:
-                duration: "20s"
-                factor: 1
-                maxDuration: "30s"
-
-      - name: app-of-apps-apps
-        spec:
-          project: root
-          revisionHistoryLimit: 3
-          source:
-            repoURL: "ssh://git@git.example.com:22/my-org/infra.git"
-            targetRevision: master
-            path: argocd-system/apps
-          destination:
-            server: https://kubernetes.default.svc
-          syncPolicy:
-            automated:
-              prune: true
-              selfHeal: true
-              allowEmpty: true
-            syncOptions:
-              - SkipDryRunOnMissingResource=true
-              - ApplyOutOfSyncOnly=true
-              - PrunePropagationPolicy=background
-            retry:
-              limit: 5
-              backoff:
-                duration: "20s"
-                factor: 1
-                maxDuration: "30s"
-
-      - name: app-of-apps-application-sets
-        spec:
-          project: root
-          revisionHistoryLimit: 3
-          source:
-            repoURL: "ssh://git@git.example.com:22/my-org/infra.git"
-            targetRevision: master
-            path: argocd-system/application-sets
-          destination:
-            server: https://kubernetes.default.svc
-          syncPolicy:
-            automated:
-              prune: true
-              selfHeal: true
-              allowEmpty: true
-            syncOptions:
-              - SkipDryRunOnMissingResource=true
-              - ApplyOutOfSyncOnly=true
-              - PrunePropagationPolicy=background
+              - ServerSideApply=true
             retry:
               limit: 5
               backoff:
@@ -290,6 +256,27 @@ all:
             namespace: "{{ argocd_namespace }}"
       - name: "argocd-managed-ui"
         namespace: "{{ argo_events_cr_namespace }}"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-ui"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-server"
+            namespace: "{{ argocd_namespace }}"
+
+      - name: "argocd-managed-deployer"
+        namespace: "{{ argo_workflows_cr_namespace }}"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: "argocd-managed-deployer"
+        subjects:
+          - kind: ServiceAccount
+            name: "argocd-application-controller"
+            namespace: "{{ argocd_namespace }}"
+      - name: "argocd-managed-ui"
+        namespace: "{{ argo_workflows_cr_namespace }}"
         roleRef:
           apiGroup: rbac.authorization.k8s.io
           kind: ClusterRole
